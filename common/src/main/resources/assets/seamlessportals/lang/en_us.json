@@ -1,0 +1,11 @@
+{
+  "seamlessportals.config.title": "Seamless Portals Configuration",
+  "seamlessportals.config.nether.immersive": "Immersive Nether Portals",
+  "seamlessportals.config.end.immersive": "Immersive End Portals",
+  "seamlessportals.config.render_depth": "Portal Render Depth",
+  "seamlessportals.config.render_distance": "Portal Render Distance (chunks)",
+  "seamlessportals.config.framebuffer_scale": "Framebuffer Scale (%)",
+  "seamlessportals.config.seamless_teleport": "Seamless Teleportation",
+  "seamlessportals.config.projectile_passthrough": "Projectile Pass-Through",
+  "seamlessportals.config.camera_smoothing": "Camera Smoothing Ticks"
+}

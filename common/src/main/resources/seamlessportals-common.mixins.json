@@ -1,0 +1,33 @@
+{
+  "required": true,
+  "package": "com.warwa.seamlessportals.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "minVersion": "0.8",
+  "client": [
+    "client.GameRendererMixin",
+    "client.MinecraftAccessorMixin",
+    "client.ClientLevelMixin",
+    "client.MinecraftMixin",
+    "client.SectionCompilerMixin",
+    "client.stencil.GlBackendMixin",
+    "client.stencil.GlConstMixin",
+    "client.stencil.RenderTargetMixin",
+    "client.stencil.GlStateManagerMixin",
+    "client.CameraInvokerMixin",
+    "client.ClearSkipMixin",
+    "client.GameRendererAccessorMixin",
+    "client.GameRendererLightmapMixin",
+    "client.LevelRendererAccessorMixin"
+  ],
+  "mixins": [
+    "EntityMixin",
+    "ServerPlayerMixin",
+    "ProjectileMixin",
+    "ThrownEnderpearlMixin",
+    "NetherPortalBlockMixin",
+    "PortalForcerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
