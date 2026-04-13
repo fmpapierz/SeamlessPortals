@@ -17,7 +17,9 @@
     "client.ClearSkipMixin",
     "client.GameRendererAccessorMixin",
     "client.GameRendererLightmapMixin",
-    "client.LevelRendererAccessorMixin"
+    "client.LevelRendererAccessorMixin",
+    "client.BlockEntityRenderDispatcherAccessorMixin",
+    "client.ParticleEngineAccessorMixin"
   ],
   "mixins": [
     "EntityMixin",

@@ -14,18 +14,15 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
 
         FabricPlatformHelper.registerClientHandlers();
 
-        // Hook AFTER translucent terrain so our portal content renders
-        // ON TOP of everything including water, clouds, and translucent blocks.
-        // The stencil mask clips to the portal shape regardless of render order.
-        //
-        // NOTE: IP hooks between solid and translucent because it re-renders
-        // the entire destination world (including its own translucent pass).
-        // For Phase 1 (colored blocks), rendering last avoids overworld bleed.
-        // For Phase 2 (context-switch), we'll need to revisit this hook point.
-        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
+        // Following IP: hook AFTER solid features, BEFORE translucent terrain.
+        // Portal rendering includes its own translucent pass for the destination world.
+        // Rendering here ensures destination blocks (including translucent) render
+        // correctly within the stencil mask, then the main world's translucent pass
+        // renders on top (excluding the portal area via depth shield).
+        LevelRenderEvents.AFTER_SOLID_FEATURES.register(context -> {
             StencilPortalRenderer.renderPortals();
         });
 
-        SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");
+        SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_SOLID_FEATURES render hook (IP architecture)");
     }
 }

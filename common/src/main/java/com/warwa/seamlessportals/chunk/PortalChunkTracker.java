@@ -27,16 +27,20 @@ import java.util.*;
  * DEBUG: Logs every chunk serialization and send operation.
  */
 public class PortalChunkTracker {
-    private final Map<UUID, Set<ChunkPos>> sentChunks = new HashMap<>();
+    // Per-player, per-dimension tracking. A ChunkPos in overworld is NOT the same
+    // as the same ChunkPos in nether — they must be tracked separately.
+    // Key: "playerUUID:dimensionId" → Set of sent ChunkPos for that dimension.
+    private final Map<String, Set<ChunkPos>> sentChunks = new HashMap<>();
     private static boolean loggedFirstSend = false;
 
     private int scanCooldown = 0;
 
     public void tick(MinecraftServer server) {
-        // Periodically scan for portals near players on the server
+        // Scan for portals near players. IP detects portals instantly at light time
+        // via entity creation hooks. We scan frequently to minimize delay.
         scanCooldown--;
         if (scanCooldown <= 0) {
-            scanCooldown = 40; // Every 2 seconds
+            scanCooldown = 5; // Every 0.25 seconds (IP: instant)
             for (ServerPlayer player : server.getPlayerList().getPlayers()) {
                 scanForPortalsNearPlayer(player, server);
             }
@@ -91,8 +95,16 @@ public class PortalChunkTracker {
         }
     }
 
-    private static boolean loggedChunkUpdate = false;
+    private static int chunkUpdateLogCooldown = 0;
 
+    /**
+     * Send chunks for ALL portal links near the player.
+     * IP: chunks are loaded for all visible portals regardless of which dimension
+     * the player is currently in. We send chunks for:
+     * 1. Links in the player's current dimension (dest chunks for viewing through portal)
+     * 2. Links in the OTHER dimension that the player came from (so chunks are ready
+     *    when the player returns — no delay)
+     */
     private void updatePlayerPortalChunks(ServerPlayer player, MinecraftServer server) {
         ResourceKey<Level> playerDim = player.level().dimension();
         PortalManager manager = PortalManager.getServerInstance();
@@ -100,29 +112,45 @@ public class PortalChunkTracker {
         int renderDist = SeamlessPortalsConfig.get().getPortalRenderDistance();
         double range = renderDist * 16.0;
 
+        // Links in current dimension (for viewing through portals here)
         List<PortalLink> nearbyLinks = manager.getLinksInRange(playerDim, player.blockPosition(), range);
 
-        if (!loggedChunkUpdate) {
+        // Also check links in the OTHER dimension pointing back here.
+        // This pre-sends chunks so they're ready when the player returns.
+        ResourceKey<Level> otherDim = PortalType.NETHER.getDestinationFor(playerDim);
+        if (otherDim != null) {
+            // The reverse link: other dim portal → this dim portal.
+            // We want to send chunks for the OTHER dim so when the player returns
+            // to this dim, those chunks are already loaded in the secondary level.
+            List<PortalLink> reverseLinks = manager.getLinksInRange(otherDim,
+                player.blockPosition(), range * 8); // scale-aware range
+            nearbyLinks = new java.util.ArrayList<>(nearbyLinks);
+            nearbyLinks.addAll(reverseLinks);
+        }
+
+        chunkUpdateLogCooldown--;
+        if (chunkUpdateLogCooldown <= 0) {
+            chunkUpdateLogCooldown = 100;
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, nearbyLinks={}, renderDist={}, range={}",
-                playerDim.identifier(), nearbyLinks.size(), renderDist, range
+                "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, links={}, playerPos={}",
+                playerDim.identifier(), nearbyLinks.size(), player.blockPosition()
             );
-            loggedChunkUpdate = true;
         }
 
         if (nearbyLinks.isEmpty()) return;
 
-        Set<ChunkPos> neededChunks = new HashSet<>();
-
         for (PortalLink link : nearbyLinks) {
             PortalInfo destPortal = link.getDestination();
             ResourceKey<Level> destDim = destPortal.getDimension();
-            Vec3 destCenter = destPortal.getCenter();
 
+            // Don't send chunks for the player's current dimension (they have them already)
+            if (destDim.equals(playerDim)) continue;
+
+            Vec3 destCenter = destPortal.getCenter();
             int centerChunkX = (int)(destCenter.x) >> 4;
             int centerChunkZ = (int)(destCenter.z) >> 4;
 
-            // Collect chunks around the destination portal
+            Set<ChunkPos> neededChunks = new HashSet<>();
             for (int dx = -renderDist; dx <= renderDist; dx++) {
                 for (int dz = -renderDist; dz <= renderDist; dz++) {
                     neededChunks.add(new ChunkPos(centerChunkX + dx, centerChunkZ + dz));
@@ -139,15 +167,13 @@ public class PortalChunkTracker {
         if (destLevel == null) return;
 
         String dimId = dimension.identifier().toString();
-        UUID playerId = player.getUUID();
-        Set<ChunkPos> previouslySent = sentChunks.computeIfAbsent(playerId, k -> new HashSet<>());
+        String trackKey = player.getUUID() + ":" + dimId;
+        Set<ChunkPos> previouslySent = sentChunks.computeIfAbsent(trackKey, k -> new HashSet<>());
 
-        if (!loggedFirstSend) {
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] sendChunksToPlayer: dim={}, chunks to check={}, prevSent={}",
-                dimId, chunks.size(), previouslySent.size()
-            );
-        }
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS DEBUG] sendChunksToPlayer: dim={}, chunks={}, prevSent={}",
+            dimId, chunks.size(), previouslySent.size()
+        );
 
         for (ChunkPos pos : chunks) {
             if (previouslySent.contains(pos)) continue;
@@ -271,7 +297,8 @@ public class PortalChunkTracker {
     }
 
     public void onPlayerDisconnect(UUID playerId) {
-        sentChunks.remove(playerId);
+        String prefix = playerId + ":";
+        sentChunks.keySet().removeIf(key -> key.startsWith(prefix));
     }
 
     public void clear() {

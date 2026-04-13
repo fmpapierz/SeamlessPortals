@@ -1,10 +1,8 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
-import com.warwa.seamlessportals.chunk.RemoteChunkManager;
 import com.warwa.seamlessportals.portal.PortalDetector;
 import com.warwa.seamlessportals.portal.PortalManager;
-import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -30,21 +28,19 @@ public abstract class ClientLevelMixin {
 
     /**
      * When a chunk loads on the client, scan for portal blocks.
-     * Also detect dimension changes and clear stale virtual portals.
+     * Portal data persists across dimension changes (following IP architecture).
      */
     @Inject(method = "onChunkLoaded", at = @At("TAIL"))
     private void seamlessportals$onChunkLoaded(ChunkPos chunkPos, CallbackInfo ci) {
         ClientLevel level = (ClientLevel)(Object) this;
         ResourceKey<Level> currentDim = level.dimension();
 
-        // Detect dimension change - clear stale virtual portals for the NEW dimension
+        // Detect dimension change — portals persist, no clearing
         if (seamlessportals$lastDimension != null && seamlessportals$lastDimension != currentDim) {
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS] Dimension change detected: {} -> {}. Clearing stale portals.",
+                "[SEAMLESS] Dimension change: {} -> {}",
                 seamlessportals$lastDimension.identifier(), currentDim.identifier()
             );
-            PortalManager.getClientInstance().clearDimension(currentDim);
-            StencilPortalRenderer.cleanup();
             seamlessportals$loggedChunkScan = false;
         }
         seamlessportals$lastDimension = currentDim;
@@ -84,11 +80,28 @@ public abstract class ClientLevelMixin {
         }
     }
 
+    /**
+     * ClientLevel.disconnect() fires on BOTH dimension changes AND server disconnect.
+     * IP: secondary worlds persist across dimension changes. Only clean up on actual disconnect.
+     * We detect actual disconnect by checking if the connection is still active.
+     */
     @Inject(method = "disconnect", at = @At("HEAD"))
     private void seamlessportals$onDisconnect(CallbackInfo ci) {
-        RemoteChunkManager.clearAll();
-        PortalManager.resetClient();
-        seamlessportals$loggedChunkScan = false;
-        seamlessportals$lastDimension = null;
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+
+        // If the connection is gone, this is a real disconnect — clean up everything.
+        // If the connection is still active, this is a dimension change — keep secondary worlds.
+        if (mc.getConnection() == null) {
+            com.warwa.seamlessportals.client.PortalWorldManager.cleanup();
+            com.warwa.seamlessportals.client.PortalDimensionManager.cleanup();
+            PortalManager.resetClient();
+            seamlessportals$loggedChunkScan = false;
+            seamlessportals$lastDimension = null;
+            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS] Full cleanup on server disconnect");
+        } else {
+            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS] Dimension change — secondary worlds preserved (IP architecture)");
+        }
     }
 }

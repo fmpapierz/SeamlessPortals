@@ -62,12 +62,25 @@ public class PortalManager {
         linksByPosition.remove(key);
     }
 
+    /**
+     * Create a bidirectional link. Does NOT overwrite existing links —
+     * each portal position links to exactly one destination.
+     * IP: each portal entity has one fixed destination.
+     */
     public PortalLink createLink(PortalInfo source, PortalInfo destination) {
-        PortalLink link = new PortalLink(source, destination);
-        PortalLink reverseLink = new PortalLink(destination, source);
-
         String srcKey = posKey(source.getDimension(), source.getOrigin());
         String dstKey = posKey(destination.getDimension(), destination.getOrigin());
+
+        // Don't overwrite existing links — IP: each portal has one fixed destination.
+        // If EITHER portal already has a link, don't create a new one.
+        // A second overworld portal linking to the same nether portal would hijack it.
+        PortalLink existingSrc = linksByPosition.get(srcKey);
+        PortalLink existingDst = linksByPosition.get(dstKey);
+        if (existingSrc != null) return existingSrc;
+        if (existingDst != null) return existingDst;
+
+        PortalLink link = new PortalLink(source, destination);
+        PortalLink reverseLink = new PortalLink(destination, source);
 
         linksByPosition.put(srcKey, link);
         linksByPosition.put(dstKey, reverseLink);
@@ -134,31 +147,75 @@ public class PortalManager {
         }
     }
 
+    /**
+     * Find the destination portal and link to it.
+     * Following IP: both portals must EXIST. No virtual placeholders.
+     *
+     * IP hooks PortalForcer.createPortal() so the dest portal exists at link time.
+     * We do the equivalent: force-load the expected destination chunk on the server
+     * and scan it for portal blocks. The server CAN load any chunk in any dimension.
+     */
     private void findOrCreateDestinationPortal(PortalInfo source, ResourceKey<Level> destDim,
                                                 ServerLevel destLevel, MinecraftServer server) {
         PortalTracker destTracker = getTracker(destDim);
         BlockPos expectedPos = computeExpectedDestination(source);
 
-        // Try to find existing portal in destination dimension
+        // First check if already registered
         Optional<PortalInfo> existing = destTracker.findNearestPortal(expectedPos, 128, source.getType());
         if (existing.isPresent()) {
             createLink(source, existing.get());
             return;
         }
 
-        // No portal found in destination - create a virtual destination for rendering
-        // The actual position might not be exact but it lets us load chunks around it
+        // Not registered yet — force-load the destination chunk and scan for portal blocks.
+        // This is what IP effectively does: the server always has access to dest dimension chunks.
+        int chunkX = expectedPos.getX() >> 4;
+        int chunkZ = expectedPos.getZ() >> 4;
+
+        // Scan a small radius around the expected position
+        for (int cx = chunkX - 8; cx <= chunkX + 8; cx++) {
+            for (int cz = chunkZ - 8; cz <= chunkZ + 8; cz++) {
+                net.minecraft.world.level.chunk.LevelChunk chunk;
+                try {
+                    chunk = destLevel.getChunk(cx, cz);
+                } catch (Exception e) {
+                    continue;
+                }
+                if (chunk == null) continue;
+
+                for (int sIdx = 0; sIdx < chunk.getSectionsCount(); sIdx++) {
+                    var section = chunk.getSection(sIdx);
+                    if (section == null || section.hasOnlyAir()) continue;
+                    int sectionY = chunk.getSectionYFromSectionIndex(sIdx);
+                    for (int lx = 0; lx < 16; lx++) {
+                        for (int ly = 0; ly < 16; ly++) {
+                            for (int lz = 0; lz < 16; lz++) {
+                                if (section.getBlockState(lx, ly, lz).is(net.minecraft.world.level.block.Blocks.NETHER_PORTAL)) {
+                                    BlockPos worldPos = new BlockPos(cx * 16 + lx, sectionY * 16 + ly, cz * 16 + lz);
+                                    // Register this portal via PortalDetector (deduplicates internally)
+                                    PortalDetector.onNetherPortalFormed(destLevel, worldPos, server);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try again after scanning
+        existing = destTracker.findNearestPortal(expectedPos, 128, source.getType());
+        if (existing.isPresent()) {
+            createLink(source, existing.get());
+            return;
+        }
+
+        // Destination doesn't exist yet. Vanilla creates it when player first teleports.
+        // PortalForcerMixin will fire at that point and create the REAL link + sync to client.
+        // No expected/placeholder portals — they cause wrong positions and broken rendering.
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS DEBUG] No destination portal found, creating virtual link at {} in {}",
+            "[SEAMLESS] No destination portal near {} in {} — will link when PortalForcer creates it",
             expectedPos, destDim.identifier()
         );
-
-        PortalInfo virtualDest = new PortalInfo(
-            source.getType(), destDim, expectedPos,
-            source.getAxis(), source.getWidth(), source.getHeight()
-        );
-        registerPortal(virtualDest);
-        createLink(source, virtualDest);
     }
 
     private BlockPos computeExpectedDestination(PortalInfo source) {
@@ -171,24 +228,6 @@ public class PortalManager {
             return new BlockPos((int)(origin.getX() * scale), origin.getY(), (int)(origin.getZ() * scale));
         }
         return origin;
-    }
-
-    /**
-     * Clear all portal data for a specific dimension.
-     * Used when dimension changes to remove stale virtual portals.
-     */
-    public void clearDimension(ResourceKey<Level> dimension) {
-        PortalTracker tracker = trackers.get(dimension);
-        if (tracker != null) {
-            // Remove links for all portals in this dimension
-            for (PortalInfo portal : new ArrayList<>(tracker.getAllPortals())) {
-                String key = posKey(dimension, portal.getOrigin());
-                linksByPosition.remove(key);
-                tracker.removePortal(portal);
-            }
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS] Cleared portal data for dimension: {}", dimension.identifier());
-        }
     }
 
     public void clear() {

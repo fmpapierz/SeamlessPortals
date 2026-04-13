@@ -102,11 +102,12 @@ public class PortalDetector {
     }
 
     /**
-     * Client-side portal detection. When a player walks near a portal on the client,
-     * register it with the client's PortalManager so the renderer knows where portals are.
-     * Also creates a "virtual" link pointing to the corresponding nether position.
+     * Client-side portal detection. Registers the portal in the client tracker.
+     * Links are created by the server via PortalSyncPayload with REAL positions.
+     * No expected/placeholder destinations — those cause wrong positions.
      *
-     * DEBUG: Logs client-side portal registration.
+     * If the real destination is already known (player returning to a previously-visited
+     * portal), try to link immediately from the client tracker.
      */
     public static void onNetherPortalDetectedClient(Level level, BlockPos portalBlock) {
         BlockState state = level.getBlockState(portalBlock);
@@ -115,7 +116,6 @@ public class PortalDetector {
         PortalManager clientManager = PortalManager.getClientInstance();
         PortalTracker tracker = clientManager.getTracker(level.dimension());
 
-        // Skip if already registered
         if (tracker.getPortalAt(portalBlock).isPresent()) return;
 
         Direction.Axis axis = state.getValue(NetherPortalBlock.AXIS);
@@ -126,23 +126,25 @@ public class PortalDetector {
         PortalInfo clientPortal = new PortalInfo(PortalType.NETHER, level.dimension(), origin, axis, width, height);
         clientManager.registerPortal(clientPortal);
 
-        // Create a virtual destination portal at the nether-equivalent position
+        // Try to find an already-known destination portal and link
         net.minecraft.resources.ResourceKey<Level> destDim = PortalType.NETHER.getDestinationFor(level.dimension());
         if (destDim != null) {
+            PortalTracker destTracker = clientManager.getTracker(destDim);
             double scale = (level.dimension() == Level.OVERWORLD) ? 1.0 / 8.0 : 8.0;
-            BlockPos destOrigin = new BlockPos(
-                (int)(origin.getX() * scale),
-                origin.getY(),
-                (int)(origin.getZ() * scale)
-            );
-            PortalInfo destPortal = new PortalInfo(PortalType.NETHER, destDim, destOrigin, axis, width, height);
-            clientManager.registerPortal(destPortal);
-            clientManager.createLink(clientPortal, destPortal);
+            BlockPos expectedDest = new BlockPos(
+                (int)(origin.getX() * scale), origin.getY(), (int)(origin.getZ() * scale));
 
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] Client registered portal at {} -> {} in {}",
-                origin, destOrigin, destDim.identifier()
-            );
+            java.util.Optional<PortalInfo> existing = destTracker.findNearestPortal(expectedDest, 1024, PortalType.NETHER);
+            if (existing.isPresent()) {
+                clientManager.createLink(clientPortal, existing.get());
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS] Client linked portal {} -> {} in {}",
+                    origin, existing.get().getOrigin(), destDim.identifier());
+            } else {
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS] Client registered portal at {} — link via server sync",
+                    origin);
+            }
         }
     }
 

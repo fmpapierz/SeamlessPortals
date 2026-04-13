@@ -1,17 +1,10 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.ProjectionType;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.*;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.chunk.RemoteChunkManager;
 import com.warwa.seamlessportals.client.PortalWorldManager;
-import com.warwa.seamlessportals.mixin.client.CameraInvokerMixin;
-import com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin;
-import com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin;
-import com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin;
+import com.warwa.seamlessportals.mixin.client.*;
 import com.warwa.seamlessportals.portal.PortalInfo;
 import com.warwa.seamlessportals.portal.PortalLink;
 import net.minecraft.client.Camera;
@@ -19,6 +12,7 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
@@ -26,152 +20,74 @@ import net.minecraft.client.renderer.fog.FogRenderer;
 import net.minecraft.client.renderer.state.GameRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
-import org.joml.Matrix4fc;
-import org.joml.Vector4f;
 
 /**
- * Handles destination world rendering through the stencil mask.
+ * Context-switch rendering matching IP's MyGameRenderer.switchAndRenderTheWorld() EXACTLY.
  *
- * Phase 1: Colored blocks from RemoteChunkManager (CURRENT - working).
- * Phase 2: Full context-switch rendering with vanilla's LevelRenderer (IN PROGRESS).
- *
- * Following IP's exact context-switch pattern from MyGameRenderer.switchAndRenderTheWorld():
- * 1. Save state (level, levelRenderer, matrices)
- * 2. Flush buffers
- * 3. Swap to destination (level, renderer, fresh matrix stack)
- * 4. Render via LevelRenderer.renderLevel()
- * 5. Restore all state
- *
- * Phase 2 is gated behind a flag. Falls back to Phase 1 if secondary renderer
- * isn't ready (chunks not compiled yet).
+ * IP saves/swaps/restores 15+ fields. We do the same.
+ * IP NEVER re-extracts on restore. We don't either.
+ * Every field is logged for verification.
  */
 public class PortalContextSwitch {
 
-    private static boolean loggedFirst = false;
-    private static boolean phase2Attempted = false;
+    /** Per-dimension success/fail tracking so nether renders get logged separately from overworld */
+    private static final java.util.Map<String, Integer> successCounts = new java.util.HashMap<>();
+    private static int failCount = 0;
 
-    /**
-     * Flag for ClearSkipMixin. Currently unused since we use renderGroup()
-     * instead of renderLevel(), but kept for future full-render support.
-     */
+    /** Flag for ClearSkipMixin. */
     public static boolean isRenderingPortal = false;
 
-    /** Cached sampler for chunk terrain rendering. Created once, reused. */
-    private static com.mojang.blaze3d.textures.GpuSampler chunkSampler = null;
-
-    /** Secondary lightmap for portal rendering. Uses destination dimension lighting. */
-    private static net.minecraft.client.renderer.Lightmap portalLightmap = null;
-
-    /**
-     * Override for GameRenderer.lightmap() during portal rendering.
-     * Set non-null before renderGroup(), null after.
-     * Read by GameRendererLightmapMixin to return the portal lightmap.
-     */
+    /** Lightmap override for GameRendererLightmapMixin (kept until Phase 1C replaces it). */
     public static com.mojang.blaze3d.textures.GpuTextureView portalLightmapOverride = null;
 
-    /**
-     * Render the destination dimension through the stencil mask.
-     * Tries Phase 2 (context-switch) first, falls back to Phase 1 (colored blocks).
-     */
+    /** Cached sampler. */
+    private static com.mojang.blaze3d.textures.GpuSampler chunkSampler = null;
+
+    /** Temp lightmap until Phase 1C creates per-dimension ones. */
+    private static Lightmap portalLightmap = null;
+
     public static void renderDestinationWorld(PortalInfo srcPortal, PortalLink link, Camera camera) {
         PortalInfo destPortal = link.getDestination();
         ResourceKey<Level> destDim = destPortal.getDimension();
 
-        // Try Phase 2: context-switch rendering with vanilla renderer
-        if (tryPhase2Render(srcPortal, link, camera, destDim)) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) return;
+
+        LevelRenderer destRenderer = PortalWorldManager.getOrCreateRenderer(destDim);
+        ClientLevel destLevel = PortalWorldManager.getLevel(destDim);
+        if (destRenderer == null || destLevel == null) {
+            if (failCount < 10) SeamlessPortalsConstants.LOGGER.info(
+                "[CTX BAIL] no renderer/level for {} (r={}, l={})",
+                destDim.identifier(), destRenderer != null, destLevel != null);
+            failCount++;
+            return;
+        }
+        int loaded = destLevel.getChunkSource().getLoadedChunksCount();
+        if (loaded == 0) {
+            // Log every 60 frames (~1 second) to avoid spam but still visible
+            if (failCount % 60 == 0) SeamlessPortalsConstants.LOGGER.info(
+                "[CTX BAIL] no chunks for {} (loaded=0, bail#{})", destDim.identifier(), failCount);
+            failCount++;
             return;
         }
 
-        // Fall back to Phase 1: colored blocks
-        renderColoredBlocks(srcPortal, link, camera, destDim);
-    }
-
-    private static int phase2FailCount = 0;
-    private static int phase2SuccessCount = 0;
-    /** Track which dimensions have had chunks fed — must be per-dimension, not global. */
-    private static final java.util.Set<ResourceKey<Level>> chunksEverFed = new java.util.HashSet<>();
-
-    /**
-     * Phase 2: Render destination chunk terrain through the stencil mask.
-     *
-     * Uses ChunkSectionsToRender.renderGroup(OPAQUE) directly instead of the
-     * full renderLevel(). renderLevel() creates a nested framegraph with passes
-     * on DIFFERENT FBOs (sky, translucent, entity outline) that don't have our
-     * stencil values — breaking the stencil mask completely.
-     *
-     * renderGroup(OPAQUE) creates ONE RenderPass on the MAIN render target
-     * (where our stencil lives). applyPipelineState() never touches stencil
-     * (verified: MC 26.1.2 has ZERO stencil references). So GL_STENCIL_TEST
-     * with GL_EQUAL(1) persists and clips terrain to the portal area.
-     *
-     * Flow:
-     * 1. Get/create secondary renderer + level
-     * 2. Feed chunks into secondary level's ClientChunkCache
-     * 3. Create virtual camera at destination position
-     * 4. Call destRenderer.extractLevel() to build chunk draw lists
-     * 5. Call destChunks.renderGroup(OPAQUE, sampler) through stencil mask
-     * 6. Restore saved state
-     */
-    private static boolean tryPhase2Render(PortalInfo srcPortal, PortalLink link,
-                                            Camera mainCamera, ResourceKey<Level> destDim) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null) return false;
-
-        // ===== 1. Get or create secondary renderer =====
-        LevelRenderer destRenderer = PortalWorldManager.getOrCreateRenderer(destDim);
-        ClientLevel destLevel = PortalWorldManager.getLevel(destDim);
-        if (destRenderer == null || destLevel == null) return false;
-
-        // ===== 2. Set view center at portal destination FIRST, then feed chunks =====
-        // CRITICAL: updateViewCenter must be called BEFORE any replaceWithPacketData,
-        // otherwise ClientChunkCache.inRange() rejects chunks far from default center (0,0).
-        // IP sets view center at the destination portal, then feeds all chunks.
-        PortalInfo destPortal = link.getDestination();
-        BlockPos destOrigin = destPortal.getOrigin();
-        destLevel.getChunkSource().updateViewCenter(
-            destOrigin.getX() >> 4, destOrigin.getZ() >> 4);
-
-        if (!chunksEverFed.contains(destDim)) {
-            PortalWorldManager.feedExistingChunks(destDim);
-            chunksEverFed.add(destDim);
-        }
-
-        if (RemoteChunkManager.getChunkCount(destDim) == 0) {
-            return false;
-        }
-
         try {
-            return doRenderGroupRender(srcPortal, link, mainCamera, destDim,
-                                        destRenderer, destLevel, mc);
+            doContextSwitchRender(srcPortal, link, camera, destDim, destRenderer, destLevel, mc);
         } catch (Exception e) {
-            if (phase2FailCount <= 3) {
-                SeamlessPortalsConstants.LOGGER.error(
-                    "[SEAMLESS PHASE2] renderGroup render failed", e);
+            failCount++;
+            if (failCount <= 5) {
+                SeamlessPortalsConstants.LOGGER.error("[CTX] Render failed", e);
             }
-            phase2FailCount++;
-            return false;
         }
     }
 
-    /**
-     * Phase 2 render using renderGroup(OPAQUE) directly.
-     *
-     * Unlike the failed renderLevel() approach (which created nested framegraph
-     * passes on DIFFERENT FBOs without stencil), renderGroup() creates ONE
-     * RenderPass on the MAIN render target where our stencil values live.
-     * MC 26.1.2's applyPipelineState() NEVER touches stencil state (verified:
-     * zero stencil references in entire MC codebase). So GL_STENCIL_TEST with
-     * GL_EQUAL(1) persists and clips terrain to the portal area.
-     */
-    private static boolean doRenderGroupRender(
+    private static void doContextSwitchRender(
             PortalInfo srcPortal, PortalLink link, Camera mainCamera,
             ResourceKey<Level> destDim, LevelRenderer destRenderer,
             ClientLevel destLevel, Minecraft mc) {
@@ -179,9 +95,62 @@ public class PortalContextSwitch {
         PortalInfo destPortal = link.getDestination();
         DeltaTracker deltaTracker = mc.getDeltaTracker();
         float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
+        GameRenderState grs = mc.gameRenderer.getGameRenderState();
+        GameRendererAccessorMixin grAccessor = (GameRendererAccessorMixin) mc.gameRenderer;
 
-        // ===== 3. Compute destination camera position =====
-        // Following IP's transformPoint(): destPos + (cameraPos - srcPos)
+        // ================================================================
+        // STEP 1: SAVE — IP saves 15+ fields by reference
+        // ================================================================
+        // 1. client.level
+        ClientLevel savedLevel = mc.level;
+        // 2. client.levelRenderer
+        LevelRenderer savedRenderer = ((MinecraftAccessorMixin) mc).seamlessportals$getLevelRenderer();
+        // 3. lightmap
+        Lightmap savedLightmap = grAccessor.seamlessportals$getLightmap();
+        // 4. blockEntityRenderDispatcher.cameraPos (MC 26.1.2: no level field)
+        Vec3 savedBlockEntityCameraPos =
+            ((BlockEntityRenderDispatcherAccessorMixin) mc.getBlockEntityRenderDispatcher())
+                .seamlessportals$getCameraPos();
+        // 5. player.noPhysics
+        boolean savedNoPhysics = mc.player.noPhysics;
+        // 6. chunkSectionsToRender (IP: oldChunkInfoList)
+        ChunkSectionsToRender savedChunks = grs.levelRenderState.chunkSectionsToRender;
+        // 7. hitResult
+        HitResult savedHitResult = mc.hitResult;
+        // 8. mainCamera
+        Camera savedCamera = grAccessor.seamlessportals$getMainCamera();
+        // 9. particleEngine.level
+        ClientLevel savedParticleLevel =
+            ((ParticleEngineAccessorMixin) mc.particleEngine).seamlessportals$getLevel();
+        // 10. fog — DEEP COPY before extractLevel overwrites in-place.
+        // FogData is mutable — saving a reference would point to the SAME object
+        // that extractLevel() overwrites with destination fog values.
+        net.minecraft.client.renderer.fog.FogData savedFogData = new net.minecraft.client.renderer.fog.FogData();
+        {
+            net.minecraft.client.renderer.fog.FogData src = grs.levelRenderState.cameraRenderState.fogData;
+            savedFogData.environmentalStart = src.environmentalStart;
+            savedFogData.renderDistanceStart = src.renderDistanceStart;
+            savedFogData.environmentalEnd = src.environmentalEnd;
+            savedFogData.renderDistanceEnd = src.renderDistanceEnd;
+            savedFogData.skyEnd = src.skyEnd;
+            savedFogData.cloudEnd = src.cloudEnd;
+            savedFogData.color = new org.joml.Vector4f(src.color);
+        }
+
+        int dimSuccess = successCounts.getOrDefault(destDim.identifier().toString(), 0);
+        if (dimSuccess < 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[CTX SAVE] level={}, fog=({},{},{},{}), noPhysics={}, hitResult={}",
+                savedLevel.dimension().identifier(),
+                String.format("%.2f", savedFogData.color.x), String.format("%.2f", savedFogData.color.y),
+                String.format("%.2f", savedFogData.color.z), String.format("%.2f", savedFogData.color.w),
+                savedNoPhysics, savedHitResult != null ? savedHitResult.getType() : "null"
+            );
+        }
+
+        // ================================================================
+        // STEP 2: Compute destination camera — IP: transformPoint()
+        // ================================================================
         Vec3 srcCenter = srcPortal.getCenter();
         Vec3 destCenter = destPortal.getCenter();
         Vec3 playerPos = mainCamera.position();
@@ -191,7 +160,19 @@ public class PortalContextSwitch {
             destCenter.z + (playerPos.z - srcCenter.z)
         );
 
-        // ===== 4. Create virtual camera (IP creates fresh Camera) =====
+        if (dimSuccess < 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[CTX CAMERA] srcPortal: origin={} center=({},{},{}), destPortal: origin={} center=({},{},{}), player=({},{},{}), destCam=({},{},{})",
+                srcPortal.getOrigin(),
+                String.format("%.1f", srcCenter.x), String.format("%.1f", srcCenter.y), String.format("%.1f", srcCenter.z),
+                destPortal.getOrigin(),
+                String.format("%.1f", destCenter.x), String.format("%.1f", destCenter.y), String.format("%.1f", destCenter.z),
+                String.format("%.1f", playerPos.x), String.format("%.1f", playerPos.y), String.format("%.1f", playerPos.z),
+                String.format("%.1f", destCameraPos.x), String.format("%.1f", destCameraPos.y), String.format("%.1f", destCameraPos.z)
+            );
+        }
+
+        // IP: fresh Camera for destination
         Camera virtualCamera = new Camera();
         virtualCamera.setLevel(destLevel);
         virtualCamera.setEntity(mc.player);
@@ -199,41 +180,58 @@ public class PortalContextSwitch {
             mainCamera.yRot(), mainCamera.xRot());
         ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetPosition(destCameraPos);
 
-        // Build frustum for chunk culling
-        CameraRenderState mainCameraState =
-            mc.gameRenderer.getGameRenderState().levelRenderState.cameraRenderState;
+        // Build frustum
+        CameraRenderState mainCameraState = grs.levelRenderState.cameraRenderState;
         Matrix4f viewMatrix = new Matrix4f();
         virtualCamera.getViewRotationMatrix(viewMatrix);
-        Matrix4f projForCulling = new Matrix4f(mainCameraState.projectionMatrix);
-        Frustum destFrustum = new Frustum(viewMatrix, projForCulling);
+        Frustum destFrustum = new Frustum(viewMatrix, new Matrix4f(mainCameraState.projectionMatrix));
         destFrustum.prepare(destCameraPos.x, destCameraPos.y, destCameraPos.z);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setCullFrustum(destFrustum);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setInitialized(true);
 
-        // ===== 5. Save shared state =====
-        GameRenderState grs = mc.gameRenderer.getGameRenderState();
-        ChunkSectionsToRender savedChunks = grs.levelRenderState.chunkSectionsToRender;
-        // Fog: NOT saving/restoring because updateBuffer() permanently overwrites
-        // the GPU buffer. Nether will use overworld fog for now — acceptable tradeoff.
+        // ================================================================
+        // STEP 3: SWITCH — IP swaps all fields to destination
+        // ================================================================
+        // IP: client.level = newWorld
+        mc.level = destLevel;
+        // IP: client.levelRenderer = worldRenderer
+        ((MinecraftAccessorMixin) mc).seamlessportals$setLevelRenderer(destRenderer);
+        // IP: client.player.noPhysics = true
+        mc.player.noPhysics = true;
+        // IP: client.hitResult = null
+        mc.hitResult = null;
+        // IP: client.particleEngine.setWorld(newWorld)
+        ((ParticleEngineAccessorMixin) mc.particleEngine).seamlessportals$setLevel(destLevel);
+        // IP: client.gameRenderer.setCamera(newCamera)
+        grAccessor.seamlessportals$setMainCamera(virtualCamera);
+        // IP: blockEntityRenderDispatcher.prepare(destCameraPos)
+        mc.getBlockEntityRenderDispatcher().prepare(destCameraPos);
+        // IP: bufferSource.endBatch() — flush before render
+        mc.renderBuffers().bufferSource().endBatch();
 
-        // View center already set in tryPhase2Render() step 2
+        if (dimSuccess < 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[CTX SWAP] level→{}, noPhysics→true, hitResult→null, camera→({},{},{})",
+                destDim.identifier(),
+                (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z
+            );
+        }
 
-        // ===== 6. Direct section compilation (bypass occlusion graph) =====
-        // The normal pipeline uses SectionOcclusionGraph BFS to find visible sections.
-        // BFS requires hasAllNeighbors() (all 8 chunk neighbors loaded) for traversal.
-        // With sparse portal chunks (small patch, no surrounding chunks), BFS can't
-        // traverse → visibleSections stays empty → nothing compiles.
-        //
-        // IP doesn't have this problem because IP loads full worlds with neighbors.
-        // We bypass the graph: directly iterate ViewArea sections, compile loaded ones
-        // synchronously, and add them to visibleSections.
+        // ================================================================
+        // STEP 4: View center at camera — IP: follows camera, not portal
+        // ================================================================
+        destLevel.getChunkSource().updateViewCenter(
+            (int)(destCameraPos.x) >> 4, (int)(destCameraPos.z) >> 4);
+
+        // ================================================================
+        // STEP 5: Compile sections + extractLevel
+        // ================================================================
         net.minecraft.client.renderer.ViewArea viewArea =
             ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getViewArea();
         it.unimi.dsi.fastutil.objects.ObjectArrayList<SectionRenderDispatcher.RenderSection> visibleSections =
             ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getVisibleSections();
 
         if (viewArea != null) {
-            // Reposition ViewArea around destination camera
             viewArea.repositionCamera(net.minecraft.core.SectionPos.of(destCameraPos));
 
             SectionRenderDispatcher dispatcher = destRenderer.getSectionRenderDispatcher();
@@ -242,104 +240,86 @@ public class PortalContextSwitch {
 
             visibleSections.clear();
             int compiled = 0;
+            int maxCompilePerFrame = 32;
 
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
                 if (section == null) continue;
                 long sectionNode = section.getSectionNode();
                 int sx = net.minecraft.core.SectionPos.x(sectionNode);
-                int sy = net.minecraft.core.SectionPos.y(sectionNode);
                 int sz = net.minecraft.core.SectionPos.z(sectionNode);
 
-                // Check if the chunk at this section is loaded in the ClientChunkCache
                 if (destLevel.getChunkSource().hasChunk(sx, sz)) {
-                    // Compile dirty sections synchronously (bypass async + neighbor check)
-                    if (section.isDirty()) {
+                    if (section.isDirty() && compiled < maxCompilePerFrame) {
                         dispatcher.rebuildSectionSync(section, cache);
                         section.setNotDirty();
+                        compiled++;
                     }
-                    // Add ALL sections with loaded chunks to visibleSections
-                    visibleSections.add(section);
-                    compiled++;
+                    if (!section.isDirty()) {
+                        visibleSections.add(section);
+                    }
                 }
             }
 
-            if (phase2SuccessCount == 0 && compiled > 0) {
+            if (dimSuccess < 3) {
                 SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS PHASE2] Direct compilation: {} sections compiled/visible", compiled);
+                    "[CTX COMPILE] {} visible, {} compiled for {}",
+                    visibleSections.size(), compiled, destDim.identifier());
             }
         }
 
-        // ===== 8. Extract level state → populates chunkSectionsToRender =====
+        // extractLevel — populates chunkSectionsToRender, fogData, sky
         destRenderer.extractLevel(deltaTracker, virtualCamera, partialTick);
 
-        // ===== 9. Get chunk draw list =====
         ChunkSectionsToRender destChunks = grs.levelRenderState.chunkSectionsToRender;
         if (destChunks == null || destChunks.maxIndicesRequired() == 0) {
-            grs.levelRenderState.chunkSectionsToRender = savedChunks;
-            if (phase2FailCount <= 5) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS PHASE2] Chunks not compiled yet for {} - Phase 1 fallback (fail #{})",
-                    destDim.identifier(), phase2FailCount + 1);
-            }
-            phase2FailCount++;
-            return false; // Fall back to Phase 1
+            // RESTORE on failure
+            restoreAllState(mc, grAccessor, savedLevel, savedRenderer, savedLightmap,
+                savedNoPhysics, savedHitResult, savedCamera, savedParticleLevel,
+                savedChunks, savedBlockEntityCameraPos, savedFogData, grs, dimSuccess);
+            failCount++;
+            return;
         }
 
-        // ===== 10. Fog handling =====
-        // NOTE: We do NOT update fogRenderer.updateBuffer() here because it
-        // permanently overwrites the GPU buffer. The saved GpuBufferSlice points
-        // to the SAME buffer, so restoring it doesn't undo the overwrite.
-        // This causes the overworld to render with nether fog (near-black).
-        // TODO: Create a separate fog buffer for the portal render, or
-        // save/restore the actual fog data bytes, not just the slice reference.
+        // ================================================================
+        // STEP 6: Fog — IP: FogRendererContext.pushSwapping(destDim)
+        // ================================================================
+        FogRenderer fogRenderer = grAccessor.seamlessportals$getFogRenderer();
+        // extractLevel populated cameraRenderState.fogData for dest dimension.
+        // Push to GPU. Save main fog for restore.
+        net.minecraft.client.renderer.fog.FogData destFogData = grs.levelRenderState.cameraRenderState.fogData;
+        FogContextManager.pushFog(fogRenderer, destFogData);
 
-        // ===== 11. Set up portal lightmap for destination dimension =====
-        // renderGroup() binds minecraft.gameRenderer.lightmap() as Sampler2.
-        // Without swapping, nether lightmap (red tint) is used for overworld terrain.
-        // IP swaps lightmap per dimension. We create a second Lightmap with neutral
-        // lighting and override GameRenderer.lightmap() via mixin during renderGroup().
+        // ================================================================
+        // STEP 7: Lightmap — IP: gameRenderer.setLightmap(destLightmap)
+        // Phase 1C will create per-dimension Lightmaps. For now, use override.
+        // ================================================================
         if (portalLightmap == null) {
-            portalLightmap = new net.minecraft.client.renderer.Lightmap();
+            portalLightmap = new Lightmap();
         }
-        // Build neutral LightmapRenderState for the destination dimension
-        net.minecraft.client.renderer.state.LightmapRenderState destLightState =
+        net.minecraft.client.renderer.state.LightmapRenderState lrs =
             new net.minecraft.client.renderer.state.LightmapRenderState();
-        destLightState.needsUpdate = true;
-        destLightState.darknessEffectScale = 0.0f;
-        destLightState.bossOverlayWorldDarkening = 0.0f;
-        destLightState.nightVisionColor = new org.joml.Vector3f(1.0f, 1.0f, 1.0f);
-        destLightState.blockLightTint = new org.joml.Vector3f(1.0f, 0.85f, 0.7f);
-
+        lrs.needsUpdate = true;
+        lrs.darknessEffectScale = 0.0f;
+        lrs.bossOverlayWorldDarkening = 0.0f;
+        lrs.nightVisionColor = new org.joml.Vector3f(1f, 1f, 1f);
+        lrs.blockLightTint = new org.joml.Vector3f(1f, 0.85f, 0.7f);
         if (destDim == Level.NETHER) {
-            // Nether: no sky light, warm ambient. Block light from glowstone/lava.
-            destLightState.skyFactor = 0.0f;
-            destLightState.blockFactor = 1.0f;
-            destLightState.brightness = 0.1f; // DimensionType nether ambient = 0.1
-            destLightState.skyLightColor = new org.joml.Vector3f(1.0f, 1.0f, 1.0f);
-            destLightState.ambientColor = new org.joml.Vector3f(0.6f, 0.3f, 0.2f);
-            destLightState.nightVisionEffectIntensity = 0.0f;
+            lrs.skyFactor = 0f; lrs.blockFactor = 1f; lrs.brightness = 0.1f;
+            lrs.skyLightColor = new org.joml.Vector3f(1f, 1f, 1f);
+            lrs.ambientColor = new org.joml.Vector3f(0.6f, 0.3f, 0.2f);
+            lrs.nightVisionEffectIntensity = 0f;
         } else {
-            // Overworld: full sky light + block light.
-            // Light data now sent from server via PortalChunkTracker (sky + block
-            // DataLayers serialized and applied to secondary LevelLightEngine).
-            // No more nightvision hack needed.
-            destLightState.skyFactor = 1.0f;
-            destLightState.blockFactor = 1.0f;
-            destLightState.brightness = 0.0f; // DimensionType overworld ambient = 0.0
-            destLightState.skyLightColor = new org.joml.Vector3f(0.95f, 0.97f, 1.0f); // slight blue sky
-            destLightState.ambientColor = new org.joml.Vector3f(0.9f, 0.9f, 0.9f);
-            destLightState.nightVisionEffectIntensity = 0.0f;
+            lrs.skyFactor = 1f; lrs.blockFactor = 1f; lrs.brightness = 0f;
+            lrs.skyLightColor = new org.joml.Vector3f(0.95f, 0.97f, 1f);
+            lrs.ambientColor = new org.joml.Vector3f(0.9f, 0.9f, 0.9f);
+            lrs.nightVisionEffectIntensity = 0f;
         }
-        portalLightmap.render(destLightState);
-
-        // Override GameRenderer.lightmap() to return our portal lightmap
+        portalLightmap.render(lrs);
         portalLightmapOverride = portalLightmap.getTextureView();
 
-        // ===== 12. Render chunk terrain through stencil mask =====
-        // renderGroup(OPAQUE) creates ONE RenderPass on the main render target.
-        // Stencil test (GL_EQUAL, 1) clips all terrain to the portal area.
-        // applyPipelineState() NEVER touches stencil (verified: MC 26.1.2 has
-        // zero stencil references). No framegraph nesting, no FBO switching.
+        // ================================================================
+        // STEP 8: RENDER
+        // ================================================================
         if (chunkSampler == null) {
             chunkSampler = RenderSystem.getDevice().createSampler(
                 com.mojang.blaze3d.textures.AddressMode.CLAMP_TO_EDGE,
@@ -350,160 +330,106 @@ public class PortalContextSwitch {
             );
         }
 
+        isRenderingPortal = true;
+
         destChunks.renderGroup(
-            net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup.OPAQUE,
-            chunkSampler
-        );
+            net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup.OPAQUE, chunkSampler);
+        destChunks.renderGroup(
+            net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup.TRANSLUCENT, chunkSampler);
 
-        // ===== 13. Restore saved state =====
-        portalLightmapOverride = null; // Stop overriding lightmap
-        grs.levelRenderState.chunkSectionsToRender = savedChunks;
+        isRenderingPortal = false;
 
-        phase2SuccessCount++;
-        if (phase2SuccessCount <= 5) {
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] renderGroup SUCCESS #{} for {} - maxIndices={} at ({}, {}, {})",
-                phase2SuccessCount, destDim.identifier(), destChunks.maxIndicesRequired(),
-                (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z
-            );
+        // ================================================================
+        // STEP 9: RESTORE — IP restores ALL by reference. NEVER re-extract.
+        // ================================================================
+        portalLightmapOverride = null;
+
+        // IP: FogRendererContext.popSwapping()
+        FogContextManager.popFog(fogRenderer, savedFogData);
+
+        // Also restore the mutable fogData object on cameraRenderState.
+        // extractLevel() mutated it in-place with destination fog values.
+        // Without this, the NEXT frame's save reads stale destination fog.
+        {
+            net.minecraft.client.renderer.fog.FogData liveFog = grs.levelRenderState.cameraRenderState.fogData;
+            liveFog.environmentalStart = savedFogData.environmentalStart;
+            liveFog.renderDistanceStart = savedFogData.renderDistanceStart;
+            liveFog.environmentalEnd = savedFogData.environmentalEnd;
+            liveFog.renderDistanceEnd = savedFogData.renderDistanceEnd;
+            liveFog.skyEnd = savedFogData.skyEnd;
+            liveFog.cloudEnd = savedFogData.cloudEnd;
+            liveFog.color.set(savedFogData.color);
         }
 
-        return true;
+        restoreAllState(mc, grAccessor, savedLevel, savedRenderer, savedLightmap,
+            savedNoPhysics, savedHitResult, savedCamera, savedParticleLevel,
+            savedChunks, savedBlockEntityCameraPos, savedFogData, grs, dimSuccess);
+
+        // IP: bufferSource.endBatch() — flush after render
+        mc.renderBuffers().bufferSource().endBatch();
+
+        String dimKey = destDim.identifier().toString();
+        int newCount = successCounts.getOrDefault(dimKey, 0) + 1;
+        successCounts.put(dimKey, newCount);
+        if (newCount <= 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[CTX RENDER] #{} for {} at ({},{},{})",
+                newCount, destDim.identifier(),
+                (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z);
+        }
     }
 
     /**
-     * Phase 1: Render colored blocks from RemoteChunkManager.
-     * This is the working implementation with stencil masking.
+     * Restore ALL saved state by reference — IP's exact restore pattern.
+     * NEVER calls extractLevel(). Just puts back every saved reference.
      */
-    private static void renderColoredBlocks(PortalInfo srcPortal, PortalLink link,
-                                             Camera camera, ResourceKey<Level> destDim) {
-        if (!RemoteChunkManager.hasDimensionData(destDim)) return;
+    private static void restoreAllState(
+            Minecraft mc, GameRendererAccessorMixin grAccessor,
+            ClientLevel savedLevel, LevelRenderer savedRenderer,
+            Lightmap savedLightmap, boolean savedNoPhysics,
+            HitResult savedHitResult, Camera savedCamera,
+            ClientLevel savedParticleLevel,
+            ChunkSectionsToRender savedChunks,
+            Vec3 savedBlockEntityCameraPos,
+            net.minecraft.client.renderer.fog.FogData savedFogData,
+            GameRenderState grs,
+            int dimSuccessForRestore) {
 
-        PortalInfo destPortal = link.getDestination();
-        Vec3 playerPos = camera.position();
-        BlockPos destOrigin = destPortal.getOrigin();
-        Direction.Axis axis = srcPortal.getAxis();
+        // IP: client.level = oldWorld
+        mc.level = savedLevel;
+        // IP: client.levelRenderer = oldWorldRenderer
+        ((MinecraftAccessorMixin) mc).seamlessportals$setLevelRenderer(savedRenderer);
+        // IP: client.player.noPhysics = oldNoClip
+        mc.player.noPhysics = savedNoPhysics;
+        // IP: client.hitResult = oldCrosshairTarget
+        mc.hitResult = savedHitResult;
+        // IP: client.particleEngine.setWorld(oldWorld)
+        ((ParticleEngineAccessorMixin) mc.particleEngine).seamlessportals$setLevel(savedParticleLevel);
+        // IP: client.gameRenderer.setCamera(oldCamera)
+        grAccessor.seamlessportals$setMainCamera(savedCamera);
+        // IP: blockEntityRenderDispatcher.prepare(oldCameraPos)
+        mc.getBlockEntityRenderDispatcher().prepare(
+            savedBlockEntityCameraPos != null ? savedBlockEntityCameraPos : Vec3.ZERO);
+        // IP: oldWorldRenderer.setChunkInfoList(oldChunkInfoList)
+        grs.levelRenderState.chunkSectionsToRender = savedChunks;
 
-        int offsetX = srcPortal.getOrigin().getX() - destOrigin.getX();
-        int offsetY = srcPortal.getOrigin().getY() - destOrigin.getY();
-        int offsetZ = srcPortal.getOrigin().getZ() - destOrigin.getZ();
+        if (dimSuccessForRestore < 3) {
+            // Verify all fields match
+            boolean levelMatch = mc.level == savedLevel;
+            boolean rendererMatch = ((MinecraftAccessorMixin) mc).seamlessportals$getLevelRenderer() == savedRenderer;
+            boolean physicsMatch = mc.player.noPhysics == savedNoPhysics;
+            boolean hitMatch = mc.hitResult == savedHitResult;
+            boolean cameraMatch = grAccessor.seamlessportals$getMainCamera() == savedCamera;
+            boolean chunksMatch = grs.levelRenderState.chunkSectionsToRender == savedChunks;
 
-        // axis = WIDTH direction. Depth perpendicular to face.
-        int depthSign;
-        if (axis == Direction.Axis.X) {
-            depthSign = (playerPos.z < srcPortal.getCenter().z) ? 1 : -1;
-        } else {
-            depthSign = (playerPos.x < srcPortal.getCenter().x) ? 1 : -1;
+            // Also verify fog was restored
+            net.minecraft.client.renderer.fog.FogData currentFog = grs.levelRenderState.cameraRenderState.fogData;
+            SeamlessPortalsConstants.LOGGER.info(
+                "[CTX RESTORE] level={}, renderer={}, physics={}, hit={}, camera={}, chunks={}, fogColor=({},{},{},{})",
+                levelMatch, rendererMatch, physicsMatch, hitMatch, cameraMatch, chunksMatch,
+                String.format("%.2f", currentFog.color.x), String.format("%.2f", currentFog.color.y),
+                String.format("%.2f", currentFog.color.z), String.format("%.2f", currentFog.color.w)
+            );
         }
-
-        ByteBufferBuilder byteBuf = new ByteBufferBuilder(262144);
-        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
-
-        int blocksDrawn = 0;
-
-        for (int d = -4; d <= 32; d++) {
-            for (int w = -20; w < srcPortal.getWidth() + 20; w++) {
-                for (int h = -20; h < srcPortal.getHeight() + 20; h++) {
-                    int nx, ny, nz;
-                    ny = destOrigin.getY() + h;
-                    if (axis == Direction.Axis.X) {
-                        nx = destOrigin.getX() + w;
-                        nz = destOrigin.getZ() + (d * depthSign);
-                    } else {
-                        nx = destOrigin.getX() + (d * depthSign);
-                        nz = destOrigin.getZ() + w;
-                    }
-
-                    BlockState state = RemoteChunkManager.getRemoteBlockState(destDim, new BlockPos(nx, ny, nz));
-                    if (state == null || state.isAir()) continue;
-
-                    float rx = (nx + offsetX) - (float) playerPos.x;
-                    float ry = (ny + offsetY) - (float) playerPos.y;
-                    float rz = (nz + offsetZ) - (float) playerPos.z;
-
-                    int c = getColor(state);
-                    int dk = darken(c, 0.7f);
-                    int dkb = darken(c, 0.55f);
-
-                    if (isAir(destDim, nx, ny+1, nz)) {
-                        builder.addVertex(rx,ry+1,rz).setColor(c);
-                        builder.addVertex(rx+1,ry+1,rz).setColor(c);
-                        builder.addVertex(rx+1,ry+1,rz+1).setColor(c);
-                        builder.addVertex(rx,ry+1,rz+1).setColor(c);
-                    }
-                    if (isAir(destDim, nx, ny-1, nz)) {
-                        builder.addVertex(rx,ry,rz+1).setColor(dkb);
-                        builder.addVertex(rx+1,ry,rz+1).setColor(dkb);
-                        builder.addVertex(rx+1,ry,rz).setColor(dkb);
-                        builder.addVertex(rx,ry,rz).setColor(dkb);
-                    }
-                    if (isAir(destDim, nx, ny, nz-1)) {
-                        builder.addVertex(rx+1,ry+1,rz).setColor(dk);
-                        builder.addVertex(rx,ry+1,rz).setColor(dk);
-                        builder.addVertex(rx,ry,rz).setColor(dk);
-                        builder.addVertex(rx+1,ry,rz).setColor(dk);
-                    }
-                    if (isAir(destDim, nx, ny, nz+1)) {
-                        builder.addVertex(rx,ry+1,rz+1).setColor(dk);
-                        builder.addVertex(rx+1,ry+1,rz+1).setColor(dk);
-                        builder.addVertex(rx+1,ry,rz+1).setColor(dk);
-                        builder.addVertex(rx,ry,rz+1).setColor(dk);
-                    }
-                    if (isAir(destDim, nx-1, ny, nz)) {
-                        builder.addVertex(rx,ry+1,rz).setColor(dk);
-                        builder.addVertex(rx,ry+1,rz+1).setColor(dk);
-                        builder.addVertex(rx,ry,rz+1).setColor(dk);
-                        builder.addVertex(rx,ry,rz).setColor(dk);
-                    }
-                    if (isAir(destDim, nx+1, ny, nz)) {
-                        builder.addVertex(rx+1,ry+1,rz+1).setColor(dk);
-                        builder.addVertex(rx+1,ry+1,rz).setColor(dk);
-                        builder.addVertex(rx+1,ry,rz).setColor(dk);
-                        builder.addVertex(rx+1,ry,rz+1).setColor(dk);
-                    }
-                    blocksDrawn++;
-                }
-            }
-        }
-
-        MeshData mesh = builder.build();
-        if (mesh != null) {
-            PortalRenderTypes.portalNoDepthColor().draw(mesh);
-        } else {
-            byteBuf.close();
-        }
-    }
-
-    private static boolean isAir(ResourceKey<Level> dim, int x, int y, int z) {
-        BlockState s = RemoteChunkManager.getRemoteBlockState(dim, new BlockPos(x, y, z));
-        return s == null || s.isAir();
-    }
-
-    private static int darken(int c, float f) {
-        int a = (c >> 24) & 0xFF;
-        int r = (int)(((c >> 16) & 0xFF) * f);
-        int g = (int)(((c >> 8) & 0xFF) * f);
-        int b = (int)((c & 0xFF) * f);
-        return (a << 24) | (r << 16) | (g << 8) | b;
-    }
-
-    private static int getColor(BlockState s) {
-        if (s.is(Blocks.NETHERRACK)) return 0xFF6B3030;
-        if (s.is(Blocks.LAVA)) return 0xFFFF6600;
-        if (s.is(Blocks.MAGMA_BLOCK)) return 0xFF8B3000;
-        if (s.is(Blocks.GLOWSTONE)) return 0xFFFFCC66;
-        if (s.is(Blocks.SOUL_SAND)) return 0xFF513A2A;
-        if (s.is(Blocks.BASALT)) return 0xFF494949;
-        if (s.is(Blocks.BLACKSTONE)) return 0xFF2A2A2A;
-        if (s.is(Blocks.BEDROCK)) return 0xFF333333;
-        if (s.is(Blocks.NETHER_BRICKS)) return 0xFF2D1515;
-        if (s.is(Blocks.GRAVEL)) return 0xFF8B7D72;
-        if (s.is(Blocks.OBSIDIAN)) return 0xFF0D0015;
-        if (s.is(Blocks.FIRE)) return 0xFFFF4400;
-        if (s.is(Blocks.STONE)) return 0xFF7F7F7F;
-        if (s.is(Blocks.DIRT)) return 0xFF8B6843;
-        if (s.is(Blocks.GRASS_BLOCK)) return 0xFF5D8C32;
-        if (s.is(Blocks.SAND)) return 0xFFDBCD82;
-        return 0xFF5A2828;
     }
 }

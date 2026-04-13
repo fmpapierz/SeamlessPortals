@@ -16,27 +16,32 @@ public class ModPayloads {
         SeamlessPortalsConstants.LOGGER.info("Registering Seamless Portals network payloads");
     }
 
+    /**
+     * Syncs a portal LINK from server to client with REAL positions.
+     * Sent when PortalForcerMixin creates the real destination portal.
+     * Client replaces any expected/wrong links with these exact positions.
+     */
     public record PortalSyncPayload(
-        String portalId,
-        BlockPos origin,
-        String portalType,
+        String srcDimId,
+        BlockPos srcOrigin,
+        String destDimId,
+        BlockPos destOrigin,
         String axis,
         int width,
-        int height,
-        String linkedPortalId
+        int height
     ) implements CustomPacketPayload {
         public static final Type<PortalSyncPayload> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "portal_sync")
         );
 
         public static final StreamCodec<FriendlyByteBuf, PortalSyncPayload> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.STRING_UTF8, PortalSyncPayload::portalId,
-            BlockPos.STREAM_CODEC, PortalSyncPayload::origin,
-            ByteBufCodecs.STRING_UTF8, PortalSyncPayload::portalType,
+            ByteBufCodecs.STRING_UTF8, PortalSyncPayload::srcDimId,
+            BlockPos.STREAM_CODEC, PortalSyncPayload::srcOrigin,
+            ByteBufCodecs.STRING_UTF8, PortalSyncPayload::destDimId,
+            BlockPos.STREAM_CODEC, PortalSyncPayload::destOrigin,
             ByteBufCodecs.STRING_UTF8, PortalSyncPayload::axis,
             ByteBufCodecs.VAR_INT, PortalSyncPayload::width,
             ByteBufCodecs.VAR_INT, PortalSyncPayload::height,
-            ByteBufCodecs.STRING_UTF8, PortalSyncPayload::linkedPortalId,
             PortalSyncPayload::new
         );
 

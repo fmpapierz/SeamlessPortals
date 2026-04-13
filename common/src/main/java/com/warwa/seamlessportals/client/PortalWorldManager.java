@@ -156,69 +156,6 @@ public class PortalWorldManager {
     }
 
     /**
-     * Feed all existing chunks from RemoteChunkManager into the secondary ClientLevel.
-     * Called when the secondary renderer is first created, to feed chunks that
-     * were received before the renderer existed.
-     */
-    public static void feedExistingChunks(ResourceKey<Level> dimension) {
-        ClientLevel destLevel = levels.get(dimension);
-        if (destLevel == null) return;
-
-        var chunks = com.warwa.seamlessportals.chunk.RemoteChunkManager.getChunks(dimension);
-        if (chunks == null || chunks.isEmpty()) return;
-
-        net.minecraft.client.multiplayer.ClientChunkCache cache = destLevel.getChunkSource();
-        int fed = 0;
-
-        for (var entry : chunks.entrySet()) {
-            net.minecraft.world.level.ChunkPos pos = entry.getKey();
-            int chunkX = pos.x();
-            int chunkZ = pos.z();
-            var sections = entry.getValue();
-
-            try {
-                // Do NOT call updateViewCenter per-chunk here!
-                // View center is set ONCE at the portal destination by tryPhase2Render().
-                // Per-chunk updates cause the center to jump, dropping previous chunks.
-
-                io.netty.buffer.ByteBuf rawBuf = io.netty.buffer.Unpooled.buffer();
-                net.minecraft.network.FriendlyByteBuf buf = new net.minecraft.network.FriendlyByteBuf(rawBuf);
-                for (var section : sections) {
-                    section.write(buf);
-                }
-                cache.replaceWithPacketData(chunkX, chunkZ, buf,
-                    java.util.Collections.emptyMap(), tag -> {});
-                buf.release();
-                fed++;
-            } catch (Exception e) {
-                SeamlessPortalsConstants.LOGGER.error(
-                    "[SEAMLESS PHASE2] feedExistingChunks: Failed chunk [{},{}]", chunkX, chunkZ, e);
-            }
-        }
-
-        if (fed > 0) {
-            // Mark ALL sections dirty on the secondary renderer so
-            // SectionRenderDispatcher compiles them. ClientChunkCache events
-            // go to mc.levelRenderer (main), not our secondary renderer.
-            LevelRenderer destRenderer = renderers.get(dimension);
-            if (destRenderer != null) {
-                for (var entry : chunks.entrySet()) {
-                    net.minecraft.world.level.ChunkPos pos = entry.getKey();
-                    int sectionCount = entry.getValue().length;
-                    int minSectionY = destLevel.getMinSectionY();
-                    for (int sy = 0; sy < sectionCount; sy++) {
-                        destRenderer.setSectionDirtyWithNeighbors(
-                            pos.x(), minSectionY + sy, pos.z());
-                    }
-                }
-            }
-
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] Fed {} existing chunks to secondary level {}", fed, dimension.identifier());
-        }
-    }
-
-    /**
      * Clean up all secondary renderers and levels.
      */
     public static void cleanup() {

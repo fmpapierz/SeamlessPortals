@@ -1,128 +1,75 @@
 package com.warwa.seamlessportals.client;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
+import com.warwa.seamlessportals.portal.*;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.Holder;
-import net.minecraft.core.registries.Registries;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.dimension.DimensionType;
 
-import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Manages secondary ClientLevel instances for remote dimensions.
- * This is the foundation of the portal rendering system.
+ * Loads remote chunk data directly into secondary ClientLevels.
  *
- * Each remote dimension gets its own ClientLevel with its own
- * ClientChunkCache. Chunks received from the server are fed
- * into these levels using vanilla's deserialization pipeline.
- *
- * For rendering, we context-switch: temporarily swap Minecraft.level
- * to the remote level, render through the portal, then swap back.
+ * View center management (matching IP's ClientWorldLoader):
+ * - handlePortalSync sets view center at REAL portal position (authoritative)
+ * - If sync hasn't arrived, compute from client-side portal link destination
+ * - PortalContextSwitch updates view center at camera position each frame
  */
 public class PortalDimensionManager {
-    private static final Map<ResourceKey<Level>, ClientLevel> remoteLevels = new ConcurrentHashMap<>();
-    private static boolean loggedCreation = false;
-    /** Track which dimensions have had their view center set (only set once per dimension) */
-    private static final java.util.Set<ResourceKey<Level>> viewCenterSet = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final Set<ResourceKey<Level>> loggedDimensions = ConcurrentHashMap.newKeySet();
+    private static final Set<ResourceKey<Level>> viewCenterInitialized = ConcurrentHashMap.newKeySet();
 
     /**
-     * Get or create a ClientLevel for a remote dimension.
-     * The level is created with the same parameters as vanilla uses
-     * during dimension changes.
+     * Called from handlePortalSync to authoritatively set view center from real positions.
      */
-    public static ClientLevel getOrCreateRemoteLevel(ResourceKey<Level> dimension) {
-        return remoteLevels.computeIfAbsent(dimension, PortalDimensionManager::createRemoteLevel);
-    }
-
-    public static ClientLevel getRemoteLevel(ResourceKey<Level> dimension) {
-        return remoteLevels.get(dimension);
-    }
-
-    public static boolean hasRemoteLevel(ResourceKey<Level> dimension) {
-        return remoteLevels.containsKey(dimension);
-    }
-
-    /**
-     * Create a new ClientLevel for a remote dimension.
-     * Uses the same constructor as vanilla's handleRespawn.
-     */
-    private static ClientLevel createRemoteLevel(ResourceKey<Level> dimension) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.getConnection() == null) {
-            SeamlessPortalsConstants.LOGGER.error(
-                "[SEAMLESS] Cannot create remote level - no active connection");
-            return null;
+    public static void setViewCenterFromSync(ResourceKey<Level> dimension, int chunkX, int chunkZ) {
+        ClientLevel level = PortalWorldManager.getLevel(dimension);
+        if (level != null) {
+            level.getChunkSource().updateViewCenter(chunkX, chunkZ);
+            viewCenterInitialized.add(dimension);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[VIEWCENTER] Set at [{},{}] for {} (from portal sync — authoritative)",
+                chunkX, chunkZ, dimension.identifier());
         }
-
-        // Get the DimensionType for this dimension from the registry
-        Holder<DimensionType> dimensionType = mc.level.registryAccess()
-            .lookupOrThrow(Registries.DIMENSION_TYPE)
-            .getOrThrow(getDimensionTypeKey(dimension));
-
-        // Create level data (minimal - we don't need full game state)
-        ClientLevel.ClientLevelData levelData = new ClientLevel.ClientLevelData(
-            Difficulty.NORMAL, false, false
-        );
-
-        // Create the ClientLevel with vanilla's constructor
-        // We pass the existing LevelRenderer - we won't use it for rendering
-        // (we'll context-switch the main one instead)
-        ClientLevel remoteLevel = new ClientLevel(
-            mc.getConnection(),
-            levelData,
-            dimension,
-            dimensionType,
-            8,    // serverChunkRadius - matches portalRenderDistance
-            8,    // serverSimulationDistance
-            mc.levelRenderer,  // shared - won't use directly
-            false,  // isDebug
-            0L,  // biomeZoomSeed - not critical for portal rendering
-            mc.level.getSeaLevel()
-        );
-
-        SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS] Created remote ClientLevel for dimension: {}, sections: {}",
-            dimension.identifier(), remoteLevel.getSectionsCount()
-        );
-
-        return remoteLevel;
     }
 
-    /**
-     * Map dimension ResourceKey to its DimensionType ResourceKey.
-     */
-    private static ResourceKey<DimensionType> getDimensionTypeKey(ResourceKey<Level> dimension) {
-        if (dimension == Level.NETHER) {
-            return ResourceKey.create(Registries.DIMENSION_TYPE,
-                net.minecraft.resources.Identifier.withDefaultNamespace("the_nether"));
-        }
-        if (dimension == Level.END) {
-            return ResourceKey.create(Registries.DIMENSION_TYPE,
-                net.minecraft.resources.Identifier.withDefaultNamespace("the_end"));
-        }
-        // Default to overworld
-        return ResourceKey.create(Registries.DIMENSION_TYPE,
-            net.minecraft.resources.Identifier.withDefaultNamespace("overworld"));
-    }
-
-    /**
-     * Feed a chunk into the remote level using vanilla's chunk deserialization.
-     * This creates a proper LevelChunk with correct block states, biomes, etc.
-     */
     public static void loadChunkIntoRemoteLevel(ResourceKey<Level> dimension,
                                                   int chunkX, int chunkZ,
                                                   byte[] sectionData) {
-        ClientLevel remoteLevel = getOrCreateRemoteLevel(dimension);
-        if (remoteLevel == null) return;
+        LevelRenderer destRenderer = PortalWorldManager.getOrCreateRenderer(dimension);
+        ClientLevel destLevel = PortalWorldManager.getLevel(dimension);
+        if (destRenderer == null || destLevel == null) return;
 
         try {
-            // Deserialize: section count + section data + light data
+            // Ensure view center is set BEFORE feeding any chunk.
+            // IP: ClientWorldLoader sets view center at portal destination.
+            if (!viewCenterInitialized.contains(dimension)) {
+                // Sync hasn't arrived yet. Use the portal link destination position
+                // from the client's PortalManager (set by either sync or chunk-scan detection).
+                BlockPos destPos = findPortalDestPosition(dimension);
+                if (destPos != null) {
+                    destLevel.getChunkSource().updateViewCenter(destPos.getX() >> 4, destPos.getZ() >> 4);
+                    viewCenterInitialized.add(dimension);
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[VIEWCENTER] Set at [{},{}] for {} (from portal link destination)",
+                        destPos.getX() >> 4, destPos.getZ() >> 4, dimension.identifier());
+                } else {
+                    // No link exists yet. Use the chunk position as last resort.
+                    // Server sends chunks centered at portal dest, so this is close.
+                    destLevel.getChunkSource().updateViewCenter(chunkX, chunkZ);
+                    viewCenterInitialized.add(dimension);
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[VIEWCENTER] Set at [{},{}] for {} (from first chunk — no link yet)",
+                        chunkX, chunkZ, dimension.identifier());
+                }
+            }
+
+            // Deserialize sections from server packet
             io.netty.buffer.ByteBuf rawBuf = io.netty.buffer.Unpooled.wrappedBuffer(sectionData);
             net.minecraft.network.FriendlyByteBuf buf = new net.minecraft.network.FriendlyByteBuf(rawBuf);
 
@@ -131,22 +78,20 @@ public class PortalDimensionManager {
                 new net.minecraft.world.level.chunk.LevelChunkSection[sectionCount];
 
             net.minecraft.world.level.chunk.PalettedContainerFactory factory =
-                net.minecraft.world.level.chunk.PalettedContainerFactory.create(remoteLevel.registryAccess());
+                net.minecraft.world.level.chunk.PalettedContainerFactory.create(destLevel.registryAccess());
 
             for (int i = 0; i < sectionCount; i++) {
                 sections[i] = new net.minecraft.world.level.chunk.LevelChunkSection(factory);
                 sections[i].read(buf);
             }
 
-            // Read sky + block light DataLayers (sent by PortalChunkTracker)
-            // Following IP architecture: full light data ensures correct rendering
-            int minSectionY = remoteLevel.getMinSectionY();
+            // Read light data
+            int minSectionY = destLevel.getMinSectionY();
             net.minecraft.world.level.chunk.DataLayer[] skyLightData =
                 new net.minecraft.world.level.chunk.DataLayer[sectionCount];
             net.minecraft.world.level.chunk.DataLayer[] blockLightData =
                 new net.minecraft.world.level.chunk.DataLayer[sectionCount];
 
-            // Read sky light
             for (int i = 0; i < sectionCount; i++) {
                 if (buf.isReadable() && buf.readBoolean()) {
                     byte[] data = new byte[2048];
@@ -154,7 +99,6 @@ public class PortalDimensionManager {
                     skyLightData[i] = new net.minecraft.world.level.chunk.DataLayer(data);
                 }
             }
-            // Read block light
             for (int i = 0; i < sectionCount; i++) {
                 if (buf.isReadable() && buf.readBoolean()) {
                     byte[] data = new byte[2048];
@@ -162,144 +106,65 @@ public class PortalDimensionManager {
                     blockLightData[i] = new net.minecraft.world.level.chunk.DataLayer(data);
                 }
             }
-
             buf.release();
 
-            // Apply light data to the remote level's LightEngine.
-            // Following vanilla's ClientPacketListener flow (lines 920-931):
-            // 1. Queue section data for each light layer
-            // 2. Call runLightUpdates() to force-apply queued DataLayers
-            //    (queueSectionData only puts into queuedSections map;
-            //     runLightUpdates → swapSectionMap applies them to storage)
-            // Without runLightUpdates(), light data sits in queue forever
-            // because the secondary level's LightEngine is never ticked.
-            net.minecraft.world.level.lighting.LevelLightEngine lightEngine =
-                remoteLevel.getLightEngine();
-            net.minecraft.world.level.ChunkPos chunkPos =
-                new net.minecraft.world.level.ChunkPos(chunkX, chunkZ);
-
-            // Enable light processing for this chunk
+            // Apply light data
+            net.minecraft.world.level.lighting.LevelLightEngine lightEngine = destLevel.getLightEngine();
+            net.minecraft.world.level.ChunkPos chunkPos = new net.minecraft.world.level.ChunkPos(chunkX, chunkZ);
             lightEngine.retainData(chunkPos, true);
 
             for (int i = 0; i < sectionCount; i++) {
                 net.minecraft.core.SectionPos sectionPos =
                     net.minecraft.core.SectionPos.of(chunkX, minSectionY + i, chunkZ);
-
-                // Update section status so light engine knows section exists
                 lightEngine.updateSectionStatus(sectionPos, false);
-
-                if (skyLightData[i] != null) {
-                    lightEngine.queueSectionData(
-                        net.minecraft.world.level.LightLayer.SKY, sectionPos, skyLightData[i]);
-                }
-                if (blockLightData[i] != null) {
-                    lightEngine.queueSectionData(
-                        net.minecraft.world.level.LightLayer.BLOCK, sectionPos, blockLightData[i]);
-                }
+                if (skyLightData[i] != null)
+                    lightEngine.queueSectionData(net.minecraft.world.level.LightLayer.SKY, sectionPos, skyLightData[i]);
+                if (blockLightData[i] != null)
+                    lightEngine.queueSectionData(net.minecraft.world.level.LightLayer.BLOCK, sectionPos, blockLightData[i]);
             }
-
-            // Force-apply queued light data (processes queue → swapSectionMap)
             lightEngine.runLightUpdates();
 
-            // Set view center ONCE per dimension (first chunk sets the center)
-            // All subsequent chunks load relative to this center.
-            if (!viewCenterSet.contains(dimension)) {
-                ClientLevel secondaryLevel = PortalWorldManager.getLevel(dimension);
-                if (secondaryLevel != null) {
-                    secondaryLevel.getChunkSource().updateViewCenter(chunkX, chunkZ);
-                    viewCenterSet.add(dimension);
-                    SeamlessPortalsConstants.LOGGER.info(
-                        "[SEAMLESS PHASE2] View center set to [{},{}] for {}",
-                        chunkX, chunkZ, dimension.identifier());
-                }
-            }
-
-            // Store in our RemoteChunkManager (for the colored-block renderer / Phase 1)
-            com.warwa.seamlessportals.chunk.RemoteChunkManager.storeDeserializedSections(
-                dimension, chunkX, chunkZ, sections);
-
-            // Phase 2: Also feed into the secondary ClientLevel's chunk cache
-            feedSectionsToSecondaryLevel(dimension, chunkX, chunkZ, sections);
-
-            if (!loggedCreation) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] First chunk loaded into remote level {}: [{},{}] ({} sections)",
-                    dimension.identifier(), chunkX, chunkZ, sectionCount
-                );
-                loggedCreation = true;
-            }
-        } catch (Exception e) {
-            SeamlessPortalsConstants.LOGGER.error(
-                "[SEAMLESS] Failed to load chunk [{},{}] into remote level {}",
-                chunkX, chunkZ, dimension.identifier(), e);
-        }
-    }
-
-    /**
-     * Feed chunk sections into the secondary ClientLevel's ClientChunkCache.
-     * This allows the secondary LevelRenderer's SectionRenderDispatcher to
-     * compile chunk meshes for Phase 2 rendering.
-     *
-     * The sections are re-serialized to FriendlyByteBuf format, which is what
-     * ClientChunkCache.replaceWithPacketData() expects (same as vanilla chunk packets).
-     */
-    private static void feedSectionsToSecondaryLevel(
-            ResourceKey<Level> dimension, int chunkX, int chunkZ,
-            net.minecraft.world.level.chunk.LevelChunkSection[] sections) {
-        ClientLevel destLevel = PortalWorldManager.getLevel(dimension);
-        if (destLevel == null) return;
-
-        try {
+            // Feed into ClientChunkCache
             net.minecraft.client.multiplayer.ClientChunkCache cache = destLevel.getChunkSource();
+            io.netty.buffer.ByteBuf reserBuf = io.netty.buffer.Unpooled.buffer();
+            net.minecraft.network.FriendlyByteBuf reserFbuf = new net.minecraft.network.FriendlyByteBuf(reserBuf);
+            for (net.minecraft.world.level.chunk.LevelChunkSection section : sections)
+                section.write(reserFbuf);
+            cache.replaceWithPacketData(chunkX, chunkZ, reserFbuf, java.util.Collections.emptyMap(), tag -> {});
+            reserFbuf.release();
 
-            // Do NOT call updateViewCenter per-chunk — it moves the center each time,
-            // causing previously loaded chunks to fall out of range.
-            // The view center is set ONCE in doRenderGroupRender() at the portal destination.
+            // Mark dirty on secondary renderer
+            for (int sy = 0; sy < sections.length; sy++)
+                destRenderer.setSectionDirtyWithNeighbors(chunkX, minSectionY + sy, chunkZ);
 
-            // Re-serialize sections to FriendlyByteBuf (vanilla chunk packet format)
-            io.netty.buffer.ByteBuf rawBuf = io.netty.buffer.Unpooled.buffer();
-            net.minecraft.network.FriendlyByteBuf buf = new net.minecraft.network.FriendlyByteBuf(rawBuf);
-
-            for (net.minecraft.world.level.chunk.LevelChunkSection section : sections) {
-                section.write(buf);
-            }
-
-            // Feed into the secondary level's chunk cache
-            cache.replaceWithPacketData(
-                chunkX, chunkZ, buf,
-                java.util.Collections.emptyMap(),
-                tag -> {} // no block entities for now
-            );
-
-            buf.release();
-
-            // Mark sections dirty on the secondary renderer so it compiles chunk meshes.
-            // ClientChunkCache events go to mc.levelRenderer (main), not ours.
-            net.minecraft.client.renderer.LevelRenderer destRenderer =
-                PortalWorldManager.getOrCreateRenderer(dimension);
-            if (destRenderer != null) {
-                int minSectionY = destLevel.getMinSectionY();
-                for (int sy = 0; sy < sections.length; sy++) {
-                    destRenderer.setSectionDirtyWithNeighbors(
-                        chunkX, minSectionY + sy, chunkZ);
-                }
+            if (!loggedDimensions.contains(dimension)) {
+                loggedDimensions.add(dimension);
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS] First chunk loaded into {} [{},{}] ({} sections, loaded={})",
+                    dimension.identifier(), chunkX, chunkZ, sectionCount,
+                    destLevel.getChunkSource().getLoadedChunksCount());
             }
         } catch (Exception e) {
             SeamlessPortalsConstants.LOGGER.error(
-                "[SEAMLESS PHASE2] Failed to feed chunk [{},{}] to secondary level {}",
-                chunkX, chunkZ, dimension.identifier(), e);
+                "[SEAMLESS] Failed to load chunk [{},{}] into {}", chunkX, chunkZ, dimension.identifier(), e);
         }
     }
 
     /**
-     * Clean up all remote levels.
+     * Find the portal destination position for a dimension from the client's portal links.
+     * Searches all links that point INTO this dimension.
      */
-    public static void cleanup() {
-        for (ClientLevel level : remoteLevels.values()) {
-            level.disconnect(net.minecraft.network.chat.Component.literal("Portal cleanup"));
+    private static BlockPos findPortalDestPosition(ResourceKey<Level> dimension) {
+        PortalManager pm = PortalManager.getClientInstance();
+        PortalTracker tracker = pm.getTracker(dimension);
+        for (PortalInfo portal : tracker.getAllPortals()) {
+            return portal.getOrigin(); // First portal in this dimension = the destination
         }
-        remoteLevels.clear();
-        viewCenterSet.clear();
-        loggedCreation = false;
+        return null;
+    }
+
+    public static void cleanup() {
+        loggedDimensions.clear();
+        viewCenterInitialized.clear();
     }
 }
