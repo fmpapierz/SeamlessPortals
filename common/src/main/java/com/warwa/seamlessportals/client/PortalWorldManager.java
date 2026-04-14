@@ -8,6 +8,8 @@ import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.GameRenderState;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
+import com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -119,6 +121,13 @@ public class PortalWorldManager {
                 mc.level.getSeaLevel()
             );
 
+            // Give the secondary renderer its OWN LevelRenderState so that
+            // extractLevel() doesn't corrupt the main renderer's shared state.
+            // MC 26.1.2 shares LevelRenderState via GameRenderState (line 190),
+            // but IP's architecture requires each renderer to have isolated state.
+            ((LevelRendererAccessorMixin) destRenderer).seamlessportals$setLevelRenderState(
+                new LevelRenderState());
+
             // Connect renderer to level (triggers chunk infrastructure creation)
             destRenderer.setLevel(destLevel);
 
@@ -197,6 +206,20 @@ public class PortalWorldManager {
         }
 
         if (fed > 0) {
+            // Apply stored light data to the level (fixes "blue box" / invisible terrain)
+            for (var entry : chunks.entrySet()) {
+                net.minecraft.world.level.ChunkPos pos = entry.getKey();
+                int sectionCount = entry.getValue().length;
+                net.minecraft.world.level.chunk.DataLayer[] skyLight =
+                    com.warwa.seamlessportals.chunk.RemoteChunkManager.getSkyLight(dimension, pos);
+                net.minecraft.world.level.chunk.DataLayer[] blockLight =
+                    com.warwa.seamlessportals.chunk.RemoteChunkManager.getBlockLight(dimension, pos);
+                if (skyLight != null || blockLight != null) {
+                    PortalDimensionManager.applyLightToLevel(
+                        destLevel, pos.x(), pos.z(), skyLight, blockLight, sectionCount);
+                }
+            }
+
             // Mark ALL sections dirty on the secondary renderer so
             // SectionRenderDispatcher compiles them. ClientChunkCache events
             // go to mc.levelRenderer (main), not our secondary renderer.
@@ -214,7 +237,26 @@ public class PortalWorldManager {
             }
 
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] Fed {} existing chunks to secondary level {}", fed, dimension.identifier());
+                "[SEAMLESS PHASE2] Fed {} existing chunks + light to level {}", fed, dimension.identifier());
+        }
+    }
+
+    /**
+     * Remove a specific dimension's secondary renderer and level.
+     * Called when the player transitions to that dimension (it becomes primary).
+     */
+    public static void removeRenderer(ResourceKey<Level> dimension) {
+        LevelRenderer renderer = renderers.remove(dimension);
+        ClientLevel level = levels.remove(dimension);
+
+        if (renderer != null) {
+            try {
+                renderer.setLevel(null);
+                renderer.close();
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.error(
+                    "[SEAMLESS PHASE2] Error removing renderer for {}", dimension.identifier(), e);
+            }
         }
     }
 

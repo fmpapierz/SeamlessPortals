@@ -13,6 +13,8 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainerFactory;
 
+import net.minecraft.world.level.chunk.DataLayer;
+
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,6 +28,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RemoteChunkManager {
     // Dimension -> ChunkPos -> sections array
     private static final Map<ResourceKey<Level>, Map<ChunkPos, LevelChunkSection[]>> remoteSections = new ConcurrentHashMap<>();
+    // Light data stored alongside sections (for backfill when secondary renderer is created later)
+    private static final Map<ResourceKey<Level>, Map<ChunkPos, DataLayer[]>> remoteSkyLight = new ConcurrentHashMap<>();
+    private static final Map<ResourceKey<Level>, Map<ChunkPos, DataLayer[]>> remoteBlockLight = new ConcurrentHashMap<>();
     private static boolean loggedFirstReceive = false;
     private static int totalChunksReceived = 0;
 
@@ -55,13 +60,39 @@ public class RemoteChunkManager {
     }
 
     /**
-     * Store pre-deserialized sections (called from PortalDimensionManager).
+     * Store pre-deserialized sections and light data (called from PortalDimensionManager).
      */
     public static void storeDeserializedSections(ResourceKey<Level> dimension,
                                                    int chunkX, int chunkZ,
                                                    LevelChunkSection[] sections) {
         Map<ChunkPos, LevelChunkSection[]> dimChunks = remoteSections.computeIfAbsent(dimension, k -> new ConcurrentHashMap<>());
         dimChunks.put(new ChunkPos(chunkX, chunkZ), sections);
+    }
+
+    /**
+     * Store light DataLayers for a chunk. Used for backfill when the secondary
+     * renderer is created after chunks have already arrived.
+     */
+    public static void storeLightData(ResourceKey<Level> dimension,
+                                       int chunkX, int chunkZ,
+                                       DataLayer[] skyLight, DataLayer[] blockLight) {
+        ChunkPos pos = new ChunkPos(chunkX, chunkZ);
+        if (skyLight != null) {
+            remoteSkyLight.computeIfAbsent(dimension, k -> new ConcurrentHashMap<>()).put(pos, skyLight);
+        }
+        if (blockLight != null) {
+            remoteBlockLight.computeIfAbsent(dimension, k -> new ConcurrentHashMap<>()).put(pos, blockLight);
+        }
+    }
+
+    public static DataLayer[] getSkyLight(ResourceKey<Level> dimension, ChunkPos pos) {
+        Map<ChunkPos, DataLayer[]> map = remoteSkyLight.get(dimension);
+        return map != null ? map.get(pos) : null;
+    }
+
+    public static DataLayer[] getBlockLight(ResourceKey<Level> dimension, ChunkPos pos) {
+        Map<ChunkPos, DataLayer[]> map = remoteBlockLight.get(dimension);
+        return map != null ? map.get(pos) : null;
     }
 
     /**
@@ -206,6 +237,8 @@ public class RemoteChunkManager {
 
     public static void clearAll() {
         remoteSections.clear();
+        remoteSkyLight.clear();
+        remoteBlockLight.clear();
         loggedFirstReceive = false;
         totalChunksReceived = 0;
     }

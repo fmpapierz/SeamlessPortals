@@ -1,10 +1,10 @@
 package com.warwa.seamlessportals.mixin;
 
 import com.warwa.seamlessportals.portal.PortalDetector;
-import net.minecraft.util.BlockUtil;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.BlockUtil;
 import net.minecraft.world.level.portal.PortalForcer;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -21,8 +21,11 @@ public abstract class PortalForcerMixin {
     @Shadow @Final private ServerLevel level;
 
     /**
-     * When vanilla creates a new portal in the destination dimension,
-     * register it with our portal system and create the link.
+     * Exact target method signature:
+     *   Optional<BlockUtil.FoundRectangle> createPortal(BlockPos pos, Direction.Axis axis)
+     *
+     * Following IP's architecture, we only observe VANILLA portal creation here.
+     * Detection/link setup never calls createPortal() itself anymore.
      */
     @Inject(method = "createPortal", at = @At("RETURN"))
     private void seamlessportals$onPortalCreated(BlockPos pos, Direction.Axis axis,

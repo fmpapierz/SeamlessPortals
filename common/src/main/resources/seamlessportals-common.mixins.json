@@ -13,11 +13,14 @@
     "client.stencil.GlConstMixin",
     "client.stencil.RenderTargetMixin",
     "client.stencil.GlStateManagerMixin",
+    "client.stencil.GlTextureViewMixin",
     "client.CameraInvokerMixin",
     "client.ClearSkipMixin",
     "client.GameRendererAccessorMixin",
     "client.GameRendererLightmapMixin",
-    "client.LevelRendererAccessorMixin"
+    "client.LevelRendererAccessorMixin",
+    "client.HandleRespawnMixin",
+    "client.MinecraftRenderTargetMixin"
   ],
   "mixins": [
     "EntityMixin",

@@ -36,15 +36,18 @@ public class PortalInfo {
     }
 
     private AABB computeBoundingBox() {
+        // axis = the direction the portal blocks stretch along (width direction).
+        // axis=X: width along X, thin along Z (portal face in XY plane)
+        // axis=Z: width along Z, thin along X (portal face in YZ plane)
         if (axis == Direction.Axis.X) {
             return new AABB(
                 origin.getX(), origin.getY(), origin.getZ(),
-                origin.getX() + 1, origin.getY() + height, origin.getZ() + width
+                origin.getX() + width, origin.getY() + height, origin.getZ() + 1
             );
         } else {
             return new AABB(
                 origin.getX(), origin.getY(), origin.getZ(),
-                origin.getX() + width, origin.getY() + height, origin.getZ() + 1
+                origin.getX() + 1, origin.getY() + height, origin.getZ() + width
             );
         }
     }
@@ -54,10 +57,14 @@ public class PortalInfo {
     }
 
     private Vec3 computeNormal() {
+        // Normal = perpendicular to the portal face (depth direction, the direction
+        // players look through). This is the axis NOT containing the portal blocks.
+        // axis=X: portal face in XY plane → normal along Z
+        // axis=Z: portal face in YZ plane → normal along X
         if (axis == Direction.Axis.X) {
-            return new Vec3(1, 0, 0);
+            return new Vec3(0, 0, 1);  // depth along Z
         } else {
-            return new Vec3(0, 0, 1);
+            return new Vec3(1, 0, 0);  // depth along X
         }
     }
 

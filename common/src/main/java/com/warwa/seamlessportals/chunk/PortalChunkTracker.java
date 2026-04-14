@@ -27,7 +27,11 @@ import java.util.*;
  * DEBUG: Logs every chunk serialization and send operation.
  */
 public class PortalChunkTracker {
-    private final Map<UUID, Set<ChunkPos>> sentChunks = new HashMap<>();
+    // Per-player, per-dimension tracking of sent chunks.
+    // Without dimension key, chunks sent from dimension A (e.g., nether chunks while
+    // player was in overworld) block sending chunks from dimension B at the same
+    // ChunkPos (e.g., overworld chunks when player enters nether).
+    private final Map<UUID, Map<ResourceKey<Level>, Set<ChunkPos>>> sentChunks = new HashMap<>();
     private static boolean loggedFirstSend = false;
 
     private int scanCooldown = 0;
@@ -51,13 +55,26 @@ public class PortalChunkTracker {
      * Scan loaded chunks near the player for portal blocks.
      * Uses chunk sections to efficiently find portal blocks.
      */
+    /**
+     * Scan for portal blocks near the player and register any unlinked portals.
+     *
+     * IMPORTANT: Only calls onNetherPortalFormed ONCE per unique portal origin.
+     * IP doesn't scan blocks at all — it intercepts portal creation events.
+     * We scan because we need to find pre-existing portals, but we must avoid:
+     * 1. Calling onNetherPortalFormed for every block in a portal (6+ calls for 2x3)
+     * 2. Re-processing portals that are already linked
+     * 3. Creating spurious links from blocks at chunk boundaries
+     */
     private void scanForPortalsNearPlayer(ServerPlayer player, MinecraftServer server) {
         ServerLevel level = (ServerLevel) player.level();
         BlockPos playerPos = player.blockPosition();
-        int chunkRadius = 4; // Scan 4 chunks in each direction
+        int chunkRadius = 4;
 
         int playerChunkX = playerPos.getX() >> 4;
         int playerChunkZ = playerPos.getZ() >> 4;
+
+        // Track origins we've already processed this scan to avoid duplicates
+        Set<BlockPos> processedOrigins = new HashSet<>();
 
         for (int cx = -chunkRadius; cx <= chunkRadius; cx++) {
             for (int cz = -chunkRadius; cz <= chunkRadius; cz++) {
@@ -81,7 +98,18 @@ public class PortalChunkTracker {
                                         sectionY * 16 + ly,
                                         chunkZ * 16 + lz
                                     );
-                                    PortalDetector.onNetherPortalFormed(level, worldPos, server);
+                                    // Find origin FIRST, skip if already processed
+                                    net.minecraft.world.level.block.state.BlockState state =
+                                        level.getBlockState(worldPos);
+                                    net.minecraft.core.Direction.Axis axis =
+                                        state.getValue(net.minecraft.world.level.block.NetherPortalBlock.AXIS);
+                                    BlockPos origin = PortalDetector.findPortalOriginPublic(
+                                        level, worldPos, axis);
+
+                                    if (!processedOrigins.contains(origin)) {
+                                        processedOrigins.add(origin);
+                                        PortalDetector.onNetherPortalFormed(level, origin, server);
+                                    }
                                 }
                             }
                         }
@@ -140,7 +168,9 @@ public class PortalChunkTracker {
 
         String dimId = dimension.identifier().toString();
         UUID playerId = player.getUUID();
-        Set<ChunkPos> previouslySent = sentChunks.computeIfAbsent(playerId, k -> new HashSet<>());
+        Map<ResourceKey<Level>, Set<ChunkPos>> playerSent =
+            sentChunks.computeIfAbsent(playerId, k -> new HashMap<>());
+        Set<ChunkPos> previouslySent = playerSent.computeIfAbsent(dimension, k -> new HashSet<>());
 
         if (!loggedFirstSend) {
             SeamlessPortalsConstants.LOGGER.info(
@@ -159,6 +189,12 @@ public class PortalChunkTracker {
             try {
                 chunk = destLevel.getChunk(pos.x(), pos.z());
             } catch (Exception e) {
+                if (loggedFirstSend) {
+                    SeamlessPortalsConstants.LOGGER.debug(
+                        "[SEAMLESS] Failed to load chunk [{}, {}] from {} - {}",
+                        pos.x(), pos.z(), dimId, e.getMessage()
+                    );
+                }
                 continue; // Skip if chunk can't be loaded
             }
             if (chunk != null) {

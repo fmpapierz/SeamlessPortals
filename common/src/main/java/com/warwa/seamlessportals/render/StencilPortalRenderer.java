@@ -27,6 +27,10 @@ public class StencilPortalRenderer {
     private static int framesRendered = 0;
 
     public static void renderPortals() {
+        // Recursion guard: renderLevel() on secondary renderer triggers AFTER_TRANSLUCENT_TERRAIN
+        // which calls this method again. Match IP's PortalRendering.isRendering() check.
+        if (PortalContextSwitch.isRenderingPortal) return;
+
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
 
@@ -99,36 +103,40 @@ public class StencilPortalRenderer {
 
         // Draw one merged quad with LEQUAL depth test - obsidian occludes stencil write
         PortalShapeRenderer.drawMergedPortalShapeWithDepthTest(portals, camera);
+        if (framesRendered <= 5) {
+            int stencilWriteFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS DEBUG] Stencil write on FBO={}", stencilWriteFbo);
+        }
 
         // ===== STEP 3: Set stencil to only pass where value == 1 =====
         GL11.glStencilFunc(GL11.GL_EQUAL, 1, 0xFF);
         GL11.glStencilMask(0x00);
 
-        // ===== STEP 3.5: Clear depth inside portal shape =====
-        // Following IP's clearDepthOfThePortalViewArea():
-        // Write depth=1.0 (maximum) inside the stencil mask.
-        // This prevents later passes (clouds, sky, translucent terrain)
-        // from rendering through air gaps in the nether blocks.
-        // glDepthRange(1,1) forces all depth writes to be 1.0.
-        // The pipeline's ALWAYS_PASS depth test ensures the write always succeeds.
-        GL11.glDepthRange(1, 1);
+        // ===== STEP 3.5: Write near-plane depth inside portal shape =====
+        // Write depth=0.0 (near plane) inside the stencil mask.
+        // This prevents ALL later passes (clouds, weather, translucent terrain)
+        // from overdrawing the portal content after FBO composite.
+        //
+        // glDepthRange(0,0) forces all depth writes to 0.0.
+        // The ALWAYS_PASS depth test ensures the write always succeeds.
+        // The FBO composite (TRACY_BLIT) has no depth test/write, so it
+        // ignores this depth and writes color through the stencil mask.
+        // After composite, depth=0.0 remains, blocking clouds/weather.
+        //
+        // NOTE: IP wrote depth=1.0 (far) here because IP did direct rendering
+        // (not FBO composite). With FBO composite that doesn't write depth,
+        // we need 0.0 (near) to block subsequent passes.
+        GL11.glDepthRange(0, 0);
         PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
         GL11.glDepthRange(0, 1); // Restore normal depth range
 
-        // ===== STEP 3.6: Draw opaque background color =====
-        PortalShapeRenderer.drawPortalBackground(portals, camera, link.getDestination().getDimension());
-
-        // ===== STEP 4: Draw destination blocks through combined stencil mask =====
+        // ===== STEP 4: Render destination world to FBO, composite through stencil =====
+        // renderLevel() renders full world (sky + terrain + entities) to secondary FBO.
+        // compositePortalFbo() draws it onto main screen through stencil EQUAL(1).
+        // No background fill needed (sky fills FBO). No depth shield needed (FBO composite
+        // writes to depth buffer, blocking clouds/weather).
         PortalContextSwitch.renderDestinationWorld(portals.get(0), link, camera);
-
-        // ===== STEP 4.5: Depth shield - block subsequent renders (clouds, weather) =====
-        // Write depth=0.0 (near plane) inside the stencil mask.
-        // Stencil is still EQUAL(1) so this only affects the portal area.
-        // Clouds/weather render AFTER our hook and don't check stencil,
-        // but they DO check depth. Near-plane depth guarantees they fail.
-        GL11.glDepthRange(0, 0);
-        PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
-        GL11.glDepthRange(0, 1);
 
         // ===== STEP 5: Reset stencil and disable =====
         GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF);

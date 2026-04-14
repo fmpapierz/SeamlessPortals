@@ -86,6 +86,45 @@ public class ModPayloads {
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /**
+     * Server → Client: Full portal link data with REAL positions.
+     * Following IP's approach: the server is the ONLY authority on portal positions
+     * (via PortalForcer). The client NEVER computes destination positions.
+     */
+    public record PortalLinkPayload(
+        String srcDimension,
+        BlockPos srcOrigin,
+        String srcAxis,
+        int srcWidth,
+        int srcHeight,
+        String destDimension,
+        BlockPos destOrigin,
+        String destAxis,
+        int destWidth,
+        int destHeight
+    ) implements CustomPacketPayload {
+        public static final Type<PortalLinkPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "portal_link")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, PortalLinkPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, PortalLinkPayload::srcDimension,
+            BlockPos.STREAM_CODEC, PortalLinkPayload::srcOrigin,
+            ByteBufCodecs.STRING_UTF8, PortalLinkPayload::srcAxis,
+            ByteBufCodecs.VAR_INT, PortalLinkPayload::srcWidth,
+            ByteBufCodecs.VAR_INT, PortalLinkPayload::srcHeight,
+            ByteBufCodecs.STRING_UTF8, PortalLinkPayload::destDimension,
+            BlockPos.STREAM_CODEC, PortalLinkPayload::destOrigin,
+            ByteBufCodecs.STRING_UTF8, PortalLinkPayload::destAxis,
+            ByteBufCodecs.VAR_INT, PortalLinkPayload::destWidth,
+            ByteBufCodecs.VAR_INT, PortalLinkPayload::destHeight,
+            PortalLinkPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record PortalTeleportPayload(
         String portalId,
         double x, double y, double z
@@ -100,6 +139,26 @@ public class ModPayloads {
             ByteBufCodecs.DOUBLE, PortalTeleportPayload::y,
             ByteBufCodecs.DOUBLE, PortalTeleportPayload::z,
             PortalTeleportPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Client → Server: Request portal data for a specific dimension.
+     * Sent after dimension change to ensure client has all portal links.
+     */
+    public record RequestPortalDataPayload(
+        String dimensionId
+    ) implements CustomPacketPayload {
+        public static final Type<RequestPortalDataPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "request_portal_data")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, RequestPortalDataPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, RequestPortalDataPayload::dimensionId,
+            RequestPortalDataPayload::new
         );
 
         @Override

@@ -29,27 +29,40 @@ public abstract class ClientLevelMixin {
     private static ResourceKey<Level> seamlessportals$lastDimension = null;
 
     /**
-     * When a chunk loads on the client, scan for portal blocks.
-     * Also detect dimension changes and clear stale virtual portals.
+     * When a chunk loads on the PRIMARY client level, scan for portal blocks.
+     *
+     * CRITICAL: Only runs on the PRIMARY level (mc.level). Secondary levels
+     * (created by PortalWorldManager for portal rendering) MUST be ignored.
+     * IP doesn't have this problem because IP manages secondary levels through
+     * a completely separate path. Without this guard, feeding nether chunks to
+     * the secondary level would trigger "dimension change detected" → clear
+     * the portal links that the server just sent → broken portal view.
      */
     @Inject(method = "onChunkLoaded", at = @At("TAIL"))
     private void seamlessportals$onChunkLoaded(ChunkPos chunkPos, CallbackInfo ci) {
         ClientLevel level = (ClientLevel)(Object) this;
+
+        // ONLY process events from the PRIMARY level.
+        // Secondary levels (PortalWorldManager) fire onChunkLoaded too, but they
+        // are NOT dimension changes — they're portal rendering data.
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc.level != level) return;
+
         ResourceKey<Level> currentDim = level.dimension();
 
-        // Detect dimension change - clear stale virtual portals for the NEW dimension
+        // Detect dimension change - just track it, don't clear
+        // Server sends fresh portal data for new dimension, so clearing would break it
         if (seamlessportals$lastDimension != null && seamlessportals$lastDimension != currentDim) {
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS] Dimension change detected: {} -> {}. Clearing stale portals.",
+                "[SEAMLESS] Dimension change detected: {} -> {}. Tracking dimension change.",
                 seamlessportals$lastDimension.identifier(), currentDim.identifier()
             );
-            PortalManager.getClientInstance().clearDimension(currentDim);
             StencilPortalRenderer.cleanup();
             seamlessportals$loggedChunkScan = false;
         }
         seamlessportals$lastDimension = currentDim;
 
-        // Scan chunk for portal blocks
+        // Scan chunk for portal blocks in the PRIMARY level only
         LevelChunk chunk = level.getChunk(chunkPos.x(), chunkPos.z());
         if (chunk == null) return;
 
@@ -69,14 +82,6 @@ public abstract class ClientLevelMixin {
                                 chunkPos.z() * 16 + z
                             );
                             PortalDetector.onNetherPortalDetectedClient(level, worldPos);
-
-                            // Log ALL portal blocks found (not just first)
-                            SeamlessPortalsConstants.LOGGER.info(
-                                "[SEAMLESS] Portal block at {} axis={} in {}",
-                                worldPos,
-                                state.getValue(net.minecraft.world.level.block.NetherPortalBlock.AXIS),
-                                currentDim.identifier()
-                            );
                         }
                     }
                 }

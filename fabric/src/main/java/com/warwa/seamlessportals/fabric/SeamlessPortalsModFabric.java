@@ -24,6 +24,7 @@ public class SeamlessPortalsModFabric implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             PortalManager.getServerInstance();
+            FabricPlatformHelper.registerServerHandlers();
             SeamlessPortalsConstants.LOGGER.info("Seamless Portals server systems ready");
         });
 

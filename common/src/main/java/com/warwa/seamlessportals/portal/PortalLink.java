@@ -14,27 +14,15 @@ public class PortalLink {
     }
 
     public Vec3 transformPosition(Vec3 sourcePos) {
-        Vec3 sourceCenter = source.getCenter();
-        Vec3 destCenter = destination.getCenter();
-
-        Vec3 offset = sourcePos.subtract(sourceCenter);
-
-        if (source.getType() == PortalType.NETHER) {
-            if (source.getDimension() == net.minecraft.world.level.Level.OVERWORLD) {
-                offset = new Vec3(offset.x / coordinateScale, offset.y, offset.z / coordinateScale);
-            } else {
-                offset = new Vec3(offset.x * coordinateScale, offset.y, offset.z * coordinateScale);
-            }
-        }
-
-        return destCenter.add(offset);
+        return PortalTransform.transformPoint(source, destination, source.getType(), sourcePos);
     }
 
     public Vec3 transformVelocity(Vec3 velocity) {
-        if (source.getAxis() == destination.getAxis()) {
-            return velocity;
-        }
-        return new Vec3(velocity.z, velocity.y, velocity.x);
+        return PortalTransform.transformVector(source, destination, source.getType(), velocity);
+    }
+
+    public float transformYaw(float sourceYaw) {
+        return PortalTransform.transformYaw(source, destination, sourceYaw);
     }
 
     public PortalInfo getSource() { return source; }

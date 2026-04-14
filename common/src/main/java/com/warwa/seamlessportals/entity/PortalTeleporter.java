@@ -3,6 +3,7 @@ package com.warwa.seamlessportals.entity;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.portal.PortalInfo;
 import com.warwa.seamlessportals.portal.PortalLink;
+import com.warwa.seamlessportals.portal.PortalManager;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -43,23 +44,32 @@ public class PortalTeleporter {
             destDim.identifier());
 
         if (entity instanceof ServerPlayer player) {
-            return teleportPlayer(player, destLevel, destPos, destVelocity);
+            return teleportPlayer(player, destLevel, destPos, destVelocity, link);
         } else {
             return teleportNonPlayer(entity, destLevel, destPos, destVelocity);
         }
     }
 
     private static boolean teleportPlayer(ServerPlayer player, ServerLevel destLevel,
-                                           Vec3 destPos, Vec3 destVelocity) {
+                                           Vec3 destPos, Vec3 destVelocity, PortalLink link) {
         // Teleport the player without the loading screen using teleportTo
+        float destYaw = link.transformYaw(player.getYRot());
         player.teleportTo(destLevel, destPos.x, destPos.y, destPos.z,
-            Set.of(), player.getYRot(), player.getXRot(), false);
+            Set.of(), destYaw, player.getXRot(), false);
 
         player.setDeltaMovement(destVelocity);
         player.setPortalCooldown(EntityPortalCollision.getTeleportCooldown());
 
         SeamlessPortalsConstants.LOGGER.info("Player {} teleported seamlessly to {} in {}",
             player.getName().getString(), destPos, destLevel.dimension().identifier());
+
+        // Re-send portal data for the new dimension to the client
+        // This ensures the client can render portals in the new dimension
+        MinecraftServer server = destLevel.getServer();
+        if (server != null) {
+            PortalManager portalManager = PortalManager.getServerInstance();
+            portalManager.sendDimensionLinksToPlayer(destLevel.dimension(), player);
+        }
 
         return true;
     }

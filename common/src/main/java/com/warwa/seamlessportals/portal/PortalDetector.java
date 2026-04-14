@@ -45,6 +45,21 @@ public class PortalDetector {
         );
     }
 
+    /** Public accessor for PortalManager's PortalForcer-based detection. */
+    public static BlockPos findPortalOriginPublic(Level level, BlockPos start, Direction.Axis axis) {
+        return findPortalOrigin(level, start, axis);
+    }
+
+    /** Public accessor for PortalManager's PortalForcer-based detection. */
+    public static int measurePortalWidthPublic(Level level, BlockPos origin, Direction.Axis axis) {
+        return measurePortalWidth(level, origin, axis);
+    }
+
+    /** Public accessor for PortalManager's PortalForcer-based detection. */
+    public static int measurePortalHeightPublic(Level level, BlockPos origin) {
+        return measurePortalHeight(level, origin);
+    }
+
     private static BlockPos findPortalOrigin(Level level, BlockPos start, Direction.Axis axis) {
         BlockPos.MutableBlockPos pos = start.mutable();
 
@@ -102,11 +117,11 @@ public class PortalDetector {
     }
 
     /**
-     * Client-side portal detection. When a player walks near a portal on the client,
-     * register it with the client's PortalManager so the renderer knows where portals are.
-     * Also creates a "virtual" link pointing to the corresponding nether position.
+     * Client-side portal detection. Registers the portal shape for stencil rendering.
      *
-     * DEBUG: Logs client-side portal registration.
+     * IMPORTANT: Does NOT create links or compute destination positions.
+     * Following IP's architecture, only the SERVER knows the actual destination
+     * (via PortalForcer). Link data comes from the server via PortalLinkPayload.
      */
     public static void onNetherPortalDetectedClient(Level level, BlockPos portalBlock) {
         BlockState state = level.getBlockState(portalBlock);
@@ -126,24 +141,56 @@ public class PortalDetector {
         PortalInfo clientPortal = new PortalInfo(PortalType.NETHER, level.dimension(), origin, axis, width, height);
         clientManager.registerPortal(clientPortal);
 
-        // Create a virtual destination portal at the nether-equivalent position
-        net.minecraft.resources.ResourceKey<Level> destDim = PortalType.NETHER.getDestinationFor(level.dimension());
-        if (destDim != null) {
-            double scale = (level.dimension() == Level.OVERWORLD) ? 1.0 / 8.0 : 8.0;
-            BlockPos destOrigin = new BlockPos(
-                (int)(origin.getX() * scale),
-                origin.getY(),
-                (int)(origin.getZ() * scale)
-            );
-            PortalInfo destPortal = new PortalInfo(PortalType.NETHER, destDim, destOrigin, axis, width, height);
-            clientManager.registerPortal(destPortal);
-            clientManager.createLink(clientPortal, destPortal);
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS] Portal block at {} axis={} in {}",
+            origin, axis, level.dimension().identifier()
+        );
 
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] Client registered portal at {} -> {} in {}",
-                origin, destOrigin, destDim.identifier()
-            );
-        }
+        // Link data will arrive from server via PortalLinkPayload.
+        // Do NOT create virtual links with scaled coordinates here.
+    }
+
+    /**
+     * Handle portal link data received from the server.
+     * This is the ONLY source of truth for portal link positions.
+     * Following IP: the server determines actual positions via PortalForcer,
+     * then sends them to the client.
+     */
+    public static void handlePortalLinkFromServer(
+            com.warwa.seamlessportals.network.ModPayloads.PortalLinkPayload payload) {
+        PortalManager clientManager = PortalManager.getClientInstance();
+
+        net.minecraft.resources.ResourceKey<Level> srcDim =
+            dimKeyFromString(payload.srcDimension());
+        net.minecraft.resources.ResourceKey<Level> destDim =
+            dimKeyFromString(payload.destDimension());
+
+        Direction.Axis srcAxis = Direction.Axis.valueOf(payload.srcAxis().toUpperCase());
+        Direction.Axis destAxis = Direction.Axis.valueOf(payload.destAxis().toUpperCase());
+
+        PortalInfo srcPortal = new PortalInfo(
+            PortalType.NETHER, srcDim, payload.srcOrigin(),
+            srcAxis, payload.srcWidth(), payload.srcHeight()
+        );
+        PortalInfo destPortal = new PortalInfo(
+            PortalType.NETHER, destDim, payload.destOrigin(),
+            destAxis, payload.destWidth(), payload.destHeight()
+        );
+
+        clientManager.registerPortal(srcPortal);
+        clientManager.registerPortal(destPortal);
+        clientManager.createLink(srcPortal, destPortal);
+
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS DEBUG] Client registered portal at {} -> {} in {} (from server)",
+            payload.srcOrigin(), payload.destOrigin(), destDim.identifier()
+        );
+    }
+
+    private static net.minecraft.resources.ResourceKey<Level> dimKeyFromString(String dim) {
+        if (dim.contains("the_nether")) return Level.NETHER;
+        if (dim.contains("the_end")) return Level.END;
+        return Level.OVERWORLD;
     }
 
     public static void onPortalDestroyed(Level level, BlockPos pos, PortalType type, MinecraftServer server) {

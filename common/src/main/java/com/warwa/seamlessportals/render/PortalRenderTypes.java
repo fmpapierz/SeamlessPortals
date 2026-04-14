@@ -33,6 +33,7 @@ public class PortalRenderTypes {
     private static RenderType PORTAL_STENCIL_WITH_DEPTH;
     private static RenderType PORTAL_NO_DEPTH_COLOR;
     private static RenderType PORTAL_DEPTH_CLEAR;
+    private static RenderType PORTAL_FBO_COMPOSITE;
 
     static {
         try {
@@ -123,7 +124,29 @@ public class PortalRenderTypes {
                 RenderSetup.builder(depthClearPipeline).createRenderSetup()
             );
 
-            SeamlessPortalsConstants.LOGGER.info("[SEAMLESS] Portal render types created (stencil-only + stencil-depth + no-depth-color + depth-clear)");
+            // Pipeline for FBO COMPOSITE: textured full-screen quad, no depth test
+            // Uses position_tex shader to sample the portal FBO texture.
+            // Drawn on the game's main FBO where stencil values live.
+            // Stencil EQUAL(1) clips to portal area.
+            RenderPipeline fboCompositePipeline = RenderPipeline.builder()
+                .withLocation("seamlessportals/pipeline/portal_fbo_composite")
+                .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
+                .withUniform("Projection", UniformType.UNIFORM_BUFFER)
+                .withSampler("Sampler0")
+                .withVertexShader("core/position_tex")
+                .withFragmentShader("core/position_tex")
+                .withVertexFormat(DefaultVertexFormat.POSITION_TEX, VertexFormat.Mode.QUADS)
+                .withDepthStencilState(Optional.empty()) // no depth test
+                .withCull(false)
+                .build();
+            fboCompositePipeline = (RenderPipeline) registerMethod.invoke(null, fboCompositePipeline);
+
+            PORTAL_FBO_COMPOSITE = (RenderType) createMethod.invoke(null,
+                "seamlessportals_fbo_composite",
+                RenderSetup.builder(fboCompositePipeline).createRenderSetup()
+            );
+
+            SeamlessPortalsConstants.LOGGER.info("[SEAMLESS] Portal render types created (stencil-only + stencil-depth + no-depth-color + depth-clear + fbo-composite)");
         } catch (Exception e) {
             SeamlessPortalsConstants.LOGGER.error("[SEAMLESS] Failed to create portal render types", e);
             PORTAL_STENCIL_ONLY = net.minecraft.client.renderer.rendertype.RenderTypes.debugQuads();
@@ -152,5 +175,10 @@ public class PortalRenderTypes {
     /** Depth write only (ALWAYS pass), no color. For clearing depth inside portal shape. */
     public static RenderType portalDepthClear() {
         return PORTAL_DEPTH_CLEAR;
+    }
+
+    /** Textured quad for compositing FBO through portal geometry. No depth test. */
+    public static RenderType portalFboComposite() {
+        return PORTAL_FBO_COMPOSITE;
     }
 }
