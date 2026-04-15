@@ -185,27 +185,21 @@ public class PortalContextSwitch {
         // clipping prevents seeing terrain between camera and portal surface.
         Direction.Axis srcAxis = srcPortal.getAxis();
         Direction.Axis destAxis = destPortal.getAxis();
-        // Camera at destination portal center — stable baseline.
-        // 1:1 transform + oblique clipping is the correct approach but requires:
-        // 1. Separate RenderBuffers (shared buffer causes "Buffer source must not be empty")
-        // 2. Oblique clipping to hide terrain between camera and portal surface
-        // Both are documented for future work.
-        Vec3 destCameraPos = destPortal.getCenter();
+        // 1:1 camera position for screen-space alignment. Separate RenderBuffers
+        // on the secondary renderer prevent "Buffer source must not be empty" errors.
+        Vec3 destCameraPos = PortalTransform.transformPoint(
+            srcPortal, destPortal, srcPortal.getType(), mainCamera.position());
 
-        Vec3 srcCenter = srcPortal.getCenter();
-        float destYaw;
-        if (destAxis == Direction.Axis.X) {
-            double side = mainCamera.position().z - srcCenter.z;
-            destYaw = side >= 0 ? 180f : 0f;
-        } else {
-            double side = mainCamera.position().x - srcCenter.x;
-            destYaw = side >= 0 ? 90f : -90f;
-        }
+        float yawOffset = (srcAxis != destAxis)
+            ? ((srcAxis == Direction.Axis.Z) ? 90.0f : -90.0f)
+            : 0;
 
+        // Player rotation for FBO/stencil alignment.
         Camera virtualCamera = new Camera();
         virtualCamera.setLevel(destLevel);
         virtualCamera.setEntity(mc.player);
-        ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetRotation(destYaw, 0f);
+        ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetRotation(
+            mainCamera.yRot() + yawOffset, mainCamera.xRot());
         ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetPosition(destCameraPos);
         // CRITICAL: tick the camera's EnvironmentAttributeProbe with the destination
         // level and position. Without this, the probe returns default values (all zeros)
@@ -222,7 +216,7 @@ public class PortalContextSwitch {
                 String.format("%.1f", destCameraPos.x),
                 String.format("%.1f", destCameraPos.y),
                 String.format("%.1f", destCameraPos.z),
-                String.format("%.1f", destYaw),
+                String.format("%.1f", mainCamera.yRot() + yawOffset),
                 srcAxis, destAxis);
         }
 
@@ -319,7 +313,14 @@ public class PortalContextSwitch {
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 
-        boolean obliqueApplied = false;
+        // Oblique near-plane clipping — clips terrain between camera and portal.
+        boolean obliqueApplied = applyObliqueNearPlane(
+            destCameraState.projectionMatrix,
+            virtualCamera,
+            destCameraPos,
+            destPortal.getCenter(),
+            destPortal.getNormal()
+        );
 
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =
@@ -660,8 +661,9 @@ public class PortalContextSwitch {
     private static com.mojang.blaze3d.buffers.GpuBufferSlice writeProjectionBuffer(Matrix4f matrix, boolean forRestore) {
         java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(64)
             .order(java.nio.ByteOrder.nativeOrder());
-        matrix.get(buf);
-        buf.flip();
+        matrix.get(buf);     // JOML writes 64 bytes at position 0 without advancing
+        buf.position(64);    // manually advance past the written data
+        buf.flip();          // now limit=64, position=0 → 64 bytes readable
 
         // Create new buffer — do NOT close the old one (GPU may still be using it)
         com.mojang.blaze3d.buffers.GpuBuffer gpuBuf = RenderSystem.getDevice().createBuffer(

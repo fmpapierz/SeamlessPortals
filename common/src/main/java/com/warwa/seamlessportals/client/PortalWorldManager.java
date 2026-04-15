@@ -72,29 +72,34 @@ public class PortalWorldManager {
         SeamlessPortalsConstants.LOGGER.info("[SEAMLESS PHASE2] Creating secondary renderer for {}", dimension.identifier());
 
         try {
-            // Get shared resources (matches IP architecture)
             GameRenderState gameRenderState = mc.gameRenderer.getGameRenderState();
-            RenderBuffers sharedRenderBuffers = mc.renderBuffers(); // SHARED - sequential access
+
+            // Create SEPARATE RenderBuffers for the secondary renderer.
+            // The main renderer's buffers are in use during AFTER_TRANSLUCENT_TERRAIN
+            // (when our portal rendering runs). Sharing them causes
+            // "Buffer source must not be empty" crashes when the 1:1 camera
+            // position triggers entity rendering.
+            RenderBuffers destRenderBuffers = new RenderBuffers(4);
 
             // Create SEPARATE FeatureRenderDispatcher (has mutable per-frame state)
             SubmitNodeStorage destSubmitNodes = new SubmitNodeStorage();
             FeatureRenderDispatcher destFeatureDispatcher = new FeatureRenderDispatcher(
                 destSubmitNodes,
                 mc.getModelManager(),
-                sharedRenderBuffers.bufferSource(),
+                destRenderBuffers.bufferSource(),
                 mc.getAtlasManager(),
-                sharedRenderBuffers.outlineBufferSource(),
-                sharedRenderBuffers.crumblingBufferSource(),
+                destRenderBuffers.outlineBufferSource(),
+                destRenderBuffers.crumblingBufferSource(),
                 mc.font,
                 gameRenderState
             );
 
-            // Create secondary LevelRenderer with SHARED RenderBuffers
+            // Create secondary LevelRenderer with its OWN RenderBuffers
             LevelRenderer destRenderer = new LevelRenderer(
                 mc,
                 mc.getEntityRenderDispatcher(),
                 mc.getBlockEntityRenderDispatcher(),
-                sharedRenderBuffers,     // SHARED (IP does this too)
+                destRenderBuffers,       // SEPARATE — avoids buffer conflicts
                 gameRenderState,         // SHARED
                 destFeatureDispatcher    // SEPARATE
             );
