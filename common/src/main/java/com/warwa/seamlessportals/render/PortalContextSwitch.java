@@ -409,13 +409,9 @@ public class PortalContextSwitch {
             GL11.glDisable(GL11.GL_STENCIL_TEST);
 
             // CRITICAL: Reset model-view stack to identity before renderLevel().
-            // We're called inside the main renderer's addMainPass lambda, so the
-            // stack has the main camera's rotation. renderLevel() pushes+multiplies
-            // its own rotation on top. Without resetting, terrain gets the COMBINED
-            // rotation (main * dest) → terrain rotates with the player's cursor.
-            org.joml.Matrix4fStack modelViewStack = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
-            modelViewStack.pushMatrix();
-            modelViewStack.identity();
+            org.joml.Matrix4fStack mvStack = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
+            mvStack.pushMatrix();
+            mvStack.identity();
 
             // Set the oblique projection on RenderSystem so bindDefaultUniforms()
             // writes it to the Projection UBO. Use MC's native backup/restore API.
@@ -459,7 +455,14 @@ public class PortalContextSwitch {
         } finally {
             // Restore model-view stack FIRST (must be in finally to prevent
             // stack overflow if renderLevel throws — stack size limit is 16)
-            modelViewStack.popMatrix();
+            com.mojang.blaze3d.systems.RenderSystem.getModelViewStack().popMatrix();
+
+            // Re-enable stencil (disabled for FBO renderLevel). Without this,
+            // if renderLevel throws, the Phase 1 fallback renders colored blocks
+            // everywhere without stencil clipping.
+            GL11.glEnable(GL11.GL_STENCIL_TEST);
+            GL11.glStencilFunc(GL11.GL_EQUAL, 1, 0xFF);
+            GL11.glStencilMask(0x00);
 
             isRenderingPortal = false;
             portalLightmapOverride = null;
