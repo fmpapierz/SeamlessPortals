@@ -9,7 +9,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.Relative;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.phys.Vec3;
@@ -34,14 +33,8 @@ public class PortalTeleporter {
         }
 
         Vec3 currentPos = entity.position();
-        Vec3 destPos = link.transformPosition(currentPos);
+        Vec3 destPos = link.transformTeleportPosition(currentPos);
         Vec3 destVelocity = link.transformVelocity(entity.getDeltaMovement());
-
-        SeamlessPortalsConstants.LOGGER.debug("Teleporting {} from {} to {} (dim: {} -> {})",
-            entity.getName().getString(),
-            currentPos, destPos,
-            entity.level().dimension().identifier(),
-            destDim.identifier());
 
         if (entity instanceof ServerPlayer player) {
             return teleportPlayer(player, destLevel, destPos, destVelocity, link);
@@ -52,19 +45,19 @@ public class PortalTeleporter {
 
     private static boolean teleportPlayer(ServerPlayer player, ServerLevel destLevel,
                                            Vec3 destPos, Vec3 destVelocity, PortalLink link) {
-        // Teleport the player without the loading screen using teleportTo
         float destYaw = link.transformYaw(player.getYRot());
+
+        // No cooldown — IP-style: depth negation places player behind dest portal,
+        // so no re-trigger. EntityMixin dimension tracking handles the rest.
         player.teleportTo(destLevel, destPos.x, destPos.y, destPos.z,
             Set.of(), destYaw, player.getXRot(), false);
 
         player.setDeltaMovement(destVelocity);
-        player.setPortalCooldown(EntityPortalCollision.getTeleportCooldown());
 
-        SeamlessPortalsConstants.LOGGER.info("Player {} teleported seamlessly to {} in {}",
+        SeamlessPortalsConstants.LOGGER.info("[SEAMLESS TELEPORT] {} -> {} in {}",
             player.getName().getString(), destPos, destLevel.dimension().identifier());
 
-        // Re-send portal data for the new dimension to the client
-        // This ensures the client can render portals in the new dimension
+        // Re-send portal data for the new dimension
         MinecraftServer server = destLevel.getServer();
         if (server != null) {
             PortalManager portalManager = PortalManager.getServerInstance();
@@ -76,7 +69,6 @@ public class PortalTeleporter {
 
     private static boolean teleportNonPlayer(Entity entity, ServerLevel destLevel,
                                               Vec3 destPos, Vec3 destVelocity) {
-        // Use TeleportTransition for non-player entity dimension change
         TeleportTransition transition = new TeleportTransition(
             destLevel, destPos, destVelocity,
             entity.getYRot(), entity.getXRot(),
@@ -84,14 +76,6 @@ public class PortalTeleporter {
         );
 
         Entity newEntity = entity.teleport(transition);
-
-        if (newEntity != null) {
-            newEntity.setPortalCooldown(EntityPortalCollision.getTeleportCooldown());
-            return true;
-        }
-
-        SeamlessPortalsConstants.LOGGER.warn("Failed to teleport entity {} to {}",
-            entity.getName().getString(), destLevel.dimension().identifier());
-        return false;
+        return newEntity != null;
     }
 }

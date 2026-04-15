@@ -39,6 +39,22 @@ public final class PortalTransform {
         return destinationCenter.add(fromLocalCoords(destination.getAxis(), local));
     }
 
+    /**
+     * Transform a position for TELEPORTATION. Same as transformPoint but negates
+     * depth so that walking INTO the source portal places you walking OUT OF the
+     * destination portal (behind it, not in front of it).
+     */
+    public static Vec3 transformTeleportPoint(PortalInfo source, PortalInfo destination, PortalType type, Vec3 sourcePos) {
+        Vec3 sourceCenter = source.getCenter();
+        Vec3 destinationCenter = destination.getCenter();
+        Vec3 offset = sourcePos.subtract(sourceCenter);
+
+        LocalCoords local = toLocalCoords(source.getAxis(), offset);
+        // Negate depth: walking INTO source = walking OUT OF destination
+        local = new LocalCoords(-local.depth(), local.width(), local.height());
+        return destinationCenter.add(fromLocalCoords(destination.getAxis(), local));
+    }
+
     public static Vec3 transformVector(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector) {
         // Same logic as transformPoint but without the center offset.
         // Depth negated: walking INTO source = walking OUT OF destination.
