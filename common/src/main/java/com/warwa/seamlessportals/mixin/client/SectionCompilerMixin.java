@@ -1,61 +1,47 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.portal.PortalType;
+import com.warwa.seamlessportals.render.PortalFrameSuppressor;
 import net.minecraft.client.renderer.chunk.RenderSectionRegion;
 import net.minecraft.client.renderer.chunk.SectionCompiler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
- * Mixin into SectionCompiler to suppress nether portal block rendering.
+ * Suppress blocks during section compilation:
+ * 1. Nether portal blocks (purple swirl) — replaced by stencil view
+ * 2. Destination portal obsidian frame — only during FBO compilation
  *
- * We redirect the blockState.getRenderShape() call inside compile().
- * When the block is a nether portal and seamless mode is on, we return
- * RenderShape.INVISIBLE instead of RenderShape.MODEL, which prevents
- * the purple swirl from being compiled into the chunk mesh.
- *
- * This works with BOTH vanilla and Fabric's Indigo renderer because
- * the getRenderShape() check happens BEFORE any renderer is invoked.
- *
- * DEBUG: Logs every portal block suppression.
+ * Uses getBlockState redirect to access both BlockState and BlockPos.
  */
 @Mixin(SectionCompiler.class)
 public abstract class SectionCompilerMixin {
 
-    @Unique
-    private static boolean seamlessportals$loggedSuppression = false;
-
-    /**
-     * Redirect blockState.getRenderShape() in the compile loop.
-     * For nether portal blocks with seamless mode on, return INVISIBLE
-     * to prevent the purple texture from rendering.
-     */
     @Redirect(
         method = "compile",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/world/level/block/state/BlockState;getRenderShape()Lnet/minecraft/world/level/block/RenderShape;"
+            target = "Lnet/minecraft/client/renderer/chunk/RenderSectionRegion;getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;"
         )
     )
-    private RenderShape seamlessportals$redirectGetRenderShape(BlockState blockState) {
-        if (blockState.is(Blocks.NETHER_PORTAL) && SeamlessPortalsConfig.shouldRenderThrough(PortalType.NETHER)) {
-            if (!seamlessportals$loggedSuppression) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS DEBUG] Suppressing portal render shape -> INVISIBLE for block: {}",
-                    blockState
-                );
-                seamlessportals$loggedSuppression = true;
-            }
-            return RenderShape.INVISIBLE;
+    private BlockState seamlessportals$redirectGetBlockState(RenderSectionRegion region, BlockPos pos) {
+        BlockState state = region.getBlockState(pos);
+
+        // Suppress nether portal purple swirl (replaced by stencil rendering)
+        if (state.is(Blocks.NETHER_PORTAL) && SeamlessPortalsConfig.shouldRenderThrough(PortalType.NETHER)) {
+            return Blocks.AIR.defaultBlockState();
         }
-        return blockState.getRenderShape();
+
+        // Suppress destination portal obsidian frame during FBO compilation
+        if (state.is(Blocks.OBSIDIAN) && PortalFrameSuppressor.isFrameBlock(pos)) {
+            return Blocks.AIR.defaultBlockState();
+        }
+
+        return state;
     }
 }

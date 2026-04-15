@@ -256,19 +256,25 @@ public class PortalContextSwitch {
 
             visibleSections.clear();
             int compiled = 0;
-            for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
-                if (section == null) continue;
-                long sectionNode = section.getSectionNode();
-                int sx = net.minecraft.core.SectionPos.x(sectionNode);
-                int sz = net.minecraft.core.SectionPos.z(sectionNode);
-                if (destLevel.getChunkSource().hasChunk(sx, sz)) {
-                    if (section.isDirty()) {
-                        dispatcher.rebuildSectionSync(section, cache);
-                        section.setNotDirty();
+            // Suppress destination portal obsidian frame during section compilation
+            PortalFrameSuppressor.setDestination(destPortal);
+            try {
+                for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
+                    if (section == null) continue;
+                    long sectionNode = section.getSectionNode();
+                    int sx = net.minecraft.core.SectionPos.x(sectionNode);
+                    int sz = net.minecraft.core.SectionPos.z(sectionNode);
+                    if (destLevel.getChunkSource().hasChunk(sx, sz)) {
+                        if (section.isDirty()) {
+                            dispatcher.rebuildSectionSync(section, cache);
+                            section.setNotDirty();
+                        }
+                        visibleSections.add(section);
+                        compiled++;
                     }
-                    visibleSections.add(section);
-                    compiled++;
                 }
+            } finally {
+                PortalFrameSuppressor.clear();
             }
             if (phase2SuccessCount == 0 && compiled > 0) {
                 SeamlessPortalsConstants.LOGGER.info(
