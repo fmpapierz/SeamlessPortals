@@ -180,16 +180,23 @@ public class PortalContextSwitch {
         }
 
         // ===== 1. Compute destination camera position =====
-        // Place camera at exact center of destination portal.
+        // 1:1 mapping through portal transform. Camera mirrors the player's
+        // position relative to the destination portal. Oblique near-plane
+        // clipping prevents seeing terrain between camera and portal surface.
         Direction.Axis srcAxis = srcPortal.getAxis();
         Direction.Axis destAxis = destPortal.getAxis();
-        Vec3 destCameraPos = destPortal.getCenter();
+        Vec3 destCameraPos = PortalTransform.transformPoint(
+            srcPortal, destPortal, srcPortal.getType(), mainCamera.position());
 
         float yawOffset = (srcAxis != destAxis)
             ? ((srcAxis == Direction.Axis.Z) ? 90.0f : -90.0f)
             : 0;
 
         // ===== 2. Create virtual camera =====
+        // Rotation follows the player's view direction (+ yaw offset for
+        // cross-axis portals). The model-view stack is reset to identity
+        // before renderLevel() to prevent the main camera's rotation from
+        // contaminating the destination view.
         Camera virtualCamera = new Camera();
         virtualCamera.setLevel(destLevel);
         virtualCamera.setEntity(mc.player);
@@ -204,17 +211,15 @@ public class PortalContextSwitch {
 
         if (phase2SuccessCount <= 3) {
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] Camera: playerPos=({},{},{}) yaw={} pitch={} → destCam=({},{},{}) yaw={} srcAxis={} destAxis={} yawOffset={}",
+                "[SEAMLESS DEBUG] Camera: playerPos=({},{},{}) → destCam=({},{},{}) destYaw={} srcAxis={} destAxis={}",
                 String.format("%.1f", mainCamera.position().x),
                 String.format("%.1f", mainCamera.position().y),
                 String.format("%.1f", mainCamera.position().z),
-                String.format("%.1f", mainCamera.yRot()),
-                String.format("%.1f", mainCamera.xRot()),
                 String.format("%.1f", destCameraPos.x),
                 String.format("%.1f", destCameraPos.y),
                 String.format("%.1f", destCameraPos.z),
                 String.format("%.1f", mainCamera.yRot() + yawOffset),
-                srcAxis, destAxis, yawOffset);
+                srcAxis, destAxis);
         }
 
         // Build frustum
@@ -388,6 +393,15 @@ public class PortalContextSwitch {
             // CRITICAL: Disable stencil test before rendering to secondary FBO.
             GL11.glDisable(GL11.GL_STENCIL_TEST);
 
+            // CRITICAL: Reset model-view stack to identity before renderLevel().
+            // We're called inside the main renderer's addMainPass lambda, so the
+            // stack has the main camera's rotation. renderLevel() pushes+multiplies
+            // its own rotation on top. Without resetting, terrain gets the COMBINED
+            // rotation (main * dest) → terrain rotates with the player's cursor.
+            org.joml.Matrix4fStack modelViewStack = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
+            modelViewStack.pushMatrix();
+            modelViewStack.identity();
+
             // CRITICAL: Update the Globals UBO with the destination camera position.
             // The terrain shader computes: pos = vertex + (ChunkPosition - CameraBlockPos) + CameraOffset
             // These values live in the Globals UBO, set by GameRenderer.globalSettingsUniform.update().
@@ -415,6 +429,9 @@ public class PortalContextSwitch {
                 true,
                 destChunks
             );
+
+            // Restore model-view stack
+            modelViewStack.popMatrix();
         } finally {
             isRenderingPortal = false;
             portalLightmapOverride = null;
@@ -481,6 +498,67 @@ public class PortalContextSwitch {
         } else if (secondaryFbo.width != w || secondaryFbo.height != h) {
             secondaryFbo.resize(w, h);
         }
+    }
+
+    /**
+     * Oblique near-plane clipping (Lengyel method).
+     * Modifies the projection matrix so the near clip plane aligns with the
+     * portal surface. Everything between the camera and the portal is clipped.
+     *
+     * @see <a href="https://terathon.com/lengyel/Lengyel-Oblique.pdf">Lengyel paper</a>
+     */
+    private static void applyObliqueNearPlane(
+            Matrix4f projMatrix,
+            Camera camera,
+            Vec3 cameraPos,
+            Vec3 portalCenter,
+            Vec3 portalNormal) {
+
+        // Get view rotation matrix
+        Matrix4f viewRotMatrix = new Matrix4f();
+        camera.getViewRotationMatrix(viewRotMatrix);
+
+        // Portal normal should point AWAY from the camera (into the destination).
+        float nx = (float) portalNormal.x;
+        float ny = (float) portalNormal.y;
+        float nz = (float) portalNormal.z;
+
+        double cameraDot = nx * (cameraPos.x - portalCenter.x)
+                         + ny * (cameraPos.y - portalCenter.y)
+                         + nz * (cameraPos.z - portalCenter.z);
+        if (cameraDot > 0) {
+            nx = -nx;
+            ny = -ny;
+            nz = -nz;
+        }
+
+        // Transform normal to view space (viewRotMatrix is orthonormal)
+        float vnx = viewRotMatrix.m00() * nx + viewRotMatrix.m10() * ny + viewRotMatrix.m20() * nz;
+        float vny = viewRotMatrix.m01() * nx + viewRotMatrix.m11() * ny + viewRotMatrix.m21() * nz;
+        float vnz = viewRotMatrix.m02() * nx + viewRotMatrix.m12() * ny + viewRotMatrix.m22() * nz;
+
+        // d in view space: dot(normal, cameraPos - portalCenter) with the possibly-negated normal
+        float vd = nx * (float)(cameraPos.x - portalCenter.x)
+                 + ny * (float)(cameraPos.y - portalCenter.y)
+                 + nz * (float)(cameraPos.z - portalCenter.z);
+
+        // Compute Q (inverse-projected corner point)
+        float qx = (Math.signum(vnx) + projMatrix.m20()) / projMatrix.m00();
+        float qy = (Math.signum(vny) + projMatrix.m21()) / projMatrix.m11();
+        float qz = -1.0f;
+        float qw = (1.0f + projMatrix.m22()) / projMatrix.m32();
+
+        // Scale clip plane
+        float dotCQ = vnx * qx + vny * qy + vnz * qz + vd * qw;
+        if (Math.abs(dotCQ) < 1e-6f) return; // degenerate — skip clipping
+
+        float scale = 2.0f / dotCQ;
+
+        // Replace row 2 of projection matrix (OpenGL NDC z range [-1,+1] → +1.0)
+        projMatrix.m02(vnx * scale);
+        projMatrix.m12(vny * scale);
+        projMatrix.m22(vnz * scale + 1.0f);
+        projMatrix.m32(vd * scale);
     }
 
     /**

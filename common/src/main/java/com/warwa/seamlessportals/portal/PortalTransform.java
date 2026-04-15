@@ -31,13 +31,11 @@ public final class PortalTransform {
         // No axis swap: toLocalCoords/fromLocalCoords handle the axis rotation.
         // Source width maps to dest width, source height maps to dest height.
         //
-        // NEGATE DEPTH: portals connect opposite faces. A player on the "front"
-        // side of the source portal (positive depth) should map to the "back"
-        // side of the destination portal (negative depth), i.e., BEYOND the
-        // portal face into the destination world. Without negation, the camera
-        // ends up in front of the destination portal, showing the portal itself.
+        // 1:1 position mapping — no negation. The camera should be at the
+        // same relative position to the destination portal as the player is
+        // to the source portal. Oblique near-plane clipping (applied to the
+        // projection matrix) handles making it look like a window.
         LocalCoords local = toLocalCoords(source.getAxis(), offset);
-        local = new LocalCoords(-local.depth(), local.width(), local.height());
         return destinationCenter.add(fromLocalCoords(destination.getAxis(), local));
     }
 
