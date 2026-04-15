@@ -186,19 +186,12 @@ public class PortalContextSwitch {
         Direction.Axis srcAxis = srcPortal.getAxis();
         Direction.Axis destAxis = destPortal.getAxis();
         // Camera at destination portal center — stable baseline.
-        // Parallax (1:1 transform) requires oblique near-plane clipping to
-        // hide terrain between camera and portal surface, which is not yet
-        // working (freezes renderer). Portal center is always inside the
-        // opening and produces stable rendering.
+        // 1:1 transform + oblique clipping is the correct approach but requires:
+        // 1. Separate RenderBuffers (shared buffer causes "Buffer source must not be empty")
+        // 2. Oblique clipping to hide terrain between camera and portal surface
+        // Both are documented for future work.
         Vec3 destCameraPos = destPortal.getCenter();
 
-        // ===== 2. Create virtual camera =====
-        // Fixed rotation perpendicular to portal face. Player rotation is NOT
-        // copied — with a fixed camera at portal center, copying rotation makes
-        // terrain slide across the portal opening (FBO is full-screen, stencil
-        // moves but FBO content also rotates → misaligned).
-        // Proper parallax requires 1:1 camera position + player rotation +
-        // oblique clipping (future work).
         Vec3 srcCenter = srcPortal.getCenter();
         float destYaw;
         if (destAxis == Direction.Axis.X) {
@@ -326,9 +319,6 @@ public class PortalContextSwitch {
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 
-        // Oblique near-plane clipping disabled (freezes renderer due to extreme
-        // projection values). The applyObliqueNearPlane() method exists for
-        // future work when RenderSystem.setProjectionMatrix integration is solved.
         boolean obliqueApplied = false;
 
         // ===== 7. Compute destination fog =====
@@ -414,8 +404,9 @@ public class PortalContextSwitch {
             mvStack.pushMatrix();
             mvStack.identity();
 
-            // Set the oblique projection on RenderSystem so bindDefaultUniforms()
-            // writes it to the Projection UBO. Use MC's native backup/restore API.
+            // Set the oblique projection on RenderSystem using our own buffer.
+            // Do NOT use MC's levelProjectionMatrixBuffer — that overwrites the
+            // main renderer's buffer content, corrupting clouds/sky after restore.
             if (obliqueApplied) {
                 RenderSystem.backupProjectionMatrix();
                 RenderSystem.setProjectionMatrix(
@@ -620,7 +611,7 @@ public class PortalContextSwitch {
         float newM22 = vnz * scale + 1.0f;
         float newM32 = vd * scale;
 
-        if (Math.abs(newM32) > 5f || Math.abs(newM22) > 5f
+        if (Math.abs(newM32) > 50f || Math.abs(newM22) > 50f
                 || Float.isNaN(newM32) || Float.isInfinite(newM32)) {
             if (phase2SuccessCount <= 3) {
                 SeamlessPortalsConstants.LOGGER.warn(
