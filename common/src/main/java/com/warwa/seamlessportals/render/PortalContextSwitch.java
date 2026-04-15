@@ -185,6 +185,12 @@ public class PortalContextSwitch {
         // clipping prevents seeing terrain between camera and portal surface.
         Direction.Axis srcAxis = srcPortal.getAxis();
         Direction.Axis destAxis = destPortal.getAxis();
+        // 1:1 position mapping — NO clamping. The FBO and main screen share
+        // pixel coordinates. For the portal to look like a physical window,
+        // the FBO camera must be at the exact transformed position so that
+        // destination terrain projects to the same screen pixels as if it
+        // were physically behind the portal. Clamping breaks this alignment.
+        // The stencil mask naturally clips geometry outside the portal opening.
         Vec3 destCameraPos = PortalTransform.transformPoint(
             srcPortal, destPortal, srcPortal.getType(), mainCamera.position());
 
@@ -315,6 +321,13 @@ public class PortalContextSwitch {
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 
+        // NOTE: Oblique near-plane clipping is implemented (applyObliqueNearPlane)
+        // but disabled. Calling RenderSystem.setProjectionMatrix() mid-frame
+        // (inside the main renderer's framegraph) freezes the renderer.
+        // Needs a different approach — possibly a mixin on bindDefaultUniforms
+        // or a custom render pass pipeline.
+        boolean obliqueApplied = false;
+
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
@@ -402,11 +415,15 @@ public class PortalContextSwitch {
             modelViewStack.pushMatrix();
             modelViewStack.identity();
 
+            // Set the oblique projection on RenderSystem so bindDefaultUniforms()
+            // writes it to the Projection UBO that the terrain shader reads.
+            if (obliqueApplied) {
+                RenderSystem.setProjectionMatrix(
+                    writeProjectionBuffer(destCameraState.projectionMatrix, false),
+                    com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+            }
+
             // CRITICAL: Update the Globals UBO with the destination camera position.
-            // The terrain shader computes: pos = vertex + (ChunkPosition - CameraBlockPos) + CameraOffset
-            // These values live in the Globals UBO, set by GameRenderer.globalSettingsUniform.update().
-            // Without updating them, the shader subtracts the MAIN camera position instead of the
-            // destination camera position, causing a massive offset in the rendered terrain.
             mc.gameRenderer.getGlobalSettingsUniform().update(
                 mc.getMainRenderTarget().width,
                 mc.getMainRenderTarget().height,
@@ -435,6 +452,13 @@ public class PortalContextSwitch {
         } finally {
             isRenderingPortal = false;
             portalLightmapOverride = null;
+
+            // Restore RenderSystem projection
+            if (obliqueApplied) {
+                RenderSystem.setProjectionMatrix(
+                    writeProjectionBuffer(mainCameraState.projectionMatrix, true),
+                    com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+            }
 
             // Restore Globals UBO with main camera position
             mc.gameRenderer.getGlobalSettingsUniform().update(
@@ -507,7 +531,7 @@ public class PortalContextSwitch {
      *
      * @see <a href="https://terathon.com/lengyel/Lengyel-Oblique.pdf">Lengyel paper</a>
      */
-    private static void applyObliqueNearPlane(
+    private static boolean applyObliqueNearPlane(
             Matrix4f projMatrix,
             Camera camera,
             Vec3 cameraPos,
@@ -526,6 +550,14 @@ public class PortalContextSwitch {
         double cameraDot = nx * (cameraPos.x - portalCenter.x)
                          + ny * (cameraPos.y - portalCenter.y)
                          + nz * (cameraPos.z - portalCenter.z);
+
+        if (phase2SuccessCount <= 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS DEBUG] ObliqueClip: cameraDot={} normalFlipped={} nx={} ny={} nz={}",
+                String.format("%.3f", cameraDot),
+                cameraDot > 0, nx, ny, nz);
+        }
+
         if (cameraDot > 0) {
             nx = -nx;
             ny = -ny;
@@ -550,15 +582,90 @@ public class PortalContextSwitch {
 
         // Scale clip plane
         float dotCQ = vnx * qx + vny * qy + vnz * qz + vd * qw;
-        if (Math.abs(dotCQ) < 1e-6f) return; // degenerate — skip clipping
+
+        if (phase2SuccessCount <= 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS DEBUG] ObliqueClip: viewNormal=({},{},{}) vd={} dotCQ={} degenerate={}",
+                String.format("%.3f", vnx), String.format("%.3f", vny), String.format("%.3f", vnz),
+                String.format("%.3f", vd), String.format("%.3f", dotCQ),
+                Math.abs(dotCQ) < 1e-6f);
+        }
+
+        if (Math.abs(dotCQ) < 1e-4f) return false; // degenerate — skip clipping
 
         float scale = 2.0f / dotCQ;
 
+        // Safety: if the resulting values are extreme, skip clipping.
+        // Extreme values cause the depth buffer to produce NaN/infinity,
+        // which freezes the renderer (all depth tests fail forever).
+        float newM02 = vnx * scale;
+        float newM12 = vny * scale;
+        float newM22 = vnz * scale + 1.0f;
+        float newM32 = vd * scale;
+
+        if (Math.abs(newM32) > 100f || Math.abs(newM22) > 100f
+                || Float.isNaN(newM32) || Float.isInfinite(newM32)) {
+            if (phase2SuccessCount <= 3) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS DEBUG] ObliqueClip: SKIPPED extreme values m22={} m32={}",
+                    newM22, newM32);
+            }
+            return false;
+        }
+
+        // Save original row 2 for debug
+        float origM02 = projMatrix.m02(), origM12 = projMatrix.m12();
+        float origM22 = projMatrix.m22(), origM32 = projMatrix.m32();
+
         // Replace row 2 of projection matrix (OpenGL NDC z range [-1,+1] → +1.0)
-        projMatrix.m02(vnx * scale);
-        projMatrix.m12(vny * scale);
-        projMatrix.m22(vnz * scale + 1.0f);
-        projMatrix.m32(vd * scale);
+        projMatrix.m02(newM02);
+        projMatrix.m12(newM12);
+        projMatrix.m22(newM22);
+        projMatrix.m32(newM32);
+
+        if (phase2SuccessCount <= 3) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS DEBUG] ObliqueClip: row2 BEFORE=({},{},{},{}) AFTER=({},{},{},{})",
+                String.format("%.4f", origM02), String.format("%.4f", origM12),
+                String.format("%.4f", origM22), String.format("%.4f", origM32),
+                String.format("%.4f", projMatrix.m02()), String.format("%.4f", projMatrix.m12()),
+                String.format("%.4f", projMatrix.m22()), String.format("%.4f", projMatrix.m32()));
+        }
+
+        return true;
+    }
+
+    /**
+     * Persistent GPU buffer references for projection matrix save/restore.
+     * Must be static fields to prevent GC from invalidating OpenGL handles
+     * before the GPU is done with them. NEVER call close() — the GPU may
+     * still be referencing the buffer from the previous frame. Old buffers
+     * get GC'd naturally when the reference is overwritten.
+     */
+    private static com.mojang.blaze3d.buffers.GpuBuffer portalProjGpuBuffer = null;
+    private static com.mojang.blaze3d.buffers.GpuBuffer restoreProjGpuBuffer = null;
+
+    /**
+     * Write a Matrix4f to a GPU buffer for RenderSystem.setProjectionMatrix().
+     * @param forRestore true = use restore buffer slot, false = use portal buffer slot
+     */
+    private static com.mojang.blaze3d.buffers.GpuBufferSlice writeProjectionBuffer(Matrix4f matrix, boolean forRestore) {
+        java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(64)
+            .order(java.nio.ByteOrder.nativeOrder());
+        matrix.get(buf);
+        buf.flip();
+
+        // Create new buffer — do NOT close the old one (GPU may still be using it)
+        com.mojang.blaze3d.buffers.GpuBuffer gpuBuf = RenderSystem.getDevice().createBuffer(
+            () -> forRestore ? "portal_proj_restore" : "portal_proj_oblique",
+            com.mojang.blaze3d.buffers.GpuBuffer.USAGE_UNIFORM, buf);
+
+        if (forRestore) {
+            restoreProjGpuBuffer = gpuBuf;
+        } else {
+            portalProjGpuBuffer = gpuBuf;
+        }
+        return gpuBuf.slice();
     }
 
     /**
