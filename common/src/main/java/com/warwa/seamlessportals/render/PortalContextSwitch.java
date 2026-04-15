@@ -185,29 +185,34 @@ public class PortalContextSwitch {
         // clipping prevents seeing terrain between camera and portal surface.
         Direction.Axis srcAxis = srcPortal.getAxis();
         Direction.Axis destAxis = destPortal.getAxis();
-        // 1:1 position mapping — NO clamping. The FBO and main screen share
-        // pixel coordinates. For the portal to look like a physical window,
-        // the FBO camera must be at the exact transformed position so that
-        // destination terrain projects to the same screen pixels as if it
-        // were physically behind the portal. Clamping breaks this alignment.
-        // The stencil mask naturally clips geometry outside the portal opening.
-        Vec3 destCameraPos = PortalTransform.transformPoint(
-            srcPortal, destPortal, srcPortal.getType(), mainCamera.position());
-
-        float yawOffset = (srcAxis != destAxis)
-            ? ((srcAxis == Direction.Axis.Z) ? 90.0f : -90.0f)
-            : 0;
+        // Camera at destination portal center — stable baseline.
+        // Parallax (1:1 transform) requires oblique near-plane clipping to
+        // hide terrain between camera and portal surface, which is not yet
+        // working (freezes renderer). Portal center is always inside the
+        // opening and produces stable rendering.
+        Vec3 destCameraPos = destPortal.getCenter();
 
         // ===== 2. Create virtual camera =====
-        // Rotation follows the player's view direction (+ yaw offset for
-        // cross-axis portals). The model-view stack is reset to identity
-        // before renderLevel() to prevent the main camera's rotation from
-        // contaminating the destination view.
+        // Fixed rotation perpendicular to portal face. Player rotation is NOT
+        // copied — with a fixed camera at portal center, copying rotation makes
+        // terrain slide across the portal opening (FBO is full-screen, stencil
+        // moves but FBO content also rotates → misaligned).
+        // Proper parallax requires 1:1 camera position + player rotation +
+        // oblique clipping (future work).
+        Vec3 srcCenter = srcPortal.getCenter();
+        float destYaw;
+        if (destAxis == Direction.Axis.X) {
+            double side = mainCamera.position().z - srcCenter.z;
+            destYaw = side >= 0 ? 180f : 0f;
+        } else {
+            double side = mainCamera.position().x - srcCenter.x;
+            destYaw = side >= 0 ? 90f : -90f;
+        }
+
         Camera virtualCamera = new Camera();
         virtualCamera.setLevel(destLevel);
         virtualCamera.setEntity(mc.player);
-        ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetRotation(
-            mainCamera.yRot() + yawOffset, mainCamera.xRot());
+        ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetRotation(destYaw, 0f);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$invokeSetPosition(destCameraPos);
         // CRITICAL: tick the camera's EnvironmentAttributeProbe with the destination
         // level and position. Without this, the probe returns default values (all zeros)
@@ -224,7 +229,7 @@ public class PortalContextSwitch {
                 String.format("%.1f", destCameraPos.x),
                 String.format("%.1f", destCameraPos.y),
                 String.format("%.1f", destCameraPos.z),
-                String.format("%.1f", mainCamera.yRot() + yawOffset),
+                String.format("%.1f", destYaw),
                 srcAxis, destAxis);
         }
 
@@ -321,14 +326,10 @@ public class PortalContextSwitch {
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 
-        // Apply oblique near-plane clipping to hide terrain between camera and portal.
-        boolean obliqueApplied = applyObliqueNearPlane(
-            destCameraState.projectionMatrix,
-            virtualCamera,
-            destCameraPos,
-            destPortal.getCenter(),
-            destPortal.getNormal()
-        );
+        // Oblique near-plane clipping disabled (freezes renderer due to extreme
+        // projection values). The applyObliqueNearPlane() method exists for
+        // future work when RenderSystem.setProjectionMatrix integration is solved.
+        boolean obliqueApplied = false;
 
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =
