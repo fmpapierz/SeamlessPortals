@@ -262,6 +262,65 @@ public class PortalShapeRenderer {
      * Used for stencil write (step 2) so obsidian frame occludes the stencil mask.
      * Identical geometry to drawMergedPortalShape but uses portalStencilWithDepth.
      */
+    /**
+     * Overload with constrained dimensions. Uses the minimum of source and
+     * destination portal sizes so the destination frame isn't visible.
+     */
+    public static void drawMergedPortalShapeWithDepthTest(
+            java.util.List<com.warwa.seamlessportals.portal.PortalInfo> portals, Camera camera,
+            int maxWidth, int maxHeight) {
+        if (portals.isEmpty()) return;
+
+        Direction.Axis axis = portals.get(0).getAxis();
+        Vec3 camPos = camera.position();
+        float cx = (float) camPos.x, cy = (float) camPos.y, cz = (float) camPos.z;
+
+        // Compute merged bounds, then constrain to maxWidth/maxHeight centered
+        com.warwa.seamlessportals.portal.PortalInfo first = portals.get(0);
+        Vec3 center = first.getCenter();
+
+        float halfW = maxWidth / 2.0f;
+        float halfH = maxHeight / 2.0f;
+
+        float minX, maxX, minY, maxY, minZ, maxZ;
+        minY = (float) center.y - halfH;
+        maxY = (float) center.y + halfH;
+        if (axis == Direction.Axis.X) {
+            minX = (float) center.x - halfW;
+            maxX = (float) center.x + halfW;
+            minZ = (float) center.z - 0.5f;
+            maxZ = (float) center.z + 0.5f;
+        } else {
+            minX = (float) center.x - 0.5f;
+            maxX = (float) center.x + 0.5f;
+            minZ = (float) center.z - halfW;
+            maxZ = (float) center.z + halfW;
+        }
+
+        int color = 0x01000000;
+        ByteBufferBuilder byteBuf = new ByteBufferBuilder(4 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
+        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+
+        if (axis == Direction.Axis.X) {
+            float z = ((minZ + maxZ) / 2.0f) - cz;
+            builder.addVertex(minX - cx, minY - cy, z).setColor(color);
+            builder.addVertex(maxX - cx, minY - cy, z).setColor(color);
+            builder.addVertex(maxX - cx, maxY - cy, z).setColor(color);
+            builder.addVertex(minX - cx, maxY - cy, z).setColor(color);
+        } else {
+            float x = ((minX + maxX) / 2.0f) - cx;
+            builder.addVertex(x, minY - cy, minZ - cz).setColor(color);
+            builder.addVertex(x, minY - cy, maxZ - cz).setColor(color);
+            builder.addVertex(x, maxY - cy, maxZ - cz).setColor(color);
+            builder.addVertex(x, maxY - cy, minZ - cz).setColor(color);
+        }
+
+        MeshData mesh = builder.build();
+        if (mesh != null) {
+            PortalRenderTypes.portalStencilWithDepth().draw(mesh);
+        }
+    }
+
     public static void drawMergedPortalShapeWithDepthTest(java.util.List<com.warwa.seamlessportals.portal.PortalInfo> portals, Camera camera) {
         if (portals.isEmpty()) return;
 
