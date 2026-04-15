@@ -321,12 +321,14 @@ public class PortalContextSwitch {
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 
-        // NOTE: Oblique near-plane clipping is implemented (applyObliqueNearPlane)
-        // but disabled. Calling RenderSystem.setProjectionMatrix() mid-frame
-        // (inside the main renderer's framegraph) freezes the renderer.
-        // Needs a different approach — possibly a mixin on bindDefaultUniforms
-        // or a custom render pass pipeline.
-        boolean obliqueApplied = false;
+        // Apply oblique near-plane clipping to hide terrain between camera and portal.
+        boolean obliqueApplied = applyObliqueNearPlane(
+            destCameraState.projectionMatrix,
+            virtualCamera,
+            destCameraPos,
+            destPortal.getCenter(),
+            destPortal.getNormal()
+        );
 
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =
@@ -416,11 +418,18 @@ public class PortalContextSwitch {
             modelViewStack.identity();
 
             // Set the oblique projection on RenderSystem so bindDefaultUniforms()
-            // writes it to the Projection UBO that the terrain shader reads.
+            // writes it to the Projection UBO. Use MC's native backup/restore API.
             if (obliqueApplied) {
+                RenderSystem.backupProjectionMatrix();
                 RenderSystem.setProjectionMatrix(
                     writeProjectionBuffer(destCameraState.projectionMatrix, false),
                     com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+                if (phase2SuccessCount <= 3) {
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS DEBUG] Projection: backed up + set oblique. m22={} m32={}",
+                        String.format("%.4f", destCameraState.projectionMatrix.m22()),
+                        String.format("%.4f", destCameraState.projectionMatrix.m32()));
+                }
             }
 
             // CRITICAL: Update the Globals UBO with the destination camera position.
@@ -447,17 +456,21 @@ public class PortalContextSwitch {
                 destChunks
             );
 
-            // Restore model-view stack
-            modelViewStack.popMatrix();
         } finally {
+            // Restore model-view stack FIRST (must be in finally to prevent
+            // stack overflow if renderLevel throws — stack size limit is 16)
+            modelViewStack.popMatrix();
+
             isRenderingPortal = false;
             portalLightmapOverride = null;
 
-            // Restore RenderSystem projection
+            // Restore RenderSystem projection using MC's native restore
             if (obliqueApplied) {
-                RenderSystem.setProjectionMatrix(
-                    writeProjectionBuffer(mainCameraState.projectionMatrix, true),
-                    com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+                RenderSystem.restoreProjectionMatrix();
+                if (phase2SuccessCount <= 3) {
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS DEBUG] Projection: restored from backup");
+                }
             }
 
             // Restore Globals UBO with main camera position
@@ -603,7 +616,7 @@ public class PortalContextSwitch {
         float newM22 = vnz * scale + 1.0f;
         float newM32 = vd * scale;
 
-        if (Math.abs(newM32) > 100f || Math.abs(newM22) > 100f
+        if (Math.abs(newM32) > 5f || Math.abs(newM22) > 5f
                 || Float.isNaN(newM32) || Float.isInfinite(newM32)) {
             if (phase2SuccessCount <= 3) {
                 SeamlessPortalsConstants.LOGGER.warn(
