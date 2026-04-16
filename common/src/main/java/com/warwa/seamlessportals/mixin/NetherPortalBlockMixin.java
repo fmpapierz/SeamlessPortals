@@ -1,6 +1,8 @@
 package com.warwa.seamlessportals.mixin;
 
+import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.portal.PortalDetector;
+import com.warwa.seamlessportals.portal.PortalType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
@@ -16,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(NetherPortalBlock.class)
 public abstract class NetherPortalBlockMixin {
 
-    @Inject(method = "entityInside", at = @At("HEAD"))
+    @Inject(method = "entityInside", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$onEntityInside(BlockState state, Level level, BlockPos pos,
                                                  Entity entity, InsideBlockEffectApplier effectApplier,
                                                  boolean isPrecise, CallbackInfo ci) {
@@ -26,6 +28,13 @@ public abstract class NetherPortalBlockMixin {
         // Also register on client side for rendering
         if (level.isClientSide()) {
             PortalDetector.onNetherPortalDetectedClient(level, pos);
+        }
+
+        // Suppress vanilla portal behavior (purple overlay, 4-second timer,
+        // loading-screen teleport) when seamless teleportation is enabled.
+        // Our EntityMixin.move() hook handles instant teleportation instead.
+        if (SeamlessPortalsConfig.shouldSeamlessTeleport(PortalType.NETHER)) {
+            ci.cancel();
         }
     }
 }

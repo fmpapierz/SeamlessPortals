@@ -18,25 +18,49 @@ public final class PortalTransform {
 
     public static Vec3 transformPoint(PortalInfo source, PortalInfo destination, PortalType type, Vec3 sourcePos) {
         Vec3 sourceCenter = source.getCenter();
-        Vec3 destinationCenter = destination.getCenter();
+        Vec3 destCenter = destination.getCenter();
         Vec3 offset = sourcePos.subtract(sourceCenter);
 
-        // Convert player offset to portal-local coordinates (depth/width/height),
-        // then convert back to world coordinates in the destination portal's frame.
-        //
-        // No coordinate scaling: the 8:1 nether scaling is already baked into the
-        // portal centers (destination portal placed at coords/8 by PortalForcer).
-        // The local offset from the portal face should be preserved 1:1.
-        //
-        // No axis swap: toLocalCoords/fromLocalCoords handle the axis rotation.
-        // Source width maps to dest width, source height maps to dest height.
-        //
-        // 1:1 position mapping — no negation. The camera should be at the
-        // same relative position to the destination portal as the player is
-        // to the source portal. Oblique near-plane clipping (applied to the
-        // projection matrix) handles making it look like a window.
+        // Depth/width use center-relative mapping (horizontal alignment).
+        // Height uses floor-relative mapping (origin Y) so different-height
+        // portals keep the ground level consistent instead of shifting the
+        // view up or down.
         LocalCoords local = toLocalCoords(source.getAxis(), offset);
-        return destinationCenter.add(fromLocalCoords(destination.getAxis(), local));
+        LocalCoords horizontal = new LocalCoords(local.depth(), local.width(), 0);
+        Vec3 hResult = fromLocalCoords(destination.getAxis(), horizontal);
+
+        double heightFromFloor = sourcePos.y() - source.getOrigin().getY();
+
+        return new Vec3(
+            destCenter.x() + hResult.x(),
+            destination.getOrigin().getY() + heightFromFloor,
+            destCenter.z() + hResult.z()
+        );
+    }
+
+    /**
+     * Transform a position for TELEPORTATION. Same as transformPoint but negates
+     * depth so that walking INTO the source portal places you walking OUT OF the
+     * destination portal (behind it, not in front of it).
+     */
+    public static Vec3 transformTeleportPoint(PortalInfo source, PortalInfo destination, PortalType type, Vec3 sourcePos) {
+        Vec3 sourceCenter = source.getCenter();
+        Vec3 destCenter = destination.getCenter();
+        Vec3 offset = sourcePos.subtract(sourceCenter);
+
+        // Negate depth: walking INTO source = walking OUT OF destination.
+        // Height uses floor-relative mapping (same as transformPoint).
+        LocalCoords local = toLocalCoords(source.getAxis(), offset);
+        LocalCoords horizontal = new LocalCoords(-local.depth(), local.width(), 0);
+        Vec3 hResult = fromLocalCoords(destination.getAxis(), horizontal);
+
+        double heightFromFloor = sourcePos.y() - source.getOrigin().getY();
+
+        return new Vec3(
+            destCenter.x() + hResult.x(),
+            destination.getOrigin().getY() + heightFromFloor,
+            destCenter.z() + hResult.z()
+        );
     }
 
     public static Vec3 transformVector(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector) {

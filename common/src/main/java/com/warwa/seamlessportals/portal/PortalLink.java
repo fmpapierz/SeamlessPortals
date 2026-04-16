@@ -17,6 +17,10 @@ public class PortalLink {
         return PortalTransform.transformPoint(source, destination, source.getType(), sourcePos);
     }
 
+    public Vec3 transformTeleportPosition(Vec3 sourcePos) {
+        return PortalTransform.transformTeleportPoint(source, destination, source.getType(), sourcePos);
+    }
+
     public Vec3 transformVelocity(Vec3 velocity) {
         return PortalTransform.transformVector(source, destination, source.getType(), velocity);
     }

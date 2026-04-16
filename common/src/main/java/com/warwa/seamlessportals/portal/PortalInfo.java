@@ -73,17 +73,23 @@ public class PortalInfo {
     }
 
     public boolean isPointOnPortalPlane(Vec3 point, double tolerance) {
+        // axis = width direction. Plane crossing is along the DEPTH (thin) axis.
+        // axis=X → thin along Z → check Z
+        // axis=Z → thin along X → check X
         if (axis == Direction.Axis.X) {
-            return Math.abs(point.x - center.x) < tolerance;
-        } else {
             return Math.abs(point.z - center.z) < tolerance;
+        } else {
+            return Math.abs(point.x - center.x) < tolerance;
         }
     }
 
     public boolean intersectsMovement(Vec3 from, Vec3 to) {
-        double planeCoord = (axis == Direction.Axis.X) ? center.x : center.z;
-        double fromCoord = (axis == Direction.Axis.X) ? from.x : from.z;
-        double toCoord = (axis == Direction.Axis.X) ? to.x : to.z;
+        // axis = width direction. Plane crossing is along the DEPTH (thin) axis.
+        // axis=X → thin along Z → check Z coordinates
+        // axis=Z → thin along X → check X coordinates
+        double planeCoord = (axis == Direction.Axis.X) ? center.z : center.x;
+        double fromCoord = (axis == Direction.Axis.X) ? from.z : from.x;
+        double toCoord = (axis == Direction.Axis.X) ? to.z : to.x;
 
         if ((fromCoord - planeCoord) * (toCoord - planeCoord) > 0) {
             return false;
@@ -99,17 +105,21 @@ public class PortalInfo {
     }
 
     private boolean isWithinPortalWidth(Vec3 point) {
+        // axis = width direction. Check bounds along the WIDTH axis.
+        // axis=X → width along X → check X coordinates
+        // axis=Z → width along Z → check Z coordinates
         if (axis == Direction.Axis.X) {
-            return point.z >= origin.getZ() && point.z <= origin.getZ() + width;
-        } else {
             return point.x >= origin.getX() && point.x <= origin.getX() + width;
+        } else {
+            return point.z >= origin.getZ() && point.z <= origin.getZ() + width;
         }
     }
 
     public Vec3 getIntersectionPoint(Vec3 from, Vec3 to) {
-        double planeCoord = (axis == Direction.Axis.X) ? center.x : center.z;
-        double fromCoord = (axis == Direction.Axis.X) ? from.x : from.z;
-        double toCoord = (axis == Direction.Axis.X) ? to.x : to.z;
+        // axis = width direction. Plane crossing is along the DEPTH (thin) axis.
+        double planeCoord = (axis == Direction.Axis.X) ? center.z : center.x;
+        double fromCoord = (axis == Direction.Axis.X) ? from.z : from.x;
+        double toCoord = (axis == Direction.Axis.X) ? to.z : to.x;
 
         double t = (planeCoord - fromCoord) / (toCoord - fromCoord);
         return from.lerp(to, t);

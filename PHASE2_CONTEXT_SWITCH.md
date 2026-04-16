@@ -742,3 +742,80 @@ WE use vanilla's dimension change which includes the loading screen.
 
 4. **Chunk coverage**: Limited to render distance 4 (81 chunks).
    FIX: Increase render distance for portal chunks.
+
+## DEEP RE-ANALYSIS: WHY THE VIEW AND TELEPORT DIVERGED (2026-04-11 14:20)
+
+### Exact divergences from IP that were still present
+
+1. **We eagerly called `PortalForcer.createPortal()` during detection**
+   - That blocks the server thread while terrain generates and the obsidian frame is built.
+   - This is the source of the big lag spike right after lighting a portal.
+   - It also means our first render depends on a synchronous world-gen side effect instead of a stable transform.
+
+2. **Render and teleport were using different transform math**
+   - Render path: axis-aware local-space transform in `PortalContextSwitch`
+   - Teleport path: old center-offset transform in `PortalLink.transformPosition`
+   - Result: the portal could show one place but teleport the player somewhere else.
+   - IP does not allow this split; both rendering and teleport use the same portal transform.
+
+3. **We were treating the temporary destination as final**
+   - When the reverse portal does not exist yet, the first view must be temporary.
+   - IP keeps one canonical server-side transform and updates it when the real portal is known.
+   - We were mixing temporary guessed links with “actual” links too early.
+
+### What changed to return toward IP
+
+1. **Detection no longer creates the reverse portal**
+   - `PortalManager.findOrCreateDestinationPortal()` now:
+     - uses an existing tracked portal if present
+     - uses `PortalForcer.findClosestPortalPosition()` if vanilla already has one
+     - otherwise publishes a temporary virtual link only
+   - No synchronous `createPortal()` during detection anymore.
+
+2. **Vanilla creation now corrects the link later**
+   - `PortalForcerMixin` now only observes real vanilla `createPortal()` calls.
+   - When the first actual teleport causes vanilla to create the reverse portal, that creation is registered and the server re-links using the real portal position.
+
+3. **Canonical transform utility introduced**
+   - `PortalTransform.transformPoint(...)`
+   - `PortalTransform.transformVector(...)`
+   - `PortalTransform.transformYaw(...)`
+   - This is now the intended single source of truth for both view and teleport.
+
+### Why this matters
+
+This gets us back to IP’s real architecture:
+- server-authoritative links
+- temporary render transform first, corrected by real portal creation later
+- one shared transform path for rendering and teleport
+
+If the portal still feels “off” after this, the next place to check is no longer portal creation —
+it is whether every caller uses `PortalTransform` and whether teleport timing matches the render-side crossing point.
+
+## CRITICAL FIXES (2026-04-11 13:00)
+
+### Root Cause: Wrong Destination Position
+The CLIENT was computing portal destinations independently using scaled coordinates
+(overworld / 8 = nether). This was ALWAYS wrong because vanilla's PortalForcer
+places portals at valid terrain locations that can be tens of blocks away.
+
+Example from logs: Virtual dest at (1, 71, -8), ACTUAL portal at (-6, 58, -1).
+That's 7 blocks X, 13 blocks Y, 7 blocks Z off!
+
+### IP's Architecture (What We Must Follow)
+1. SERVER is the ONLY authority on portal positions (via PortalForcer)
+2. SERVER sends link data to CLIENT via network packet
+3. CLIENT NEVER computes destination positions
+4. SERVER creates destination portal via PortalForcer.createPortal() if it doesn't exist
+
+### Fixes Applied:
+1. **PortalLinkPayload**: New S→C packet with both portal positions + axes
+2. **PortalManager.findOrCreateDestinationPortal()**: Uses PortalForcer.createPortal()
+   when findClosestPortalPosition() returns empty. Sends PortalLinkPayload to all clients.
+3. **PortalDetector.onNetherPortalDetectedClient()**: No longer creates virtual links.
+   Only registers portal shape for stencil rendering. Links come from server.
+4. **PortalInfo AABB**: Fixed swapped axes in computeBoundingBox(). axis=X now
+   extends X by width, axis=Z extends Z by width.
+5. **PortalInfo normal**: Fixed to return perpendicular direction, not width direction.
+6. **Camera transform**: Axis-aware decomposition into depth/width/height, remapped
+   to destination portal's coordinate system. Yaw rotated 90° when axes differ.

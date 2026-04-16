@@ -16,9 +16,6 @@ public class EntityPortalCollision {
     public static Optional<PortalLink> checkPortalCrossing(Entity entity, Vec3 from, Vec3 to) {
         if (entity.level().isClientSide()) return Optional.empty();
 
-        // Check teleport cooldown
-        if (entity.getPortalCooldown() > 0) return Optional.empty();
-
         ResourceKey<Level> dimension = entity.level().dimension();
         PortalManager manager = PortalManager.getServerInstance();
         PortalTracker tracker = manager.getTracker(dimension);
@@ -44,6 +41,14 @@ public class EntityPortalCollision {
     }
 
     public static boolean isInPortalBounds(Entity entity) {
+        return findPortalLinkAtEntity(entity).isPresent();
+    }
+
+    /**
+     * Find the portal link for a portal the entity is currently inside.
+     * Used for instant teleportation when the entity enters the portal bounding box.
+     */
+    public static Optional<PortalLink> findPortalLinkAtEntity(Entity entity) {
         ResourceKey<Level> dimension = entity.level().dimension();
         PortalManager manager = entity.level().isClientSide()
             ? PortalManager.getClientInstance()
@@ -54,10 +59,16 @@ public class EntityPortalCollision {
 
         for (PortalInfo portal : tracker.getPortalsInRange(entity.blockPosition(), 2.0)) {
             if (portal.containsPoint(entityPos)) {
-                return true;
+                if (!SeamlessPortalsConfig.shouldSeamlessTeleport(portal.getType())) {
+                    continue;
+                }
+                Optional<PortalLink> link = manager.getLinkForPortal(portal.getPortalId());
+                if (link.isPresent()) {
+                    return link;
+                }
             }
         }
-        return false;
+        return Optional.empty();
     }
 
     public static int getTeleportCooldown() {
