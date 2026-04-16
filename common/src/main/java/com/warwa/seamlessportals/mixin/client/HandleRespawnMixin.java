@@ -10,15 +10,22 @@ import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.dimension.DimensionType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Eliminates the loading screen during portal-based dimension changes.
@@ -45,6 +52,21 @@ public abstract class HandleRespawnMixin {
     @Shadow private boolean clientLoaded;
 
     /**
+     * Persistent ClientLevel cache, keyed by dimension. When the player
+     * changes dimension vanilla normally allocates a brand-new ClientLevel
+     * and the old one plus all its chunks and entity state is GC'd. We cache
+     * the outgoing level here so the NEXT time we enter that dimension we
+     * can hand vanilla the existing instance — chunks already loaded stay
+     * loaded, meshes don't need to rebuild, and there's no multi-second
+     * reload flood from the server.
+     *
+     * Static + process-lifetime because we want it to survive across
+     * session-internal ClientPacketListener reconnects.
+     */
+    private static final Map<ResourceKey<Level>, ClientLevel> seamlessportals$cachedLevels =
+        new ConcurrentHashMap<>();
+
+    /**
      * Track whether we're doing a seamless transition (set before startWaitingForNewLevel,
      * read in the inject, cleared after handleRespawn).
      */
@@ -68,6 +90,17 @@ public abstract class HandleRespawnMixin {
             ResourceKey<Level> currentDim = mc.level.dimension();
             boolean dimensionChanged = destDim != currentDim;
 
+            // Stash the OUTGOING ClientLevel so that when the player returns
+            // to this dimension later, the Redirect below can hand it back
+            // instead of letting vanilla allocate a fresh empty level.
+            // Chunks already loaded, meshes already built — everything stays.
+            if (dimensionChanged) {
+                seamlessportals$cachedLevels.put(currentDim, mc.level);
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS LEVEL-CACHE] Stashed ClientLevel for {}",
+                    currentDim.identifier());
+            }
+
             if (dimensionChanged && RemoteChunkManager.getChunkCount(destDim) > 0) {
                 seamlessportals$seamlessTransition = true;
                 SeamlessPortalsConstants.LOGGER.info(
@@ -77,6 +110,27 @@ public abstract class HandleRespawnMixin {
             }
         }
     }
+
+    // NOTE: the ClientLevel-reuse @Redirect was removed. Reusing a cached
+    // ClientLevel by itself does NOT solve the flash/reload:
+    //
+    //   Minecraft.setLevel(cachedLevel) → updateLevelInEngines →
+    //     levelRenderer.setLevel(cachedLevel) → allChanged()
+    //
+    // allChanged() releases all section buffers and creates a fresh ViewArea,
+    // so every chunk mesh has to recompile from scratch even though the
+    // ClientLevel still holds the chunk data. That's the multi-second blank
+    // terrain you see after teleport.
+    //
+    // IP-style "both dimensions loaded, no flash, no reload" requires:
+    //   1. A LevelRenderer per dimension (not vanilla's single shared one)
+    //   2. Swap mc.levelRenderer on teleport so compiled meshes persist
+    //   3. Preserve the LocalPlayer across dim change (don't destroy+recreate)
+    //   4. Suppress vanilla's chunk resend for dims we've already visited
+    //
+    // That's a multi-system refactor best done as a focused pass, not bolted
+    // onto the respawn path. The `seamlessportals$cachedLevels` map stays
+    // for when that work lands.
 
     /**
      * Skip the loading screen when we have pre-loaded chunks.
