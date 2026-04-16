@@ -34,6 +34,20 @@ public class RemoteChunkManager {
     private static boolean loggedFirstReceive = false;
     private static int totalChunksReceived = 0;
 
+    /**
+     * Queue of pending chunk packets to process. After a dimension change the
+     * server bursts ~289 chunks per portal within a single tick; processing
+     * them all synchronously in handleChunkData used to freeze the render
+     * thread for 4-5 seconds. We enqueue here and drain a small batch per
+     * client tick via {@link #drainPending}.
+     */
+    private record PendingChunk(ResourceKey<Level> dim, int chunkX, int chunkZ, byte[] data) {}
+    private static final java.util.concurrent.ConcurrentLinkedQueue<PendingChunk> pendingChunks =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** Max chunks processed per client tick. ~5ms per chunk → 8 = ~40ms/tick worst case. */
+    private static final int CHUNKS_PER_TICK = 8;
+
     public static void handleChunkData(String dimensionId, int chunkX, int chunkZ, byte[] data) {
         ResourceKey<Level> dim = parseDimensionKey(dimensionId);
         if (dim == null) {
@@ -41,21 +55,40 @@ public class RemoteChunkManager {
             return;
         }
 
-        try {
-            // Route through PortalDimensionManager to load into a real ClientLevel
-            com.warwa.seamlessportals.client.PortalDimensionManager.loadChunkIntoRemoteLevel(
-                dim, chunkX, chunkZ, data);
+        // Enqueue — DON'T process here. Processing is deferred to drainPending()
+        // which runs in ClientTickEvents, spreading the work across multiple
+        // frames so no single frame exceeds the 16ms target.
+        pendingChunks.add(new PendingChunk(dim, chunkX, chunkZ, data));
+    }
 
-            totalChunksReceived++;
-            if (totalChunksReceived % 50 == 0) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] Remote chunks received: {} for {}",
-                    getChunkCount(dim), dimensionId
-                );
+    /**
+     * Called once per client tick. Processes up to {@link #CHUNKS_PER_TICK}
+     * pending chunks, OR until 6ms of wall-clock time has been spent — whichever
+     * comes first. Keeps individual tick costs well under the render budget.
+     */
+    public static void drainPending() {
+        long drainStart = System.nanoTime();
+        final long BUDGET_NS = 6_000_000L;
+        int processed = 0;
+        while (processed < CHUNKS_PER_TICK && (System.nanoTime() - drainStart) < BUDGET_NS) {
+            PendingChunk pc = pendingChunks.poll();
+            if (pc == null) break;
+            try {
+                com.warwa.seamlessportals.client.PortalDimensionManager.loadChunkIntoRemoteLevel(
+                    pc.dim, pc.chunkX, pc.chunkZ, pc.data);
+                totalChunksReceived++;
+                if (totalChunksReceived % 50 == 0) {
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS] Remote chunks received: {} for {} (pending: {})",
+                        getChunkCount(pc.dim), pc.dim.identifier(), pendingChunks.size()
+                    );
+                }
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.error(
+                    "[SEAMLESS] Failed to process chunk [{}, {}] from {}",
+                    pc.chunkX, pc.chunkZ, pc.dim.identifier(), e);
             }
-        } catch (Exception e) {
-            SeamlessPortalsConstants.LOGGER.error("[SEAMLESS] Failed to process chunk [{}, {}] from {}",
-                chunkX, chunkZ, dimensionId, e);
+            processed++;
         }
     }
 

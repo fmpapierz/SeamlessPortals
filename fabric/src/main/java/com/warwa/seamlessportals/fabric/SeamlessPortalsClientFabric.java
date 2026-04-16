@@ -1,9 +1,11 @@
 package com.warwa.seamlessportals.fabric;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
+import com.warwa.seamlessportals.chunk.RemoteChunkManager;
 import com.warwa.seamlessportals.fabric.network.FabricPlatformHelper;
 import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 
 public class SeamlessPortalsClientFabric implements ClientModInitializer {
@@ -24,6 +26,15 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         // For Phase 2 (context-switch), we'll need to revisit this hook point.
         LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
             StencilPortalRenderer.renderPortals();
+        });
+
+        // Drain the remote-chunk queues in small batches per tick. Without
+        // these, the post-teleport chunk processing (both the server's burst
+        // of ~289 incoming chunks AND the secondary-renderer's initial feed
+        // of pre-loaded chunks) would freeze the render thread for seconds.
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            RemoteChunkManager.drainPending();
+            com.warwa.seamlessportals.client.PortalWorldManager.drainPendingFeeds();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

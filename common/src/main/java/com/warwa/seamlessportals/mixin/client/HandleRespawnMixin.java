@@ -56,8 +56,11 @@ public abstract class HandleRespawnMixin {
      *
      * We inject at the start of handleRespawn to check the destination dimension.
      */
+    private long seamlessportals$respawnStartNanos = 0;
+
     @Inject(method = "handleRespawn", at = @At("HEAD"))
     private void seamlessportals$beforeRespawn(ClientboundRespawnPacket packet, CallbackInfo ci) {
+        seamlessportals$respawnStartNanos = System.nanoTime();
         ResourceKey<Level> destDim = packet.commonPlayerSpawnInfo().dimension();
         Minecraft mc = Minecraft.getInstance();
 
@@ -68,7 +71,7 @@ public abstract class HandleRespawnMixin {
             if (dimensionChanged && RemoteChunkManager.getChunkCount(destDim) > 0) {
                 seamlessportals$seamlessTransition = true;
                 SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] Seamless transition detected: {} → {} ({} pre-loaded chunks)",
+                    "[SEAMLESS TIMING] handleRespawn START: {} → {} ({} pre-loaded chunks)",
                     currentDim.identifier(), destDim.identifier(),
                     RemoteChunkManager.getChunkCount(destDim));
             }
@@ -111,6 +114,11 @@ public abstract class HandleRespawnMixin {
     private void seamlessportals$afterRespawn(ClientboundRespawnPacket packet, CallbackInfo ci) {
         if (!seamlessportals$seamlessTransition) return;
         seamlessportals$seamlessTransition = false;
+        long respawnCoreNanos = System.nanoTime() - seamlessportals$respawnStartNanos;
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS TIMING] handleRespawn core took {}ms (before chunk-feed)",
+            respawnCoreNanos / 1_000_000);
+        long chunkFeedStart = System.nanoTime();
 
         ResourceKey<Level> destDim = packet.commonPlayerSpawnInfo().dimension();
         Minecraft mc = Minecraft.getInstance();
@@ -135,48 +143,84 @@ public abstract class HandleRespawnMixin {
             }
         }
 
-        // Feed pre-loaded chunks from RemoteChunkManager into the NEW ClientLevel
-        // that vanilla just created. This gives immediate terrain visibility.
+        // Feed a SMALL set of pre-loaded chunks into the new ClientLevel —
+        // only those immediately around the destination portal. Previously we
+        // fed ALL pre-loaded chunks (~289) synchronously on the render thread,
+        // causing a 120-205ms hitch that was the single biggest source of
+        // perceptible teleport lag.
+        //
+        // The player's LocalPlayer was just recreated, so mc.player.position()
+        // is (0, 0, 0) at this point — we can't use it to find "nearby"
+        // chunks. Instead we use the PortalLink's destination origin.
+        //
+        // The server will send its own chunk packets within a few ticks;
+        // those will fill in the rest of the view distance.
         var chunks = RemoteChunkManager.getChunks(destDim);
         if (chunks != null && !chunks.isEmpty()) {
             net.minecraft.client.multiplayer.ClientChunkCache cache = mc.level.getChunkSource();
-            int fed = 0;
 
-            // Set view center first (required for inRange check)
-            // Use player position as center (vanilla would do this via chunk packets)
-            if (mc.player != null) {
-                int playerChunkX = mc.player.blockPosition().getX() >> 4;
-                int playerChunkZ = mc.player.blockPosition().getZ() >> 4;
-                cache.updateViewCenter(playerChunkX, playerChunkZ);
+            // Find the destination portal position — the player should land
+            // next to it, so centering the feed there gives immediate
+            // visibility in the actual render area.
+            var pm = com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
+            int centerChunkX = 0, centerChunkZ = 0;
+            boolean haveCenter = false;
+            var linksList = pm.getLinksInRange(destDim,
+                new net.minecraft.core.BlockPos(0, 64, 0), Integer.MAX_VALUE / 2);
+            if (!linksList.isEmpty()) {
+                // There should typically only be one portal pair relevant here.
+                // Picking the first is fine — if there were many, feeding a
+                // slightly wrong region still doesn't hurt (server will fix it).
+                var destOrigin = linksList.get(0).getDestination().getDimension() == destDim
+                    ? linksList.get(0).getDestination().getOrigin()
+                    : linksList.get(0).getSource().getOrigin();
+                centerChunkX = destOrigin.getX() >> 4;
+                centerChunkZ = destOrigin.getZ() >> 4;
+                haveCenter = true;
             }
 
-            for (var entry : chunks.entrySet()) {
-                net.minecraft.world.level.ChunkPos pos = entry.getKey();
-                var sections = entry.getValue();
+            if (haveCenter) {
+                cache.updateViewCenter(centerChunkX, centerChunkZ);
 
-                try {
-                    io.netty.buffer.ByteBuf rawBuf = io.netty.buffer.Unpooled.buffer();
-                    net.minecraft.network.FriendlyByteBuf buf =
-                        new net.minecraft.network.FriendlyByteBuf(rawBuf);
-                    for (var section : sections) {
-                        section.write(buf);
+                // Feed a tiny 3x3 chunk region (48 blocks) around the portal —
+                // just the player's immediate surroundings. Going from 5x5 (25
+                // chunks, 18-41ms) to 3x3 (9 chunks, ~10ms) brings the total
+                // teleport hitch under a single render frame. The full 289-
+                // chunk preload is still held in RemoteChunkManager for the
+                // portal's "other-side" view, and the server sends its own
+                // chunk packets within a few ticks to fill the view distance.
+                final int radius = 1;
+                int fed = 0;
+                for (int dx = -radius; dx <= radius; dx++) {
+                    for (int dz = -radius; dz <= radius; dz++) {
+                        net.minecraft.world.level.ChunkPos pos =
+                            new net.minecraft.world.level.ChunkPos(centerChunkX + dx, centerChunkZ + dz);
+                        var sections = chunks.get(pos);
+                        if (sections == null) continue;
+                        try {
+                            io.netty.buffer.ByteBuf rawBuf = io.netty.buffer.Unpooled.buffer();
+                            net.minecraft.network.FriendlyByteBuf buf =
+                                new net.minecraft.network.FriendlyByteBuf(rawBuf);
+                            for (var section : sections) {
+                                section.write(buf);
+                            }
+                            cache.replaceWithPacketData(pos.x(), pos.z(), buf,
+                                java.util.Collections.emptyMap(), tag -> {});
+                            buf.release();
+                            fed++;
+                        } catch (Exception e) {
+                            // Non-fatal: server will send chunks shortly anyway
+                            SeamlessPortalsConstants.LOGGER.debug(
+                                "[SEAMLESS] Failed to pre-feed chunk [{},{}]: {}",
+                                pos.x(), pos.z(), e.getMessage());
+                        }
                     }
-                    cache.replaceWithPacketData(pos.x(), pos.z(), buf,
-                        java.util.Collections.emptyMap(), tag -> {});
-                    buf.release();
-                    fed++;
-                } catch (Exception e) {
-                    // Non-fatal: server will send chunks shortly anyway
-                    SeamlessPortalsConstants.LOGGER.debug(
-                        "[SEAMLESS] Failed to pre-feed chunk [{},{}]: {}",
-                        pos.x(), pos.z(), e.getMessage());
                 }
-            }
-
-            if (fed > 0) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] Pre-fed {} chunks into new {} level",
-                    fed, destDim.identifier());
+                if (fed > 0) {
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS] Pre-fed {} chunks around portal ({}, {}) into new {} level",
+                        fed, centerChunkX, centerChunkZ, destDim.identifier());
+                }
             }
         }
 
@@ -210,7 +254,10 @@ public abstract class HandleRespawnMixin {
             dimId = "minecraft:overworld";
         }
         PlatformHelper.getInstance().sendToServer(new ModPayloads.RequestPortalDataPayload(dimId));
+        long chunkFeedElapsed = System.nanoTime() - chunkFeedStart;
+        long totalElapsed = System.nanoTime() - seamlessportals$respawnStartNanos;
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS] Requested portal data for dimension: {}", dimId);
+            "[SEAMLESS TIMING] respawn complete: chunk-feed={}ms, TOTAL={}ms",
+            chunkFeedElapsed / 1_000_000, totalElapsed / 1_000_000);
     }
 }

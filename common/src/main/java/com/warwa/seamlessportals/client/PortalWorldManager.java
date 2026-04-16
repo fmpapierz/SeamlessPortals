@@ -170,10 +170,40 @@ public class PortalWorldManager {
     }
 
     /**
-     * Feed all existing chunks from RemoteChunkManager into the secondary ClientLevel.
-     * Called when the secondary renderer is first created, to feed chunks that
-     * were received before the renderer existed.
+     * Queue of dimensions whose pre-loaded chunks still need to be fed into
+     * the secondary ClientLevel. Populated by {@link #feedExistingChunks} and
+     * drained a small batch at a time in {@link #drainPendingFeeds}.
+     *
+     * Previously {@code feedExistingChunks} ran synchronously and processed
+     * all ~289 chunks in one call, freezing the render thread for ~3 seconds
+     * right after every teleport when the "dimension we just left" secondary
+     * renderer was created. Splitting it into (queue → drain N/tick) keeps
+     * each frame responsive.
      */
+    private record PendingFeed(ResourceKey<Level> dim, net.minecraft.world.level.ChunkPos pos) {}
+    private static final java.util.concurrent.ConcurrentLinkedQueue<PendingFeed> pendingFeeds =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** Dimensions with at least one feed still pending — used to skip the final "fed all" log until the queue drains. */
+    private static final java.util.Set<ResourceKey<Level>> feedingDims =
+        java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    /** How many chunks to feed per drain call. Each chunk ≈ 10ms → 6 → ~60ms worst case per tick. */
+    private static final int FEEDS_PER_DRAIN = 6;
+
+    /**
+     * Enqueue a SMALL radius of RemoteChunkManager chunks around each portal
+     * in the given dimension. The chunks are fed into the secondary ClientLevel
+     * one batch at a time by {@link #drainPendingFeeds}.
+     *
+     * Previously this queued ALL ~289 pre-loaded chunks, and even with the
+     * batched drain the sheer volume created a backlog of chunk inserts +
+     * mesh rebuilds that caused near-total FPS collapse (0-1 fps) for
+     * multiple seconds. The user only sees the destination through the
+     * portal opening, so a tight radius around each portal covers everything
+     * visible. More distant chunks are still held in RemoteChunkManager and
+     * can be lazily queued later if we ever need them.
+     */
+    private static final int FEED_RADIUS_CHUNKS = 3; // 7x7 = 49 chunks per portal
+
     public static void feedExistingChunks(ResourceKey<Level> dimension) {
         ClientLevel destLevel = levels.get(dimension);
         if (destLevel == null) return;
@@ -181,68 +211,143 @@ public class PortalWorldManager {
         var chunks = com.warwa.seamlessportals.chunk.RemoteChunkManager.getChunks(dimension);
         if (chunks == null || chunks.isEmpty()) return;
 
-        net.minecraft.client.multiplayer.ClientChunkCache cache = destLevel.getChunkSource();
-        int fed = 0;
+        // Find the destination portal positions in this dimension (from any
+        // link where this dimension appears as either source or destination).
+        var pm = com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
+        java.util.List<net.minecraft.core.BlockPos> portalOrigins = new java.util.ArrayList<>();
+        for (var link : pm.getLinksInRange(dimension,
+                new net.minecraft.core.BlockPos(0, 64, 0), Integer.MAX_VALUE / 2)) {
+            if (link.getDestination().getDimension() == dimension) {
+                portalOrigins.add(link.getDestination().getOrigin());
+            } else if (link.getSource().getDimension() == dimension) {
+                portalOrigins.add(link.getSource().getOrigin());
+            }
+        }
 
-        for (var entry : chunks.entrySet()) {
-            net.minecraft.world.level.ChunkPos pos = entry.getKey();
-            int chunkX = pos.x();
-            int chunkZ = pos.z();
-            var sections = entry.getValue();
+        if (portalOrigins.isEmpty()) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PHASE2] feedExistingChunks: no portal origins found for {}, skipping",
+                dimension.identifier());
+            return;
+        }
+
+        java.util.Set<net.minecraft.world.level.ChunkPos> alreadyQueued = new java.util.HashSet<>();
+        int enqueued = 0;
+        for (var origin : portalOrigins) {
+            int cx = origin.getX() >> 4;
+            int cz = origin.getZ() >> 4;
+            for (int dx = -FEED_RADIUS_CHUNKS; dx <= FEED_RADIUS_CHUNKS; dx++) {
+                for (int dz = -FEED_RADIUS_CHUNKS; dz <= FEED_RADIUS_CHUNKS; dz++) {
+                    var pos = new net.minecraft.world.level.ChunkPos(cx + dx, cz + dz);
+                    if (!alreadyQueued.add(pos)) continue;
+                    if (!chunks.containsKey(pos)) continue;
+                    pendingFeeds.add(new PendingFeed(dimension, pos));
+                    enqueued++;
+                }
+            }
+        }
+        if (enqueued > 0) {
+            feedingDims.add(dimension);
+        }
+
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS PHASE2] Queued {} existing chunks (radius {} around {} portal(s)) for async feed to level {}",
+            enqueued, FEED_RADIUS_CHUNKS, portalOrigins.size(), dimension.identifier());
+    }
+
+    /**
+     * Called once per client tick from the main client lifecycle. Processes at
+     * most {@link #FEEDS_PER_DRAIN} queued chunks: loads the section data into
+     * the destination ClientLevel via replaceWithPacketData, applies stored
+     * light, and marks sections dirty on the secondary renderer.
+     */
+    public static void drainPendingFeeds() {
+        if (pendingFeeds.isEmpty()) return;
+
+        long drainStart = System.nanoTime();
+        int processed = 0;
+        // Time-bounded drain: never exceed 8ms of work per tick. Sections
+        // counts vary (overworld chunks are full-height, lots of heavy
+        // sections; nether chunks can be smaller), so we can't predict
+        // per-chunk cost from count alone — just keep drawing chunks until
+        // we either hit FEEDS_PER_DRAIN or the time budget.
+        final long BUDGET_NS = 8_000_000L;
+        while (processed < FEEDS_PER_DRAIN && (System.nanoTime() - drainStart) < BUDGET_NS) {
+            PendingFeed feed = pendingFeeds.poll();
+            if (feed == null) break;
+
+            ClientLevel destLevel = levels.get(feed.dim);
+            if (destLevel == null) {
+                processed++;
+                continue;
+            }
+
+            var sections = com.warwa.seamlessportals.chunk.RemoteChunkManager
+                .getChunks(feed.dim);
+            if (sections == null) {
+                processed++;
+                continue;
+            }
+            net.minecraft.world.level.chunk.LevelChunkSection[] sectionsForChunk = sections.get(feed.pos);
+            if (sectionsForChunk == null) {
+                processed++;
+                continue;
+            }
+
+            net.minecraft.client.multiplayer.ClientChunkCache cache = destLevel.getChunkSource();
+            int chunkX = feed.pos.x();
+            int chunkZ = feed.pos.z();
 
             try {
-                // Do NOT call updateViewCenter per-chunk here!
-                // View center is set ONCE at the portal destination by tryPhase2Render().
-                // Per-chunk updates cause the center to jump, dropping previous chunks.
-
                 io.netty.buffer.ByteBuf rawBuf = io.netty.buffer.Unpooled.buffer();
                 net.minecraft.network.FriendlyByteBuf buf = new net.minecraft.network.FriendlyByteBuf(rawBuf);
-                for (var section : sections) {
+                for (var section : sectionsForChunk) {
                     section.write(buf);
                 }
                 cache.replaceWithPacketData(chunkX, chunkZ, buf,
                     java.util.Collections.emptyMap(), tag -> {});
                 buf.release();
-                fed++;
-            } catch (Exception e) {
-                SeamlessPortalsConstants.LOGGER.error(
-                    "[SEAMLESS PHASE2] feedExistingChunks: Failed chunk [{},{}]", chunkX, chunkZ, e);
-            }
-        }
 
-        if (fed > 0) {
-            // Apply stored light data to the level (fixes "blue box" / invisible terrain)
-            for (var entry : chunks.entrySet()) {
-                net.minecraft.world.level.ChunkPos pos = entry.getKey();
-                int sectionCount = entry.getValue().length;
-                net.minecraft.world.level.chunk.DataLayer[] skyLight =
-                    com.warwa.seamlessportals.chunk.RemoteChunkManager.getSkyLight(dimension, pos);
-                net.minecraft.world.level.chunk.DataLayer[] blockLight =
-                    com.warwa.seamlessportals.chunk.RemoteChunkManager.getBlockLight(dimension, pos);
+                // Apply stored light (fixes "blue box"/unlit chunks).
+                var skyLight = com.warwa.seamlessportals.chunk.RemoteChunkManager
+                    .getSkyLight(feed.dim, feed.pos);
+                var blockLight = com.warwa.seamlessportals.chunk.RemoteChunkManager
+                    .getBlockLight(feed.dim, feed.pos);
                 if (skyLight != null || blockLight != null) {
                     PortalDimensionManager.applyLightToLevel(
-                        destLevel, pos.x(), pos.z(), skyLight, blockLight, sectionCount);
+                        destLevel, chunkX, chunkZ, skyLight, blockLight, sectionsForChunk.length);
                 }
-            }
 
-            // Mark ALL sections dirty on the secondary renderer so
-            // SectionRenderDispatcher compiles them. ClientChunkCache events
-            // go to mc.levelRenderer (main), not our secondary renderer.
-            LevelRenderer destRenderer = renderers.get(dimension);
-            if (destRenderer != null) {
-                for (var entry : chunks.entrySet()) {
-                    net.minecraft.world.level.ChunkPos pos = entry.getKey();
-                    int sectionCount = entry.getValue().length;
+                // Mark sections dirty on the secondary renderer so meshes rebuild.
+                LevelRenderer destRenderer = renderers.get(feed.dim);
+                if (destRenderer != null) {
                     int minSectionY = destLevel.getMinSectionY();
-                    for (int sy = 0; sy < sectionCount; sy++) {
+                    for (int sy = 0; sy < sectionsForChunk.length; sy++) {
                         destRenderer.setSectionDirtyWithNeighbors(
-                            pos.x(), minSectionY + sy, pos.z());
+                            chunkX, minSectionY + sy, chunkZ);
                     }
                 }
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.error(
+                    "[SEAMLESS PHASE2] drainPendingFeeds: Failed chunk [{},{}] in {}",
+                    chunkX, chunkZ, feed.dim.identifier(), e);
             }
 
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] Fed {} existing chunks + light to level {}", fed, dimension.identifier());
+            processed++;
+        }
+
+        // Log when a dimension's feed queue fully drains.
+        for (ResourceKey<Level> d : feedingDims.toArray(new ResourceKey[0])) {
+            boolean anyStillPending = false;
+            for (PendingFeed pf : pendingFeeds) {
+                if (pf.dim == d) { anyStillPending = true; break; }
+            }
+            if (!anyStillPending) {
+                feedingDims.remove(d);
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS PHASE2] Finished async-feeding chunks for level {}",
+                    d.identifier());
+            }
         }
     }
 
