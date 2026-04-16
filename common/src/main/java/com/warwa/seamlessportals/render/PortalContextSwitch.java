@@ -361,13 +361,12 @@ public class PortalContextSwitch {
             destPortalNormal
         );
 
-        // Apply the SAME walk-bob / hurt-tilt to the destination projection as
-        // GameRenderer applies to the main projection, so the portal view moves
-        // consistently with the source frame. Without this, the source obsidian
-        // frame bobs on screen but the destination FBO is clean — the composite
-        // then makes the destination content appear to "slide" within the
-        // bobbing frame, which looks wrong.
-        applyMainCameraBobToProjection(destCameraState.projectionMatrix, mainCameraState);
+        // NOTE: no longer applying bob to the destination projection.
+        // Instead, MainProjectionBobMixin skips the main projection's bob
+        // entirely (world + destination both render without bob), while the
+        // hand still bobs via its own pose stack in renderItemInHand. This
+        // avoids the subtle rendering artifacts that appeared when we
+        // multiplied bob into the destination projection directly.
 
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =

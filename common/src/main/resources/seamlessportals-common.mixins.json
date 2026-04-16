@@ -20,7 +20,8 @@
     "client.GameRendererLightmapMixin",
     "client.LevelRendererAccessorMixin",
     "client.HandleRespawnMixin",
-    "client.MinecraftRenderTargetMixin"
+    "client.MinecraftRenderTargetMixin",
+    "client.MainProjectionBobMixin"
   ],
   "mixins": [
     "EntityMixin",
