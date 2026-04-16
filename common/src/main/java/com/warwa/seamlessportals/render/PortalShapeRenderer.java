@@ -18,6 +18,26 @@ import net.minecraft.world.phys.Vec3;
 public class PortalShapeRenderer {
 
     /**
+     * Inset applied to the stencil-write and depth-clear quads along all four edges.
+     *
+     * Without this, the vertical portal quad shares its boundary Y/X/Z with the
+     * horizontal top/bottom faces of the obsidian frame (e.g. the bottom obsidian's
+     * top face at Y=origin.Y and the portal quad's bottom edge at Y=origin.Y).
+     * Pixels on those horizontal surfaces BEHIND the portal plane pass LEQUAL
+     * against the quad, get stencil=1, and are overwritten by the FBO composite.
+     *
+     * Since PortalFrameSuppressor hides the destination obsidian in the FBO,
+     * the "overwrite" content at those pixels is destination sky/terrain — so
+     * the SOURCE obsidian's back half appears transparent, and floor blocks
+     * adjacent to the portal base appear as a dark gap.
+     *
+     * 0.02 is ~1/50th of a block — imperceptibly small visually, but enough
+     * to move the quad boundary cleanly inside the portal opening so it no
+     * longer coincides with frame/floor surfaces.
+     */
+    private static final float EDGE_INSET = 0.05f;
+
+    /**
      * Draw the portal face quad using debugQuads RenderType.
      * Color is white with zero alpha (invisible but writes to stencil/depth).
      */
@@ -81,6 +101,17 @@ public class PortalShapeRenderer {
                 minZ = Math.min(minZ, o.getZ());
                 maxZ = Math.max(maxZ, o.getZ() + w);
             }
+        }
+
+        // Match the stencil-write quad bounds exactly (same inset).
+        minY += EDGE_INSET;
+        maxY -= EDGE_INSET;
+        if (axis == Direction.Axis.X) {
+            minX += EDGE_INSET;
+            maxX -= EDGE_INSET;
+        } else {
+            minZ += EDGE_INSET;
+            maxZ -= EDGE_INSET;
         }
 
         int color = 0x01000000; // alpha=1, won't be discarded by shader
@@ -349,6 +380,24 @@ public class PortalShapeRenderer {
                 minZ = Math.min(minZ, o.getZ());
                 maxZ = Math.max(maxZ, o.getZ() + w);
             }
+        }
+
+        // Inset all four edges to prevent the vertical portal quad from
+        // sharing its boundary with horizontal obsidian frame surfaces
+        // (top face of bottom frame, bottom face of top frame) and
+        // surrounding floor blocks. Without this, the back half of those
+        // surfaces receives stencil=1 via LEQUAL depth-test tie, then gets
+        // overwritten by the FBO composite — since the destination obsidian
+        // is suppressed in the FBO, the source frame/floor appears to have
+        // a "missing half".
+        minY += EDGE_INSET;
+        maxY -= EDGE_INSET;
+        if (axis == Direction.Axis.X) {
+            minX += EDGE_INSET;
+            maxX -= EDGE_INSET;
+        } else {
+            minZ += EDGE_INSET;
+            maxZ -= EDGE_INSET;
         }
 
         int color = 0x01000000;

@@ -256,6 +256,18 @@ public class PortalContextSwitch {
 
             visibleSections.clear();
             int compiled = 0;
+            // PortalFrameSuppressor DISABLED:
+            // User expects to see the destination obsidian frame through the
+            // source portal opening (matches Immersive Portals' classical
+            // behaviour). Hiding it left empty sky/void in the FBO at those
+            // pixels, and any stencil bleed onto source floor/frame pixels
+            // showed that void through them ("X-ray floor" effect).
+            //
+            // Force-dirty sections near the destination portal ONCE per portal
+            // so any previously suppression-baked meshes get regenerated with
+            // the full obsidian frame. After that initial pass, the normal
+            // isDirty() path handles updates as usual.
+            PortalFrameSuppressor.maybeForceDirtyForPortal(destPortal, viewArea);
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
                 if (section == null) continue;
                 long sectionNode = section.getSectionNode();
@@ -313,14 +325,49 @@ public class PortalContextSwitch {
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 
+        // Zero out bob/hurt state on destCameraState as a defensive measure
+        // (in case any render-path consults it directly — vanilla doesn't
+        // inside LevelRenderer.renderLevel, but mods/mixins might).
+        if (destCameraState.entityRenderState != null) {
+            destCameraState.entityRenderState.bob = 0.0f;
+            destCameraState.entityRenderState.backwardsInterpolatedWalkDistance = 0.0f;
+            destCameraState.entityRenderState.hurtTime = -1.0f;
+            destCameraState.entityRenderState.hurtDuration = 1;
+            destCameraState.entityRenderState.isDeadOrDying = false;
+        }
+
         // Oblique near-plane clipping — clips terrain between camera and portal.
+        // Shift the clip plane ~0.55 blocks TOWARD the destination camera so it
+        // sits slightly on the camera-side of the destination portal's near face
+        // (not the portal center, and not coplanar with the near face itself).
+        //
+        // 0.5 would put the plane exactly on the destination obsidian's near face
+        // — floating-point precision then makes the obsidian flicker in and out
+        // as the camera moves. 0.55 gives a 0.05-block safety margin while still
+        // keeping the clip plane near enough to the portal to hide anything in
+        // front of it.
+        Vec3 destPortalNormal = destPortal.getNormal();
+        Vec3 destPortalCenter = destPortal.getCenter();
+        Vec3 toCamera = destCameraPos.subtract(destPortalCenter);
+        double sideSign = Math.signum(toCamera.dot(destPortalNormal));
+        if (sideSign == 0) sideSign = 1; // fallback: camera exactly on portal plane
+        Vec3 shiftedClipCenter = destPortalCenter.add(destPortalNormal.scale(sideSign * 0.55));
+
         boolean obliqueApplied = applyObliqueNearPlane(
             destCameraState.projectionMatrix,
             virtualCamera,
             destCameraPos,
-            destPortal.getCenter(),
-            destPortal.getNormal()
+            shiftedClipCenter,
+            destPortalNormal
         );
+
+        // Apply the SAME walk-bob / hurt-tilt to the destination projection as
+        // GameRenderer applies to the main projection, so the portal view moves
+        // consistently with the source frame. Without this, the source obsidian
+        // frame bobs on screen but the destination FBO is clean — the composite
+        // then makes the destination content appear to "slide" within the
+        // bobbing frame, which looks wrong.
+        applyMainCameraBobToProjection(destCameraState.projectionMatrix, mainCameraState);
 
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =
@@ -405,20 +452,29 @@ public class PortalContextSwitch {
             mvStack.pushMatrix();
             mvStack.identity();
 
-            // Set the oblique projection on RenderSystem using our own buffer.
-            // Do NOT use MC's levelProjectionMatrixBuffer — that overwrites the
-            // main renderer's buffer content, corrupting clouds/sky after restore.
-            if (obliqueApplied) {
-                RenderSystem.backupProjectionMatrix();
-                RenderSystem.setProjectionMatrix(
-                    writeProjectionBuffer(destCameraState.projectionMatrix, false),
-                    com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
-                if (phase2SuccessCount <= 3) {
-                    SeamlessPortalsConstants.LOGGER.info(
-                        "[SEAMLESS DEBUG] Projection: backed up + set oblique. m22={} m32={}",
-                        String.format("%.4f", destCameraState.projectionMatrix.m22()),
-                        String.format("%.4f", destCameraState.projectionMatrix.m32()));
-                }
+            // ALWAYS override the RenderSystem projection during the destination
+            // render — even if oblique clipping wasn't applied. The main render
+            // path in GameRenderer.renderLevel has already pushed the BOBBED
+            // main-camera projection onto RenderSystem (it multiplies the walk-
+            // bob pose into the projection matrix before levelRenderer runs).
+            // If we skip this override, the destination view inherits the
+            // player's footstep bob and the entire destination world bobs
+            // along with every step.
+            //
+            // destCameraState.projectionMatrix was copied from mainCameraState.
+            // projectionMatrix (which stays CLEAN — the bob only lives in
+            // GameRenderer's local variable + its ring buffer), then optionally
+            // had oblique clipping applied to row 2. Either way it's bob-free.
+            RenderSystem.backupProjectionMatrix();
+            RenderSystem.setProjectionMatrix(
+                writeProjectionBuffer(destCameraState.projectionMatrix, false),
+                com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+            if (phase2SuccessCount <= 3) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS DEBUG] Projection: backed up + set {}. m22={} m32={}",
+                    obliqueApplied ? "oblique" : "clean",
+                    String.format("%.4f", destCameraState.projectionMatrix.m22()),
+                    String.format("%.4f", destCameraState.projectionMatrix.m32()));
             }
 
             // CRITICAL: Update the Globals UBO with the destination camera position.
@@ -460,13 +516,14 @@ public class PortalContextSwitch {
             isRenderingPortal = false;
             portalLightmapOverride = null;
 
-            // Restore RenderSystem projection using MC's native restore
-            if (obliqueApplied) {
-                RenderSystem.restoreProjectionMatrix();
-                if (phase2SuccessCount <= 3) {
-                    SeamlessPortalsConstants.LOGGER.info(
-                        "[SEAMLESS DEBUG] Projection: restored from backup");
-                }
+            // Restore RenderSystem projection using MC's native restore.
+            // We ALWAYS back up + restore now (not just when oblique applied)
+            // so the destination render cannot inherit the main camera's
+            // bobbed projection buffer.
+            RenderSystem.restoreProjectionMatrix();
+            if (phase2SuccessCount <= 3) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS DEBUG] Projection: restored from backup");
             }
 
             // Restore Globals UBO with main camera position
@@ -642,6 +699,68 @@ public class PortalContextSwitch {
         }
 
         return true;
+    }
+
+    /**
+     * Apply GameRenderer's walk-bob + hurt-tilt to the given projection matrix,
+     * using the MAIN camera's render state as the bob source.
+     *
+     * Mirrors the sequence in GameRenderer.renderLevel:
+     *   PoseStack bobStack = new PoseStack();
+     *   this.bobHurt(cameraState, bobStack);
+     *   if (optionsState.bobView) this.bobView(cameraState, bobStack);
+     *   projectionMatrix.mul(bobStack.last().pose());
+     *
+     * so that the destination render's projection has the same visible bob as
+     * the source render. Without this, the source frame bobs but the destination
+     * FBO is still — and the composite makes the destination content appear to
+     * slide within the bobbing frame.
+     */
+    private static void applyMainCameraBobToProjection(
+            Matrix4f projectionMatrix,
+            CameraRenderState mainState) {
+        if (mainState == null || mainState.entityRenderState == null) return;
+
+        Minecraft mc = Minecraft.getInstance();
+        boolean bobViewEnabled = mc.gameRenderer.getGameRenderState().optionsRenderState.bobView;
+        double damageTiltStrength = mc.gameRenderer.getGameRenderState().optionsRenderState.damageTiltStrength;
+
+        Matrix4f bob = new Matrix4f();
+
+        // bobHurt
+        if (mainState.entityRenderState.isLiving) {
+            if (mainState.entityRenderState.isDeadOrDying) {
+                float duration = Math.min(mainState.entityRenderState.deathTime, 20.0f);
+                bob.rotateZ((float) Math.toRadians(40.0f - 8000.0f / (duration + 200.0f)));
+            }
+            float hurt = mainState.entityRenderState.hurtTime;
+            if (hurt >= 0.0f) {
+                hurt /= mainState.entityRenderState.hurtDuration;
+                hurt = net.minecraft.util.Mth.sin(hurt * hurt * hurt * hurt * (float) Math.PI);
+                float rr = mainState.entityRenderState.hurtDir;
+                bob.rotateY((float) Math.toRadians(-rr));
+                float tiltAmount = (float)(-hurt * 14.0 * damageTiltStrength);
+                bob.rotateZ((float) Math.toRadians(tiltAmount));
+                bob.rotateY((float) Math.toRadians(rr));
+            }
+        }
+
+        // bobView
+        if (bobViewEnabled && mainState.entityRenderState.isPlayer) {
+            float walkDist = mainState.entityRenderState.backwardsInterpolatedWalkDistance;
+            float bobAmt = mainState.entityRenderState.bob;
+            bob.translate(
+                net.minecraft.util.Mth.sin(walkDist * (float) Math.PI) * bobAmt * 0.5f,
+                -Math.abs(net.minecraft.util.Mth.cos(walkDist * (float) Math.PI) * bobAmt),
+                0.0f
+            );
+            bob.rotateZ((float) Math.toRadians(
+                net.minecraft.util.Mth.sin(walkDist * (float) Math.PI) * bobAmt * 3.0f));
+            bob.rotateX((float) Math.toRadians(
+                Math.abs(net.minecraft.util.Mth.cos(walkDist * (float) Math.PI - 0.2f) * bobAmt) * 5.0f));
+        }
+
+        projectionMatrix.mul(bob);
     }
 
     /**
