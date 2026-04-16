@@ -12,6 +12,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.NetherPortalBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.portal.PortalForcer;
@@ -218,8 +219,17 @@ public class PortalManager {
         Optional<BlockUtil.FoundRectangle> createdRect = portalForcer.createPortal(expectedPos, source.getAxis());
 
         if (createdRect.isPresent()) {
+            BlockPos minCorner = createdRect.get().minCorner;
+
+            // Vanilla createPortal hardcodes 2x3 dimensions. Resize the just-
+            // created destination portal to match the source portal's size so
+            // both sides are symmetric windows.
+            resizePortalToMatchSource(
+                destLevel, minCorner, source.getAxis(),
+                source.getWidth(), source.getHeight());
+
             // Portal was created successfully, detect its actual dimensions
-            PortalInfo actualDest = detectActualPortal(source.getType(), destDim, destLevel, createdRect.get().minCorner, source.getAxis());
+            PortalInfo actualDest = detectActualPortal(source.getType(), destDim, destLevel, minCorner, source.getAxis());
             registerPortal(actualDest);
             createLink(source, actualDest);
             sendLinkToClients(source, actualDest, server);
@@ -241,6 +251,94 @@ public class PortalManager {
             createLink(source, virtualDest);
             sendLinkToClients(source, virtualDest, server);
         }
+    }
+
+    /**
+     * Resize the just-created vanilla 2x3 destination portal so it matches the
+     * source portal's dimensions. Vanilla's {@code PortalForcer.createPortal}
+     * hardcodes a 2x3 opening; without this, a 3x4 overworld portal would link
+     * to a 2x3 nether portal and the player would see a mismatched window.
+     *
+     * <p>This operates on the portal coordinate system vanilla uses in
+     * {@code PortalForcer.createPortal}:
+     * <ul>
+     *   <li>{@code minCorner} is the bottom-width-start portal block (the
+     *       {@code closestFullPosition} vanilla returned in the FoundRectangle).</li>
+     *   <li>For axis=X the "width" direction is EAST (+X).</li>
+     *   <li>For axis=Z the "width" direction is NORTH (-Z).</li>
+     *   <li>Height is +Y.</li>
+     * </ul>
+     *
+     * <p>The resize overwrites anything in the way of the larger portal. We don't
+     * attempt to validate the terrain around the expansion — vanilla already
+     * placed a 2x3 frame there, and overwriting a few extra blocks is the price
+     * of symmetric portals. Source size is assumed ≥ 2x3 (vanilla's minimum
+     * and also our enforced minimum on the source side).
+     */
+    private static void resizePortalToMatchSource(
+            ServerLevel destLevel, BlockPos minCorner, Direction.Axis axis,
+            int sourceWidth, int sourceHeight) {
+        if (sourceWidth == 2 && sourceHeight == 3) {
+            return; // already the right size
+        }
+
+        // Match vanilla PortalForcer.createPortal's direction convention:
+        //   Direction.get(Direction.AxisDirection.POSITIVE, axis)
+        // i.e. EAST for axis=X, SOUTH for axis=Z. The portal extends from
+        // `minCorner` (= vanilla's closestFullPosition) in this +axis
+        // direction. Earlier I used NORTH for axis=Z, which placed the new
+        // portal blocks and the new frame on the WRONG side of vanilla's
+        // 2x3, producing a double-thick obsidian column and a portal whose
+        // real position was offset by ~1 block from what detection said.
+        Direction widthDir = Direction.get(Direction.AxisDirection.POSITIVE, axis);
+
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        BlockState portalBlockState = Blocks.NETHER_PORTAL.defaultBlockState()
+            .setValue(NetherPortalBlock.AXIS, axis);
+        BlockState obsidian = Blocks.OBSIDIAN.defaultBlockState();
+
+        // ORDER MATTERS: place the obsidian frame FIRST, then the portal blocks.
+        // If we do it the other way round, the obsidian setBlock(flag=3) triggers
+        // neighbor updates on the just-placed portal blocks. Those portal blocks
+        // then run their "is my frame valid?" self-check against a still-partial
+        // frame, fail, and self-destruct. Vanilla's PortalForcer follows the same
+        // "frame first, then portal blocks" order for this reason.
+
+        // Step 1 — obsidian ring around the source-sized opening.
+        // Also overwrites the PARTIAL vanilla 2x3 frame edges that now sit
+        // inside the new larger opening (those get re-set to portal blocks in
+        // step 2). Everything outside the new opening is obsidian after this.
+        for (int w = -1; w <= sourceWidth; w++) {
+            for (int h = -1; h <= sourceHeight; h++) {
+                boolean onFrame = (w == -1) || (w == sourceWidth)
+                               || (h == -1) || (h == sourceHeight);
+                if (!onFrame) continue;
+                pos.setWithOffset(minCorner,
+                    w * widthDir.getStepX(),
+                    h,
+                    w * widthDir.getStepZ());
+                destLevel.setBlock(pos, obsidian, 3);
+            }
+        }
+
+        // Step 2 — portal blocks filling the source-sized opening. Flag 18
+        // (UPDATE_CLIENTS | UPDATE_KNOWN_SHAPE) avoids triggering neighbor
+        // self-checks so the portal block placements are durable. At this
+        // point the full 3x4 (or whatever) obsidian ring is already in place,
+        // so any self-check that does fire finds a valid frame.
+        for (int w = 0; w < sourceWidth; w++) {
+            for (int h = 0; h < sourceHeight; h++) {
+                pos.setWithOffset(minCorner,
+                    w * widthDir.getStepX(),
+                    h,
+                    w * widthDir.getStepZ());
+                destLevel.setBlock(pos, portalBlockState, 18);
+            }
+        }
+
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS] Resized destination portal at {} (axis={}) from 2x3 to {}x{}",
+            minCorner, axis, sourceWidth, sourceHeight);
     }
 
     private PortalInfo detectActualPortal(

@@ -174,9 +174,11 @@ public class PortalContextSwitch {
 
         if (phase2SuccessCount <= 3) {
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS] FBO render: src={} ({}), dest={} ({})",
+                "[SEAMLESS] FBO render: src={} ({}) size={}x{} axis={}, dest={} ({}) size={}x{} axis={}",
                 srcPortal.getOrigin(), srcPortal.getDimension().identifier(),
-                destPortal.getOrigin(), destDim.identifier());
+                srcPortal.getWidth(), srcPortal.getHeight(), srcPortal.getAxis(),
+                destPortal.getOrigin(), destDim.identifier(),
+                destPortal.getWidth(), destPortal.getHeight(), destPortal.getAxis());
         }
 
         // ===== 1. Compute destination camera position =====
