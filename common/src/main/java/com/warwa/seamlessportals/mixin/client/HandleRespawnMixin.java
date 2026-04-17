@@ -570,17 +570,15 @@ public abstract class HandleRespawnMixin {
             }
         }
 
-        // Clean up secondary renderer for the dimension we just arrived in
-        // (we're now the primary level for this dimension)
-        if (PortalWorldManager.hasRenderer(destDim)) {
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS] Cleaning up secondary renderer for {} (now primary)",
-                destDim.identifier());
-            // Don't fully cleanup — just remove this dimension's secondary renderer.
-            // The old dimension will need a secondary renderer set up when looking
-            // back through portals.
-            PortalWorldManager.removeRenderer(destDim);
-        }
+        // Subphase 1 (2026-04-17): no longer needed. After the unified-map
+        // refactor of PortalWorldManager, promoteToMain already removes the
+        // incoming dim's entry from {@code renderers}/{@code levels} before
+        // we get here (it has to — the renderer is now {@code mc.levelRenderer}
+        // and the level is {@code mc.level}). So at this point
+        // {@code hasRenderer(destDim)} is guaranteed false for a seamless
+        // transition. The original call here dated to an earlier architecture
+        // where promoteToMain used a "dormant" bucket and a stale secondary
+        // in {@code renderers} could linger until this cleanup ran.
 
         // Reset chunk-fed state so the portal view system re-initializes
         // when looking at portals from the new dimension

@@ -110,6 +110,45 @@ public class PortalContextSwitch {
     private static final int COMPILE_SCHEDULE_RADIUS_SQ =
         COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
 
+    /**
+     * Atomically swap {@code mc.level}, {@code mc.levelRenderer}, and
+     * {@code mc.mainRenderTarget} to the destination for the duration of
+     * {@code renderCallback}, then restore. Always restores in a
+     * {@code finally} even if the callback throws.
+     *
+     * <p>Mirrors IP's {@code ClientWorldLoader.withSwitchedWorld} pattern.
+     * Subphase 2 will expand this to also swap the particle engine's level
+     * and the network handler's level, matching IP more fully.
+     *
+     * <p>Used by {@link #doFboRender} to centralize the primary-state swap
+     * so future edits (e.g. adding particle/network swap, or moving the
+     * hook point) only need to change this one method.
+     */
+    public static void withSwitchedWorld(
+            ClientLevel destLevel,
+            LevelRenderer destRenderer,
+            com.mojang.blaze3d.pipeline.RenderTarget destMainRT,
+            Runnable renderCallback) {
+        Minecraft mc = Minecraft.getInstance();
+        com.mojang.blaze3d.pipeline.RenderTarget savedMainRT = mc.getMainRenderTarget();
+        ClientLevel savedLevel = mc.level;
+        LevelRenderer savedRenderer = mc.levelRenderer;
+        try {
+            ((MinecraftRenderTargetMixin) (Object) mc)
+                .seamlessportals$setMainRenderTarget(destMainRT);
+            mc.level = destLevel;
+            ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
+                .seamlessportals$setLevelRenderer(destRenderer);
+            renderCallback.run();
+        } finally {
+            mc.level = savedLevel;
+            ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
+                .seamlessportals$setLevelRenderer(savedRenderer);
+            ((MinecraftRenderTargetMixin) (Object) mc)
+                .seamlessportals$setMainRenderTarget(savedMainRT);
+        }
+    }
+
     public static void resetChunkFedState(ResourceKey<Level> dimension) {
         lastFedChunkCount.remove(dimension);
         phase2FailCount = 0;
