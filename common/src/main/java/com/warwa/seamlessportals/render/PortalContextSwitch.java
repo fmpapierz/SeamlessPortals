@@ -563,154 +563,118 @@ public class PortalContextSwitch {
         dimHelper.updateAndRender(virtualCamera, partialTick);
         portalLightmapOverride = dimHelper.getLightmap().getTextureView();
 
-        // ===== 9. Full context switch (match IP's withSwitchedWorld) =====
-        // Save state
-        RenderTarget savedMainRT = mc.getMainRenderTarget();
-        ClientLevel savedLevel = mc.level;
-        LevelRenderer savedRenderer = mc.levelRenderer;
+        // ===== 9. Full context switch via withSwitchedWorld =====
+        // Pre-capture for the lambda's nested finally (Globals UBO restore
+        // needs source-side game time + camera position; both come from
+        // mc.level / mainCamera before the swap).
+        final Matrix4f destViewMatrix = new Matrix4f();
+        virtualCamera.getViewRotationMatrix(destViewMatrix);
+        final Vec3 savedCameraPos = mainCamera.position();
+        final long savedLevelGameTime = mc.level.getGameTime();
+        final boolean obliqueAppliedFinal = obliqueApplied;
 
-        // Swap to destination context
-        ((MinecraftRenderTargetMixin)(Object) mc).seamlessportals$setMainRenderTarget(secondaryFbo);
-        mc.level = destLevel;
-        ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
-            .seamlessportals$setLevelRenderer(destRenderer);
-
-        // Debug: verify swaps
-        if (phase2SuccessCount <= 3) {
-            int mainFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] Context switch: level={} renderer={} mainRT={}x{} glFbo={}",
-                mc.level.dimension().identifier(),
-                mc.levelRenderer == destRenderer ? "dest" : "WRONG",
-                mc.getMainRenderTarget().width, mc.getMainRenderTarget().height,
-                mainFbo);
-        }
-
-        // ===== 10. Set recursion guard and call renderLevel() =====
-        // Save main camera pos for Globals UBO restore (must be before try block)
-        Vec3 savedCameraPos = mainCamera.position();
         isRenderingPortal = true;
         try {
-            // With full context switch, renderLevel() sees:
-            // - mc.level = destLevel (fog, biome, sky from destination)
-            // - mc.levelRenderer = destRenderer (correct translucent target, etc.)
-            // - mc.getMainRenderTarget() = secondaryFbo (renders to FBO, not screen)
-            // This matches IP's withSwitchedWorld() + RendererUsingFrameBuffer.doRenderPortal()
-            Matrix4f destViewMatrix = new Matrix4f();
-            virtualCamera.getViewRotationMatrix(destViewMatrix);
+            withSwitchedWorld(
+                destLevel, destRenderer, secondaryFbo, virtualCamera,
+                dimHelper.getLightmap(),
+                () -> {
+                    if (phase2SuccessCount <= 3) {
+                        int mainFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+                        SeamlessPortalsConstants.LOGGER.info(
+                            "[SEAMLESS DEBUG] Context switch: level={} renderer={} mainRT={}x{} glFbo={}",
+                            mc.level.dimension().identifier(),
+                            mc.levelRenderer == destRenderer ? "dest" : "WRONG",
+                            mc.getMainRenderTarget().width, mc.getMainRenderTarget().height,
+                            mainFbo);
+                        SeamlessPortalsConstants.LOGGER.info(
+                            "[SEAMLESS DEBUG] renderLevel fogColor=({},{},{},{}) destChunks.maxIndices={} skyRender=true cam=({},{},{})",
+                            destFogData.color.x, destFogData.color.y, destFogData.color.z, destFogData.color.w,
+                            destChunks.maxIndicesRequired(),
+                            (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z);
+                        SeamlessPortalsConstants.LOGGER.info(
+                            "[SEAMLESS DEBUG] fogDistances: envStart={} envEnd={} renderStart={} renderEnd={} skyEnd={} cloudEnd={}",
+                            destFogData.environmentalStart, destFogData.environmentalEnd,
+                            destFogData.renderDistanceStart, destFogData.renderDistanceEnd,
+                            destFogData.skyEnd, destFogData.cloudEnd);
+                    }
 
-            if (phase2SuccessCount <= 3) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS DEBUG] renderLevel fogColor=({},{},{},{}) destChunks.maxIndices={} skyRender=true cam=({},{},{})",
-                    destFogData.color.x, destFogData.color.y, destFogData.color.z, destFogData.color.w,
-                    destChunks.maxIndicesRequired(),
-                    (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z);
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS DEBUG] fogDistances: envStart={} envEnd={} renderStart={} renderEnd={} skyEnd={} cloudEnd={}",
-                    destFogData.environmentalStart, destFogData.environmentalEnd,
-                    destFogData.renderDistanceStart, destFogData.renderDistanceEnd,
-                    destFogData.skyEnd, destFogData.cloudEnd);
-            }
+                    GL11.glDisable(GL11.GL_STENCIL_TEST);
+                    org.joml.Matrix4fStack mvStack = RenderSystem.getModelViewStack();
+                    mvStack.pushMatrix();
+                    mvStack.identity();
+                    try {
+                        // ALWAYS override the RenderSystem projection during the destination
+                        // render — even if oblique clipping wasn't applied. The main render
+                        // path in GameRenderer.renderLevel has already pushed the BOBBED
+                        // main-camera projection onto RenderSystem (walk-bob multiplied in
+                        // before levelRenderer runs). Skipping the override would let the
+                        // destination world inherit the player's footstep bob.
+                        RenderSystem.backupProjectionMatrix();
+                        RenderSystem.setProjectionMatrix(
+                            writeProjectionBuffer(destCameraState.projectionMatrix, false),
+                            com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+                        if (phase2SuccessCount <= 3) {
+                            SeamlessPortalsConstants.LOGGER.info(
+                                "[SEAMLESS DEBUG] Projection: backed up + set {}. m22={} m32={}",
+                                obliqueAppliedFinal ? "oblique" : "clean",
+                                String.format("%.4f", destCameraState.projectionMatrix.m22()),
+                                String.format("%.4f", destCameraState.projectionMatrix.m32()));
+                        }
+                        try {
+                            mc.gameRenderer.getGlobalSettingsUniform().update(
+                                mc.getMainRenderTarget().width,
+                                mc.getMainRenderTarget().height,
+                                mc.gameRenderer.getGameRenderState().optionsRenderState.glintStrength,
+                                destLevel.getGameTime(),
+                                deltaTracker,
+                                mc.gameRenderer.getGameRenderState().optionsRenderState.menuBackgroundBlurriness,
+                                destCameraPos,
+                                false
+                            );
 
-            // CRITICAL: Disable stencil test before rendering to secondary FBO.
-            GL11.glDisable(GL11.GL_STENCIL_TEST);
-
-            // CRITICAL: Reset model-view stack to identity before renderLevel().
-            org.joml.Matrix4fStack mvStack = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
-            mvStack.pushMatrix();
-            mvStack.identity();
-
-            // ALWAYS override the RenderSystem projection during the destination
-            // render — even if oblique clipping wasn't applied. The main render
-            // path in GameRenderer.renderLevel has already pushed the BOBBED
-            // main-camera projection onto RenderSystem (it multiplies the walk-
-            // bob pose into the projection matrix before levelRenderer runs).
-            // If we skip this override, the destination view inherits the
-            // player's footstep bob and the entire destination world bobs
-            // along with every step.
-            //
-            // destCameraState.projectionMatrix was copied from mainCameraState.
-            // projectionMatrix (which stays CLEAN — the bob only lives in
-            // GameRenderer's local variable + its ring buffer), then optionally
-            // had oblique clipping applied to row 2. Either way it's bob-free.
-            RenderSystem.backupProjectionMatrix();
-            RenderSystem.setProjectionMatrix(
-                writeProjectionBuffer(destCameraState.projectionMatrix, false),
-                com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
-            if (phase2SuccessCount <= 3) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS DEBUG] Projection: backed up + set {}. m22={} m32={}",
-                    obliqueApplied ? "oblique" : "clean",
-                    String.format("%.4f", destCameraState.projectionMatrix.m22()),
-                    String.format("%.4f", destCameraState.projectionMatrix.m32()));
-            }
-
-            // CRITICAL: Update the Globals UBO with the destination camera position.
-            mc.gameRenderer.getGlobalSettingsUniform().update(
-                mc.getMainRenderTarget().width,
-                mc.getMainRenderTarget().height,
-                mc.gameRenderer.getGameRenderState().optionsRenderState.glintStrength,
-                destLevel.getGameTime(),
-                deltaTracker,
-                mc.gameRenderer.getGameRenderState().optionsRenderState.menuBackgroundBlurriness,
-                destCameraPos,
-                false // RGSS flag — matches main camera
+                            destRenderer.renderLevel(
+                                GraphicsResourceAllocator.UNPOOLED,
+                                deltaTracker,
+                                false,
+                                destCameraState,
+                                destViewMatrix,
+                                destFogBuffer,
+                                destFogData.color,
+                                true,
+                                destChunks
+                            );
+                        } finally {
+                            // Restore Globals UBO with the source camera while mc.mainRT is
+                            // still the secondary FBO (sizes match — secondaryFbo was sized
+                            // to main FBO at prepare time).
+                            mc.gameRenderer.getGlobalSettingsUniform().update(
+                                mc.getMainRenderTarget().width,
+                                mc.getMainRenderTarget().height,
+                                mc.gameRenderer.getGameRenderState().optionsRenderState.glintStrength,
+                                savedLevelGameTime,
+                                deltaTracker,
+                                mc.gameRenderer.getGameRenderState().optionsRenderState.menuBackgroundBlurriness,
+                                savedCameraPos,
+                                false
+                            );
+                            RenderSystem.restoreProjectionMatrix();
+                            if (phase2SuccessCount <= 3) {
+                                SeamlessPortalsConstants.LOGGER.info(
+                                    "[SEAMLESS DEBUG] Projection: restored from backup");
+                            }
+                        }
+                    } finally {
+                        mvStack.popMatrix();
+                        GL11.glEnable(GL11.GL_STENCIL_TEST);
+                        GL11.glStencilFunc(GL11.GL_EQUAL, 1, 0xFF);
+                        GL11.glStencilMask(0x00);
+                    }
+                }
             );
-
-            destRenderer.renderLevel(
-                GraphicsResourceAllocator.UNPOOLED,
-                deltaTracker,
-                false,
-                destCameraState,
-                destViewMatrix,
-                destFogBuffer,
-                destFogData.color,
-                true,
-                destChunks
-            );
-
         } finally {
-            // Restore model-view stack FIRST (must be in finally to prevent
-            // stack overflow if renderLevel throws — stack size limit is 16)
-            com.mojang.blaze3d.systems.RenderSystem.getModelViewStack().popMatrix();
-
-            // Re-enable stencil (disabled for FBO renderLevel). Without this,
-            // if renderLevel throws, the Phase 1 fallback renders colored blocks
-            // everywhere without stencil clipping.
-            GL11.glEnable(GL11.GL_STENCIL_TEST);
-            GL11.glStencilFunc(GL11.GL_EQUAL, 1, 0xFF);
-            GL11.glStencilMask(0x00);
-
             isRenderingPortal = false;
             portalLightmapOverride = null;
-
-            // Restore RenderSystem projection using MC's native restore.
-            // We ALWAYS back up + restore now (not just when oblique applied)
-            // so the destination render cannot inherit the main camera's
-            // bobbed projection buffer.
-            RenderSystem.restoreProjectionMatrix();
-            if (phase2SuccessCount <= 3) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS DEBUG] Projection: restored from backup");
-            }
-
-            // Restore Globals UBO with main camera position
-            mc.gameRenderer.getGlobalSettingsUniform().update(
-                mc.getMainRenderTarget().width,
-                mc.getMainRenderTarget().height,
-                mc.gameRenderer.getGameRenderState().optionsRenderState.glintStrength,
-                savedLevel.getGameTime(),
-                deltaTracker,
-                mc.gameRenderer.getGameRenderState().optionsRenderState.menuBackgroundBlurriness,
-                savedCameraPos,
-                false // RGSS flag — matches main camera
-            );
-
-            // ===== 11. Restore ALL state (match IP's finally block) =====
-            mc.level = savedLevel;
-            ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
-                .seamlessportals$setLevelRenderer(savedRenderer);
-            ((MinecraftRenderTargetMixin)(Object) mc).seamlessportals$setMainRenderTarget(savedMainRT);
         }
 
         // Debug: verify state after restore
