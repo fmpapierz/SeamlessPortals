@@ -22,6 +22,7 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
@@ -111,39 +112,90 @@ public class PortalContextSwitch {
         COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
 
     /**
-     * Atomically swap {@code mc.level}, {@code mc.levelRenderer}, and
-     * {@code mc.mainRenderTarget} to the destination for the duration of
-     * {@code renderCallback}, then restore. Always restores in a
-     * {@code finally} even if the callback throws.
+     * Atomically swap primary client state to the destination for the duration
+     * of {@code renderCallback}, then restore in {@code finally}.
      *
-     * <p>Mirrors IP's {@code ClientWorldLoader.withSwitchedWorld} pattern.
-     * Subphase 2 will expand this to also swap the particle engine's level
-     * and the network handler's level, matching IP more fully.
+     * <p>Subphase 2 Commit B — swap set expanded to mirror IP's
+     * {@code MyGameRenderer.switchAndRenderTheWorld} as much as 26.1.2 allows:
      *
-     * <p>Used by {@link #doFboRender} to centralize the primary-state swap
-     * so future edits (e.g. adding particle/network swap, or moving the
-     * hook point) only need to change this one method.
+     * <ul>
+     *   <li>{@code mc.level}, {@code mc.levelRenderer}, {@code mc.mainRenderTarget}
+     *       — the original Subphase 1 trio.</li>
+     *   <li>{@code mc.gameRenderer.mainCamera} — needed once Commit C calls
+     *       {@code mc.gameRenderer.renderLevel(...)} which extracts camera state
+     *       from {@code mainCamera}, not from a passed-in argument.</li>
+     *   <li>{@code mc.gameRenderer.lightmap} — per-dim {@link Lightmap} via
+     *       {@link DimensionRenderHelper}. Once wired (Commit C), this lets
+     *       vanilla's {@code GameRenderer.lightmap()} return the destination
+     *       dimension's lightmap directly, replacing the
+     *       {@link #portalLightmapOverride} HEAD-inject path.</li>
+     *   <li>{@code mc.hitResult = null} — prevents crosshair targeting in the
+     *       portal-view render. IP does the same (clears hitResult during
+     *       fake-camera render).</li>
+     *   <li>{@code mc.player.noPhysics = true} — defensive; matches IP. Stops
+     *       any incidental physics tick triggered from the render path.</li>
+     *   <li>{@code mc.particleEngine.setLevel(destLevel)} — particles consult
+     *       {@code particleEngine.level} for tick + extract; mismatching it
+     *       against {@code mc.level} would mis-bind particle render state.</li>
+     * </ul>
+     *
+     * <p>Dropped from IP's swap set (no equivalent field in 26.1.2):
+     * <ul>
+     *   <li>{@code mc.blockEntityRenderDispatcher.level} — BERD has no
+     *       {@code level} field in 26.1.2; level lookup happens at
+     *       render-state extraction time, not at submit time.</li>
+     *   <li>{@code GameRenderer.doRenderHand} flag — no such field.</li>
+     *   <li>{@code FogRendererContext.swappingManager} push/pop — no such
+     *       infrastructure. {@link #doFboRender} sidesteps the issue by
+     *       writing a separate {@code GpuBufferSlice} for portal fog.</li>
+     * </ul>
+     *
+     * <p>Not yet used by {@link #doFboRender} — Commit C will switch the
+     * inline save/swap block (~line 508 onward) to call this utility wrapping
+     * {@code mc.gameRenderer.renderLevel(...)}.
      */
     public static void withSwitchedWorld(
             ClientLevel destLevel,
             LevelRenderer destRenderer,
             com.mojang.blaze3d.pipeline.RenderTarget destMainRT,
+            Camera destCamera,
+            Lightmap destLightmap,
             Runnable renderCallback) {
         Minecraft mc = Minecraft.getInstance();
+        GameRendererAccessorMixin gameRendererAccess =
+            (GameRendererAccessorMixin) mc.gameRenderer;
+        com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin mcAccess =
+            (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
+
         com.mojang.blaze3d.pipeline.RenderTarget savedMainRT = mc.getMainRenderTarget();
         ClientLevel savedLevel = mc.level;
         LevelRenderer savedRenderer = mc.levelRenderer;
+        Camera savedMainCamera = gameRendererAccess.seamlessportals$getMainCamera();
+        Lightmap savedLightmap = gameRendererAccess.seamlessportals$getLightmap();
+        net.minecraft.world.phys.HitResult savedHitResult = mc.hitResult;
+        net.minecraft.client.player.LocalPlayer player = mc.player;
+        boolean savedNoPhysics = player != null && player.noPhysics;
+
         try {
             ((MinecraftRenderTargetMixin) (Object) mc)
                 .seamlessportals$setMainRenderTarget(destMainRT);
             mc.level = destLevel;
-            ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
-                .seamlessportals$setLevelRenderer(destRenderer);
+            mcAccess.seamlessportals$setLevelRenderer(destRenderer);
+            gameRendererAccess.seamlessportals$setMainCamera(destCamera);
+            gameRendererAccess.seamlessportals$setLightmap(destLightmap);
+            mc.hitResult = null;
+            if (player != null) player.noPhysics = true;
+            mc.particleEngine.setLevel(destLevel);
+
             renderCallback.run();
         } finally {
+            mc.particleEngine.setLevel(savedLevel);
+            if (player != null) player.noPhysics = savedNoPhysics;
+            mc.hitResult = savedHitResult;
+            gameRendererAccess.seamlessportals$setLightmap(savedLightmap);
+            gameRendererAccess.seamlessportals$setMainCamera(savedMainCamera);
+            mcAccess.seamlessportals$setLevelRenderer(savedRenderer);
             mc.level = savedLevel;
-            ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
-                .seamlessportals$setLevelRenderer(savedRenderer);
             ((MinecraftRenderTargetMixin) (Object) mc)
                 .seamlessportals$setMainRenderTarget(savedMainRT);
         }
