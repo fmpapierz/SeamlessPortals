@@ -46,4 +46,35 @@ public interface LevelRendererAccessorMixin {
     @Accessor("levelRenderState")
     @Mutable
     void seamlessportals$setLevelRenderState(LevelRenderState state);
+
+    /**
+     * Seed the "last camera section" bookkeeping fields used by
+     * {@link LevelRenderer#cullTerrain} to decide whether the {@link ViewArea}
+     * grid needs repositioning on a given frame. When we promote a cached
+     * renderer on teleport, its stale values are from wherever the player
+     * was when that dim was previously active — typically a different section
+     * than the (preserved-player) section we're rendering from now. Without
+     * seeding, the very first frame after promote detects a change,
+     * unconditionally calls {@code viewArea.repositionCamera}, which in turn
+     * calls {@code RenderSection.setSectionNode} on every relocated slot and
+     * clears their compiled meshes via {@code reset()}. Result: a ~1-frame
+     * flash where the primary world hasn't rendered because all nearby
+     * section meshes were just wiped.
+     *
+     * Fields verified in {@code LevelRenderer.java:155-157}:
+     * {@code private int lastCameraSectionX/Y/Z = Integer.MIN_VALUE}.
+     *
+     * See memory: {@code viewarea_reposition_mesh_loss.md}.
+     */
+    @Accessor("lastCameraSectionX")
+    @Mutable
+    void seamlessportals$setLastCameraSectionX(int x);
+
+    @Accessor("lastCameraSectionY")
+    @Mutable
+    void seamlessportals$setLastCameraSectionY(int y);
+
+    @Accessor("lastCameraSectionZ")
+    @Mutable
+    void seamlessportals$setLastCameraSectionZ(int z);
 }

@@ -18,7 +18,9 @@ import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
 
+import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -41,6 +43,39 @@ public class PortalWorldManager {
 
     private static final Map<ResourceKey<Level>, LevelRenderer> renderers = new ConcurrentHashMap<>();
     private static final Map<ResourceKey<Level>, ClientLevel> levels = new ConcurrentHashMap<>();
+
+    /**
+     * Dormant former-primary renderers, keyed by dimension. When the player
+     * leaves a dimension where the primary was the vanilla-main LevelRenderer
+     * (shared {@code mc.renderBuffers} with {@code GameRenderer}), we cannot
+     * reuse it as a secondary for portal viewing — the shared buffer sources
+     * would collide with the main render's own use inside
+     * {@code AFTER_TRANSLUCENT_TERRAIN} → "Buffer source must not be empty".
+     *
+     * Instead, stash it here. Compiled section meshes + ViewArea are
+     * preserved untouched, so a future return to the dim can promote the
+     * stashed renderer straight back to primary and skip all chunk rebuild.
+     * While stashed, the renderer is not involved in any render path — we
+     * create a fresh PWM-style secondary (with separate RenderBuffers) if
+     * the dim needs portal-viewing coverage.
+     */
+    private static final Map<ResourceKey<Level>, LevelRenderer> dormantPrimaries = new ConcurrentHashMap<>();
+    private static final Map<ResourceKey<Level>, ClientLevel> dormantLevels = new ConcurrentHashMap<>();
+
+    /**
+     * Renderers that were promoted FROM the secondary {@link #renderers} map.
+     * These are PWM-style (separate RenderBuffers, separate FeatureRenderDispatcher)
+     * and therefore safe to re-demote back into the secondary map on dim
+     * change — they won't cause buffer conflicts during portal viewing.
+     *
+     * Renderers NOT in this set (i.e. the vanilla main or a once-dormant that
+     * was re-promoted) go into {@link #dormantPrimaries} on demote instead.
+     */
+    private static final Set<LevelRenderer> promotedSecondaries =
+        Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    /** Promotion outcome: the renderer + level to install as Minecraft's primary. */
+    public record Promotion(LevelRenderer renderer, ClientLevel level) {}
 
     /**
      * Get or create a LevelRenderer + ClientLevel for the given dimension.
@@ -104,27 +139,46 @@ public class PortalWorldManager {
                 destFeatureDispatcher    // SEPARATE
             );
 
-            // Create secondary ClientLevel
-            Holder<DimensionType> dimensionType = mc.level.registryAccess()
-                .lookupOrThrow(Registries.DIMENSION_TYPE)
-                .getOrThrow(getDimensionTypeKey(dimension));
+            // Phase C follow-up (2026-04-17): if a dormant primary's level
+            // exists for this dim, REUSE it instead of creating an empty
+            // ClientLevel. The dormant level holds every chunk that was
+            // loaded while the player was in that dim — often the entire
+            // server render distance. A fresh ClientLevel has zero chunks
+            // and only gets the 49 that {@code feedExistingChunks} copies
+            // from {@code RemoteChunkManager}, so portal-view coverage was
+            // capped at 7×7 chunks around the destination portal.
+            //
+            // Two renderers (dormant + new PWM secondary) pointing at the
+            // same ClientLevel is safe: the dormant isn't ticking, so only
+            // our new renderer observes + compiles the level's chunks.
+            // When the dormant is later promoted back to primary, its
+            // viewArea and compiled meshes are still valid because nothing
+            // touched them.
+            ClientLevel destLevel = dormantLevels.get(dimension);
+            boolean reusedDormantLevel = destLevel != null;
 
-            ClientLevel.ClientLevelData levelData = new ClientLevel.ClientLevelData(
-                Difficulty.NORMAL, false, false
-            );
+            if (destLevel == null) {
+                Holder<DimensionType> dimensionType = mc.level.registryAccess()
+                    .lookupOrThrow(Registries.DIMENSION_TYPE)
+                    .getOrThrow(getDimensionTypeKey(dimension));
 
-            ClientLevel destLevel = new ClientLevel(
-                mc.getConnection(),
-                levelData,
-                dimension,
-                dimensionType,
-                8,  // render distance for portal view (matches portalRenderDistance)
-                8,  // simulation distance
-                destRenderer,
-                false,
-                0L,
-                mc.level.getSeaLevel()
-            );
+                ClientLevel.ClientLevelData levelData = new ClientLevel.ClientLevelData(
+                    Difficulty.NORMAL, false, false
+                );
+
+                destLevel = new ClientLevel(
+                    mc.getConnection(),
+                    levelData,
+                    dimension,
+                    dimensionType,
+                    8,  // render distance for portal view (matches portalRenderDistance)
+                    8,  // simulation distance
+                    destRenderer,
+                    false,
+                    0L,
+                    mc.level.getSeaLevel()
+                );
+            }
 
             // Give the secondary renderer its OWN LevelRenderState so that
             // extractLevel() doesn't corrupt the main renderer's shared state.
@@ -144,8 +198,8 @@ public class PortalWorldManager {
             levels.put(dimension, destLevel);
 
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] Secondary renderer created for {} (sections={})",
-                dimension.identifier(), destLevel.getSectionsCount()
+                "[SEAMLESS PHASE2] Secondary renderer created for {} (sections={}, reusedDormantLevel={})",
+                dimension.identifier(), destLevel.getSectionsCount(), reusedDormantLevel
             );
 
             return destRenderer;
@@ -371,6 +425,202 @@ public class PortalWorldManager {
     }
 
     /**
+     * Promote a cached renderer+level for {@code dim} to be installed as
+     * {@code mc.levelRenderer} / {@code mc.level}.
+     *
+     * Lookup order:
+     * <ol>
+     *   <li>{@link #dormantPrimaries} — the previous primary for this dim.
+     *       Meshes cover the entire view distance from when the player was
+     *       last there, so promotion gives the best visual continuity on
+     *       return trips.</li>
+     *   <li>{@link #renderers} — a PWM secondary built up from portal views.
+     *       Meshes cover a tighter radius around the portal, but they are
+     *       ready to display the destination the instant we arrive.</li>
+     * </ol>
+     *
+     * The promoted renderer's {@code LevelRenderState} is re-pointed at the
+     * supplied shared state so that {@code GameRenderer.renderLevel} — which
+     * reads {@code gameRenderState.levelRenderState.chunkSectionsToRender}
+     * — sees what the renderer's {@code extractLevel} writes. Without this
+     * re-point, a newly-installed primary would render black terrain because
+     * its isolated state is never read by the outer framegraph.
+     *
+     * Returns {@code null} when neither cache has an entry; the caller then
+     * falls back to the vanilla dim-change flow (new ClientLevel + allChanged).
+     */
+    public static Promotion promoteToMain(
+            ResourceKey<Level> dim,
+            LevelRenderState sharedState) {
+
+        // Prefer the dormant-primary cache (fuller mesh coverage).
+        LevelRenderer dormantRenderer = dormantPrimaries.remove(dim);
+        ClientLevel dormantLevel = dormantLevels.remove(dim);
+        if (dormantRenderer != null && dormantLevel != null) {
+            ((LevelRendererAccessorMixin) dormantRenderer)
+                .seamlessportals$setLevelRenderState(sharedState);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PHASE2] Promoted dormant-primary → mc.levelRenderer for {}",
+                dim.identifier());
+            return new Promotion(dormantRenderer, dormantLevel);
+        }
+
+        // Fall back to the portal-view secondary.
+        LevelRenderer secondaryRenderer = renderers.remove(dim);
+        ClientLevel secondaryLevel = levels.remove(dim);
+        if (secondaryRenderer != null && secondaryLevel != null) {
+            ((LevelRendererAccessorMixin) secondaryRenderer)
+                .seamlessportals$setLevelRenderState(sharedState);
+            promotedSecondaries.add(secondaryRenderer);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PHASE2] Promoted PWM secondary → mc.levelRenderer for {}",
+                dim.identifier());
+            return new Promotion(secondaryRenderer, secondaryLevel);
+        }
+
+        return null;
+    }
+
+    /**
+     * Stash a renderer+level that was previously the primary for {@code dim}.
+     * Where it goes depends on whether it has separate RenderBuffers:
+     * <ul>
+     *   <li>A PWM-style renderer (tracked in {@link #promotedSecondaries})
+     *       can safely re-enter the secondary {@link #renderers} map and be
+     *       used again for portal viewing of this dim.</li>
+     *   <li>A vanilla-main-style renderer (shared {@code mc.renderBuffers})
+     *       must go to {@link #dormantPrimaries} only — using it as a
+     *       secondary during another frame's portal render would try to
+     *       reuse the main render's active buffer source.</li>
+     * </ul>
+     *
+     * Either way the renderer's {@code ViewArea} and compiled section meshes
+     * are untouched, so a future promotion back to primary skips any rebuild.
+     */
+    public static void demoteFromMain(
+            ResourceKey<Level> dim,
+            LevelRenderer renderer,
+            ClientLevel level) {
+
+        if (promotedSecondaries.remove(renderer)) {
+            // Was a PWM secondary before promotion — safe to return to the
+            // secondary pool. Give it an isolated LevelRenderState so that
+            // portal-view extractLevel calls don't clobber the new primary's
+            // shared state.
+            ((LevelRendererAccessorMixin) renderer)
+                .seamlessportals$setLevelRenderState(new LevelRenderState());
+            renderers.put(dim, renderer);
+            levels.put(dim, level);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PHASE2] Demoted promoted-secondary → PWM secondary for {}",
+                dim.identifier());
+            return;
+        }
+
+        // Vanilla-main style: shared RenderBuffers. Keep it dormant so its
+        // meshes survive for a future re-promotion, but do not expose it to
+        // portal-view rendering — the shared buffer sources would conflict
+        // with the outer frame's own use of them.
+        dormantPrimaries.put(dim, renderer);
+        dormantLevels.put(dim, level);
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS PHASE2] Demoted vanilla-main → dormant for {}",
+            dim.identifier());
+    }
+
+    /**
+     * Phase C — continuous async compile pump for secondary renderers.
+     *
+     * Modeled after IP's {@code ClientWorldLoader.tickRemoteWorld + .tick}
+     * pattern: every non-active LevelRenderer gets a chance each client tick
+     * to advance its compile work. In MC 26.1.2 the primary renderer's
+     * compile is driven from {@code LevelRenderer.compileSections} inside
+     * {@code GameRenderer.renderLevel}; secondaries are never rendered via
+     * that path, so without this pump their dirty sections sit idle until
+     * the next portal-view FBO render touches them. That's why portal views
+     * into a dim we just left showed only 1-2 compiled chunks — the FBO
+     * render only has a few ms of render-thread time to schedule async work
+     * before the frame ends, so most sections stayed UNCOMPILED until the
+     * user lingered.
+     *
+     * <p>Strategy:
+     * <ul>
+     *   <li>Iterate each secondary in {@link #renderers} whose dim is not
+     *       the active primary's.</li>
+     *   <li>Read {@code viewArea.getCameraSectionPos()} — wherever the last
+     *       FBO render placed the ring buffer — and schedule async compile
+     *       for dirty sections within a tight radius. Crucially we do NOT
+     *       call {@code repositionCamera} here; that would wipe meshes via
+     *       {@code setSectionNode → reset} (see
+     *       {@code viewarea_reposition_mesh_loss.md}) and undo the async
+     *       work already in flight.</li>
+     *   <li>Hard cap on total scheduled tasks per tick
+     *       ({@link #COMPILE_PUMP_BUDGET_PER_TICK}) to avoid saturating the
+     *       background executor.</li>
+     * </ul>
+     *
+     * Called from {@code ClientTickEvents.END_CLIENT_TICK} alongside the
+     * chunk-feed drain.
+     */
+    private static final int COMPILE_PUMP_RADIUS_CHUNKS = 8;
+    private static final int COMPILE_PUMP_RADIUS_SQ =
+        COMPILE_PUMP_RADIUS_CHUNKS * COMPILE_PUMP_RADIUS_CHUNKS;
+    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 24;
+
+    public static void advanceCompilePipelines() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return;
+        ResourceKey<Level> activeDim = mc.level.dimension();
+        int remaining = COMPILE_PUMP_BUDGET_PER_TICK;
+
+        for (Map.Entry<ResourceKey<Level>, LevelRenderer> entry : renderers.entrySet()) {
+            if (remaining <= 0) break;
+            ResourceKey<Level> dim = entry.getKey();
+            if (dim == activeDim) continue;
+            ClientLevel level = levels.get(dim);
+            remaining -= advanceOneRenderer(dim, entry.getValue(), level, remaining);
+        }
+    }
+
+    private static int advanceOneRenderer(
+            ResourceKey<Level> dim,
+            LevelRenderer renderer,
+            ClientLevel level,
+            int budget) {
+        if (renderer == null || level == null || budget <= 0) return 0;
+        net.minecraft.client.renderer.ViewArea viewArea =
+            ((com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) renderer)
+                .seamlessportals$getViewArea();
+        if (viewArea == null) return 0;
+
+        net.minecraft.core.SectionPos viewCenter = viewArea.getCameraSectionPos();
+        int camSecX = viewCenter.x();
+        int camSecZ = viewCenter.z();
+
+        net.minecraft.client.renderer.chunk.RenderRegionCache cache =
+            new net.minecraft.client.renderer.chunk.RenderRegionCache();
+
+        int scheduled = 0;
+        for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section
+                : viewArea.sections) {
+            if (section == null) continue;
+            if (scheduled >= budget) break;
+            long sectionNode = section.getSectionNode();
+            int sx = net.minecraft.core.SectionPos.x(sectionNode);
+            int sz = net.minecraft.core.SectionPos.z(sectionNode);
+            if (!level.getChunkSource().hasChunk(sx, sz)) continue;
+            if (!section.isDirty()) continue;
+            int dx = sx - camSecX;
+            int dz = sz - camSecZ;
+            if (dx * dx + dz * dz > COMPILE_PUMP_RADIUS_SQ) continue;
+            section.rebuildSectionAsync(cache);
+            section.setNotDirty();
+            scheduled++;
+        }
+        return scheduled;
+    }
+
+    /**
      * Clean up all secondary renderers and levels.
      */
     public static void cleanup() {
@@ -384,5 +634,21 @@ public class PortalWorldManager {
         }
         renderers.clear();
         levels.clear();
+        // Dormant primaries hold references to the vanilla main's ViewArea +
+        // SectionRenderDispatcher. Release them on full teardown.
+        for (LevelRenderer renderer : dormantPrimaries.values()) {
+            try {
+                renderer.setLevel(null);
+                // Do NOT call renderer.close() on the vanilla main — Minecraft
+                // itself owns its lifecycle and calls close() in its own close().
+                // If this is a once-dormant-now-detached primary, setLevel(null)
+                // releases the ViewArea; that's enough.
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.error("[SEAMLESS PHASE2] Error cleaning up dormant renderer", e);
+            }
+        }
+        dormantPrimaries.clear();
+        dormantLevels.clear();
+        promotedSecondaries.clear();
     }
 }

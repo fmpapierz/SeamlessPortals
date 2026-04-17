@@ -35,6 +35,11 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             RemoteChunkManager.drainPending();
             com.warwa.seamlessportals.client.PortalWorldManager.drainPendingFeeds();
+            // Phase C: advance compile work on every non-active secondary
+            // renderer so their portal-view sections stay compiled in the
+            // background — not just during the brief window an FBO render
+            // occupies the render thread.
+            com.warwa.seamlessportals.client.PortalWorldManager.advanceCompilePipelines();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

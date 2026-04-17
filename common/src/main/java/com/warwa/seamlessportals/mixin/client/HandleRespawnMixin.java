@@ -8,13 +8,19 @@ import com.warwa.seamlessportals.network.PlatformHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.ClientRecipeBook;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.stats.StatsCounter;
 import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
 import org.spongepowered.asm.mixin.Mixin;
@@ -23,9 +29,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Eliminates the loading screen during portal-based dimension changes.
@@ -52,25 +55,30 @@ public abstract class HandleRespawnMixin {
     @Shadow private boolean clientLoaded;
 
     /**
-     * Persistent ClientLevel cache, keyed by dimension. When the player
-     * changes dimension vanilla normally allocates a brand-new ClientLevel
-     * and the old one plus all its chunks and entity state is GC'd. We cache
-     * the outgoing level here so the NEXT time we enter that dimension we
-     * can hand vanilla the existing instance — chunks already loaded stay
-     * loaded, meshes don't need to rebuild, and there's no multi-second
-     * reload flood from the server.
-     *
-     * Static + process-lifetime because we want it to survive across
-     * session-internal ClientPacketListener reconnects.
-     */
-    private static final Map<ResourceKey<Level>, ClientLevel> seamlessportals$cachedLevels =
-        new ConcurrentHashMap<>();
-
-    /**
-     * Track whether we're doing a seamless transition (set before startWaitingForNewLevel,
-     * read in the inject, cleared after handleRespawn).
+     * Track whether we're doing a seamless transition (set at handleRespawn HEAD,
+     * consumed by the renderer-swap @Redirects, cleared at RETURN).
      */
     private boolean seamlessportals$seamlessTransition = false;
+
+    /**
+     * Set by the {@code new ClientLevel} redirect if a cached renderer+level
+     * exists for the destination dimension; consumed by the {@code mc.setLevel}
+     * redirect to swap {@code mc.levelRenderer} without triggering
+     * {@code allChanged()}. Cleared either way on handleRespawn RETURN.
+     *
+     * Kept as a field (not thread-local) because handleRespawn runs entirely
+     * on the client packet thread in a single call.
+     */
+    private PortalWorldManager.Promotion seamlessportals$pendingPromotion = null;
+
+    /**
+     * True once the {@code mc.setLevel} redirect actually swapped
+     * {@code mc.levelRenderer} to a promoted renderer. Used by afterRespawn
+     * to skip the post-respawn chunk re-feed: the cached ClientLevel already
+     * holds the chunks + compiled meshes, so re-feeding would mark sections
+     * dirty and force them to recompile, defeating the whole Step 1 purpose.
+     */
+    private boolean seamlessportals$rendererWasPromoted = false;
 
     /**
      * Detect seamless transitions: if we have pre-loaded chunks for the destination,
@@ -90,17 +98,6 @@ public abstract class HandleRespawnMixin {
             ResourceKey<Level> currentDim = mc.level.dimension();
             boolean dimensionChanged = destDim != currentDim;
 
-            // Stash the OUTGOING ClientLevel so that when the player returns
-            // to this dimension later, the Redirect below can hand it back
-            // instead of letting vanilla allocate a fresh empty level.
-            // Chunks already loaded, meshes already built — everything stays.
-            if (dimensionChanged) {
-                seamlessportals$cachedLevels.put(currentDim, mc.level);
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS LEVEL-CACHE] Stashed ClientLevel for {}",
-                    currentDim.identifier());
-            }
-
             if (dimensionChanged && RemoteChunkManager.getChunkCount(destDim) > 0) {
                 seamlessportals$seamlessTransition = true;
                 SeamlessPortalsConstants.LOGGER.info(
@@ -111,26 +108,295 @@ public abstract class HandleRespawnMixin {
         }
     }
 
-    // NOTE: the ClientLevel-reuse @Redirect was removed. Reusing a cached
-    // ClientLevel by itself does NOT solve the flash/reload:
-    //
-    //   Minecraft.setLevel(cachedLevel) → updateLevelInEngines →
-    //     levelRenderer.setLevel(cachedLevel) → allChanged()
-    //
-    // allChanged() releases all section buffers and creates a fresh ViewArea,
-    // so every chunk mesh has to recompile from scratch even though the
-    // ClientLevel still holds the chunk data. That's the multi-second blank
-    // terrain you see after teleport.
-    //
-    // IP-style "both dimensions loaded, no flash, no reload" requires:
-    //   1. A LevelRenderer per dimension (not vanilla's single shared one)
-    //   2. Swap mc.levelRenderer on teleport so compiled meshes persist
-    //   3. Preserve the LocalPlayer across dim change (don't destroy+recreate)
-    //   4. Suppress vanilla's chunk resend for dims we've already visited
-    //
-    // That's a multi-system refactor best done as a focused pass, not bolted
-    // onto the respawn path. The `seamlessportals$cachedLevels` map stays
-    // for when that work lands.
+    /**
+     * Intercept the {@code new ClientLevel(...)} construction inside
+     * {@code handleRespawn}. When the destination dimension has a cached
+     * renderer + level in {@link PortalWorldManager}, return the cached
+     * ClientLevel instead of allocating a fresh empty one.
+     *
+     * This pairs with {@link #seamlessportals$redirectSetLevel} — the
+     * cached level's compiled chunk meshes only survive if {@code mc.setLevel}
+     * is intercepted to skip {@code levelRenderer.setLevel(newLevel)} (which
+     * calls {@code allChanged()} and releases every ViewArea buffer).
+     *
+     * Also mutates {@link #seamlessportals$pendingPromotion} so the setLevel
+     * redirect knows which renderer to install.
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "NEW",
+            target = "(Lnet/minecraft/client/multiplayer/ClientPacketListener;"
+                + "Lnet/minecraft/client/multiplayer/ClientLevel$ClientLevelData;"
+                + "Lnet/minecraft/resources/ResourceKey;"
+                + "Lnet/minecraft/core/Holder;"
+                + "IILnet/minecraft/client/renderer/LevelRenderer;ZJI)"
+                + "Lnet/minecraft/client/multiplayer/ClientLevel;"))
+    private ClientLevel seamlessportals$redirectNewClientLevel(
+            ClientPacketListener connection,
+            ClientLevel.ClientLevelData levelData,
+            ResourceKey<Level> dimension,
+            Holder<DimensionType> dimensionType,
+            int serverChunkRadius,
+            int serverSimulationDistance,
+            LevelRenderer levelRenderer,
+            boolean isDebug,
+            long seed,
+            int seaLevel) {
+
+        if (seamlessportals$seamlessTransition) {
+            Minecraft mc = Minecraft.getInstance();
+            LevelRenderState sharedState =
+                mc.gameRenderer.getGameRenderState().levelRenderState;
+            PortalWorldManager.Promotion promotion =
+                PortalWorldManager.promoteToMain(dimension, sharedState);
+            if (promotion != null) {
+                seamlessportals$pendingPromotion = promotion;
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS RENDERER-SWAP] Reusing cached ClientLevel for {} — skip vanilla ctor",
+                    dimension.identifier());
+                return promotion.level();
+            }
+            // No cache → vanilla ctor, vanilla allChanged(). Not a bug; just
+            // means the player entered this dim without prior portal-view
+            // warmup. Next round-trip will preserve via demoteFromMain.
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS RENDERER-SWAP] No cache for {} — falling through to vanilla ClientLevel ctor",
+                dimension.identifier());
+        }
+        return new ClientLevel(connection, levelData, dimension, dimensionType,
+            serverChunkRadius, serverSimulationDistance, levelRenderer,
+            isDebug, seed, seaLevel);
+    }
+
+    /**
+     * Intercept the {@code this.minecraft.setLevel(this.level)} call inside
+     * {@code handleRespawn}. When a pending promotion exists, perform our own
+     * context swap that assigns {@code mc.level} + {@code mc.levelRenderer}
+     * directly and drives only the side effects of vanilla's
+     * {@code updateLevelInEngines} that don't trash compiled meshes.
+     *
+     * Specifically we DO NOT call {@code mc.levelRenderer.setLevel(level)} —
+     * that is the source of {@code allChanged()}, which releases every
+     * ViewArea buffer and forces every chunk to recompile from scratch.
+     * Instead we swap {@code mc.levelRenderer} to the already-bound primary
+     * renderer; it is already on the right level, so no rebuild is needed.
+     *
+     * The outgoing primary gets handed back to
+     * {@link PortalWorldManager#demoteFromMain} so its meshes survive for a
+     * future return to its dim.
+     *
+     * Step 1 scope: keeps {@code setCameraEntity(null)} intact (that black
+     * frame is Step 2's job).
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/Minecraft;setLevel(Lnet/minecraft/client/multiplayer/ClientLevel;)V"))
+    private void seamlessportals$redirectSetLevel(Minecraft mc, ClientLevel level) {
+        PortalWorldManager.Promotion promotion = seamlessportals$pendingPromotion;
+        if (!seamlessportals$seamlessTransition || promotion == null) {
+            mc.setLevel(level);
+            return;
+        }
+        seamlessportals$pendingPromotion = null;
+
+        LevelRenderer oldRenderer = mc.levelRenderer;
+        ClientLevel oldLevel = mc.level;
+        ResourceKey<Level> oldDim = oldLevel != null ? oldLevel.dimension() : null;
+
+        // ===== Install promoted renderer + level as the new primary =====
+        ((com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc)
+            .seamlessportals$setLevelRenderer(promotion.renderer());
+        mc.level = level;
+        seamlessportals$rendererWasPromoted = true;
+
+        // Phase B (2026-04-17): seed the promoted renderer's
+        // {@code lastCameraSection*} bookkeeping fields to the section the
+        // player currently lives in, so the very first frame's
+        // {@code cullTerrain} sees "no change" and does NOT call
+        // {@code viewArea.repositionCamera}. Without this, the ViewArea's
+        // stale camera-section (from the last time this dim was active)
+        // differs from the reused-player-position section on frame 1, so
+        // cullTerrain would wipe all relocated slot meshes via
+        // {@code setSectionNode → reset}. OW terrain then renders as empty
+        // for the 1-2 frames needed to re-compile → visible flash.
+        //
+        // The player position used here is the outgoing player's preserved
+        // position (Step 3 identity-reuse). The server's post-teleport
+        // position packet will move the player shortly; if that subsequent
+        // movement crosses a section boundary, cullTerrain will reposition
+        // normally but only a small strip of slots — small enough that
+        // async compile (Phase A) catches up within the same frame.
+        //
+        // See memory: viewarea_reposition_mesh_loss.md,
+        // step1_5_viewarea_sync_radius_fix.md.
+        LocalPlayer preservedPlayer = mc.player;
+        if (preservedPlayer != null) {
+            int csx = net.minecraft.core.SectionPos.posToSectionCoord(preservedPlayer.getX());
+            int csy = net.minecraft.core.SectionPos.posToSectionCoord(preservedPlayer.getY());
+            int csz = net.minecraft.core.SectionPos.posToSectionCoord(preservedPlayer.getZ());
+            LevelRendererAccessorMixin accessor =
+                (LevelRendererAccessorMixin) (Object) promotion.renderer();
+            accessor.seamlessportals$setLastCameraSectionX(csx);
+            accessor.seamlessportals$setLastCameraSectionY(csy);
+            accessor.seamlessportals$setLastCameraSectionZ(csz);
+        }
+
+        // ===== Demote outgoing primary (stash meshes for future return) =====
+        if (oldRenderer != null && oldLevel != null && oldDim != null
+                && oldRenderer != promotion.renderer()) {
+            PortalWorldManager.demoteFromMain(oldDim, oldRenderer, oldLevel);
+        }
+
+        // ===== Replay the rest of Minecraft.updateLevelInEngines side-effects =====
+        // These are the non-mesh-wiping parts of vanilla's setLevel.
+        // Deliberately omitted:
+        //   - soundManager.stop() — cosmetic; keeps music continuity
+        //   - levelRenderer.setLevel(level) — the allChanged() source (Step 1)
+        //   - setCameraEntity(null) — Step 2: avoids the "camera briefly points
+        //     at a nulled entity, Camera.update re-attaches to a just-created
+        //     LocalPlayer at (0,0,0)" flash. See also redirectSetCameraEntity
+        //     below — the explicit call in handleRespawn is also elided.
+        //   - pendingConnection nulling — not ours to touch.
+        mc.particleEngine.setLevel(level);
+        mc.gameRenderer.setLevel(level);
+
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS RENDERER-SWAP] Installed primary for {} (old primary {} demoted)",
+            level.dimension().identifier(),
+            oldDim != null ? oldDim.identifier() : "null");
+    }
+
+    /**
+     * Step 2: skip the explicit {@code mc.setCameraEntity(null)} that vanilla
+     * issues between {@code setLevel} and the creation of the new
+     * {@code LocalPlayer}.
+     *
+     * With Step 1 in place, the renderer + level are swapped in-place on the
+     * same thread — no frame is drawn between {@code setLevel} and
+     * {@code setCameraEntity(newPlayer)}. The intermediate null is therefore
+     * invisible in principle, but leaving it in has a subtler cost:
+     * {@code Camera.update()} runs on the next render and sees
+     * {@code entity == null}, which triggers its "re-attach to
+     * {@code mc.player}" fallback. By that point {@code mc.player} is already
+     * the freshly-spawned {@code LocalPlayer} at {@code (0, 0, 0)} (the server's
+     * teleport packet hasn't been processed yet) — so the camera snaps to the
+     * origin for a frame. Visible as a flash.
+     *
+     * Keeping the camera pointed at the outgoing player right up until
+     * {@code setCameraEntity(newPlayer)} runs means {@code Camera.update()}
+     * never sees a null, never re-attaches, and the camera position stays
+     * coherent through the swap.
+     *
+     * Non-null calls (the subsequent {@code setCameraEntity(newPlayer)}, and
+     * any call outside a seamless transition) pass through unchanged.
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/Minecraft;setCameraEntity(Lnet/minecraft/world/entity/Entity;)V"))
+    private void seamlessportals$redirectSetCameraEntity(Minecraft mc, Entity cameraEntity) {
+        if (seamlessportals$rendererWasPromoted && cameraEntity == null) {
+            // Elide the null-set; the camera keeps pointing at the outgoing
+            // player until the explicit setCameraEntity(newPlayer) below
+            // replaces it.
+            return;
+        }
+        mc.setCameraEntity(cameraEntity);
+    }
+
+    /**
+     * Step 3: preserve the outgoing {@link LocalPlayer} instance across the
+     * dim change instead of allocating a fresh one.
+     *
+     * Vanilla's {@code MultiPlayerGameMode.createPlayer(...)} allocates a
+     * brand-new player tied to the destination level. Subsequent handleRespawn
+     * code transfers id, delta movement, rotation, and entity-data from the
+     * outgoing player to the new one, but the new player's position starts at
+     * {@code (0, 0, 0)} until the server's post-teleport position packet
+     * arrives. That one-frame origin-snap is what produces the final visible
+     * teleport flash (confirmed by the {@code TELEPORT LANDED: (0.0, 0.0, 0.0)}
+     * log line in earlier sessions).
+     *
+     * Reusing the outgoing player instance avoids all of that:
+     * <ul>
+     *   <li>Position, velocity, rotation, inventory, stats, recipe book,
+     *       entity data, arm animation state, input tracking, ambient sound
+     *       handlers — all preserved by identity.</li>
+     *   <li>The subsequent {@code newPlayer.setId(oldPlayer.getId())} /
+     *       {@code mc.player = newPlayer} / state-copy lines in handleRespawn
+     *       become self-assignments (no-ops).</li>
+     *   <li>The player's {@code level} field is re-pointed to the destination
+     *       ClientLevel via {@link EntityLevelAccessorMixin} so that
+     *       {@code level()}-dependent code (collision, sound, sky brightness,
+     *       etc.) resolves against the new dim.</li>
+     * </ul>
+     *
+     * Both overloads of {@code createPlayer} appear in handleRespawn (a 5-arg
+     * path for {@code shouldKeep((byte)2)} true, a 3-arg path otherwise).
+     * Both are redirected here so either branch triggers the same reuse.
+     *
+     * Outside of a seamless transition (same-dim respawn, first login, etc.)
+     * the vanilla allocation is preserved untouched.
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;"
+                + "createPlayer(Lnet/minecraft/client/multiplayer/ClientLevel;"
+                + "Lnet/minecraft/stats/StatsCounter;"
+                + "Lnet/minecraft/client/ClientRecipeBook;"
+                + "Lnet/minecraft/world/entity/player/Input;Z)"
+                + "Lnet/minecraft/client/player/LocalPlayer;"))
+    private LocalPlayer seamlessportals$redirectCreatePlayerFull(
+            MultiPlayerGameMode gameMode,
+            ClientLevel level,
+            StatsCounter stats,
+            ClientRecipeBook recipeBook,
+            Input lastSentInput,
+            boolean wasSprinting) {
+        LocalPlayer reused = seamlessportals$maybeReuseOldPlayer(level);
+        if (reused != null) return reused;
+        return gameMode.createPlayer(level, stats, recipeBook, lastSentInput, wasSprinting);
+    }
+
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;"
+                + "createPlayer(Lnet/minecraft/client/multiplayer/ClientLevel;"
+                + "Lnet/minecraft/stats/StatsCounter;"
+                + "Lnet/minecraft/client/ClientRecipeBook;)"
+                + "Lnet/minecraft/client/player/LocalPlayer;"))
+    private LocalPlayer seamlessportals$redirectCreatePlayerShort(
+            MultiPlayerGameMode gameMode,
+            ClientLevel level,
+            StatsCounter stats,
+            ClientRecipeBook recipeBook) {
+        LocalPlayer reused = seamlessportals$maybeReuseOldPlayer(level);
+        if (reused != null) return reused;
+        return gameMode.createPlayer(level, stats, recipeBook);
+    }
+
+    /**
+     * Shared helper for both createPlayer redirects. When the swap is a
+     * seamless promotion, return the current {@code mc.player} with its level
+     * re-pointed at the destination ClientLevel. Otherwise return null and
+     * let the caller fall through to vanilla allocation.
+     */
+    private LocalPlayer seamlessportals$maybeReuseOldPlayer(ClientLevel destLevel) {
+        if (!seamlessportals$rendererWasPromoted) return null;
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer oldPlayer = mc.player;
+        if (oldPlayer == null) return null;
+        // Re-point the player's level field to the destination level. The
+        // old level still contains the player in its storage + players list;
+        // that's tolerated because the old level has been demoted to dormant
+        // or secondary — it's not actively rendering or ticking the player.
+        // The server's post-teleport entity packets will reconcile membership
+        // within a few ticks.
+        ((com.warwa.seamlessportals.mixin.EntityLevelAccessorMixin) oldPlayer)
+            .seamlessportals$invokeSetLevel(destLevel);
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS PLAYER-REUSE] Preserved LocalPlayer (id={}) across dim change → {}",
+            oldPlayer.getId(), destLevel.dimension().identifier());
+        return oldPlayer;
+    }
 
     /**
      * Skip the loading screen when we have pre-loaded chunks.
@@ -168,6 +434,26 @@ public abstract class HandleRespawnMixin {
     private void seamlessportals$afterRespawn(ClientboundRespawnPacket packet, CallbackInfo ci) {
         if (!seamlessportals$seamlessTransition) return;
         seamlessportals$seamlessTransition = false;
+        // Snapshot + clear the promotion flag so stale state doesn't leak
+        // into a non-promoted transition later.
+        boolean didPromote = seamlessportals$rendererWasPromoted;
+        seamlessportals$rendererWasPromoted = false;
+        seamlessportals$pendingPromotion = null;
+
+        // Step 3 cleanup: if we reused the LocalPlayer, the subsequent
+        // `this.level.addEntity(newPlayer)` in handleRespawn hit the reused
+        // instance with its own internal `removeEntity(id, DISCARDED)` first.
+        // That leaves the preserved player flagged removed=DISCARDED, which
+        // triggers a "Duplicate entity UUID" warn and would cause the entity
+        // to be ignored by level-side iteration paths (tickEntities, collision
+        // lookups that filter by isRemoved, etc.). Clear the flag now so the
+        // player is usable in its new dim. `onAddedToLevel` already ran as
+        // part of addEntity, so section/tracking state is correct.
+        Minecraft mc = Minecraft.getInstance();
+        if (didPromote && mc.player != null) {
+            ((com.warwa.seamlessportals.mixin.EntityLevelAccessorMixin) mc.player)
+                .seamlessportals$invokeUnsetRemoved();
+        }
         long respawnCoreNanos = System.nanoTime() - seamlessportals$respawnStartNanos;
         SeamlessPortalsConstants.LOGGER.info(
             "[SEAMLESS TIMING] handleRespawn core took {}ms (before chunk-feed)",
@@ -175,7 +461,6 @@ public abstract class HandleRespawnMixin {
         long chunkFeedStart = System.nanoTime();
 
         ResourceKey<Level> destDim = packet.commonPlayerSpawnInfo().dimension();
-        Minecraft mc = Minecraft.getInstance();
 
         if (mc.level == null) return;
 
@@ -209,8 +494,15 @@ public abstract class HandleRespawnMixin {
         //
         // The server will send its own chunk packets within a few ticks;
         // those will fill in the rest of the view distance.
+        //
+        // SKIP this block when the renderer was promoted: the cached ClientLevel
+        // (now mc.level) already contains the chunks, and re-feeding them
+        // would call setSectionDirtyWithNeighbors via onSectionBecomingNonEmpty
+        // on the promoted renderer — which would force a recompile of the
+        // exact meshes we just preserved by skipping allChanged(). The server
+        // will still sync any genuinely-stale chunks through its normal flow.
         var chunks = RemoteChunkManager.getChunks(destDim);
-        if (chunks != null && !chunks.isEmpty()) {
+        if (!didPromote && chunks != null && !chunks.isEmpty()) {
             net.minecraft.client.multiplayer.ClientChunkCache cache = mc.level.getChunkSource();
 
             // Find the destination portal position — the player should land

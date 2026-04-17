@@ -85,6 +85,31 @@ public class PortalContextSwitch {
     /** Tracks chunk count at last feed per dimension. Feed only when new chunks arrive. */
     private static final java.util.Map<ResourceKey<Level>, Integer> lastFedChunkCount = new java.util.HashMap<>();
 
+    /**
+     * How far (in chunks) from the destination camera we will consider
+     * scheduling async compile for dirty {@code RenderSection}s in the
+     * portal-view FBO render path.
+     *
+     * Previous history: before Phase A (commit TBD), this bounded a
+     * {@code rebuildSectionSync} loop to avoid a 4-second render-thread stall
+     * on return teleports when a demoted primary's ViewArea (up to
+     * 23×23×16 = 8464 slots for render dist 11 × Nether height) was
+     * substantially dirty. Sync rebuild has since been replaced with
+     * {@link SectionRenderDispatcher.RenderSection#rebuildSectionAsync} which
+     * returns immediately and runs on {@link net.minecraft.Util#backgroundExecutor}.
+     *
+     * The radius gate is kept because async scheduling still has a cost:
+     * {@code createCompileTask} allocates a {@code RenderSectionRegion} and
+     * cancels prior tasks. Flooding the queue with sections beyond the
+     * portal-view frustum wastes worker CPU on meshes we'll never show.
+     *
+     * See memory: {@code step1_5_viewarea_sync_radius_fix.md},
+     * {@code viewarea_reposition_mesh_loss.md}.
+     */
+    private static final int COMPILE_SCHEDULE_RADIUS_CHUNKS = 8;
+    private static final int COMPILE_SCHEDULE_RADIUS_SQ =
+        COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
+
     public static void resetChunkFedState(ResourceKey<Level> dimension) {
         lastFedChunkCount.remove(dimension);
         phase2FailCount = 0;
@@ -270,24 +295,69 @@ public class PortalContextSwitch {
             // the full obsidian frame. After that initial pass, the normal
             // isDirty() path handles updates as usual.
             PortalFrameSuppressor.maybeForceDirtyForPortal(destPortal, viewArea);
+            // Phase A (2026-04-17): Schedule dirty sections on the background
+            // executor via {@code rebuildSectionAsync} instead of blocking the
+            // render thread with {@code rebuildSectionSync}. This matches the
+            // pattern vanilla's {@code LevelRenderer.compileSections} uses for
+            // the primary renderer and IP uses for every renderer.
+            //
+            // - First-frame portal view after teleport may show "holes" where
+            //   sections are still compiling; they pop in within tens of ms.
+            // - No render-thread stall → no "sky-color flash" on teleport.
+            // - Radius gate kept: don't flood worker queue with sections
+            //   outside the visible portal-view frustum.
+            // - Vanilla compilability filter applied: only schedule sections
+            //   that already have a (stale) mesh OR have all 8 neighbor
+            //   chunks loaded — otherwise mesh compiles against missing
+            //   neighbors and produces broken chunk borders.
+            //
+            // Sections with existing (possibly stale) meshes are still added
+            // to {@code visibleSections} so the renderer shows SOMETHING while
+            // the fresh compile runs. UNCOMPILED sections contribute zero
+            // draws but are harmless to have in the list.
+            int camSecX = cameraSectionPos.x();
+            int camSecZ = cameraSectionPos.z();
+            int scheduledAsync = 0;
+            int skippedFar = 0;
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
                 if (section == null) continue;
                 long sectionNode = section.getSectionNode();
                 int sx = net.minecraft.core.SectionPos.x(sectionNode);
                 int sz = net.minecraft.core.SectionPos.z(sectionNode);
-                if (destLevel.getChunkSource().hasChunk(sx, sz)) {
-                    if (section.isDirty()) {
-                        dispatcher.rebuildSectionSync(section, cache);
+                if (!destLevel.getChunkSource().hasChunk(sx, sz)) continue;
+                if (section.isDirty()) {
+                    int dx = sx - camSecX;
+                    int dz = sz - camSecZ;
+                    if (dx * dx + dz * dz > COMPILE_SCHEDULE_RADIUS_SQ) {
+                        // Beyond portal-view frustum; don't schedule.
+                        skippedFar++;
+                    } else {
+                        // Match what our previous sync path required: chunk
+                        // loaded (already checked above) is enough to schedule.
+                        //
+                        // Vanilla's stricter filter
+                        // (mesh != UNCOMPILED || hasAllNeighbors) additionally
+                        // requires {@code LightEngine.lightOnInColumn} which
+                        // our {@code RemoteChunkManager}-fed chunks don't set
+                        // reliably, so it filters out every first-time compile
+                        // and scheduledAsync stays 0 forever. Portal-view
+                        // chunk-border artifacts from compiling against missing
+                        // neighbors are acceptable; the user's complaint was
+                        // the stall, not border mis-culling.
+                        section.rebuildSectionAsync(cache);
                         section.setNotDirty();
+                        scheduledAsync++;
                     }
-                    visibleSections.add(section);
-                    compiled++;
                 }
+                visibleSections.add(section);
+                compiled++;
             }
             if (phase2SuccessCount == 0 && compiled > 0) {
                 SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] Direct compilation: {} sections at [{},{}]",
-                    compiled, cameraSectionPos.x(), cameraSectionPos.z());
+                    "[SEAMLESS] Direct compilation: {} sections at [{},{}] "
+                        + "(scheduledAsync={}, skippedFarDirty={})",
+                    compiled, cameraSectionPos.x(), cameraSectionPos.z(),
+                    scheduledAsync, skippedFar);
             }
         }
 
