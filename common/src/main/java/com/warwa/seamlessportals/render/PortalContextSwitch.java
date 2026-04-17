@@ -134,9 +134,13 @@ public class PortalContextSwitch {
      *       fake-camera render).</li>
      *   <li>{@code mc.player.noPhysics = true} — defensive; matches IP. Stops
      *       any incidental physics tick triggered from the render path.</li>
-     *   <li>{@code mc.particleEngine.setLevel(destLevel)} — particles consult
+     *   <li>{@code mc.particleEngine.level} — particles consult
      *       {@code particleEngine.level} for tick + extract; mismatching it
-     *       against {@code mc.level} would mis-bind particle render state.</li>
+     *       against {@code mc.level} would mis-bind particle render state.
+     *       Done via {@link com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin}
+     *       (raw field write, NOT {@code setLevel(...)} — the public setter
+     *       calls {@code clearParticles()} as a side effect, which would wipe
+     *       the source level's particles every portal-render frame).</li>
      * </ul>
      *
      * <p>Dropped from IP's swap set (no equivalent field in 26.1.2):
@@ -166,6 +170,8 @@ public class PortalContextSwitch {
             (GameRendererAccessorMixin) mc.gameRenderer;
         com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin mcAccess =
             (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
+        com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin particleAccess =
+            (com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin) mc.particleEngine;
 
         com.mojang.blaze3d.pipeline.RenderTarget savedMainRT = mc.getMainRenderTarget();
         ClientLevel savedLevel = mc.level;
@@ -185,11 +191,11 @@ public class PortalContextSwitch {
             gameRendererAccess.seamlessportals$setLightmap(destLightmap);
             mc.hitResult = null;
             if (player != null) player.noPhysics = true;
-            mc.particleEngine.setLevel(destLevel);
+            particleAccess.seamlessportals$setLevel(destLevel);
 
             renderCallback.run();
         } finally {
-            mc.particleEngine.setLevel(savedLevel);
+            particleAccess.seamlessportals$setLevel(savedLevel);
             if (player != null) player.noPhysics = savedNoPhysics;
             mc.hitResult = savedHitResult;
             gameRendererAccess.seamlessportals$setLightmap(savedLightmap);

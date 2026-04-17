@@ -21,7 +21,8 @@
     "client.LevelRendererAccessorMixin",
     "client.HandleRespawnMixin",
     "client.MinecraftRenderTargetMixin",
-    "client.MainProjectionBobMixin"
+    "client.MainProjectionBobMixin",
+    "client.ParticleEngineAccessorMixin"
   ],
   "mixins": [
     "EntityMixin",
