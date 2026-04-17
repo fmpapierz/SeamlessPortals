@@ -2,6 +2,7 @@ package com.warwa.seamlessportals.mixin.client;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
@@ -77,4 +78,18 @@ public interface LevelRendererAccessorMixin {
     @Accessor("lastCameraSectionZ")
     @Mutable
     void seamlessportals$setLastCameraSectionZ(int z);
+
+    /**
+     * Read this renderer's {@link RenderBuffers}. For PortalWorldManager-built
+     * secondaries this is their own private instance; for the vanilla
+     * {@code mc.levelRenderer} this is the same instance as
+     * {@code mc.renderBuffers}. Both get swapped to a pooled buffer during
+     * portal sub-render via {@link com.warwa.seamlessportals.render.PortalContextSwitch#withSwitchedWorld}.
+     */
+    @Accessor("renderBuffers")
+    RenderBuffers seamlessportals$getRenderBuffers();
+
+    @Accessor("renderBuffers")
+    @Mutable
+    void seamlessportals$setRenderBuffers(RenderBuffers renderBuffers);
 }

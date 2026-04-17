@@ -141,6 +141,15 @@ public class PortalContextSwitch {
      *       (raw field write, NOT {@code setLevel(...)} — the public setter
      *       calls {@code clearParticles()} as a side effect, which would wipe
      *       the source level's particles every portal-render frame).</li>
+     *   <li>{@code mc.renderBuffers} + {@code destRenderer.renderBuffers} —
+     *       both swapped to a pooled {@link PortalRenderBuffersPool} buffer
+     *       for the duration. The dormant vanilla {@code mc.levelRenderer}
+     *       (a map entry per Subphase 1) shares its {@code renderBuffers}
+     *       with {@code mc.renderBuffers}; without this swap, using it as a
+     *       portal-view secondary would conflict with the in-flight main
+     *       render's buffer. PortalWorldManager-built secondaries already
+     *       have isolated buffers, but routing them through the same swap
+     *       is harmless and keeps the path uniform.</li>
      * </ul>
      *
      * <p>Dropped from IP's swap set (no equivalent field in 26.1.2):
@@ -154,9 +163,10 @@ public class PortalContextSwitch {
      *       writing a separate {@code GpuBufferSlice} for portal fog.</li>
      * </ul>
      *
-     * <p>Not yet used by {@link #doFboRender} — Commit C will switch the
-     * inline save/swap block (~line 508 onward) to call this utility wrapping
-     * {@code mc.gameRenderer.renderLevel(...)}.
+     * <p>Wired into {@link #doFboRender} as of Commit C1 — the inline
+     * save/swap block was replaced with a {@code withSwitchedWorld(...)}
+     * call wrapping a lambda that runs the GL state setup +
+     * {@code destRenderer.renderLevel(...)}.
      */
     public static void withSwitchedWorld(
             ClientLevel destLevel,
@@ -172,6 +182,8 @@ public class PortalContextSwitch {
             (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
         com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin particleAccess =
             (com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin) mc.particleEngine;
+        com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin destRendererAccess =
+            (com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) destRenderer;
 
         com.mojang.blaze3d.pipeline.RenderTarget savedMainRT = mc.getMainRenderTarget();
         ClientLevel savedLevel = mc.level;
@@ -181,6 +193,14 @@ public class PortalContextSwitch {
         net.minecraft.world.phys.HitResult savedHitResult = mc.hitResult;
         net.minecraft.client.player.LocalPlayer player = mc.player;
         boolean savedNoPhysics = player != null && player.noPhysics;
+
+        // Buffer pool acquire — null if exhausted (no swap, fall back to
+        // existing per-renderer buffers; no crash).
+        net.minecraft.client.renderer.RenderBuffers pooledBuffers = PortalRenderBuffersPool.acquire();
+        net.minecraft.client.renderer.RenderBuffers savedMcBuffers =
+            mcAccess.seamlessportals$getRenderBuffers();
+        net.minecraft.client.renderer.RenderBuffers savedDestRendererBuffers =
+            destRendererAccess.seamlessportals$getRenderBuffers();
 
         try {
             ((MinecraftRenderTargetMixin) (Object) mc)
@@ -192,9 +212,17 @@ public class PortalContextSwitch {
             mc.hitResult = null;
             if (player != null) player.noPhysics = true;
             particleAccess.seamlessportals$setLevel(destLevel);
+            if (pooledBuffers != null) {
+                mcAccess.seamlessportals$setRenderBuffers(pooledBuffers);
+                destRendererAccess.seamlessportals$setRenderBuffers(pooledBuffers);
+            }
 
             renderCallback.run();
         } finally {
+            if (pooledBuffers != null) {
+                destRendererAccess.seamlessportals$setRenderBuffers(savedDestRendererBuffers);
+                mcAccess.seamlessportals$setRenderBuffers(savedMcBuffers);
+            }
             particleAccess.seamlessportals$setLevel(savedLevel);
             if (player != null) player.noPhysics = savedNoPhysics;
             mc.hitResult = savedHitResult;
@@ -204,6 +232,7 @@ public class PortalContextSwitch {
             mc.level = savedLevel;
             ((MinecraftRenderTargetMixin) (Object) mc)
                 .seamlessportals$setMainRenderTarget(savedMainRT);
+            PortalRenderBuffersPool.release(pooledBuffers);
         }
     }
 
