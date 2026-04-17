@@ -80,6 +80,18 @@ public class PortalWorldManager {
     /**
      * Get or create a LevelRenderer + ClientLevel for the given dimension.
      * Creates the secondary rendering pipeline on first call.
+     *
+     * <p>History note (2026-04-17): An earlier version of this method pulled
+     * entries out of {@link #dormantPrimaries} here to preserve compiled
+     * meshes when the player looked back at a just-left dim. That broke
+     * vanilla rendering — the dormant vanilla-main's {@code renderBuffers}
+     * is {@code mc.renderBuffers}, which {@code GameRenderer} accesses
+     * directly for several passes. Using it concurrently as a portal-view
+     * secondary caused subtle buffer corruption (no crash, but visible
+     * geometry artifacts on the primary view). Reverted to always-fresh
+     * allocation; the trade-off is the ~8s compile wait on first return
+     * to a previously-visited dim, documented in
+     * {@code phase_abc_async_compile_pipeline.md}.
      */
     public static LevelRenderer getOrCreateRenderer(ResourceKey<Level> dimension) {
         return renderers.computeIfAbsent(dimension, PortalWorldManager::createRenderer);
