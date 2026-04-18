@@ -50,6 +50,16 @@ public abstract class LocalPlayerMixin {
             return;
         }
 
+        // Post-swap cooldown: prevent detecting a new crossing for ~500ms
+        // after the last swap. This avoids the rapid-back-and-forth
+        // "Network Protocol Error" where stale chunk packets from the old
+        // dim overrun the reader of the freshly swapped new-dim level. See
+        // SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS for rationale.
+        long sinceSwap = System.nanoTime() - SeamlessClientTeleport.lastSwapMonotonicNanos;
+        if (sinceSwap < SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS) {
+            return;
+        }
+
         Optional<PortalLink> linkOpt = EntityPortalCollision.findPortalLinkAtEntity(self);
         if (linkOpt.isEmpty()) return;
 

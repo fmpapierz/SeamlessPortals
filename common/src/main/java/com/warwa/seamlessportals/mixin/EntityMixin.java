@@ -56,6 +56,21 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
             setPortalCooldown(getPortalCooldown() - 1);
         }
 
+        // IP-style: for ServerPlayer entities, the client is the authoritative
+        // crossing detector — it calls SeamlessClientTeleport.performCrossing
+        // on LocalPlayer.tick HEAD, which does the visual swap synchronously
+        // and sends a ClientPortalCrossingPayload to trigger the server
+        // teleport. If the server-side tick detected independently, it would
+        // race against (and often beat) the client packet, reintroducing the
+        // 50-100 ms round-trip flash for the player whose view we're trying
+        // to keep seamless.
+        //
+        // Mobs and items still use the server-side detector below — they have
+        // no client to originate the crossing from.
+        if (self instanceof net.minecraft.server.level.ServerPlayer) {
+            return;
+        }
+
         // After teleporting, wait until entity walks OUT of the destination
         // portal before allowing another teleport. This prevents bounce
         // without needing a time-based cooldown.

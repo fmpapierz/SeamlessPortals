@@ -287,8 +287,33 @@ public final class SeamlessClientTeleport {
         String dimId = destDim.identifier().toString();
         PlatformHelper.getInstance().sendToServer(new ModPayloads.RequestPortalDataPayload(dimId));
 
+        // 8. Stamp the swap time so LocalPlayerMixin can throttle re-detection.
+        // Rapid back-and-forth teleports race against in-flight chunk packets
+        // from the old dim: if nether chunks (16 sections) arrive after we've
+        // promoted overworld (24 sections) but before handleRespawn writes
+        // this.level, the decoder overruns the buffer and disconnects with
+        // "Network Protocol Error". Gating re-entry of the detector for
+        // ~500ms lets the in-flight queue drain.
+        lastSwapMonotonicNanos = System.nanoTime();
+
         return true;
     }
+
+    /**
+     * Monotonic timestamp of the last client-first swap. Read by
+     * LocalPlayerMixin to throttle the portal-containment detector so
+     * rapid repeat crossings can't issue a second swap before the
+     * previous respawn packet + in-flight chunk queue has drained.
+     */
+    public static volatile long lastSwapMonotonicNanos = 0L;
+
+    /**
+     * Cooldown window after a client-first swap during which new crossings
+     * are suppressed. ~500ms is enough for the respawn round-trip + stale
+     * chunk-packet drain under typical local-server latency; generous
+     * enough to survive slower networks.
+     */
+    public static final long POST_SWAP_COOLDOWN_NANOS = 500_000_000L;
 
     private static ResourceKey<Level> parseDim(String id) {
         return switch (id) {
