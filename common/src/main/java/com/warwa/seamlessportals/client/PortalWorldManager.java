@@ -499,11 +499,38 @@ public class PortalWorldManager {
             ClientLevel level) {
         ((LevelRendererAccessorMixin) renderer)
             .seamlessportals$setLevelRenderState(new LevelRenderState());
+
+        // Wipe cached entity state from the demoted level. While the level
+        // is dormant the server isn't sending entity-tracking updates for
+        // it, so any entities here would otherwise sit at their last-known
+        // positions from this visit until the player returns — appearing
+        // "frozen" on re-promotion (mobs stuck mid-walk, arrows still in
+        // the air, items not despawned). On return the server's normal
+        // entity-tracking sync spawns them fresh.
+        //
+        // The player instance has already been migrated to the incoming
+        // dim's level by SeamlessClientTeleport.doVisualSwap's
+        // oldLevel.removeEntity(player.getId(), ...) — so it's not in
+        // this list. Still guard defensively.
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.player.LocalPlayer player = mc.player;
+        java.util.List<Integer> toRemove = new java.util.ArrayList<>();
+        int kept = 0;
+        for (net.minecraft.world.entity.Entity e : level.entitiesForRendering()) {
+            if (e == player) { kept++; continue; }
+            toRemove.add(e.getId());
+        }
+        for (int id : toRemove) {
+            try {
+                level.removeEntity(id, net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
+            } catch (Exception ignored) {}
+        }
+
         renderers.put(dim, renderer);
         levels.put(dim, level);
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, isolated state",
-            dim.identifier());
+            "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, cleared {} stale entities (kept {})",
+            dim.identifier(), toRemove.size(), kept);
     }
 
     /**
