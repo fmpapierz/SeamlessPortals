@@ -23,7 +23,9 @@
     "client.MinecraftRenderTargetMixin",
     "client.MainProjectionBobMixin",
     "client.ParticleEngineAccessorMixin",
-    "client.LocalPlayerMixin"
+    "client.LocalPlayerMixin",
+    "client.LevelRendererDiagMixin",
+    "client.ChunkPacketGuardMixin"
   ],
   "mixins": [
     "EntityMixin",

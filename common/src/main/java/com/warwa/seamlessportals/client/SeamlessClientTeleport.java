@@ -224,9 +224,19 @@ public final class SeamlessClientTeleport {
             return false;
         }
 
+        int swapId = ++diagSwapSeq;
         LevelRenderer oldRenderer = mc.levelRenderer;
         ClientLevel oldLevel = mc.level;
         ResourceKey<Level> oldDim = oldLevel.dimension();
+
+        // DIAG: visibleSections state BEFORE swap from both renderers.
+        int oldVSBefore = oldRenderer != null
+            ? ((LevelRendererAccessorMixin)(Object) oldRenderer).seamlessportals$getVisibleSections().size() : -1;
+        int newVSBefore = ((LevelRendererAccessorMixin)(Object) promotion.renderer())
+            .seamlessportals$getVisibleSections().size();
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS DIAG #{}] PRE-swap: oldRenderer({}).visibleSections={}, promoted({}).visibleSections={}",
+            swapId, oldDim.identifier(), oldVSBefore, destDim.identifier(), newVSBefore);
 
         // 1. Install promoted renderer + level as new primary.
         ((MinecraftAccessorMixin) mc).seamlessportals$setLevelRenderer(promotion.renderer());
@@ -281,13 +291,26 @@ public final class SeamlessClientTeleport {
         player.yRotO = destYaw;
         player.xRotO = destPitch;
 
-        // 7. Reset portal-view cache for the new dim + request portal data
+        // Warm-up REMOVED after diagnostic run (2026-04-17 22:32): it forces
+        // LevelRenderer.update → applyFrustum → clearVisibleSections BEFORE
+        // SectionOcclusionGraph has had a chance to propagate for the new
+        // main-camera direction. On first-ever teleports to a dim (SOG fresh
+        // from portal-view state only), the clear + re-apply produces
+        // visibleSections=1 (just the player's own section) and stays stuck
+        // there for the 2-3 frames the flash covers. Skipping the warm-up
+        // leaves the stale portal-view visibleSections populated (thousands of
+        // sections, mostly wrong direction) but at least some render, and
+        // SOG propagates naturally over the next frames.
+        //
+        // IP's ClientWorldLoader.withSwitchedWorld similarly does not pre-warm.
+
+        // Reset portal-view cache for the new dim + request portal data
         // (mirrors HandleRespawnMixin.afterRespawn).
         PortalContextSwitch.resetChunkFedState(destDim);
         String dimId = destDim.identifier().toString();
         PlatformHelper.getInstance().sendToServer(new ModPayloads.RequestPortalDataPayload(dimId));
 
-        // 8. Stamp the swap time so LocalPlayerMixin can throttle re-detection.
+        // Stamp the swap time so LocalPlayerMixin can throttle re-detection.
         // Rapid back-and-forth teleports race against in-flight chunk packets
         // from the old dim: if nether chunks (16 sections) arrive after we've
         // promoted overworld (24 sections) but before handleRespawn writes
@@ -314,6 +337,21 @@ public final class SeamlessClientTeleport {
      * enough to survive slower networks.
      */
     public static final long POST_SWAP_COOLDOWN_NANOS = 500_000_000L;
+
+    /**
+     * Diagnostic counter decremented by the LevelRenderer.update injection
+     * in {@code LevelRendererDiagMixin}. Set to a small integer (e.g. 12)
+     * at the end of {@link #doVisualSwap} to have the next N update() calls
+     * log visibleSections.size(). Helps pinpoint when visibleSections gets
+     * populated post-swap (the 2-3 blank frames we're investigating).
+     */
+    public static volatile int diagLogUpdatesRemaining = 0;
+
+    /**
+     * Increments every doVisualSwap so diagnostic log lines include a
+     * session-unique id (useful when there are multiple swaps per test run).
+     */
+    public static volatile int diagSwapSeq = 0;
 
     private static ResourceKey<Level> parseDim(String id) {
         return switch (id) {
