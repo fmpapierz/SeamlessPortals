@@ -40,6 +40,9 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // background — not just during the brief window an FBO render
             // occupies the render thread.
             com.warwa.seamlessportals.client.PortalWorldManager.advanceCompilePipelines();
+            // Keep cached (dormant) levels' gameTime in sync with the active
+            // mc.level so portal-view rendering doesn't show stale time-of-day.
+            com.warwa.seamlessportals.client.PortalWorldManager.syncTimeToCachedLevels();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

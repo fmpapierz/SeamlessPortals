@@ -493,6 +493,39 @@ public class PortalWorldManager {
      * <p>{@code ViewArea} and compiled section meshes are untouched, so a
      * future {@link #promoteToMain} skips rebuild.
      */
+    /**
+     * Keep cached (dormant) ClientLevels' {@code gameTime} in sync with the
+     * currently-active {@code mc.level}. Without this, the cached levels'
+     * time stays frozen at whatever the server last synced when that dim was
+     * active — which in practice means overworld-as-portal-view stays at
+     * the day-time from your last overworld visit even while the real server
+     * time has advanced to night (or vice versa).
+     *
+     * <p>Effect: portal-view rendering of the destination dim now uses
+     * current time of day. After a teleport to that dim, sky/lighting stays
+     * consistent instead of jumping from "stale portal-view time" to
+     * "live server time" over the first few frames.
+     *
+     * <p>Vanilla's {@code ClientPacketListener.handleSetTime} only applies
+     * server-sent time updates to {@code mc.level}. Copying to cached
+     * levels here mirrors that update across all of them every tick.
+     *
+     * <p>{@code gameTime} is the single authoritative counter in 1.21.2
+     * (day/night is derived per-dim via {@code DimensionType.fixedTime} +
+     * vanilla sky shaders) so syncing that alone is sufficient.
+     */
+    public static void syncTimeToCachedLevels() {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        if (active == null) return;
+        long gt = active.getGameTime();
+        for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+            ClientLevel cached = e.getValue();
+            if (cached == null || cached == active) continue;
+            cached.setTimeFromServer(gt);
+        }
+    }
+
     public static void demoteFromMain(
             ResourceKey<Level> dim,
             LevelRenderer renderer,
