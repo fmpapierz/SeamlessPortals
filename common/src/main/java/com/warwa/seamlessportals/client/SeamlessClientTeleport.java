@@ -262,6 +262,24 @@ public final class SeamlessClientTeleport {
         mc.particleEngine.setLevel(promotion.level());
         mc.gameRenderer.setLevel(promotion.level());
 
+        // 4b. Swap mc.gameRenderer.lightmap to the destination dim's cached
+        // Lightmap. Without this, the first few frames post-swap render with
+        // the OLD dim's lightmap texture (nether warm-red applied to the
+        // overworld, or vice-versa) — visible in the screen-recording as
+        // the 1-2 frames of "wrong fog/sky color" immediately following
+        // the 2 blank terrain frames. Mirrors IP's per-dim Lightmap
+        // (Phase X1 Commit B already established the swap mechanism).
+        try {
+            com.warwa.seamlessportals.render.DimensionRenderHelper destHelper =
+                com.warwa.seamlessportals.render.DimensionRenderHelper.getOrCreate(destDim);
+            ((com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin) mc.gameRenderer)
+                .seamlessportals$setLightmap(destHelper.getLightmap());
+        } catch (Exception e) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS CLIENT-CROSSING] Failed to swap lightmap to {}: {}",
+                destDim.identifier(), e.getMessage());
+        }
+
         // 5. Transfer the LocalPlayer between ClientLevel entity-lists and
         // re-point its level field to the destination.
         try {
