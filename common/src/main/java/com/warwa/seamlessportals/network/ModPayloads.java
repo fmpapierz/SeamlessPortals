@@ -164,4 +164,72 @@ public class ModPayloads {
         @Override
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
+
+    /**
+     * Client → Server: "I crossed portal X client-side, please perform the server
+     * teleport." IP-style client-initiated seamless teleport.
+     *
+     * The server validates that the player is actually near the source portal,
+     * that the portal link exists, that the cooldown has expired, and then
+     * performs its own cross-dim move via {@code SeamlessServerTeleport} —
+     * which notably does NOT send {@code ClientboundRespawnPacket}. Instead
+     * it replies with {@link ClientboundSeamlessMovePayload} so the client
+     * can reconcile (or do a deferred visual swap if it never detected the
+     * crossing).
+     */
+    public record ClientPortalCrossingPayload(
+        String portalId
+    ) implements CustomPacketPayload {
+        public static final Type<ClientPortalCrossingPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "client_portal_crossing")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, ClientPortalCrossingPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, ClientPortalCrossingPayload::portalId,
+            ClientPortalCrossingPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Server → Client: reconciliation after a seamless teleport completed
+     * on the server side. Replaces {@code ClientboundRespawnPacket} for
+     * portal crossings so the client never enters {@code handleRespawn}.
+     *
+     * Carries authoritative dest position/rotation/velocity + the portal link
+     * id so the client can either:
+     *   1. (hot path) confirm its own client-first swap matches server truth, OR
+     *   2. (fallback) perform the visual swap now if it missed the crossing
+     *      locally (e.g. portal link not yet synced when the eye crossed).
+     */
+    public record ClientboundSeamlessMovePayload(
+        String portalId,
+        String destDimension,
+        double x, double y, double z,
+        float yaw, float pitch,
+        double vx, double vy, double vz
+    ) implements CustomPacketPayload {
+        public static final Type<ClientboundSeamlessMovePayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "seamless_move")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, ClientboundSeamlessMovePayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, ClientboundSeamlessMovePayload::portalId,
+            ByteBufCodecs.STRING_UTF8, ClientboundSeamlessMovePayload::destDimension,
+            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::x,
+            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::y,
+            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::z,
+            ByteBufCodecs.FLOAT, ClientboundSeamlessMovePayload::yaw,
+            ByteBufCodecs.FLOAT, ClientboundSeamlessMovePayload::pitch,
+            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::vx,
+            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::vy,
+            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::vz,
+            ClientboundSeamlessMovePayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
 }

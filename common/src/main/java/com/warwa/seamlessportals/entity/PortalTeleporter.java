@@ -45,25 +45,12 @@ public class PortalTeleporter {
 
     private static boolean teleportPlayer(ServerPlayer player, ServerLevel destLevel,
                                            Vec3 destPos, Vec3 destVelocity, PortalLink link) {
-        float destYaw = link.transformYaw(player.getYRot());
-
-        // No cooldown — IP-style: depth negation places player behind dest portal,
-        // so no re-trigger. EntityMixin dimension tracking handles the rest.
-        player.teleportTo(destLevel, destPos.x, destPos.y, destPos.z,
-            Set.of(), destYaw, player.getXRot(), false);
-
-        player.setDeltaMovement(destVelocity);
-
-        SeamlessPortalsConstants.LOGGER.info("[SEAMLESS TELEPORT] {} -> {} in {}",
-            player.getName().getString(), destPos, destLevel.dimension().identifier());
-
-        // Re-send portal data for the new dimension
-        MinecraftServer server = destLevel.getServer();
-        if (server != null) {
-            PortalManager portalManager = PortalManager.getServerInstance();
-            portalManager.sendDimensionLinksToPlayer(destLevel.dimension(), player);
-        }
-
+        // IP-style: server-first fallback path (when client-initiated crossing
+        // hasn't fired yet). Delegates to SeamlessServerTeleport which uses
+        // vanilla teleportTo + sends ClientboundSeamlessMovePayload for
+        // reconciliation. The client-first path goes directly from
+        // SeamlessClientTeleport to the server via ClientPortalCrossingPayload.
+        SeamlessServerTeleport.performCrossing(player, link);
         return true;
     }
 

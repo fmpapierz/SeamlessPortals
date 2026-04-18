@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.Optional;
 
 @Mixin(Entity.class)
-public abstract class EntityMixin {
+public abstract class EntityMixin implements com.warwa.seamlessportals.entity.SeamlessTeleportState {
 
     @Shadow
     public abstract Vec3 position();
@@ -35,6 +35,16 @@ public abstract class EntityMixin {
      */
     @Unique
     private boolean seamlessportals$justTeleported;
+
+    @Override
+    public boolean seamlessportals$isJustTeleported() {
+        return seamlessportals$justTeleported;
+    }
+
+    @Override
+    public void seamlessportals$setJustTeleported(boolean value) {
+        seamlessportals$justTeleported = value;
+    }
 
     @Inject(method = "tick", at = @At("HEAD"))
     private void seamlessportals$checkPortalCrossing(CallbackInfo ci) {

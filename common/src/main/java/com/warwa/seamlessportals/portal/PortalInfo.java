@@ -7,6 +7,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 public class PortalInfo {
@@ -23,7 +24,16 @@ public class PortalInfo {
 
     public PortalInfo(PortalType type, ResourceKey<Level> dimension, BlockPos origin,
                       Direction.Axis axis, int width, int height) {
-        this.portalId = UUID.randomUUID();
+        // Deterministic UUID from portal identity. The client-first seamless
+        // teleport sends the source portal id to the server for validation;
+        // client and server must agree on the id for a given portal.
+        // Previous behavior (UUID.randomUUID()) made them mismatch.
+        // Width/height excluded so resizes don't change the id.
+        this.portalId = UUID.nameUUIDFromBytes(
+            (dimension.identifier().toString()
+                + "@" + origin.getX() + "," + origin.getY() + "," + origin.getZ()
+                + "/" + axis.getName()
+            ).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         this.type = type;
         this.dimension = dimension;
         this.origin = origin;

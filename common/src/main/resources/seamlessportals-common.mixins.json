@@ -22,7 +22,8 @@
     "client.HandleRespawnMixin",
     "client.MinecraftRenderTargetMixin",
     "client.MainProjectionBobMixin",
-    "client.ParticleEngineAccessorMixin"
+    "client.ParticleEngineAccessorMixin",
+    "client.LocalPlayerMixin"
   ],
   "mixins": [
     "EntityMixin",

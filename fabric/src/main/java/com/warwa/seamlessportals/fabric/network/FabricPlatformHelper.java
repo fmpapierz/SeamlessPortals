@@ -44,6 +44,10 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.PortalLinkPayload.TYPE,
             ModPayloads.PortalLinkPayload.STREAM_CODEC
         );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.ClientboundSeamlessMovePayload.TYPE,
+            ModPayloads.ClientboundSeamlessMovePayload.STREAM_CODEC
+        );
 
         // Register client -> server payloads
         PayloadTypeRegistry.serverboundPlay().register(
@@ -53,6 +57,10 @@ public class FabricPlatformHelper implements PlatformHelper {
         PayloadTypeRegistry.serverboundPlay().register(
             ModPayloads.RequestPortalDataPayload.TYPE,
             ModPayloads.RequestPortalDataPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.serverboundPlay().register(
+            ModPayloads.ClientPortalCrossingPayload.TYPE,
+            ModPayloads.ClientPortalCrossingPayload.STREAM_CODEC
         );
 
         SeamlessPortalsConstants.LOGGER.info("Fabric network payloads registered");
@@ -87,6 +95,21 @@ public class FabricPlatformHelper implements PlatformHelper {
 
                     // Send all portal links for this dimension to the requesting player
                     manager.sendDimensionLinksToPlayer(dimension, player);
+                });
+            }
+        );
+
+        // IP-style client-initiated seamless teleport: client detected the
+        // crossing locally and already did its visual swap; the server now
+        // performs the authoritative teleport (without sending a respawn
+        // packet) and replies with ClientboundSeamlessMovePayload.
+        ServerPlayNetworking.registerGlobalReceiver(
+            ModPayloads.ClientPortalCrossingPayload.TYPE,
+            (payload, context) -> {
+                ServerPlayer player = context.player();
+                context.server().execute(() -> {
+                    com.warwa.seamlessportals.entity.SeamlessServerTeleport
+                        .handleClientInitiatedCrossing(player, payload.portalId());
                 });
             }
         );
@@ -132,6 +155,22 @@ public class FabricPlatformHelper implements PlatformHelper {
             (payload, context) -> {
                 context.client().execute(() -> {
                     com.warwa.seamlessportals.portal.PortalDetector.handlePortalLinkFromServer(payload);
+                });
+            }
+        );
+
+        // Seamless reconciliation / fallback-swap payload.
+        // Hot path: the client already performed its visual swap; this packet
+        // confirms authoritative dest position + velocity from the server.
+        // Fallback: the client never detected the crossing (e.g. link wasn't
+        // synced in time); this packet carries enough info to trigger the
+        // deferred visual swap now.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.ClientboundSeamlessMovePayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() -> {
+                    com.warwa.seamlessportals.client.SeamlessClientTeleport
+                        .handleServerReconcile(payload);
                 });
             }
         );
