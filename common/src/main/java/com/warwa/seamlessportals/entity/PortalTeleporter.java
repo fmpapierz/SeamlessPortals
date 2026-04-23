@@ -63,6 +63,18 @@ public class PortalTeleporter {
         );
 
         Entity newEntity = entity.teleport(transition);
+        if (newEntity != null) {
+            // Vanilla cross-dim teleport replaces the entity object — the
+            // @Unique seamlessportals$justTeleported flag on the source
+            // entity is lost, and the new entity spawns inside the
+            // destination portal bounds. Without a cooldown it would be
+            // picked up by our EntityMixin on the very next tick,
+            // teleported back, creating a new entity each hop. Setting the
+            // standard 300-tick (15 s) portal cooldown on the new entity
+            // matches vanilla's cross-portal anti-loop behaviour and
+            // guarantees the mob has time to walk out of the portal bounds.
+            newEntity.setPortalCooldown(300);
+        }
         return newEntity != null;
     }
 }

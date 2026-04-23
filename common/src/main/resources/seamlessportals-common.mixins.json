@@ -25,7 +25,14 @@
     "client.ParticleEngineAccessorMixin",
     "client.LocalPlayerMixin",
     "client.LevelRendererDiagMixin",
-    "client.ChunkPacketGuardMixin"
+    "client.ChunkPacketGuardMixin",
+    "client.SectionOcclusionGraphAccessorMixin",
+    "client.LevelRendererCullTerrainMixin",
+    "client.LivingEntityRendererDiagMixin",
+    "client.FeatureRenderDispatcherAccessorMixin",
+    "client.ApplyLightDataGuardMixin",
+    "client.NetherPortalUninteractableMixin",
+    "client.GameRendererObliqueClipMixin"
   ],
   "mixins": [
     "EntityMixin",
@@ -34,7 +41,9 @@
     "ProjectileMixin",
     "ThrownEnderpearlMixin",
     "NetherPortalBlockMixin",
-    "PortalForcerMixin"
+    "PortalForcerMixin",
+    "ServerLevelBlockUpdateMixin",
+    "TicketTypeInvoker"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -81,6 +81,21 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
             return;
         }
 
+        // Honour vanilla portal cooldown. When a non-player entity does a
+        // cross-dim teleport via {@code entity.teleport()}, vanilla
+        // destroys the old entity object and creates a new one at the
+        // destination — our {@code seamlessportals$justTeleported} @Unique
+        // flag is on the OLD object and is lost. PortalTeleporter now
+        // stamps a 300-tick portalCooldown on the new entity so we can
+        // skip re-crossing attempts until the mob walks out of the
+        // destination portal. Without this check, every non-player
+        // entity that crosses a portal would loop endlessly, spawning a
+        // fresh entity id each tick (observed: stationary "piglins" at a
+        // portal with new IDs 729, 738, 747, 756... every tick).
+        if (getPortalCooldown() > 0) {
+            return;
+        }
+
         // Check if entity is inside a portal — teleport instantly
         Optional<PortalLink> linkOpt = EntityPortalCollision.findPortalLinkAtEntity(self);
         if (linkOpt.isPresent()) {

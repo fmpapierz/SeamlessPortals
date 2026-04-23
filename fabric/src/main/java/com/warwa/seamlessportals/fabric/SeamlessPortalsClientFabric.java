@@ -43,6 +43,10 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // Keep cached (dormant) levels' gameTime in sync with the active
             // mc.level so portal-view rendering doesn't show stale time-of-day.
             com.warwa.seamlessportals.client.PortalWorldManager.syncTimeToCachedLevels();
+            // Phase 2a.5: tick mirrored entities in cached levels so their
+            // interpolation handlers advance and animations run. Without
+            // this, mobs visible through portals are frozen / spazzing.
+            com.warwa.seamlessportals.client.PortalWorldManager.tickCachedEntities();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

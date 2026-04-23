@@ -48,6 +48,34 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.ClientboundSeamlessMovePayload.TYPE,
             ModPayloads.ClientboundSeamlessMovePayload.STREAM_CODEC
         );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteBlockUpdatePayload.TYPE,
+            ModPayloads.RemoteBlockUpdatePayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteEntityAddPayload.TYPE,
+            ModPayloads.RemoteEntityAddPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteEntityMovePayload.TYPE,
+            ModPayloads.RemoteEntityMovePayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteEntityRemovePayload.TYPE,
+            ModPayloads.RemoteEntityRemovePayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteEntityDataPayload.TYPE,
+            ModPayloads.RemoteEntityDataPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteEntityEquipmentPayload.TYPE,
+            ModPayloads.RemoteEntityEquipmentPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.PortalUnregisterPayload.TYPE,
+            ModPayloads.PortalUnregisterPayload.STREAM_CODEC
+        );
 
         // Register client -> server payloads
         PayloadTypeRegistry.serverboundPlay().register(
@@ -171,6 +199,86 @@ public class FabricPlatformHelper implements PlatformHelper {
                 context.client().execute(() -> {
                     com.warwa.seamlessportals.client.SeamlessClientTeleport
                         .handleServerReconcile(payload);
+                });
+            }
+        );
+
+        // Phase 1 live-portal-view: apply block updates from watched dims
+        // to the cached ClientLevel + kick the cached renderer to rebuild
+        // the affected section on its next portal-view FBO render.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteBlockUpdatePayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() -> {
+                    com.warwa.seamlessportals.chunk.RemoteBlockUpdater.apply(
+                        payload.dimensionId(), payload.packedPos(), payload.blockStateId());
+                });
+            }
+        );
+
+        // Phase 2a live-portal-view: entity mirroring. Add/move/remove
+        // entities in the cached ClientLevel so they render through
+        // portals and participate in the client's entity-getter for later
+        // cross-portal raycast work.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteEntityAddPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RemoteEntityApplier.applyAdd(payload));
+            }
+        );
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteEntityMovePayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RemoteEntityApplier.applyMove(payload));
+            }
+        );
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteEntityRemovePayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RemoteEntityApplier.applyRemove(payload));
+            }
+        );
+        // Phase 2b: apply SynchedEntityData (pose / glow / baby / custom
+        // name) from server mirror to cached ClientLevel entity.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteEntityDataPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RemoteEntityApplier.applyData(payload));
+            }
+        );
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteEntityEquipmentPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RemoteEntityApplier.applyEquipment(payload));
+            }
+        );
+        // Portal destroyed on server — drop the client-side PortalInfo
+        // so the stencil/view stops rendering.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.PortalUnregisterPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() -> {
+                    com.warwa.seamlessportals.portal.PortalManager cm =
+                        com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
+                    net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dim;
+                    switch (payload.dimensionId()) {
+                        case "minecraft:overworld" ->
+                            dim = net.minecraft.world.level.Level.OVERWORLD;
+                        case "minecraft:the_nether" ->
+                            dim = net.minecraft.world.level.Level.NETHER;
+                        case "minecraft:the_end" ->
+                            dim = net.minecraft.world.level.Level.END;
+                        default -> { return; }
+                    }
+                    cm.getTracker(dim).getPortalAt(payload.origin()).ifPresent(cm::unregisterPortal);
+                    com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS] Client dropped portal at {} in {}",
+                        payload.origin().toShortString(), payload.dimensionId());
                 });
             }
         );

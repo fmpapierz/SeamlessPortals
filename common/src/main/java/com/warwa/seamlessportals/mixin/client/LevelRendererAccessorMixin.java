@@ -92,4 +92,18 @@ public interface LevelRendererAccessorMixin {
     @Accessor("renderBuffers")
     @Mutable
     void seamlessportals$setRenderBuffers(RenderBuffers renderBuffers);
+
+    /**
+     * The {@link net.minecraft.client.renderer.feature.FeatureRenderDispatcher}
+     * tied to this renderer. Secondary renderers created by
+     * {@link com.warwa.seamlessportals.client.PortalWorldManager#createRenderer}
+     * own their own dispatcher; exposing this lets
+     * {@link com.warwa.seamlessportals.render.PortalContextSwitch#withSwitchedWorld}
+     * reach into the dispatcher to swap its buffer-source references in
+     * sync with the renderBuffers swap, so entity-equipment item draws go
+     * to the actively-flushed buffer rather than the dormant
+     * {@code destRenderBuffers.bufferSource()}.
+     */
+    @Accessor("featureRenderDispatcher")
+    net.minecraft.client.renderer.feature.FeatureRenderDispatcher seamlessportals$getFeatureRenderDispatcher();
 }

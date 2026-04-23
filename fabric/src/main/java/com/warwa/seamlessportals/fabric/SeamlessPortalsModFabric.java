@@ -2,6 +2,7 @@ package com.warwa.seamlessportals.fabric;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.chunk.PortalChunkTracker;
+import com.warwa.seamlessportals.chunk.PortalEntityTracker;
 import com.warwa.seamlessportals.fabric.network.FabricPlatformHelper;
 import com.warwa.seamlessportals.network.ModPayloads;
 import com.warwa.seamlessportals.portal.PortalManager;
@@ -12,6 +13,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 public class SeamlessPortalsModFabric implements ModInitializer {
 
     private final PortalChunkTracker chunkTracker = new PortalChunkTracker();
+    private final PortalEntityTracker entityTracker = new PortalEntityTracker();
 
     @Override
     public void onInitialize() {
@@ -31,10 +33,12 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             PortalManager.resetServer();
             chunkTracker.clear();
+            entityTracker.clear();
         });
 
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             chunkTracker.tick(server);
+            entityTracker.tick(server);
         });
     }
 }

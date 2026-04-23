@@ -204,6 +204,271 @@ public class ModPayloads {
      *   2. (fallback) perform the visual swap now if it missed the crossing
      *      locally (e.g. portal link not yet synced when the eye crossed).
      */
+    /**
+     * Server → Client: add a mirrored entity to the client's cached
+     * ClientLevel for {@code dimensionId}, so it renders in the portal view.
+     *
+     * <p>Phase 2a.1 of the live-portal-view feature: entity presence. A
+     * companion to {@link RemoteBlockUpdatePayload} — that covers blocks,
+     * this covers mobs/items/projectiles/xp-orbs/everything that is an
+     * {@link net.minecraft.world.entity.Entity}. Dispatched by
+     * {@code PortalEntityTracker} on the server as entities enter the
+     * portal-view radius around a player's nearby portal destination.
+     *
+     * <p>Same wire shape as {@code ClientboundAddEntityPacket}, kept as a
+     * custom payload rather than wrapping the vanilla packet so the client
+     * handler can target the cached {@code ClientLevel} directly without
+     * swapping {@code ClientPacketListener.level} thread-locally.
+     */
+    /**
+     * Server → Client: the portal at {@code origin} in {@code dimensionId}
+     * has been destroyed (its nether_portal block turned to air, typically
+     * because a surrounding obsidian block was broken). Client removes the
+     * portal + link from its {@link com.warwa.seamlessportals.portal.PortalManager}
+     * so the portal view stops rendering.
+     */
+    public record PortalUnregisterPayload(
+        String dimensionId,
+        BlockPos origin
+    ) implements CustomPacketPayload {
+        public static final Type<PortalUnregisterPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "portal_unregister")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, PortalUnregisterPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, PortalUnregisterPayload::dimensionId,
+            BlockPos.STREAM_CODEC, PortalUnregisterPayload::origin,
+            PortalUnregisterPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    public record RemoteEntityAddPayload(
+        String dimensionId,
+        int entityId,
+        UUID uuid,
+        int entityTypeId,
+        double x, double y, double z,
+        float yRot, float xRot, float yHeadRot,
+        double vx, double vy, double vz,
+        int data
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteEntityAddPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_entity_add")
+        );
+
+        // composite() tops out at 12 fields and we have 15; roll a manual
+        // codec that writes/reads the fields in order.
+        public static final StreamCodec<FriendlyByteBuf, RemoteEntityAddPayload> STREAM_CODEC =
+            StreamCodec.of(
+                (buf, p) -> {
+                    buf.writeUtf(p.dimensionId);
+                    buf.writeVarInt(p.entityId);
+                    buf.writeUUID(p.uuid);
+                    buf.writeVarInt(p.entityTypeId);
+                    buf.writeDouble(p.x);
+                    buf.writeDouble(p.y);
+                    buf.writeDouble(p.z);
+                    buf.writeFloat(p.yRot);
+                    buf.writeFloat(p.xRot);
+                    buf.writeFloat(p.yHeadRot);
+                    buf.writeDouble(p.vx);
+                    buf.writeDouble(p.vy);
+                    buf.writeDouble(p.vz);
+                    buf.writeVarInt(p.data);
+                },
+                buf -> new RemoteEntityAddPayload(
+                    buf.readUtf(),
+                    buf.readVarInt(),
+                    buf.readUUID(),
+                    buf.readVarInt(),
+                    buf.readDouble(), buf.readDouble(), buf.readDouble(),
+                    buf.readFloat(), buf.readFloat(), buf.readFloat(),
+                    buf.readDouble(), buf.readDouble(), buf.readDouble(),
+                    buf.readVarInt()
+                )
+            );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Server → Client: absolute-position tick update for a previously
+     * added mirrored entity. Sent every server tick (20 Hz) per entity in
+     * the portal-view radius, matching vanilla's tracking cadence.
+     *
+     * <p>Uses absolute position rather than delta-encoded
+     * {@code ClientboundMoveEntityPacket.Pos} shorts — simpler, no prev-pos
+     * state needed server-side, cost is ~a couple of bytes per packet on a
+     * 60Hz network. Consider compressing in a later optimization pass if
+     * bandwidth becomes a concern.
+     */
+    public record RemoteEntityMovePayload(
+        String dimensionId,
+        int entityId,
+        double x, double y, double z,
+        float yRot, float xRot, float yHeadRot,
+        boolean onGround
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteEntityMovePayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_entity_move")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, RemoteEntityMovePayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, RemoteEntityMovePayload::dimensionId,
+            ByteBufCodecs.VAR_INT, RemoteEntityMovePayload::entityId,
+            ByteBufCodecs.DOUBLE, RemoteEntityMovePayload::x,
+            ByteBufCodecs.DOUBLE, RemoteEntityMovePayload::y,
+            ByteBufCodecs.DOUBLE, RemoteEntityMovePayload::z,
+            ByteBufCodecs.FLOAT, RemoteEntityMovePayload::yRot,
+            ByteBufCodecs.FLOAT, RemoteEntityMovePayload::xRot,
+            ByteBufCodecs.FLOAT, RemoteEntityMovePayload::yHeadRot,
+            ByteBufCodecs.BOOL, RemoteEntityMovePayload::onGround,
+            RemoteEntityMovePayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Server → Client: replicate a mirrored entity's
+     * {@link net.minecraft.network.syncher.SynchedEntityData} so its
+     * visual state (pose, glow, baby flag, sneaking, sitting, aiming,
+     * custom name, etc.) matches the authoritative server entity.
+     *
+     * <p>Phase 2b of the live-portal-view feature. Wraps vanilla's
+     * {@link net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket}
+     * so we inherit its codec for free — that packet's serializer uses
+     * {@link net.minecraft.network.RegistryFriendlyByteBuf} because some
+     * data values (item stacks, particle options) need registry access.
+     *
+     * <p>Sent per entity right after
+     * {@link RemoteEntityAddPayload} with the full non-default data set,
+     * and again per tick only when the entity reports dirty data (via
+     * {@code SynchedEntityData.packDirty()}) so bandwidth scales with
+     * change rate, not mob count.
+     */
+    public record RemoteEntityDataPayload(
+        String dimensionId,
+        net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket innerPacket
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteEntityDataPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_entity_data")
+        );
+
+        public static final StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, RemoteEntityDataPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8.cast(),
+            RemoteEntityDataPayload::dimensionId,
+            net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket.STREAM_CODEC,
+            RemoteEntityDataPayload::innerPacket,
+            RemoteEntityDataPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Server → Client: replicate a living mirrored entity's equipment
+     * slots (main hand, off hand, helmet, chestplate, leggings, boots,
+     * horse armor). Wraps vanilla
+     * {@link net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket}
+     * for its codec — slots carry full ItemStack which needs registry
+     * access via {@link net.minecraft.network.RegistryFriendlyByteBuf}.
+     */
+    public record RemoteEntityEquipmentPayload(
+        String dimensionId,
+        net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket innerPacket
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteEntityEquipmentPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_entity_equipment")
+        );
+
+        public static final StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, RemoteEntityEquipmentPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8.cast(),
+            RemoteEntityEquipmentPayload::dimensionId,
+            net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket.STREAM_CODEC,
+            RemoteEntityEquipmentPayload::innerPacket,
+            RemoteEntityEquipmentPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Server → Client: remove one or more mirrored entities from the
+     * client's cached ClientLevel for {@code dimensionId}. Sent when an
+     * entity leaves the portal-view radius, dies, or gets despawned.
+     */
+    public record RemoteEntityRemovePayload(
+        String dimensionId,
+        java.util.List<Integer> entityIds
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteEntityRemovePayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_entity_remove")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, RemoteEntityRemovePayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, RemoteEntityRemovePayload::dimensionId,
+            ByteBufCodecs.VAR_INT.apply(ByteBufCodecs.list()), RemoteEntityRemovePayload::entityIds,
+            RemoteEntityRemovePayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
+     * Server → Client: live block update for a chunk currently watched
+     * through a portal.
+     *
+     * <p>Mirrors the effect of {@code ClientboundBlockUpdatePacket} but routed
+     * to the client's cached {@code ClientLevel} for {@code dimensionId}
+     * rather than {@code mc.level}. Enables the "live portal view" feature:
+     * as blocks change in the destination dimension, the portal's rendered
+     * view updates without the player having to cross through.
+     *
+     * <p>Dispatched from
+     * {@code com.warwa.seamlessportals.mixin.ServerLevelBlockUpdateMixin}
+     * (server-side hook on {@code ServerLevel.sendBlockUpdated}) to each
+     * player whose nearby portal has a destination in this dim within
+     * render-distance of {@code pos}.
+     *
+     * <p>Wire format:
+     * <ul>
+     *   <li>{@code dimensionId} — e.g. "minecraft:the_nether"</li>
+     *   <li>{@code packedPos} — {@link net.minecraft.core.BlockPos#asLong()}</li>
+     *   <li>{@code blockStateId} —
+     *     {@link net.minecraft.world.level.block.Block#getId(net.minecraft.world.level.block.state.BlockState)}
+     *     — compact integer id into the block-state registry
+     *   </li>
+     * </ul>
+     */
+    public record RemoteBlockUpdatePayload(
+        String dimensionId,
+        long packedPos,
+        int blockStateId
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteBlockUpdatePayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_block_update")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, RemoteBlockUpdatePayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, RemoteBlockUpdatePayload::dimensionId,
+            ByteBufCodecs.VAR_LONG, RemoteBlockUpdatePayload::packedPos,
+            ByteBufCodecs.VAR_INT, RemoteBlockUpdatePayload::blockStateId,
+            RemoteBlockUpdatePayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record ClientboundSeamlessMovePayload(
         String portalId,
         String destDimension,

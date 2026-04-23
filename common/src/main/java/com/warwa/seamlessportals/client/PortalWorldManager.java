@@ -64,6 +64,20 @@ public class PortalWorldManager {
     private static final Map<ResourceKey<Level>, LevelRenderer> renderers = new ConcurrentHashMap<>();
     private static final Map<ResourceKey<Level>, ClientLevel> levels = new ConcurrentHashMap<>();
 
+    /**
+     * Renderers that were just promoted and need a synchronous
+     * {@link net.minecraft.client.renderer.SectionOcclusionGraph} prime on
+     * their next {@code cullTerrain} call, to avoid the 1-2 blank-terrain
+     * frames at the start of a portal crossing.
+     *
+     * <p>Consumed by
+     * {@link com.warwa.seamlessportals.mixin.client.LevelRendererCullTerrainMixin}
+     * on the first post-promote frame. Weak-referenced so a renderer that
+     * gets closed without its prime consumed doesn't leak.
+     */
+    private static final java.util.Set<LevelRenderer> pendingSyncPrime =
+        java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     private static boolean initialized = false;
 
     /** Promotion outcome: the renderer + level to install as Minecraft's primary. */
@@ -308,8 +322,21 @@ public class PortalWorldManager {
             return;
         }
 
+        // Only backfill chunks the cached ClientLevel doesn't already have.
+        // Re-feeding an already-loaded chunk from RemoteChunkManager's
+        // snapshot would destroy live mutations that arrived via vanilla
+        // block-update packets (when the cached level was mc.level and
+        // received a direct edit, e.g. the player placing a block while in
+        // that dim) or via our RemoteBlockUpdatePayload mirror. The snapshot
+        // is only guaranteed to be fresh at initial serialization time; as
+        // the player's session progresses, the cached level's in-memory
+        // state drifts ahead of it. Guard against that regression here.
+        net.minecraft.client.multiplayer.ClientChunkCache cachedChunkSource =
+            destLevel.getChunkSource();
+
         java.util.Set<net.minecraft.world.level.ChunkPos> alreadyQueued = new java.util.HashSet<>();
         int enqueued = 0;
+        int skippedLive = 0;
         for (var origin : portalOrigins) {
             int cx = origin.getX() >> 4;
             int cz = origin.getZ() >> 4;
@@ -318,6 +345,13 @@ public class PortalWorldManager {
                     var pos = new net.minecraft.world.level.ChunkPos(cx + dx, cz + dz);
                     if (!alreadyQueued.add(pos)) continue;
                     if (!chunks.containsKey(pos)) continue;
+                    if (cachedChunkSource.hasChunk(pos.x(), pos.z())) {
+                        // Cached level already has this chunk — treat its
+                        // in-memory state as authoritative (it may contain
+                        // live mutations not in our snapshot).
+                        skippedLive++;
+                        continue;
+                    }
                     pendingFeeds.add(new PendingFeed(dimension, pos));
                     enqueued++;
                 }
@@ -325,6 +359,11 @@ public class PortalWorldManager {
         }
         if (enqueued > 0) {
             feedingDims.add(dimension);
+        }
+        if (skippedLive > 0) {
+            SeamlessPortalsConstants.LOGGER.debug(
+                "[SEAMLESS PHASE2] feedExistingChunks: skipped {} live-loaded chunks (only backfilling {}) for {}",
+                skippedLive, enqueued, dimension.identifier());
         }
 
         SeamlessPortalsConstants.LOGGER.info(
@@ -477,10 +516,63 @@ public class PortalWorldManager {
         }
         ((LevelRendererAccessorMixin) renderer)
             .seamlessportals$setLevelRenderState(sharedState);
+
+        // Wipe any entities that accumulated in this level while it was
+        // a cached mirror target. Phase 2a's RemoteEntityApplier added
+        // mirrored entities via level.addEntity(...); those live in the
+        // level's entity-getter. If we don't clear them before the level
+        // becomes mc.level, the main-view renderer will render them as
+        // real entities at their (often nether-mapped) coordinates —
+        // producing the "entities render through walls / in crosshair"
+        // symptom where a mirrored-piglin at nether (14.5, 81, 4.1) ends
+        // up visible in the OW at the same coords. Vanilla will re-sync
+        // the authoritative entity list via Clientbound(Add|Remove)Entity
+        // packets as the server picks up our teleport.
+        Minecraft mc0 = Minecraft.getInstance();
+        net.minecraft.client.player.LocalPlayer lp0 = mc0.player;
+        int promoteWiped = 0;
+        java.util.List<Integer> promoteToRemove = new java.util.ArrayList<>();
+        for (net.minecraft.world.entity.Entity ent : level.entitiesForRendering()) {
+            if (ent == lp0) continue;
+            promoteToRemove.add(ent.getId());
+        }
+        for (int id : promoteToRemove) {
+            try {
+                level.removeEntity(id,
+                    net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
+                promoteWiped++;
+            } catch (Exception ignored) {}
+        }
+
+        // Flag this renderer for synchronous SOG prime on its next
+        // cullTerrain call. Eliminates the 1-2 blank-terrain frames
+        // that would otherwise show while the async
+        // SectionOcclusionGraph full-update task propagates.
+        synchronized (pendingSyncPrime) {
+            pendingSyncPrime.add(renderer);
+        }
+
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS PHASE2] Promoted renderer → mc.levelRenderer for {}",
-            dim.identifier());
+            "[SEAMLESS PHASE2] Promoted renderer → mc.levelRenderer for {} (marked for SOG sync prime; wiped {} mirrored entities)",
+            dim.identifier(), promoteWiped);
         return new Promotion(renderer, level);
+    }
+
+    /**
+     * Returns {@code true} if the given renderer was marked for a one-shot
+     * synchronous SectionOcclusionGraph prime (and clears the flag).
+     *
+     * <p>Called from
+     * {@link com.warwa.seamlessportals.mixin.client.LevelRendererCullTerrainMixin}
+     * immediately after vanilla's {@code SectionOcclusionGraph.update()} call
+     * on each frame. Returning {@code true} triggers a blocking wait on the
+     * newly-scheduled full-update task; all other frames pass through without
+     * cost.
+     */
+    public static boolean consumePendingPrime(LevelRenderer renderer) {
+        synchronized (pendingSyncPrime) {
+            return pendingSyncPrime.remove(renderer);
+        }
     }
 
     /**
@@ -514,6 +606,59 @@ public class PortalWorldManager {
      * (day/night is derived per-dim via {@code DimensionType.fixedTime} +
      * vanilla sky shaders) so syncing that alone is sufficient.
      */
+    /**
+     * Phase 2a tick pump: tick mirrored entities living in cached (dormant)
+     * ClientLevels so their animations, interpolation handlers, and
+     * prev-tick position fields advance frame-to-frame.
+     *
+     * <p>Without this call, a mirrored entity's
+     * {@link net.minecraft.world.entity.InterpolationHandler} never runs
+     * ({@code interpolate()} isn't called), so the render path reads stale
+     * interpolated values and animation timers (arm swing, walk animation,
+     * idle breathing) stay frozen. Prev-tick position fields
+     * ({@code xo/yo/zo}) also stay stale, so the render's within-tick lerp
+     * jumps every time our 20 Hz Move payload snaps the current position
+     * to a new value — which is the "spazzing" symptom observed when mobs
+     * were visible but not animated.
+     *
+     * <p>We call the entity's own {@link Entity#tick()} which handles all
+     * of the above. Exceptions are caught per-entity so a single misbehaving
+     * mob doesn't poison the rest of the pump. Skips the local player
+     * (which shouldn't ever be in a cached level but a defense-in-depth
+     * guard doesn't cost anything).
+     */
+    public static void tickCachedEntities() {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        net.minecraft.client.player.LocalPlayer localPlayer = mc.player;
+        for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+            ClientLevel cached = e.getValue();
+            if (cached == null || cached == active) continue;
+            for (net.minecraft.world.entity.Entity ent : cached.entitiesForRendering()) {
+                if (ent == localPlayer) continue;
+                if (ent.isPassenger()) continue;
+                if (ent.isRemoved()) continue;
+                try {
+                    // Mirror entities follow vanilla's exact per-tick
+                    // lifecycle: setOldPosAndRot() to freeze the prev
+                    // frame, increment tickCount, then full entity.tick().
+                    // This is what ClientLevel.tickNonPassenger does for
+                    // normal mc.level entities — using the same code path
+                    // here guarantees walkAnimation, attack swings, pose
+                    // transitions, effect ticks, head-rotation lerping
+                    // all behave exactly like they do for a directly-seen
+                    // entity in vanilla. AI server-side work stays
+                    // guarded inside aiStep via isClientSide().
+                    ent.setOldPosAndRot();
+                    ent.tickCount++;
+                    ent.tick();
+                } catch (Throwable t) {
+                    // Swallow — mirror is render-only, can't crash here.
+                }
+            }
+        }
+    }
+
     public static void syncTimeToCachedLevels() {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel active = mc.level;

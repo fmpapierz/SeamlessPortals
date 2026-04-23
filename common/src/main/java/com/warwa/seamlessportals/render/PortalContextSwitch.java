@@ -202,6 +202,28 @@ public class PortalContextSwitch {
         net.minecraft.client.renderer.RenderBuffers savedDestRendererBuffers =
             destRendererAccess.seamlessportals$getRenderBuffers();
 
+        // Phase 2b fix — the secondary renderer's FeatureRenderDispatcher
+        // owns its own bufferSource refs (final, set at construction from
+        // destRenderBuffers.bufferSource()). When we swap the renderer's
+        // RenderBuffers to pooledBuffers below, the dispatcher's refs stay
+        // pointed at destRenderBuffers and nothing in vanilla flushes that
+        // buffer during the portal render — entity equipment items
+        // (bow/sword/armor) submitted through itemFeatureRenderer.renderSolid
+        // go there and never draw.
+        //
+        // Solution: read the dispatcher via LevelRenderer accessor, stash
+        // its current refs, overwrite to pooledBuffers' refs for the
+        // duration of the render callback, restore after.
+        com.warwa.seamlessportals.mixin.client.FeatureRenderDispatcherAccessorMixin destDispatcherAccess =
+            (com.warwa.seamlessportals.mixin.client.FeatureRenderDispatcherAccessorMixin)
+                (Object) destRendererAccess.seamlessportals$getFeatureRenderDispatcher();
+        net.minecraft.client.renderer.MultiBufferSource.BufferSource savedDestDispatcherBuffers =
+            destDispatcherAccess.seamlessportals$getBufferSource();
+        net.minecraft.client.renderer.OutlineBufferSource savedDestDispatcherOutline =
+            destDispatcherAccess.seamlessportals$getOutlineBufferSource();
+        net.minecraft.client.renderer.MultiBufferSource.BufferSource savedDestDispatcherCrumbling =
+            destDispatcherAccess.seamlessportals$getCrumblingBufferSource();
+
         try {
             ((MinecraftRenderTargetMixin) (Object) mc)
                 .seamlessportals$setMainRenderTarget(destMainRT);
@@ -215,11 +237,17 @@ public class PortalContextSwitch {
             if (pooledBuffers != null) {
                 mcAccess.seamlessportals$setRenderBuffers(pooledBuffers);
                 destRendererAccess.seamlessportals$setRenderBuffers(pooledBuffers);
+                destDispatcherAccess.seamlessportals$setBufferSource(pooledBuffers.bufferSource());
+                destDispatcherAccess.seamlessportals$setOutlineBufferSource(pooledBuffers.outlineBufferSource());
+                destDispatcherAccess.seamlessportals$setCrumblingBufferSource(pooledBuffers.crumblingBufferSource());
             }
 
             renderCallback.run();
         } finally {
             if (pooledBuffers != null) {
+                destDispatcherAccess.seamlessportals$setCrumblingBufferSource(savedDestDispatcherCrumbling);
+                destDispatcherAccess.seamlessportals$setOutlineBufferSource(savedDestDispatcherOutline);
+                destDispatcherAccess.seamlessportals$setBufferSource(savedDestDispatcherBuffers);
                 destRendererAccess.seamlessportals$setRenderBuffers(savedDestRendererBuffers);
                 mcAccess.seamlessportals$setRenderBuffers(savedMcBuffers);
             }

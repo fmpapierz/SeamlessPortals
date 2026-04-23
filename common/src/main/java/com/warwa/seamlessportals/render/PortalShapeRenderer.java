@@ -103,15 +103,18 @@ public class PortalShapeRenderer {
             }
         }
 
-        // Match the stencil-write quad bounds exactly (same inset).
-        minY += EDGE_INSET;
-        maxY -= EDGE_INSET;
+        // Flat quad at the portal plane, matching the stencil-write quad.
+        // Outset the 2D edges by the same epsilon so the depth-block plane
+        // covers every stencil pixel (including the overlap into obsidian).
+        final float EDGE_OUTSET = 0.01f;
+        minY -= EDGE_OUTSET;
+        maxY += EDGE_OUTSET;
         if (axis == Direction.Axis.X) {
-            minX += EDGE_INSET;
-            maxX -= EDGE_INSET;
+            minX -= EDGE_OUTSET;
+            maxX += EDGE_OUTSET;
         } else {
-            minZ += EDGE_INSET;
-            maxZ -= EDGE_INSET;
+            minZ -= EDGE_OUTSET;
+            maxZ += EDGE_OUTSET;
         }
 
         int color = 0x01000000; // alpha=1, won't be discarded by shader
@@ -329,22 +332,65 @@ public class PortalShapeRenderer {
         }
 
         int color = 0x01000000;
-        ByteBufferBuilder byteBuf = new ByteBufferBuilder(4 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
+        // Draw the stencil-write as a full 3D BOX matching the portal-block
+        // volume, not a single flat quad at center-z. The original code put
+        // the quad at {@code (minZ+maxZ)/2}, 0.5 blocks behind the obsidian's
+        // near face. Perspective parallax then made the stencil shape
+        // appear slightly smaller than the obsidian opening — users saw a
+        // thin sliver of background between the portal view and the
+        // obsidian frame.
+        //
+        // A box with 6 faces at the portal-block volume boundaries
+        // (x0..x0+width, y0..y0+height, z0..z0+1 for axis=X) has every
+        // edge coplanar with the inner face of one of the surrounding
+        // obsidian blocks. Stencil writes wherever any face is visible +
+        // passes depth test (obsidian columns still occlude us on the
+        // sides, top, and bottom exactly at their inner faces). From any
+        // viewing angle the stencil edge meets the obsidian edge at the
+        // same world-space line.
+        //
+        // Faces are wound so their normals point OUTWARD from the box
+        // center, matching vanilla CCW-front-face convention.
+        ByteBufferBuilder byteBuf = new ByteBufferBuilder(24 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
         BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
-        if (axis == Direction.Axis.X) {
-            float z = ((minZ + maxZ) / 2.0f) - cz;
-            builder.addVertex(minX - cx, minY - cy, z).setColor(color);
-            builder.addVertex(maxX - cx, minY - cy, z).setColor(color);
-            builder.addVertex(maxX - cx, maxY - cy, z).setColor(color);
-            builder.addVertex(minX - cx, maxY - cy, z).setColor(color);
-        } else {
-            float x = ((minX + maxX) / 2.0f) - cx;
-            builder.addVertex(x, minY - cy, minZ - cz).setColor(color);
-            builder.addVertex(x, minY - cy, maxZ - cz).setColor(color);
-            builder.addVertex(x, maxY - cy, maxZ - cz).setColor(color);
-            builder.addVertex(x, maxY - cy, minZ - cz).setColor(color);
-        }
+        float x0 = minX - cx;
+        float x1 = maxX - cx;
+        float y0 = minY - cy;
+        float y1 = maxY - cy;
+        float z0 = minZ - cz;
+        float z1 = maxZ - cz;
+
+        // Front face (−Z normal): winding CCW when viewed from −Z side.
+        builder.addVertex(x1, y0, z0).setColor(color);
+        builder.addVertex(x0, y0, z0).setColor(color);
+        builder.addVertex(x0, y1, z0).setColor(color);
+        builder.addVertex(x1, y1, z0).setColor(color);
+        // Back face (+Z normal)
+        builder.addVertex(x0, y0, z1).setColor(color);
+        builder.addVertex(x1, y0, z1).setColor(color);
+        builder.addVertex(x1, y1, z1).setColor(color);
+        builder.addVertex(x0, y1, z1).setColor(color);
+        // Left face (−X normal)
+        builder.addVertex(x0, y0, z0).setColor(color);
+        builder.addVertex(x0, y0, z1).setColor(color);
+        builder.addVertex(x0, y1, z1).setColor(color);
+        builder.addVertex(x0, y1, z0).setColor(color);
+        // Right face (+X normal)
+        builder.addVertex(x1, y0, z1).setColor(color);
+        builder.addVertex(x1, y0, z0).setColor(color);
+        builder.addVertex(x1, y1, z0).setColor(color);
+        builder.addVertex(x1, y1, z1).setColor(color);
+        // Bottom face (−Y normal)
+        builder.addVertex(x0, y0, z0).setColor(color);
+        builder.addVertex(x1, y0, z0).setColor(color);
+        builder.addVertex(x1, y0, z1).setColor(color);
+        builder.addVertex(x0, y0, z1).setColor(color);
+        // Top face (+Y normal)
+        builder.addVertex(x0, y1, z1).setColor(color);
+        builder.addVertex(x1, y1, z1).setColor(color);
+        builder.addVertex(x1, y1, z0).setColor(color);
+        builder.addVertex(x0, y1, z0).setColor(color);
 
         MeshData mesh = builder.build();
         if (mesh != null) {
@@ -382,22 +428,28 @@ public class PortalShapeRenderer {
             }
         }
 
-        // Inset all four edges to prevent the vertical portal quad from
-        // sharing its boundary with horizontal obsidian frame surfaces
-        // (top face of bottom frame, bottom face of top frame) and
-        // surrounding floor blocks. Without this, the back half of those
-        // surfaces receives stencil=1 via LEQUAL depth-test tie, then gets
-        // overwritten by the FBO composite — since the destination obsidian
-        // is suppressed in the FBO, the source frame/floor appears to have
-        // a "missing half".
-        minY += EDGE_INSET;
-        maxY -= EDGE_INSET;
+        // The portal is conceptually an infinitely-thin 2D plane at the
+        // center of the nether_portal block volume (z = z0 + 0.5 for
+        // axis=X; x = x0 + 0.5 for axis=Z). Users naturally perceive the
+        // portal as a flat surface, not a 1-block-deep box — the 3D-box
+        // approach made the stencil edge "wrap around" the inside
+        // depth of the portal block and spill into the obsidian.
+        //
+        // Fix: single flat quad in the portal plane, with the 2D edges
+        // (width/height) outset by a tiny epsilon so the quad overlaps
+        // slightly INTO the surrounding obsidian. LEQUAL depth test
+        // occludes the write where obsidian's inner face is present;
+        // the outset closes the sub-pixel sliver that shows up at exact
+        // block-boundary coordinates. Matches IP's overlap strategy.
+        final float EDGE_OUTSET = 0.01f;
+        minY -= EDGE_OUTSET;
+        maxY += EDGE_OUTSET;
         if (axis == Direction.Axis.X) {
-            minX += EDGE_INSET;
-            maxX -= EDGE_INSET;
+            minX -= EDGE_OUTSET;
+            maxX += EDGE_OUTSET;
         } else {
-            minZ += EDGE_INSET;
-            maxZ -= EDGE_INSET;
+            minZ -= EDGE_OUTSET;
+            maxZ += EDGE_OUTSET;
         }
 
         int color = 0x01000000;
