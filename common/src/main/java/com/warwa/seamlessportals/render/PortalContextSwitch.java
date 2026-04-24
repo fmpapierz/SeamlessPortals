@@ -572,20 +572,12 @@ public class PortalContextSwitch {
         // as the camera moves. 0.55 gives a 0.05-block safety margin while still
         // keeping the clip plane near enough to the portal to hide anything in
         // front of it.
-        Vec3 destPortalNormal = destPortal.getNormal();
-        Vec3 destPortalCenter = destPortal.getCenter();
-        Vec3 toCamera = destCameraPos.subtract(destPortalCenter);
-        double sideSign = Math.signum(toCamera.dot(destPortalNormal));
-        if (sideSign == 0) sideSign = 1; // fallback: camera exactly on portal plane
-        Vec3 shiftedClipCenter = destPortalCenter.add(destPortalNormal.scale(sideSign * 0.55));
-
-        boolean obliqueApplied = applyObliqueNearPlane(
-            destCameraState.projectionMatrix,
-            virtualCamera,
-            destCameraPos,
-            shiftedClipCenter,
-            destPortalNormal
-        );
+        // Oblique near-plane clipping REMOVED (2026-04-24) — replaced with
+        // gl_ClipDistance inner clip plane (see withSwitchedWorld lambda
+        // below). IP does not use oblique; it uses a clip-plane uniform
+        // only. Oblique projection corrupts depth precision across the
+        // whole frustum; gl_ClipDistance only affects clipped fragments.
+        boolean obliqueApplied = false;
 
         // NOTE: no longer applying bob to the destination projection.
         // Instead, MainProjectionBobMixin skips the main projection's bob
@@ -657,6 +649,29 @@ public class PortalContextSwitch {
                     }
 
                     GL11.glDisable(GL11.GL_STENCIL_TEST);
+                    // Inner clip plane — IP's actual technique. Active ONLY
+                    // during the nested dest-dim render inside the switched
+                    // world. Keeps dest geometry on the far side of the dest
+                    // portal plane (the side the source camera "looks into"
+                    // through the portal). Dest geometry in front of the
+                    // dest portal (between the virtual camera and the dest
+                    // portal face) is clipped — this prevents the obsidian
+                    // frame / mobs / floor from poking through the stencil
+                    // mask onto source pixels.
+                    //
+                    // Previously we used oblique near-plane clipping, which
+                    // achieves the same geometric goal but corrupts depth
+                    // precision across the whole frustum. IP uses this
+                    // gl_ClipDistance approach; we now match it.
+                    //
+                    // Capture/restore discipline: the outer plane state
+                    // coming into this block is whatever the main-camera
+                    // pass set (currently always default-no-op now that
+                    // GameRendererMainClipMixin has been deleted). We
+                    // still capture/restore so future work (entity cross-
+                    // portal clip) doesn't surprise this code path.
+                    FrontClipping.Snapshot outerSnap = FrontClipping.capture();
+                    FrontClipping.setupInnerClipping(destPortal, destCameraPos, destViewMatrix);
                     org.joml.Matrix4fStack mvStack = RenderSystem.getModelViewStack();
                     mvStack.pushMatrix();
                     mvStack.identity();
@@ -723,6 +738,12 @@ public class PortalContextSwitch {
                         }
                     } finally {
                         mvStack.popMatrix();
+                        // Restore the clip plane state captured BEFORE the
+                        // nested render (inner clip is swapped out here).
+                        // Post-deletion of GameRendererMainClipMixin this
+                        // restore is mainly defensive in case we later
+                        // re-introduce an entity-level clip plane.
+                        FrontClipping.restore(outerSnap);
                         GL11.glEnable(GL11.GL_STENCIL_TEST);
                         GL11.glStencilFunc(GL11.GL_EQUAL, 1, 0xFF);
                         GL11.glStencilMask(0x00);
@@ -1191,4 +1212,13 @@ public class PortalContextSwitch {
         if (s.is(Blocks.SAND)) return 0xFFDBCD82;
         return 0xFF5A2828;
     }
+
+    // Phase 2f Option-1 experiment removed (2026-04-24). Research showed
+    // IP does not render a "slice" into the main FBO. The illusion of
+    // two worlds split at the portal plane emerges from the stencil +
+    // secondary-FBO render PLUS an inner clip plane active only inside
+    // the nested dest render. The full-screen `doSliceRender` method
+    // that used to live here painted dest-sky over source in half the
+    // screen when the eye was close to a portal — IP never does this.
+    // Inner-clip wiring now lives inside `doFboRender` itself.
 }

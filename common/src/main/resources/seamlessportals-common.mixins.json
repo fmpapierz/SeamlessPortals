@@ -32,7 +32,8 @@
     "client.FeatureRenderDispatcherAccessorMixin",
     "client.ApplyLightDataGuardMixin",
     "client.NetherPortalUninteractableMixin",
-    "client.GameRendererObliqueClipMixin"
+    "client.ShaderManagerCompilationCacheMixin",
+    "client.GlCommandEncoderClipMixin"
   ],
   "mixins": [
     "EntityMixin",
