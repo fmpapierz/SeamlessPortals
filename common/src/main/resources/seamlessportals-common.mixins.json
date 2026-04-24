@@ -31,6 +31,7 @@
     "client.LivingEntityRendererDiagMixin",
     "client.FeatureRenderDispatcherAccessorMixin",
     "client.ApplyLightDataGuardMixin",
+    "client.ChunkLightLambdaGuardMixin",
     "client.NetherPortalUninteractableMixin",
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin"

@@ -322,6 +322,46 @@ public final class SeamlessClientTeleport {
         //
         // IP's ClientWorldLoader.withSwitchedWorld similarly does not pre-warm.
 
+        // THE FLASH FIX (2026-04-24):
+        //
+        // MC's {@code EnvironmentAttributeProbe} (on the main Camera) lerps
+        // fog/sky color over 1 tick (~50ms = 1–2 frames at typical FPS)
+        // when the camera transitions between environments. On a cross-dim
+        // teleport the probe's {@code lastValue} holds the previous dim's
+        // fog color (e.g. OW blue) while the next tick's {@code newValue}
+        // computes to the destination dim's fog color (e.g. nether red) —
+        // for those 1–2 frames, {@code get()} returns a lerp like
+        // {@code (0.46, 0.44, 0.53)} which produces the visible flash in
+        // the sky/fog.
+        //
+        // Fix: reset AND immediately re-tick the probe with the destination
+        // level + destination position. This does two things:
+        //   1. reset() clears the stale valueProbes (which were lerping
+        //      from the old dim's values).
+        //   2. tick(destLevel, destPos) re-populates probe.level +
+        //      probe.position, so the next get() constructs a fresh
+        //      ValueProbe with lastValue = newValue = dest fog. No lerp.
+        //
+        // Just calling reset() was NOT enough: with probe.level left null,
+        // any get() call before the next Camera.tick() returns
+        // {@code attribute.defaultValue()} (not the dest dim's fog) — a
+        // different, default-colored flash. The explicit re-tick here
+        // ensures the first render frame post-swap sees correct dest fog.
+        try {
+            net.minecraft.client.Camera mainCamera = mc.gameRenderer.getMainCamera();
+            if (mainCamera != null) {
+                mainCamera.attributeProbe().reset();
+                // Populate with destination values so no lerp and no
+                // default-fog frame. destPos is the just-assigned player
+                // position (post setPos above).
+                mainCamera.attributeProbe().tick(promotion.level(), destPos);
+            }
+        } catch (Exception e) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS CLIENT-CROSSING] attributeProbe reset failed: {}",
+                e.getMessage());
+        }
+
         // Reset portal-view cache for the new dim + request portal data
         // (mirrors HandleRespawnMixin.afterRespawn).
         PortalContextSwitch.resetChunkFedState(destDim);
