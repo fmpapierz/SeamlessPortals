@@ -745,10 +745,25 @@ public class PortalWorldManager {
      * Called from {@code ClientTickEvents.END_CLIENT_TICK} alongside the
      * chunk-feed drain.
      */
-    private static final int COMPILE_PUMP_RADIUS_CHUNKS = 8;
-    private static final int COMPILE_PUMP_RADIUS_SQ =
-        COMPILE_PUMP_RADIUS_CHUNKS * COMPILE_PUMP_RADIUS_CHUNKS;
-    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 24;
+    /**
+     * Hard floor on the compile-pump radius. We always pump at LEAST this
+     * many chunks around the cached camera section. The actual radius used
+     * each tick is {@code max(COMPILE_PUMP_MIN_RADIUS_CHUNKS,
+     * mc.options.renderDistance)} — i.e., the player's current render
+     * distance. Without scaling to RD, the OUTER half of the user's RD
+     * never compiled while cached, so a teleport into a high-RD dim
+     * produced a long mesh-compile burst as the cache caught up.
+     */
+    private static final int COMPILE_PUMP_MIN_RADIUS_CHUNKS = 8;
+    /**
+     * Per-tick async-compile budget. Bumped 24 → 256 → 1024 in stages.
+     * 1024/tick × 20 tps = 20 480 sections/s ≈ matches vanilla's primary
+     * compile rate. RD=16 OW (~26 000 sections) compiles in ~1.3 s while
+     * cached. Sections compile on the background executor — render thread
+     * unaffected — so the only cost is sustained bg-thread CPU. Lower
+     * again if profiler shows worker-pool saturation.
+     */
+    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 1024;
 
     public static void advanceCompilePipelines() {
         Minecraft mc = Minecraft.getInstance();
@@ -780,6 +795,17 @@ public class PortalWorldManager {
         int camSecX = viewCenter.x();
         int camSecZ = viewCenter.z();
 
+        // Use the player's CURRENT render distance as the pump radius so
+        // the OUTER ring of RD compiles while cached — not just the inner
+        // 8-chunk radius. Falls back to the hard floor if RD isn't yet
+        // available (very early in startup).
+        int rd = COMPILE_PUMP_MIN_RADIUS_CHUNKS;
+        try {
+            int optRd = Minecraft.getInstance().options.renderDistance().get();
+            if (optRd > rd) rd = optRd;
+        } catch (Throwable ignored) {}
+        int radiusSq = rd * rd;
+
         net.minecraft.client.renderer.chunk.RenderRegionCache cache =
             new net.minecraft.client.renderer.chunk.RenderRegionCache();
 
@@ -795,7 +821,7 @@ public class PortalWorldManager {
             if (!section.isDirty()) continue;
             int dx = sx - camSecX;
             int dz = sz - camSecZ;
-            if (dx * dx + dz * dz > COMPILE_PUMP_RADIUS_SQ) continue;
+            if (dx * dx + dz * dz > radiusSq) continue;
             section.rebuildSectionAsync(cache);
             section.setNotDirty();
             scheduled++;

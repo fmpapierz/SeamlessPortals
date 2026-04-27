@@ -76,6 +76,13 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.PortalUnregisterPayload.TYPE,
             ModPayloads.PortalUnregisterPayload.STREAM_CODEC
         );
+        // Stage 2: generic packet redirection. Wraps any clientbound game
+        // packet inside our payload + a target dim id; client unwraps,
+        // switches level, dispatches the inner packet through vanilla.
+        PayloadTypeRegistry.clientboundPlay().register(
+            com.warwa.seamlessportals.network.SeamlessPacketRedirection.Payload.TYPE,
+            com.warwa.seamlessportals.network.SeamlessPacketRedirection.Payload.CODEC
+        );
 
         // Register client -> server payloads
         PayloadTypeRegistry.serverboundPlay().register(
@@ -144,6 +151,24 @@ public class FabricPlatformHelper implements PlatformHelper {
     }
 
     public static void registerClientHandlers() {
+        // Stage 2: generic packet redirection receiver. Unwraps the
+        // wrapped packet and dispatches it on the cached ClientLevel
+        // for the target dim. Lets the server send arbitrary clientbound
+        // game packets to a non-active dim's cached client world (e.g.
+        // chunk packets for the dest dim of a visible portal so the
+        // cache is fully populated before the player teleports).
+        ClientPlayNetworking.registerGlobalReceiver(
+            com.warwa.seamlessportals.network.SeamlessPacketRedirection.Payload.TYPE,
+            (payload, context) -> {
+                @SuppressWarnings("unchecked")
+                net.minecraft.network.protocol.Packet<net.minecraft.network.protocol.game.ClientGamePacketListener>
+                    inner = (net.minecraft.network.protocol.Packet<
+                        net.minecraft.network.protocol.game.ClientGamePacketListener>) payload.packet();
+                com.warwa.seamlessportals.network.SeamlessPacketRedirection
+                    .handleRedirectedPacket(payload.dimensionId(), inner);
+            }
+        );
+
         ClientPlayNetworking.registerGlobalReceiver(
             ModPayloads.RemoteChunkDataPayload.TYPE,
             (payload, context) -> {

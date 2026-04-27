@@ -107,9 +107,17 @@ public class PortalContextSwitch {
      * See memory: {@code step1_5_viewarea_sync_radius_fix.md},
      * {@code viewarea_reposition_mesh_loss.md}.
      */
-    private static final int COMPILE_SCHEDULE_RADIUS_CHUNKS = 8;
-    private static final int COMPILE_SCHEDULE_RADIUS_SQ =
-        COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
+    /**
+     * Hard floor on the per-FBO-frame compile-schedule radius. The actual
+     * radius used each frame is {@code max(COMPILE_SCHEDULE_MIN_RADIUS_CHUNKS,
+     * mc.options.renderDistance)} — so the OUTER ring of the player's RD
+     * gets scheduled too, not just an 8-chunk core. Without this, dirty
+     * sections beyond radius 8 sat with {@code skippedFarDirty=17464}
+     * (verified empirically at RD=16 OW), and after a teleport the player
+     * paid for compiling all 17 464 + the visible compile burst was felt
+     * as multi-frame lag.
+     */
+    private static final int COMPILE_SCHEDULE_MIN_RADIUS_CHUNKS = 8;
 
     /**
      * Atomically swap primary client state to the destination for the duration
@@ -422,7 +430,27 @@ public class PortalContextSwitch {
 
         if (viewArea != null) {
             net.minecraft.core.SectionPos cameraSectionPos = net.minecraft.core.SectionPos.of(destCameraPos);
-            viewArea.repositionCamera(cameraSectionPos);
+            // Skip repositionCamera if the camera section hasn't changed.
+            // {@link net.minecraft.client.renderer.ViewArea#repositionCamera}
+            // calls {@code setSectionNode} which invokes
+            // {@code section.reset()} on every section that shifts in the
+            // grid — that DISCARDS compiled meshes
+            // (see memory note viewarea_reposition_mesh_loss.md). Calling
+            // it every FBO frame even when the section is unchanged was
+            // wiping & re-scheduling rebuilds for already-good meshes
+            // every frame, which both wastes async-compile budget and
+            // produces visible flicker on the first frame after a teleport
+            // (the new player camera section diverged by ≥1 chunk from the
+            // viewArea's previous tracking section, triggering a full
+            // wipe burst).
+            net.minecraft.core.SectionPos viewAreaCenter = viewArea.getCameraSectionPos();
+            boolean sectionChanged = viewAreaCenter == null
+                || viewAreaCenter.x() != cameraSectionPos.x()
+                || viewAreaCenter.y() != cameraSectionPos.y()
+                || viewAreaCenter.z() != cameraSectionPos.z();
+            if (sectionChanged) {
+                viewArea.repositionCamera(cameraSectionPos);
+            }
             destLevel.getChunkSource().updateViewCenter(cameraSectionPos.x(), cameraSectionPos.z());
 
             SectionRenderDispatcher dispatcher = destRenderer.getSectionRenderDispatcher();
@@ -471,6 +499,17 @@ public class PortalContextSwitch {
             // draws but are harmless to have in the list.
             int camSecX = cameraSectionPos.x();
             int camSecZ = cameraSectionPos.z();
+            // Use the player's RD as the schedule radius — same logic as
+            // PortalWorldManager.advanceCompilePipelines. Without this,
+            // ~17 464 dirty sections within RD but beyond radius 8 sat
+            // un-scheduled until the player teleported and the post-
+            // teleport main render had to compile them all in a burst.
+            int rd = COMPILE_SCHEDULE_MIN_RADIUS_CHUNKS;
+            try {
+                int optRd = Minecraft.getInstance().options.renderDistance().get();
+                if (optRd > rd) rd = optRd;
+            } catch (Throwable ignored) {}
+            int radiusSq = rd * rd;
             int scheduledAsync = 0;
             int skippedFar = 0;
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
@@ -482,7 +521,7 @@ public class PortalContextSwitch {
                 if (section.isDirty()) {
                     int dx = sx - camSecX;
                     int dz = sz - camSecZ;
-                    if (dx * dx + dz * dz > COMPILE_SCHEDULE_RADIUS_SQ) {
+                    if (dx * dx + dz * dz > radiusSq) {
                         // Beyond portal-view frustum; don't schedule.
                         skippedFar++;
                     } else {

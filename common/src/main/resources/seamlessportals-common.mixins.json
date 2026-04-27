@@ -36,7 +36,10 @@
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin",
     "client.ViewAreaInvokerMixin",
-    "client.QuadParticleGroupMixin"
+    "client.QuadParticleGroupMixin",
+    "client.ClientLevelChunkSourceMixin",
+    "client.ClientChunkCacheAccessorMixin",
+    "client.ClientPacketListenerLevelAccessorMixin"
   ],
   "mixins": [
     "EntityMixin",

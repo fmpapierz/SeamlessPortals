@@ -106,4 +106,14 @@ public interface LevelRendererAccessorMixin {
      */
     @Accessor("featureRenderDispatcher")
     net.minecraft.client.renderer.feature.FeatureRenderDispatcher seamlessportals$getFeatureRenderDispatcher();
+
+    /**
+     * Companion list to {@link #seamlessportals$getVisibleSections()} used
+     * by vanilla rendering for the "close" tier (entity render, particles
+     * adjacent to camera). Cleared together with visibleSections inside
+     * {@code clearVisibleSections}. Exposed so we can replicate vanilla's
+     * default behavior outside our post-teleport skip-clear window.
+     */
+    @Accessor("nearbyVisibleSections")
+    ObjectArrayList<SectionRenderDispatcher.RenderSection> seamlessportals$getNearbyVisibleSections();
 }
