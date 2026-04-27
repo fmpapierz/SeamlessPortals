@@ -35,7 +35,8 @@
     "client.NetherPortalUninteractableMixin",
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin",
-    "client.ViewAreaInvokerMixin"
+    "client.ViewAreaInvokerMixin",
+    "client.QuadParticleGroupMixin"
   ],
   "mixins": [
     "EntityMixin",
