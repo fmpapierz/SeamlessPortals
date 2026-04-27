@@ -1,7 +1,6 @@
 package com.warwa.seamlessportals.mixin;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
-import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.network.ModPayloads;
 import com.warwa.seamlessportals.network.PlatformHelper;
 import com.warwa.seamlessportals.portal.PortalInfo;
@@ -13,15 +12,11 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import java.util.List;
 
 /**
  * Phase 1 (blocks only) of the live-portal-view feature.
@@ -49,8 +44,6 @@ import java.util.List;
  */
 @Mixin(ServerLevel.class)
 public abstract class ServerLevelBlockUpdateMixin {
-
-    private static int fireCount = 0;
 
     @Inject(
         method = "sendBlockUpdated(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/block/state/BlockState;I)V",
@@ -82,63 +75,19 @@ public abstract class ServerLevelBlockUpdateMixin {
             seamlessportals$handlePortalDestroyed(self, pos, thisDim, server);
         }
 
-        // First few calls: always log so we can confirm the mixin is firing
-        // and see which dim + players are involved.
-        if (++fireCount <= 8) {
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS LIVE SERVER] fire #{}: {} at {} in {} (players online: {})",
-                fireCount, newState.getBlock().getName().getString(),
-                pos.toShortString(), thisDim.identifier(),
-                server.getPlayerList().getPlayers().size());
-        }
-        PortalManager manager = PortalManager.getServerInstance();
-        int renderDistChunks = SeamlessPortalsConfig.get().getPortalRenderDistance();
-        double rangeBlocks = renderDistChunks * 16.0;
-        double rangeSq = rangeBlocks * rangeBlocks;
-
-        int stateId = Block.getId(newState);
-        long packedPos = pos.asLong();
-        String thisDimId = thisDim.identifier().toString();
-
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ResourceKey<Level> playerDim = player.level().dimension();
-            if (playerDim.equals(thisDim)) {
-                // Same dim — vanilla already notified this player through the
-                // normal ClientboundBlockUpdatePacket path. Skip.
-                continue;
-            }
-            List<PortalLink> links = manager.getLinksInRange(
-                playerDim, player.blockPosition(), rangeBlocks);
-            if (links.isEmpty()) continue;
-
-            boolean sent = false;
-            for (PortalLink link : links) {
-                PortalInfo destPortal = link.getDestination();
-                if (!destPortal.getDimension().equals(thisDim)) continue;
-
-                Vec3 destCenter = destPortal.getCenter();
-                double dx = pos.getX() + 0.5 - destCenter.x;
-                double dy = pos.getY() + 0.5 - destCenter.y;
-                double dz = pos.getZ() + 0.5 - destCenter.z;
-                // Horizontal check is enough — render distance is chunk-radial.
-                if (dx * dx + dz * dz > rangeSq) continue;
-
-                PlatformHelper.getInstance().sendToClient(player,
-                    new ModPayloads.RemoteBlockUpdatePayload(
-                        thisDimId, packedPos, stateId));
-                sent = true;
-                break; // One portal-link match is enough — no need to double-send.
-            }
-
-            if (sent) {
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS LIVE SERVER] Mirrored {} → {} at {} in {} to {} (stateId={})",
-                    oldState.getBlock().getName().getString(),
-                    newState.getBlock().getName().getString(),
-                    pos.toShortString(), thisDimId,
-                    player.getName().getString(), stateId);
-            }
-        }
+        // NOTE (2026-04-26): the player-loop + RemoteBlockUpdatePayload send
+        // path that used to live here was MOVED to
+        // {@link LevelChunkSetBlockStateMixin}. Reason: vanilla's
+        // {@code Level.markAndNotifyBlock} skips the {@code sendBlockUpdated}
+        // call for ~99% of fluid-spread setBlock invocations (the
+        // {@code chunk.getFullStatus().isOrAfter(BLOCK_TICKING)} gate, the
+        // {@code newState == blockState} object-identity wrapper, and Forge
+        // {@code captureBlockSnapshots} all filter calls before reaching
+        // here). Hooking {@code LevelChunk.setBlockState} TAIL fires
+        // unconditionally on every successful state change — including
+        // every Air→Water spread. This mixin retains ONLY the portal-
+        // destroy detection (above) and the diagnostic logs (above) since
+        // those don't need to fire for every fluid spread.
     }
 
     /**

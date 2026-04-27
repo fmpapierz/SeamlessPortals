@@ -204,6 +204,20 @@ public class PortalEntityTracker {
             keepChunksLoaded(destLevel, center);
         }
 
+        // FLUID-DIAG GATE log was removed 2026-04-26 once the cross-dim
+        // fluid-mirror path was confirmed end-to-end. Verified findings:
+        //   - All three gates (shouldTickBlocksAt, areEntitiesLoaded,
+        //     chunkSource.isPositionTicking) flip to true within ~1 server
+        //     tick of MIRROR_VIEW_TICKET being added.
+        //   - LevelTicks.sortContainersToTick drains queued fluid ticks
+        //     for our portal-mirrored chunks unchanged from vanilla once
+        //     the gates pass.
+        // The actual freeze the user saw was downstream of fluid sim:
+        // sendBlockUpdated wasn't being called for ~99% of fluid setBlock
+        // events (Level.markAndNotifyBlock filtering). That was fixed by
+        // hooking LevelChunk.setBlockState TAIL instead. See
+        // LevelChunkSetBlockStateMixin.
+
         // Find all entities within any dest-center radius.
         // Use a broad AABB per center then union the hit sets.
         Set<Entity> visible = new HashSet<>();

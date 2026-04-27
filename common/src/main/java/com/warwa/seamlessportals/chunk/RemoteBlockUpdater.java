@@ -68,6 +68,22 @@ public final class RemoteBlockUpdater {
         // Drive the cached LevelRenderer (if any) to rebuild the section
         // mesh covering pos + its neighbors. This is how the block shows
         // up in the next portal-view FBO render.
+        //
+        // Marking dirty alone is INSUFFICIENT for fluid spread that lands
+        // in sections beyond the portal-view's visible-frustum convergence
+        // zone (e.g., lava dripping past the portal-bottom-y, into chunk
+        // sections that the PortalContextSwitch / advanceCompilePipelines
+        // radius checks skip, OR sections whose dirty-mark is consumed by
+        // a frame compile pass between block-arrives-1 and block-arrives-2,
+        // resulting in a rebuild that captured the chunk state slightly
+        // too early).
+        //
+        // Fix: also DIRECTLY schedule {@code rebuildSectionAsync} on the
+        // central RenderSection right after the setBlock. This guarantees
+        // a fresh rebuild from the now-updated cached-level state on the
+        // background executor, independent of any per-frame radius gating.
+        // Async work is cheap (one section's worth of geometry compile)
+        // and idempotent — the framework merges duplicate scheduled work.
         if (PortalWorldManager.hasRenderer(dim)) {
             LevelRenderer renderer = PortalWorldManager.getOrCreateRenderer(dim);
             if (renderer != null) {
@@ -75,6 +91,30 @@ public final class RemoteBlockUpdater {
                 int sy = SectionPos.blockToSectionCoord(pos.getY());
                 int sz = SectionPos.blockToSectionCoord(pos.getZ());
                 renderer.setSectionDirtyWithNeighbors(sx, sy, sz);
+
+                // Force rebuild of the central section now, bypassing any
+                // radius-cull in the per-frame / per-tick compile pumps.
+                try {
+                    net.minecraft.client.renderer.ViewArea va =
+                        ((com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin)
+                            renderer).seamlessportals$getViewArea();
+                    if (va != null) {
+                        long node = net.minecraft.core.SectionPos.asLong(sx, sy, sz);
+                        net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection rs =
+                            ((com.warwa.seamlessportals.mixin.client.ViewAreaInvokerMixin)
+                                (Object) va).seamlessportals$invokeGetRenderSection(node);
+                        if (rs != null) {
+                            rs.rebuildSectionAsync(
+                                new net.minecraft.client.renderer.chunk.RenderRegionCache());
+                            rs.setNotDirty();
+                        }
+                    }
+                } catch (Throwable t) {
+                    // Don't let rebuild scheduling failures break block apply.
+                    SeamlessPortalsConstants.LOGGER.warn(
+                        "[SEAMLESS LIVE] Direct section rebuild failed for {} in {}: {}",
+                        pos.toShortString(), dimensionId, t.getMessage());
+                }
             }
         }
 
@@ -85,14 +125,17 @@ public final class RemoteBlockUpdater {
         updateRemoteSection(dim, pos, newState);
 
         applyCount++;
-        SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS LIVE CLIENT] apply #{}: {} → {} at {} in {} (rendererDirty={})",
-            applyCount,
-            // Read the state we just wrote, to confirm the setBlock stuck.
-            cachedLevel.getBlockState(pos).getBlock().getName().getString(),
-            newState.getBlock().getName().getString(),
-            pos.toShortString(), dimensionId,
-            PortalWorldManager.hasRenderer(dim));
+        // Log only the first few apply calls per session as a sanity check
+        // that the mirror payload is reaching the client; the steady-state
+        // case is far too high-volume to log per-event.
+        if (applyCount <= 5) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS LIVE CLIENT] apply #{}: {} at {} in {} (rendererDirty={})",
+                applyCount,
+                newState.getBlock().getName().getString(),
+                pos.toShortString(), dimensionId,
+                PortalWorldManager.hasRenderer(dim));
+        }
     }
 
     /**

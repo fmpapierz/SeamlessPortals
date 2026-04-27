@@ -34,7 +34,8 @@
     "client.ChunkLightLambdaGuardMixin",
     "client.NetherPortalUninteractableMixin",
     "client.ShaderManagerCompilationCacheMixin",
-    "client.GlCommandEncoderClipMixin"
+    "client.GlCommandEncoderClipMixin",
+    "client.ViewAreaInvokerMixin"
   ],
   "mixins": [
     "EntityMixin",
@@ -45,6 +46,7 @@
     "NetherPortalBlockMixin",
     "PortalForcerMixin",
     "ServerLevelBlockUpdateMixin",
+    "LevelChunkSetBlockStateMixin",
     "TicketTypeInvoker"
   ],
   "injectors": {
