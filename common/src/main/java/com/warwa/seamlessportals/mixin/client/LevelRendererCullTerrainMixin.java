@@ -67,11 +67,23 @@ public abstract class LevelRendererCullTerrainMixin {
             return;
         }
         long startNs = System.nanoTime();
+        // Cap at one 60fps frame budget (16ms). If the SOG full-update
+        // task isn't done within 16ms, fall through and render this
+        // frame with the previous-frame visibleSections (vanilla's
+        // currentGraph reference is the last-completed state, still
+        // valid). User sees 1 frame of slightly-stale terrain instead
+        // of a 39–57ms render-thread stall (4 frames of freeze).
+        // Subsequent frames pick up the new graph automatically.
         try {
-            task.get();
+            task.get(16, java.util.concurrent.TimeUnit.MILLISECONDS);
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] SOG sync prime: blocked {}ms on full-update task",
+                "[SEAMLESS PHASE2] SOG sync prime: blocked {}ms on full-update task (within budget)",
+                elapsedMs);
+        } catch (java.util.concurrent.TimeoutException te) {
+            long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PHASE2] SOG sync prime: bailed at {}ms (16ms budget exceeded; rendering with last-frame visibleSections, will catch up next frame)",
                 elapsedMs);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
