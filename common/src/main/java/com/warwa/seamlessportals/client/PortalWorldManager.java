@@ -778,6 +778,21 @@ public class PortalWorldManager {
         }
     }
 
+    /**
+     * Inner-radius priority. Vanilla's {@code compileSections} sync-
+     * rebuilds dirty sections within ~28 blocks (~2 chunks). If the
+     * cached renderer always has its inner-3-chunk-radius sections
+     * compiled, vanilla finds nothing to sync-rebuild post-teleport
+     * and the player sees no FPS drop.
+     *
+     * <p>This radius is tighter than the outer pump radius
+     * ({@link #COMPILE_PUMP_RADIUS_CHUNKS}) and runs as a separate
+     * priority pass.
+     */
+    private static final int COMPILE_PUMP_PRIORITY_RADIUS_CHUNKS = 3;
+    private static final int COMPILE_PUMP_PRIORITY_RADIUS_SQ =
+        COMPILE_PUMP_PRIORITY_RADIUS_CHUNKS * COMPILE_PUMP_PRIORITY_RADIUS_CHUNKS;
+
     private static int advanceOneRenderer(
             ResourceKey<Level> dim,
             LevelRenderer renderer,
@@ -797,6 +812,27 @@ public class PortalWorldManager {
             new net.minecraft.client.renderer.chunk.RenderRegionCache();
 
         int scheduled = 0;
+
+        // PASS 1: priority — inner radius (≤3 chunks). Always schedule
+        // these regardless of overall budget, so vanilla's nearby sync-
+        // rebuild has nothing to do post-teleport.
+        for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section
+                : viewArea.sections) {
+            if (section == null) continue;
+            long sectionNode = section.getSectionNode();
+            int sx = net.minecraft.core.SectionPos.x(sectionNode);
+            int sz = net.minecraft.core.SectionPos.z(sectionNode);
+            int dx = sx - camSecX;
+            int dz = sz - camSecZ;
+            if (dx * dx + dz * dz > COMPILE_PUMP_PRIORITY_RADIUS_SQ) continue;
+            if (!level.getChunkSource().hasChunk(sx, sz)) continue;
+            if (!section.isDirty()) continue;
+            section.rebuildSectionAsync(cache);
+            section.setNotDirty();
+            scheduled++;
+        }
+
+        // PASS 2: outer radius (≤8 chunks). Bounded by budget.
         for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section
                 : viewArea.sections) {
             if (section == null) continue;
@@ -804,11 +840,14 @@ public class PortalWorldManager {
             long sectionNode = section.getSectionNode();
             int sx = net.minecraft.core.SectionPos.x(sectionNode);
             int sz = net.minecraft.core.SectionPos.z(sectionNode);
-            if (!level.getChunkSource().hasChunk(sx, sz)) continue;
-            if (!section.isDirty()) continue;
             int dx = sx - camSecX;
             int dz = sz - camSecZ;
-            if (dx * dx + dz * dz > COMPILE_PUMP_RADIUS_SQ) continue;
+            int distSq = dx * dx + dz * dz;
+            // Skip inner radius (already handled by Pass 1).
+            if (distSq <= COMPILE_PUMP_PRIORITY_RADIUS_SQ) continue;
+            if (distSq > COMPILE_PUMP_RADIUS_SQ) continue;
+            if (!level.getChunkSource().hasChunk(sx, sz)) continue;
+            if (!section.isDirty()) continue;
             section.rebuildSectionAsync(cache);
             section.setNotDirty();
             scheduled++;
