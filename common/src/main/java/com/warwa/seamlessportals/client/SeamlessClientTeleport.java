@@ -78,6 +78,22 @@ public final class SeamlessClientTeleport {
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null) return false;
 
+        // IP loading-indicator parity: don't fire client-first cross
+        // until the server confirms the link's destination chunks
+        // are loaded. Without this gate, the visual swap happens
+        // immediately + the server-bound packet triggers vanilla
+        // teleportTo's chunk-gen freeze.
+        //
+        // The link starts unready and flips to ready when
+        // SeamlessLinkReadinessTracker detects all pre-load chunks
+        // at FULL status server-side and broadcasts via
+        // LinkReadinessPayload. Until then, walk into the portal
+        // does nothing — player feels portal is "loading" but they
+        // can move freely (no stuck-in-portal lock).
+        if (!link.isLinkReady()) {
+            return false;
+        }
+
         Vec3 srcPos = player.position();
         Vec3 destPos = link.transformTeleportPosition(srcPos);
         Vec3 destVel = link.transformVelocity(player.getDeltaMovement());

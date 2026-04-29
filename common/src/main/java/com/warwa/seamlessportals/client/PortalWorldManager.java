@@ -671,6 +671,91 @@ public class PortalWorldManager {
         }
     }
 
+    /**
+     * Stage 4 (IP parity) — per-tick drain of cached levels' light-update
+     * queue + tick of cached renderers. Mirrors IP's
+     * {@code ClientWorldLoader.tickRemoteWorld + worldRenderer.tick()}
+     * loop (1.19 source, lines 87–119 + 135–158).
+     *
+     * <p><b>What this fixes (architecturally).</b> Vanilla calls
+     * {@link ClientLevel#pollLightUpdates()} from inside
+     * {@link LevelRenderer#renderLevel} per frame — but only on
+     * {@code mc.level} via {@code mc.levelRenderer}. Cached
+     * (non-primary) {@code ClientLevel}s never get their
+     * {@code lightUpdateQueue} drained except during a portal-view FBO
+     * render that happens to invoke {@code destRenderer.renderLevel}.
+     * If a {@code ClientboundLevelChunkWithLightPacket} (or
+     * {@code ClientboundForgetLevelChunkPacket}, or
+     * {@code ClientboundLightUpdatePacket}) is dispatched against a
+     * cached level — i.e. via {@link
+     * com.warwa.seamlessportals.network.SeamlessPacketRedirection#handleRedirectedPacket}
+     * — its queued light-update {@code Runnable} sits forever unless we
+     * pump it. IP's {@code tickRemoteWorld} pumps it once per client
+     * tick.
+     *
+     * <p><b>Lambda level-binding.</b> The runnables queued by
+     * {@code ClientPacketListener.handleLevelChunkWithLight} (vanilla
+     * line 680) read {@code this.level} at execution time, not at queue
+     * time. So we drain the queue inside
+     * {@link com.warwa.seamlessportals.network.SeamlessPacketRedirection#withSwitchedWorld}
+     * — same state-swap as IP's {@code ClientWorldLoader.withSwitchedWorld}
+     * — so the lambdas observe {@code connection.level == cached} when
+     * they fire and mutate the right level.
+     *
+     * <p><b>Current effect.</b> No-op for normal play: nothing currently
+     * routes vanilla chunk/light packets to cached levels'
+     * {@code lightUpdateQueue}. This method is the per-tick substrate
+     * the (future) Stage 3 cross-dim chunk redirection needs to land
+     * cleanly. Cost when queues are empty: ~4 setter calls per cached
+     * level + a constant-time queue-empty check. Negligible.
+     *
+     * <p><b>Renderer tick.</b> 26.1.2 {@code LevelRenderer.tick(Camera)}
+     * advances {@code this.ticks}, ticks rain particles via
+     * {@code weatherEffectRenderer.tickRainParticles}, and cleans
+     * destruction-progress every 20 ticks. Vanilla passes
+     * {@code mc.gameRenderer.getMainCamera()} (see
+     * {@code GameRenderer.java:306}); we mirror that exactly. The cached
+     * renderer's rain particles spawn relative to the active camera —
+     * cosmetically wrong for cached dims but invisible to the user (the
+     * cached level isn't being rendered as primary, and any FBO portal
+     * view runs through {@code destRenderer.renderLevel} which has its
+     * own particle dispatch).
+     */
+    public static void tickCachedLightAndRenderers() {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        LevelRenderer activeRenderer = mc.levelRenderer;
+
+        for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+            ClientLevel cached = e.getValue();
+            if (cached == null || cached == active) continue;
+            try {
+                com.warwa.seamlessportals.network.SeamlessPacketRedirection
+                    .withSwitchedWorld(cached, cached::pollLightUpdates);
+            } catch (Throwable t) {
+                // One bad lambda shouldn't poison the pump for other levels.
+                SeamlessPortalsConstants.LOGGER.debug(
+                    "[SEAMLESS STAGE4] pollLightUpdates threw on cached level {}: {}",
+                    e.getKey().identifier(), t.getMessage());
+            }
+        }
+
+        net.minecraft.client.Camera mainCamera =
+            mc.gameRenderer == null ? null : mc.gameRenderer.getMainCamera();
+        if (mainCamera == null) return;
+        for (Map.Entry<ResourceKey<Level>, LevelRenderer> e : renderers.entrySet()) {
+            LevelRenderer renderer = e.getValue();
+            if (renderer == null || renderer == activeRenderer) continue;
+            try {
+                renderer.tick(mainCamera);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.debug(
+                    "[SEAMLESS STAGE4] renderer.tick() threw on cached renderer for {}: {}",
+                    e.getKey().identifier(), t.getMessage());
+            }
+        }
+    }
+
     public static void demoteFromMain(
             ResourceKey<Level> dim,
             LevelRenderer renderer,

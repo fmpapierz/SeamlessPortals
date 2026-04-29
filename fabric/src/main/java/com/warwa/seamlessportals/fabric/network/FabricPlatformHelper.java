@@ -76,6 +76,14 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.PortalUnregisterPayload.TYPE,
             ModPayloads.PortalUnregisterPayload.STREAM_CODEC
         );
+        // IP loading-indicator parity: server tells the client when a
+        // portal link's pre-load chunks have all reached FULL status.
+        // Until the client receives this with ready=true, it blocks
+        // client-first cross detection in SeamlessClientTeleport.
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.LinkReadinessPayload.TYPE,
+            ModPayloads.LinkReadinessPayload.STREAM_CODEC
+        );
         // Stage 2: generic packet redirection. Wraps any clientbound game
         // packet inside our payload + a target dim id; client unwraps,
         // switches level, dispatches the inner packet through vanilla.
@@ -208,6 +216,30 @@ public class FabricPlatformHelper implements PlatformHelper {
             (payload, context) -> {
                 context.client().execute(() -> {
                     com.warwa.seamlessportals.portal.PortalDetector.handlePortalLinkFromServer(payload);
+                });
+            }
+        );
+
+        // IP loading-indicator parity: server signals when a link's
+        // destination chunks are fully loaded server-side. Until this
+        // arrives, client's PortalLink.linkReady stays false and
+        // SeamlessClientTeleport blocks client-first cross detection
+        // — preventing the user from triggering vanilla teleportTo's
+        // chunk-gen freeze.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.LinkReadinessPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() -> {
+                    net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dim =
+                        net.minecraft.resources.ResourceKey.create(
+                            net.minecraft.core.registries.Registries.DIMENSION,
+                            net.minecraft.resources.Identifier.tryParse(payload.srcDimensionId()));
+                    com.warwa.seamlessportals.portal.PortalLink link =
+                        com.warwa.seamlessportals.portal.PortalManager.getClientInstance()
+                            .getLinkBySource(dim, payload.srcOrigin());
+                    if (link != null) {
+                        link.setLinkReady(payload.ready());
+                    }
                 });
             }
         );

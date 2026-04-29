@@ -47,6 +47,13 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // interpolation handlers advance and animations run. Without
             // this, mobs visible through portals are frozen / spazzing.
             com.warwa.seamlessportals.client.PortalWorldManager.tickCachedEntities();
+            // Stage 4 (IP parity): drain queueLightUpdate runnables on
+            // cached levels + advance destruction-progress cleanup on
+            // cached renderers. Mirrors IP's ClientWorldLoader.tick →
+            // tickRemoteWorld + worldRenderer.tick loop. No-op until
+            // Stage 3 (cross-dim chunk redirection) routes vanilla
+            // chunk/light packets to cached levels.
+            com.warwa.seamlessportals.client.PortalWorldManager.tickCachedLightAndRenderers();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

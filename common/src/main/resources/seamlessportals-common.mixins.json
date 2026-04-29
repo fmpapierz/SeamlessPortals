@@ -51,7 +51,10 @@
     "PortalForcerMixin",
     "ServerLevelBlockUpdateMixin",
     "LevelChunkSetBlockStateMixin",
-    "TicketTypeInvoker"
+    "TicketTypeInvoker",
+    "ServerCommonPacketListenerImplSendMixin",
+    "PlayerChunkSenderMixin",
+    "ChunkMapTickMixin"
   ],
   "injectors": {
     "defaultRequire": 1

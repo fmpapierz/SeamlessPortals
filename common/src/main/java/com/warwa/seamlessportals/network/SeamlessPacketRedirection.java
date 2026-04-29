@@ -128,8 +128,67 @@ public final class SeamlessPacketRedirection {
             ServerPlayer player,
             ResourceKey<Level> dim,
             Packet<? extends ClientGamePacketListener> packet) {
-        Payload payload = new Payload(dim.identifier().toString(), packet);
-        player.connection.send(new ClientboundCustomPayloadPacket(payload));
+        player.connection.send(createRedirectedPacket(dim, packet));
+    }
+
+    /**
+     * Build a redirected wrapper packet without sending. Used by the
+     * {@link #withForceRedirect} pattern: an active force-redirect block
+     * + the {@code ServerCommonPacketListenerImpl.send} mixin call this
+     * to wrap any packet passed through {@code connection.send(...)}
+     * during the block.
+     */
+    public static ClientboundCustomPayloadPacket createRedirectedPacket(
+            ResourceKey<Level> dim,
+            Packet<? extends ClientGamePacketListener> packet) {
+        return new ClientboundCustomPayloadPacket(
+            new Payload(dim.identifier().toString(), packet));
+    }
+
+    // ─── Force-redirect thread-local ─────────────────────────────────
+    //
+    // Mirrors IP 1.19's {@code PacketRedirection.serverPacketRedirection
+    // + withForceRedirect + getForceRedirectDimension}. When set, the
+    // {@code ServerCommonPacketListenerImpl.send} mixin auto-wraps every
+    // outgoing packet on the calling thread for the duration of the
+    // {@link #withForceRedirect} block.
+    //
+    // Why a thread-local instead of an explicit wrap-then-send? Some
+    // call paths (especially entity-tracker updates inside
+    // {@code ChunkMap.ip_updateEntityTrackersAfterSendingChunkPacket}
+    // — the future {@code MixinChunkMap_Seamless}) send several
+    // different packet types as a side effect of a single chunk-data
+    // send. Wrapping every send-call site individually would touch
+    // every entity-tracker mixin. The thread-local lets us scope the
+    // redirect to "this whole block" once at the top-level call.
+
+    private static final ThreadLocal<ResourceKey<Level>> forceRedirectDim =
+        ThreadLocal.withInitial(() -> null);
+
+
+    /**
+     * Returns the force-redirect dim for the calling thread, or
+     * {@code null} if no {@link #withForceRedirect} block is active.
+     * Read by the {@code ServerCommonPacketListenerImpl.send} mixin
+     * to decide whether to auto-wrap.
+     */
+    public static ResourceKey<Level> getForceRedirectDimension() {
+        return forceRedirectDim.get();
+    }
+
+    /**
+     * Run {@code runnable} with all outgoing packets on this thread
+     * auto-wrapped to land on the cached {@link ClientLevel} for
+     * {@code dim}. Restored on exit even if the runnable throws.
+     */
+    public static void withForceRedirect(ResourceKey<Level> dim, Runnable runnable) {
+        ResourceKey<Level> previous = forceRedirectDim.get();
+        forceRedirectDim.set(dim);
+        try {
+            runnable.run();
+        } finally {
+            forceRedirectDim.set(previous);
+        }
     }
 
     /**
@@ -159,21 +218,44 @@ public final class SeamlessPacketRedirection {
             return;
         }
         if (mc.level != null && mc.level.dimension().equals(dim)) {
-            // Target is the active dim — no swap needed; just dispatch.
-            // (This case shouldn't normally happen since the server
-            // wouldn't redirect to the active dim, but be safe.)
+            // FULL IP PORT (active-dim dispatch). Our graph owns
+            // own-dim chunk delivery (graph's direct records). Dispatch
+            // to active connection so the chunk applies to mc.level
+            // normally.
+            //
+            // IMPORTANT: this re-enables a path that was the source
+            // of the v1 stale-forget-packet bug. The graph's record-
+            // refresh logic prevents stale forgets in normal play
+            // (records for the player's CURRENT dim keep getting
+            // refreshed by updateForPlayer, so they don't stale-purge
+            // while the player is in the dim).
             ClientPacketListener handler = mc.getConnection();
             if (handler != null) {
                 innerPacket.handle(handler);
             }
             return;
         }
+        // Ensure the cached level exists. On first launch, before the
+        // player has crossed any portal, the cached ClientLevel for
+        // a destination dim hasn't been created yet — but the server
+        // graph (E4) has already started redirecting chunks for it.
+        // Without lazy-creation here, those chunks get dropped silently
+        // and the server's wasSentViaRedirect latch (E10) lies about
+        // delivery, so PlayerChunkSenderMixin (E11) suppresses
+        // vanilla's resend after teleport — the cached level promotes
+        // to mc.level empty → nether doesn't render.
+        //
+        // getOrCreateRenderer triggers ClientLevel construction as a
+        // side effect (see PortalWorldManager.createRenderer).
+        PortalWorldManager.getOrCreateRenderer(dim);
         ClientLevel cached = PortalWorldManager.getLevel(dim);
         if (cached == null) {
-            // No cached level — drop the packet. A future portal-link
-            // payload from the server will cause the cache to be
-            // created, and subsequent redirected packets will start
-            // applying.
+            // Creation failed — log and drop. Server will keep
+            // attempting; if the dim is genuinely invalid the player
+            // can't teleport into it anyway.
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS REDIRECT] getOrCreateRenderer({}) failed; dropping packet",
+                dim.identifier());
             return;
         }
         ClientPacketListener handler = mc.getConnection();

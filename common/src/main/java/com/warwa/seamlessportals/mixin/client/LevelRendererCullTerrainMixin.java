@@ -67,28 +67,32 @@ public abstract class LevelRendererCullTerrainMixin {
             return;
         }
         long startNs = System.nanoTime();
-        // Cap the wait to a 1-frame budget (~8 ms at 60 fps). Empirically
-        // the unbounded block was 23 ms (nether RD~16) up to 73 ms (OW
-        // RD~16) — visible as a multi-frame stutter exactly at the moment
-        // of teleport, which is the user's main complaint about teleport
-        // lag. Trade-off: if the SOG full-update task doesn't finish in
-        // 8 ms, we fall through and render this frame with stale
-        // visibleSections (mostly portal-view-direction sections frustum-
-        // culled at draw time, producing 1 mostly-blank frame). Next
-        // frame's cullTerrain will see {@code consumeFrustumUpdate}
-        // return true and call {@code applyFrustum} which repopulates
-        // visibleSections from the now-completed {@code currentGraph}.
-        // 1 stale frame ≪ 5-frame stutter.
+        // Cap the wait to ~80 ms — large enough to absorb the unbounded
+        // 23–73 ms full-update we measured, while still being a single
+        // visible "pause frame" (~5 frames at 60 fps). Earlier we used
+        // 8 ms and it bailed every teleport, leaving the cached
+        // renderer's visibleSections pointing at the OLD camera
+        // direction (looking through portal back at source dim). When
+        // the player is now standing IN dest dim looking forward, those
+        // visibleSections are almost entirely outside the frustum for
+        // the new view — producing several frames of empty/broken
+        // terrain that look like "still in source dim, didn't teleport."
+        //
+        // Trade-off: ~80 ms pause = visible single stutter at the
+        // moment of teleport. Far less bad than several broken frames
+        // of empty world — and matches IP's behaviour where the
+        // teleport itself is visually crisp even if there's a brief
+        // sync hitch.
         try {
-            task.get(8, java.util.concurrent.TimeUnit.MILLISECONDS);
+            task.get(80, java.util.concurrent.TimeUnit.MILLISECONDS);
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
             SeamlessPortalsConstants.LOGGER.info(
                 "[SEAMLESS PHASE2] SOG sync prime: blocked {}ms on full-update task (within budget)",
                 elapsedMs);
         } catch (java.util.concurrent.TimeoutException te) {
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS PHASE2] SOG sync prime: bailed at {}ms (budget exceeded; rendering with stale visibleSections this frame)",
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PHASE2] SOG sync prime: bailed at {}ms (80ms budget exceeded — visibleSections will be stale; expect 1-3 frames of empty terrain)",
                 elapsedMs);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();

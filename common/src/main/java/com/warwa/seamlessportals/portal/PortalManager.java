@@ -64,6 +64,24 @@ public class PortalManager {
         clientInstance = null;
     }
 
+    /**
+     * Snapshot of all currently-known portal links. Used by
+     * {@link com.warwa.seamlessportals.chunk.SeamlessLinkReadinessTracker}
+     * to iterate per-tick checking readiness.
+     */
+    public java.util.Collection<PortalLink> getAllLinksSnapshot() {
+        return new java.util.ArrayList<>(linksByPosition.values());
+    }
+
+    /**
+     * Look up a link by source dim + source origin. Used by the
+     * client-side {@code LinkReadinessPayload} handler to find the
+     * matching link.
+     */
+    public PortalLink getLinkBySource(ResourceKey<Level> dim, BlockPos origin) {
+        return linksByPosition.get(posKey(dim, origin));
+    }
+
     public PortalTracker getTracker(ResourceKey<Level> dimension) {
         return trackers.computeIfAbsent(dimension, ignored -> new PortalTracker(dimension));
     }
@@ -93,7 +111,88 @@ public class PortalManager {
             source.getOrigin(), source.getDimension().identifier(),
             destination.getOrigin(), destination.getDimension().identifier()
         );
+
+        // IP parity: register global chunk loaders for BOTH portal
+        // endpoints. Idempotent — only registers ONCE per
+        // (source, destination) pair. createLink can be called
+        // many times for the same portal pair as the server re-syncs
+        // link data; without dedup, each call registers another pair
+        // of loaders, and the graph's updateAndPurge iterates ALL
+        // loaders every cycle (49 chunks × N loaders × 13-tick
+        // interval = catastrophic CPU pile-up at >50 redundant
+        // loaders).
+        if (!isClient) {
+            registerLinkChunkLoadersIfNotPresent(source);
+        }
         return forward;
+    }
+
+    /**
+     * Per-link chunk-loader registry: holds strong refs to the
+     * loaders so they aren't GC'd. Keyed by source-side posKey for
+     * lookup on portal removal.
+     */
+    private final Map<String, com.warwa.seamlessportals.chunk.SeamlessChunkLoader[]>
+        linkChunkLoaders = new ConcurrentHashMap<>();
+
+    /**
+     * Half-side of the destination-chunk grid we pre-load on portal
+     * creation. {@code 2 → 25 chunks per portal endpoint × 2 ends =
+     * 50 chunks of pre-load work per portal pair}. Lowered from 4
+     * (81 chunks/end → 162/pair) because SP integrated server's
+     * chunk-gen throughput cannot complete 162 chunks in the few
+     * seconds between portal creation and the user's first
+     * teleport — server falls 5s behind, user gets stuck mid-portal.
+     *
+     * <p>At 25 chunks, gen completes in ~2-3 seconds on typical
+     * hardware. By the time the user walks to the portal, dest area
+     * is ready.
+     */
+    private static final int PORTAL_CREATE_PRELOAD_RADIUS = 2;
+
+    /**
+     * Register chunk-loaders for a portal endpoint pair, but ONLY if
+     * we haven't already registered for this {@code source}. The key
+     * is the source-side {@code posKey} so {@code createLink(A, B)}
+     * and {@code createLink(B, A)} (the reverse link) each get their
+     * own registration — that's correct because each side needs its
+     * own loader to pre-load the OTHER side's chunks.
+     */
+    private void registerLinkChunkLoadersIfNotPresent(PortalInfo source) {
+        String key = posKey(source.getDimension(), source.getOrigin());
+        if (linkChunkLoaders.containsKey(key)) {
+            // Already registered. createLink is being called as part
+            // of a re-sync (e.g. portal-link payload re-broadcast or
+            // server-state restore). The original chunk loaders are
+            // still active in the graph; no need to register more.
+            return;
+        }
+        try {
+            com.warwa.seamlessportals.chunk.SeamlessChunkLoader sourceLoader =
+                makeLoader(source);
+            com.warwa.seamlessportals.chunk.SeamlessChunkTrackingGraph
+                .addGlobalAdditionalChunkLoader(sourceLoader);
+            // Strong ref so the graph's WeakReference survives.
+            linkChunkLoaders.put(key,
+                new com.warwa.seamlessportals.chunk.SeamlessChunkLoader[]{sourceLoader});
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PRELOAD] Registered global chunk loader for portal at {} in {}",
+                source.getOrigin(), source.getDimension().identifier());
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PRELOAD] Failed to register chunk loaders for portal at {}: {}",
+                source.getOrigin(), t.toString());
+        }
+    }
+
+    private com.warwa.seamlessportals.chunk.SeamlessChunkLoader makeLoader(PortalInfo portal) {
+        BlockPos origin = portal.getOrigin();
+        net.minecraft.world.level.ChunkPos chunkPos =
+            net.minecraft.world.level.ChunkPos.containing(origin);
+        return new com.warwa.seamlessportals.chunk.SeamlessChunkLoader(
+            new com.warwa.seamlessportals.chunk.DimChunkPos(portal.getDimension(), chunkPos),
+            PORTAL_CREATE_PRELOAD_RADIUS,
+            false);
     }
 
     public Optional<PortalLink> getLinkForPortal(UUID portalId) {

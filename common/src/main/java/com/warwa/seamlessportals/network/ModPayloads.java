@@ -469,6 +469,39 @@ public class ModPayloads {
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /**
+     * Server → Client: notification that a portal link's destination
+     * chunks have finished loading server-side. While {@code ready}
+     * is false on a link, both client-first seamless teleport and
+     * server-side teleport-handling are blocked — preventing the
+     * 4-6 second server-thread freeze that would otherwise occur
+     * when {@code teleportTo} triggers on-demand chunk-gen.
+     *
+     * <p>Server broadcasts this once per (newly-formed link, ready)
+     * transition. Clients update the cached PortalLink's
+     * {@code linkReady} flag. Subsequent broadcasts on the same link
+     * are no-op for clients that already have the flag set.
+     */
+    public record LinkReadinessPayload(
+        String srcDimensionId,
+        BlockPos srcOrigin,
+        boolean ready
+    ) implements CustomPacketPayload {
+        public static final Type<LinkReadinessPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "link_readiness")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, LinkReadinessPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, LinkReadinessPayload::srcDimensionId,
+            BlockPos.STREAM_CODEC, LinkReadinessPayload::srcOrigin,
+            ByteBufCodecs.BOOL, LinkReadinessPayload::ready,
+            LinkReadinessPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record ClientboundSeamlessMovePayload(
         String portalId,
         String destDimension,
