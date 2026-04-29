@@ -748,7 +748,20 @@ public class PortalWorldManager {
     private static final int COMPILE_PUMP_RADIUS_CHUNKS = 8;
     private static final int COMPILE_PUMP_RADIUS_SQ =
         COMPILE_PUMP_RADIUS_CHUNKS * COMPILE_PUMP_RADIUS_CHUNKS;
-    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 24;
+    /**
+     * Per-tick async-compile budget. Bounded to avoid client-tick
+     * freeze: each rebuildSectionAsync call has synchronous chunk-
+     * snapshot work (~1ms/section). 8192/tick = 4-5s of synchronous
+     * blocking on cached-renderer-swap (the "totalt freeze on first
+     * teleport" reported). 24/tick was too low — cached renderer
+     * stayed near-empty.
+     *
+     * <p>128/tick = ~128ms worst case per tick (acceptable). At 20 tps
+     * that's 2560 sections/sec. A typical cached level (~5000 sections)
+     * compiles in ~2 seconds — fast enough to be done while the player
+     * walks up to the portal.
+     */
+    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 128;
 
     public static void advanceCompilePipelines() {
         Minecraft mc = Minecraft.getInstance();

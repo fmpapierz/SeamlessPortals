@@ -473,31 +473,43 @@ public class PortalContextSwitch {
             int camSecZ = cameraSectionPos.z();
             int scheduledAsync = 0;
             int skippedFar = 0;
+            // Per-frame cap on async-compile scheduling. Each
+            // rebuildSectionAsync has synchronous chunk-snapshot work
+            // (~1ms/section). Without a cap, post-teleport this loop
+            // schedules 4000+ compiles in one frame = 4+ seconds of
+            // frame stall. 128/frame keeps the worst case ~128ms, and
+            // remaining dirty sections get scheduled on subsequent
+            // frames + by the per-tick compile pump.
+            final int PORTAL_VIEW_COMPILE_BUDGET = 128;
+            // FRUSTUM CULL — full RD, only sections actually visible
+            // through portal opening are added to visibleSections.
+            // Without this filter, all ~78K loaded sections in the
+            // cached level's viewArea got added every frame → 10 FPS
+            // stalls.
+            //
+            // Frustum check uses {@code destFrustum} (narrow cone from
+            // virtual camera through portal opening). Sections outside
+            // are entirely off-screen for the portal-view, so skipping
+            // them costs nothing visually.
+            //
+            // Compile scheduling still uses the small radius (8) — only
+            // schedule compiles for sections close to the virtual
+            // camera, since those will be the ones actually rendered.
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
                 if (section == null) continue;
                 long sectionNode = section.getSectionNode();
                 int sx = net.minecraft.core.SectionPos.x(sectionNode);
                 int sz = net.minecraft.core.SectionPos.z(sectionNode);
                 if (!destLevel.getChunkSource().hasChunk(sx, sz)) continue;
+                // Frustum cull: skip sections whose bounding box is
+                // outside the portal-view cone.
+                if (!destFrustum.isVisible(section.getBoundingBox())) continue;
                 if (section.isDirty()) {
                     int dx = sx - camSecX;
                     int dz = sz - camSecZ;
                     if (dx * dx + dz * dz > COMPILE_SCHEDULE_RADIUS_SQ) {
-                        // Beyond portal-view frustum; don't schedule.
                         skippedFar++;
-                    } else {
-                        // Match what our previous sync path required: chunk
-                        // loaded (already checked above) is enough to schedule.
-                        //
-                        // Vanilla's stricter filter
-                        // (mesh != UNCOMPILED || hasAllNeighbors) additionally
-                        // requires {@code LightEngine.lightOnInColumn} which
-                        // our {@code RemoteChunkManager}-fed chunks don't set
-                        // reliably, so it filters out every first-time compile
-                        // and scheduledAsync stays 0 forever. Portal-view
-                        // chunk-border artifacts from compiling against missing
-                        // neighbors are acceptable; the user's complaint was
-                        // the stall, not border mis-culling.
+                    } else if (scheduledAsync < PORTAL_VIEW_COMPILE_BUDGET) {
                         section.rebuildSectionAsync(cache);
                         section.setNotDirty();
                         scheduledAsync++;
