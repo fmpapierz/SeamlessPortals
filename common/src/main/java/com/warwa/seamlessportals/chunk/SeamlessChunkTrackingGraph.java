@@ -113,12 +113,18 @@ public final class SeamlessChunkTrackingGraph {
      * resend). 200 ticks = 10 s.
      *
      * <p>The trade-off: post-window vanilla sends will overwrite
-     * already-good chunks and trigger mesh rebuilds. In practice
-     * the cost is minor — a sparse trickle of mesh rebuilds spread
-     * over time, vs. the 200-section burst that caused the original
-     * 10 s freeze.
+     * already-good chunks and trigger mesh rebuilds. Originally 200
+     * ticks (10 s) which caused the second-teleport stutter:
+     * after 10 s in dest dim, vanilla started re-sending chunks the
+     * client already had, invalidating meshes — visible as 1-3 frames
+     * of empty terrain on every subsequent teleport.
+     *
+     * <p>Bumped to 24000 ticks (20 minutes) to cover any reasonable
+     * play session. Chunks are stable unless block-modified, which
+     * goes through {@code RemoteBlockUpdater} not full chunk re-send,
+     * so suppressing the full-chunk path indefinitely is safe.
      */
-    public static final long REDIRECT_SUPPRESS_WINDOW_TICKS = 200L;
+    public static final long REDIRECT_SUPPRESS_WINDOW_TICKS = 24000L;
 
     /**
      * @deprecated Use {@link PerformanceLevel#directDeliveryBudgetPerTick()} via

@@ -120,6 +120,21 @@ public class PortalContextSwitch {
     private static final int COMPILE_SCHEDULE_MIN_RADIUS_CHUNKS = 8;
 
     /**
+     * Per-portal-view-frame cap on async-compile scheduling.
+     *
+     * <p>Matches what vanilla's {@code LevelRenderer.compileSections} does
+     * for the primary renderer (it processes a small batch of dirty
+     * sections each frame, not all of them).
+     *
+     * <p>Before this cap, we scheduled 12 000+ async compiles per frame
+     * which saturated the section-render dispatcher's worker pool, the
+     * GPU mesh-upload pipeline, and pushed the server tick 4.8 s behind.
+     * 32 / frame matches IP's typical per-frame compile budget for
+     * secondary renderers.
+     */
+    private static final int COMPILE_BUDGET_PER_FRAME = 32;
+
+    /**
      * Atomically swap primary client state to the destination for the duration
      * of {@code renderCallback}, then restore in {@code finally}.
      *
@@ -420,6 +435,44 @@ public class PortalContextSwitch {
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setCullFrustum(destFrustum);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setInitialized(true);
 
+        // ===== 2.5. Pre-warm cached renderer's SectionOcclusionGraph =====
+        //
+        // Without this, the SOG full-update task on this renderer only
+        // ever spawns at teleport time (when promoted to primary), where
+        // it takes 50–80 ms and produces a multi-frame stutter at the
+        // moment of crossing — the user's main complaint about teleport
+        // lag.
+        //
+        // The BFS tree {@link SectionOcclusionGraph#initializeQueueForFullUpdate}
+        // builds is direction-agnostic — it only uses
+        // {@code camera.blockPosition()} for the seed and propagates
+        // radially through occlusion. Building it here with the
+        // virtualCamera at the dest portal pre-computes the tree for
+        // the eventual post-teleport view.
+        //
+        // {@code SOG.update} schedules a full update only when
+        // {@code needsFullUpdate} is true (default true at first call,
+        // re-set true on camera-section bin change). After the async
+        // task completes, subsequent calls are cheap partial updates
+        // unless invalidated.
+        //
+        // We pass {@code visibleSections} (the renderer's own list)
+        // because {@code runPartialUpdate} expects it; we then clear
+        // and rebuild it ourselves below for the actual portal-view
+        // render.
+        try {
+            net.minecraft.client.renderer.SectionOcclusionGraph destSog =
+                destRenderer.getSectionOcclusionGraph();
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet emptySections =
+                destLevel.getChunkSource().getLoadedEmptySections();
+            destSog.update(true, virtualCamera, destFrustum,
+                ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getVisibleSections(),
+                emptySections);
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS] SOG pre-warm on cached renderer failed: {}", t.toString());
+        }
+
         // ===== 3. Direct section compilation (sparse chunks, bypass occlusion graph) =====
         LevelRenderState destLRS =
             ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState();
@@ -463,94 +516,66 @@ public class PortalContextSwitch {
             net.minecraft.client.renderer.chunk.RenderRegionCache cache =
                 new net.minecraft.client.renderer.chunk.RenderRegionCache();
 
+            // ===== IP-PARITY VISIBLE-SECTION POPULATION =====
+            //
+            // BEFORE (the lag bomb): we iterated EVERY section in viewArea
+            // (~26 616 per frame) and called {@code section.rebuildSectionAsync}
+            // on every dirty one (~12 000 per frame). That saturated the
+            // section-compile worker pool, the GPU upload bandwidth and the
+            // render thread, and pushed the server tick 4.8 seconds behind
+            // ("Can't keep up! Running 4849ms"). It also pushed ALL sections
+            // into {@code visibleSections} regardless of frustum — the
+            // chunk-render pass then drew thousands of off-screen sections
+            // every frame, blowing the Chunk Sections UBO from 1024 to
+            // 8192+ slots in seconds.
+            //
+            // AFTER (matches vanilla {@code LevelRenderer.cullTerrain} +
+            // IP's portal renderer): use the SOG we just pre-warmed.
+            // {@code SOG.addSectionsInFrustum} traverses the BFS tree
+            // intersected with the frustum and populates ONLY actually-
+            // visible sections. Same cost as vanilla's main render — no
+            // extra work per portal-view frame.
+            //
+            // Compile scheduling is bounded: at most
+            // {@link #COMPILE_BUDGET_PER_FRAME} dirty sections in the
+            // visible set get rebuildSectionAsync per frame. The rest stay
+            // dirty and get scheduled on subsequent frames. Matches what
+            // vanilla's {@code compileSections} does for the primary
+            // renderer.
             visibleSections.clear();
-            int compiled = 0;
-            // PortalFrameSuppressor DISABLED:
-            // User expects to see the destination obsidian frame through the
-            // source portal opening (matches Immersive Portals' classical
-            // behaviour). Hiding it left empty sky/void in the FBO at those
-            // pixels, and any stencil bleed onto source floor/frame pixels
-            // showed that void through them ("X-ray floor" effect).
-            //
-            // Force-dirty sections near the destination portal ONCE per portal
-            // so any previously suppression-baked meshes get regenerated with
-            // the full obsidian frame. After that initial pass, the normal
-            // isDirty() path handles updates as usual.
+            it.unimi.dsi.fastutil.objects.ObjectArrayList<SectionRenderDispatcher.RenderSection> nearbySections =
+                ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getNearbyVisibleSections();
+            nearbySections.clear();
+
             PortalFrameSuppressor.maybeForceDirtyForPortal(destPortal, viewArea);
-            // Phase A (2026-04-17): Schedule dirty sections on the background
-            // executor via {@code rebuildSectionAsync} instead of blocking the
-            // render thread with {@code rebuildSectionSync}. This matches the
-            // pattern vanilla's {@code LevelRenderer.compileSections} uses for
-            // the primary renderer and IP uses for every renderer.
-            //
-            // - First-frame portal view after teleport may show "holes" where
-            //   sections are still compiling; they pop in within tens of ms.
-            // - No render-thread stall → no "sky-color flash" on teleport.
-            // - Radius gate kept: don't flood worker queue with sections
-            //   outside the visible portal-view frustum.
-            // - Vanilla compilability filter applied: only schedule sections
-            //   that already have a (stale) mesh OR have all 8 neighbor
-            //   chunks loaded — otherwise mesh compiles against missing
-            //   neighbors and produces broken chunk borders.
-            //
-            // Sections with existing (possibly stale) meshes are still added
-            // to {@code visibleSections} so the renderer shows SOMETHING while
-            // the fresh compile runs. UNCOMPILED sections contribute zero
-            // draws but are harmless to have in the list.
-            int camSecX = cameraSectionPos.x();
-            int camSecZ = cameraSectionPos.z();
-            // Use the player's RD as the schedule radius — same logic as
-            // PortalWorldManager.advanceCompilePipelines. Without this,
-            // ~17 464 dirty sections within RD but beyond radius 8 sat
-            // un-scheduled until the player teleported and the post-
-            // teleport main render had to compile them all in a burst.
-            int rd = COMPILE_SCHEDULE_MIN_RADIUS_CHUNKS;
-            try {
-                int optRd = Minecraft.getInstance().options.renderDistance().get();
-                if (optRd > rd) rd = optRd;
-            } catch (Throwable ignored) {}
-            int radiusSq = rd * rd;
+
+            net.minecraft.client.renderer.SectionOcclusionGraph destSogForFrustum =
+                destRenderer.getSectionOcclusionGraph();
+            destSogForFrustum.addSectionsInFrustum(destFrustum, visibleSections, nearbySections);
+
+            // Bounded compile scheduling — at most COMPILE_BUDGET_PER_FRAME
+            // dirty visible sections per frame.
             int scheduledAsync = 0;
-            int skippedFar = 0;
-            for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
-                if (section == null) continue;
-                long sectionNode = section.getSectionNode();
-                int sx = net.minecraft.core.SectionPos.x(sectionNode);
-                int sz = net.minecraft.core.SectionPos.z(sectionNode);
-                if (!destLevel.getChunkSource().hasChunk(sx, sz)) continue;
+            for (int i = 0, n = visibleSections.size();
+                    i < n && scheduledAsync < COMPILE_BUDGET_PER_FRAME; i++) {
+                SectionRenderDispatcher.RenderSection section = visibleSections.get(i);
                 if (section.isDirty()) {
-                    int dx = sx - camSecX;
-                    int dz = sz - camSecZ;
-                    if (dx * dx + dz * dz > radiusSq) {
-                        // Beyond portal-view frustum; don't schedule.
-                        skippedFar++;
-                    } else {
-                        // Match what our previous sync path required: chunk
-                        // loaded (already checked above) is enough to schedule.
-                        //
-                        // Vanilla's stricter filter
-                        // (mesh != UNCOMPILED || hasAllNeighbors) additionally
-                        // requires {@code LightEngine.lightOnInColumn} which
-                        // our {@code RemoteChunkManager}-fed chunks don't set
-                        // reliably, so it filters out every first-time compile
-                        // and scheduledAsync stays 0 forever. Portal-view
-                        // chunk-border artifacts from compiling against missing
-                        // neighbors are acceptable; the user's complaint was
-                        // the stall, not border mis-culling.
-                        section.rebuildSectionAsync(cache);
-                        section.setNotDirty();
-                        scheduledAsync++;
-                    }
+                    long sectionNode = section.getSectionNode();
+                    int sx = net.minecraft.core.SectionPos.x(sectionNode);
+                    int sz = net.minecraft.core.SectionPos.z(sectionNode);
+                    if (!destLevel.getChunkSource().hasChunk(sx, sz)) continue;
+                    section.rebuildSectionAsync(cache);
+                    section.setNotDirty();
+                    scheduledAsync++;
                 }
-                visibleSections.add(section);
-                compiled++;
             }
+            int compiled = visibleSections.size();
             if (phase2SuccessCount == 0 && compiled > 0) {
                 SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] Direct compilation: {} sections at [{},{}] "
-                        + "(scheduledAsync={}, skippedFarDirty={})",
+                    "[SEAMLESS] SOG-driven visible: {} sections at [{},{}] "
+                        + "(scheduledAsync={}, budget={})",
                     compiled, cameraSectionPos.x(), cameraSectionPos.z(),
-                    scheduledAsync, skippedFar);
+                    scheduledAsync, COMPILE_BUDGET_PER_FRAME);
             }
         }
 

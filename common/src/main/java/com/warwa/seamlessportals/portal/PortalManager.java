@@ -484,8 +484,25 @@ public class PortalManager {
             dest.getHeight()
         );
 
+        // Look up the current readiness state of the forward link for this
+        // (source → dest) direction so we can attach it to the broadcast.
+        // Without this, the client constructs PortalLink with default
+        // linkReady=false; if the readiness broadcast already fired before
+        // the client knew the link existed, the client is permanently
+        // stuck thinking the link is unready and silently rejects every
+        // crossing on it.
+        String forwardKey = posKey(source.getDimension(), source.getOrigin());
+        PortalLink forwardLink = linksByPosition.get(forwardKey);
+        boolean ready = forwardLink != null && forwardLink.isLinkReady();
+        ModPayloads.LinkReadinessPayload readinessPayload = new ModPayloads.LinkReadinessPayload(
+            source.getDimension().identifier().toString(),
+            source.getOrigin(),
+            ready
+        );
+
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             PlatformHelper.getInstance().sendToClient(player, payload);
+            PlatformHelper.getInstance().sendToClient(player, readinessPayload);
         }
     }
 
@@ -543,7 +560,20 @@ public class PortalManager {
                     link.getDestination().getWidth(),
                     link.getDestination().getHeight()
                 );
+                // Match link payload with current readiness state so the
+                // client doesn't get a freshly-constructed PortalLink
+                // stuck at default linkReady=false. Without this, after
+                // a teleport the server re-sends links via
+                // sendDimensionLinksToPlayer but the client's copy of
+                // the back-direction link is unready forever — silently
+                // rejects all back-teleport attempts.
+                ModPayloads.LinkReadinessPayload readinessPayload = new ModPayloads.LinkReadinessPayload(
+                    link.getSource().getDimension().identifier().toString(),
+                    link.getSource().getOrigin(),
+                    link.isLinkReady()
+                );
                 PlatformHelper.getInstance().sendToClient(player, payload);
+                PlatformHelper.getInstance().sendToClient(player, readinessPayload);
                 sent++;
             }
         }
