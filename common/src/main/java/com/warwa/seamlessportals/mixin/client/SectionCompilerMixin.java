@@ -30,7 +30,14 @@ public abstract class SectionCompilerMixin {
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/world/level/block/state/BlockState;getRenderShape()Lnet/minecraft/world/level/block/RenderShape;"
-        )
+        ),
+        // Sodium replaces SectionCompiler.compile with its own mesh
+        // builder. require=0 lets the mixin gracefully no-op when the
+        // target method doesn't exist (Sodium env). In that case the
+        // portal swirl/frame suppression won't run; Sodium-specific
+        // hooks would be needed to restore it. See
+        // {@link com.warwa.seamlessportals.compat.SodiumCompat}.
+        require = 0
     )
     private RenderShape seamlessportals$suppressPortalSwirl(BlockState blockState) {
         if (blockState.is(Blocks.NETHER_PORTAL) && SeamlessPortalsConfig.shouldRenderThrough(PortalType.NETHER)) {
@@ -48,7 +55,8 @@ public abstract class SectionCompilerMixin {
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/chunk/RenderSectionRegion;getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;"
-        )
+        ),
+        require = 0  // Sodium-replaced method; gracefully no-op when absent
     )
     private BlockState seamlessportals$suppressFrameObsidian(RenderSectionRegion region, BlockPos pos) {
         BlockState state = region.getBlockState(pos);

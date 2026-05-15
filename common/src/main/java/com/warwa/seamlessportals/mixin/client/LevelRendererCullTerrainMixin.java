@@ -48,10 +48,23 @@ public abstract class LevelRendererCullTerrainMixin {
             target = "Lnet/minecraft/client/renderer/SectionOcclusionGraph;update(ZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/culling/Frustum;Ljava/util/List;Lit/unimi/dsi/fastutil/longs/LongOpenHashSet;)V",
             shift = At.Shift.AFTER
         ),
-        require = 1
+        // Sodium replaces SectionOcclusionGraph + the cullTerrain
+        // pipeline. require=0 lets the mixin gracefully no-op when
+        // those targets don't exist (Sodium env). When Sodium is
+        // present, Sodium's own chunk graph drives section visibility;
+        // our sync-prime workaround for blanks-on-teleport doesn't
+        // apply because Sodium's path doesn't have that race condition
+        // in the same form.
+        require = 0
     )
     private void seamlessportals$blockSyncOnFirstPostPromote(
             Camera camera, Frustum frustum, boolean spectator, CallbackInfo ci) {
+        // Early bail if Sodium is loaded — even if the target method
+        // happens to still exist, our SOG-blocking logic touches
+        // vanilla-specific {@link SectionOcclusionGraph} state that
+        // Sodium replaces. Skipping is safe; Sodium has its own
+        // post-promote behavior.
+        if (com.warwa.seamlessportals.compat.SodiumCompat.isSodiumLoaded()) return;
         LevelRenderer self = (LevelRenderer) (Object) this;
         if (!PortalWorldManager.consumePendingPrime(self)) {
             return;

@@ -25,6 +25,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.NetherPortalBlock;
+import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -163,5 +164,34 @@ public abstract class NetherPortalBlockMixin {
             BlockState state, Player player, BlockGetter level, BlockPos pos,
             CallbackInfoReturnable<Float> cir) {
         cir.setReturnValue(0.0F);
+    }
+
+    /**
+     * Override {@code BlockBehaviour.getRenderShape} (inherited) to return
+     * {@code INVISIBLE} for nether-portal blocks. Vanilla returns
+     * {@code MODEL} which causes the chunk mesh builder to bake the
+     * animated purple swirl into the section mesh.
+     *
+     * <p>By overriding here on the block itself, the suppression works
+     * regardless of which chunk-mesh builder is in use — vanilla's
+     * {@code SectionCompiler} OR Sodium's replacement pipeline. Both
+     * call {@code BlockState.getRenderShape()} which delegates to
+     * {@code block.getRenderShape(state)}; this override answers
+     * {@code INVISIBLE} for the portal block, so neither builder
+     * generates swirl geometry.
+     *
+     * <p>Replaces the {@link com.warwa.seamlessportals.mixin.client.SectionCompilerMixin}
+     * redirect that only worked on the vanilla {@code SectionCompiler}
+     * path (gated off under Sodium via {@code require=0}).
+     *
+     * <p>This method is a Mixin "method addition" — declared in the
+     * mixin class, injected into {@code NetherPortalBlock}, where it
+     * overrides the inherited {@code BlockBehaviour.getRenderShape}.
+     */
+    public RenderShape getRenderShape(BlockState state) {
+        if (SeamlessPortalsConfig.shouldRenderThrough(PortalType.NETHER)) {
+            return RenderShape.INVISIBLE;
+        }
+        return RenderShape.MODEL;
     }
 }

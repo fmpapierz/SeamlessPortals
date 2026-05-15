@@ -608,6 +608,17 @@ public class PortalContextSwitch {
             0f, // no boss darkening for portal view
             destLevel
         );
+        // SAVE the main render's fogData + fogType BEFORE overwriting them.
+        // In MC 26.1.2, {@code levelRenderState.cameraRenderState} is shared
+        // across LevelRenderer instances — writing destFogData here without
+        // restoring leaks the destination dim's fog into the main render
+        // after we return. Vanilla didn't read fogData directly from this
+        // field (it used the GPU fog buffer we isolate via
+        // {@code writePortalFogBuffer}), so the leak was invisible. Sodium
+        // and any mod that reads {@code cameraRenderState.fogData} directly
+        // sees the stale dest-dim values. Save+restore is the safe pattern.
+        final FogData savedFogData = destCameraState.fogData;
+        final FogType savedFogType = destCameraState.fogType;
         destCameraState.fogData = destFogData;
         destCameraState.fogType = FogType.NONE;
 
@@ -765,6 +776,13 @@ public class PortalContextSwitch {
         } finally {
             isRenderingPortal = false;
             portalLightmapOverride = null;
+            // Restore the main render's fog data + type that we overwrote
+            // at "===== 7. Compute destination fog =====". Sodium and any
+            // mod that reads cameraRenderState.fogData directly would
+            // otherwise see the destination dim's fog after we return,
+            // tinting the source-dim main world with dest-dim fog.
+            destCameraState.fogData = savedFogData;
+            destCameraState.fogType = savedFogType;
         }
 
         // Debug: verify state after restore

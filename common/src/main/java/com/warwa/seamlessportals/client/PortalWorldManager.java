@@ -764,6 +764,14 @@ public class PortalWorldManager {
     private static final int COMPILE_PUMP_BUDGET_PER_TICK = 128;
 
     public static void advanceCompilePipelines() {
+        // Sodium gate: under Sodium, our vanilla-pipeline compile pump
+        // ({@code RenderSection.rebuildSectionAsync}) is a no-op
+        // because Sodium replaces {@code SectionRenderDispatcher} with
+        // its own builder. Skip entirely — Sodium's own per-frame
+        // chunk-build loop on the secondary {@code LevelRenderer}
+        // handles the equivalent work for cached dims.
+        if (com.warwa.seamlessportals.compat.SodiumCompat.isSodiumLoaded()) return;
+
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) return;
         ResourceKey<Level> activeDim = mc.level.dimension();
