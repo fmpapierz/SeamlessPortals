@@ -322,6 +322,12 @@ public class PortalContextSwitch {
 
         // Require minimum chunks before attempting FBO render.
         if (currentCount < 9) {
+            if (phase2FailCount <= 5) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS DEBUG] tryFboRender bailed: currentCount={} (need >=9) destDim={}",
+                    currentCount, destDim.identifier());
+                phase2FailCount++;
+            }
             return false;
         }
 
@@ -728,17 +734,89 @@ public class PortalContextSwitch {
                                 false
                             );
 
-                            destRenderer.renderLevel(
-                                GraphicsResourceAllocator.UNPOOLED,
-                                deltaTracker,
-                                false,
-                                destCameraState,
-                                destViewMatrix,
-                                destFogBuffer,
-                                destFogData.color,
-                                true,
-                                destChunks
-                            );
+                            // Critical: invoke {@code destRenderer.update(camera)}
+                            // for the portal-view camera. {@code update()}
+                            // calls {@code cullTerrain()} which is the entry
+                            // point Sodium @Overwrites to drive its chunk
+                            // graph + build pipeline.
+                            //
+                            // In MC 26.1.2, {@code renderLevel} no longer
+                            // calls {@code update()} or {@code cullTerrain()}
+                            // — those are called from {@code GameRenderer}
+                            // separately, only for {@code mc.levelRenderer}.
+                            // Our portal render path skips {@code update}
+                            // entirely, so Sodium's setupTerrain never fires
+                            // for the secondary renderer, leaving its
+                            // RenderSectionManager empty (0 visible chunks,
+                            // 0 geometry uploaded).
+                            //
+                            // Calling {@code destRenderer.update(virtualCamera)}
+                            // here is the IP-equivalent flow — it routes
+                            // through vanilla's natural code path which
+                            // Sodium has already patched to do all the right
+                            // things (no parameter mismatches, no managed-
+                            // code wrap to worry about, no destChunks
+                            // matrix re-pointing).
+                            destRenderer.update(virtualCamera);
+
+                            // SodiumFogOverride.activate: tell Sodium's
+                            // GameRendererMixin to serve dest-dim fog
+                            // instead of its captured main-render fog
+                            // for the duration of this renderLevel call.
+                            // CRITICAL Sodium fix: re-point destChunks's
+                            // Sodium-mixin fields (renderer, matrices,
+                            // camera offset) to portal-view values.
+                            // destChunks was created during
+                            // destRenderer.extractLevel() with whatever
+                            // matrices were on the LevelRenderer mixin
+                            // field at that moment — typically stale main-
+                            // render matrices, because
+                            // {@code sodium$setMatrices} only fires when
+                            // renderLevel itself runs (which hasn't yet at
+                            // extract-time). Without this re-pointing,
+                            // {@code drawChunkLayer} on each chunk-section
+                            // layer would draw at main-render's view/camera,
+                            // not portal-view's — producing visible chunks
+                            // in the graph but invisible-to-FBO renders
+                            // (fog color only).
+                            com.warwa.seamlessportals.compat.SodiumBridge
+                                .updateChunkSectionsRenderer(
+                                    destChunks, destRenderer,
+                                    destCameraState.projectionMatrix,
+                                    destViewMatrix,
+                                    destCameraPos.x, destCameraPos.y, destCameraPos.z);
+
+                            com.warwa.seamlessportals.render.SodiumFogOverride
+                                .activate(destFogData);
+                            int sodiumVisBefore = -1;
+                            if (phase2SuccessCount <= 3) {
+                                sodiumVisBefore = com.warwa.seamlessportals.compat.SodiumBridge
+                                    .getVisibleChunkCount(destRenderer);
+                            }
+                            try {
+                                destRenderer.renderLevel(
+                                    GraphicsResourceAllocator.UNPOOLED,
+                                    deltaTracker,
+                                    false,
+                                    destCameraState,
+                                    destViewMatrix,
+                                    destFogBuffer,
+                                    destFogData.color,
+                                    true,
+                                    destChunks
+                                );
+                            } finally {
+                                com.warwa.seamlessportals.render.SodiumFogOverride.clear();
+                            }
+                            if (phase2SuccessCount <= 3) {
+                                int sodiumVisAfter = com.warwa.seamlessportals.compat.SodiumBridge
+                                    .getVisibleChunkCount(destRenderer);
+                                String debugInfo = com.warwa.seamlessportals.compat.SodiumBridge
+                                    .getDebugInfo(destRenderer);
+                                SeamlessPortalsConstants.LOGGER.info(
+                                    "[SEAMLESS SODIUM] visibleChunkCount: before={}, after={} | {}",
+                                    sodiumVisBefore, sodiumVisAfter, debugInfo);
+                            }
                         } finally {
                             // Restore Globals UBO with the source camera while mc.mainRT is
                             // still the secondary FBO (sizes match — secondaryFbo was sized
@@ -783,6 +861,40 @@ public class PortalContextSwitch {
             // tinting the source-dim main world with dest-dim fog.
             destCameraState.fogData = savedFogData;
             destCameraState.fogType = savedFogType;
+
+            // Restore Sodium's captured FogParameters on FogRenderer.
+            // Our portal render called {@code fogRenderer.setupFog(virtualCamera, ..., destLevel)}
+            // at "===== 7. Compute destination fog =====". Sodium has an
+            // @Inject on {@code FogRenderer.setupFog} that captures the
+            // resulting {@code FogData} into a per-FogRenderer
+            // {@code FogParameters parameters} field
+            // ({@code net.caffeinemc.mods.sodium.mixin.core.render.world.FogRendererMixin}).
+            // Once captured as nether fog, Sodium's chunk-draw uniforms
+            // serve nether fog into the source-dim main render until the
+            // NEXT frame's main setupFog runs.
+            //
+            // Re-run setupFog with the main camera and source level
+            // (mc.level at this point is restored to source dim — withSwitchedWorld
+            // finally) so Sodium's @Inject re-captures source fog now,
+            // not on the next frame. No vanilla side effects: setupFog
+            // returns a fresh FogData and doesn't write to the GPU fog
+            // buffer.
+            if (mc.level != null) {
+                try {
+                    FogRenderer fr = ((GameRendererAccessorMixin) mc.gameRenderer)
+                        .seamlessportals$getFogRenderer();
+                    fr.setupFog(
+                        mc.gameRenderer.getMainCamera(),
+                        mc.options.getEffectiveRenderDistance(),
+                        deltaTracker,
+                        0f,
+                        (ClientLevel) mc.level);
+                } catch (Exception e) {
+                    SeamlessPortalsConstants.LOGGER.warn(
+                        "[SEAMLESS SODIUM] Source-fog recapture failed: {}",
+                        e.toString());
+                }
+            }
         }
 
         // Debug: verify state after restore

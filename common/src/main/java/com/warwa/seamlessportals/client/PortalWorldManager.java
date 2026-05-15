@@ -366,9 +366,11 @@ public class PortalWorldManager {
                 skippedLive, enqueued, dimension.identifier());
         }
 
-        SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS PHASE2] Queued {} existing chunks (radius {} around {} portal(s)) for async feed to level {}",
-            enqueued, FEED_RADIUS_CHUNKS, portalOrigins.size(), dimension.identifier());
+        if (enqueued > 0 || skippedLive > 0) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PHASE2] feedExistingChunks for {} — enqueued={} skippedLive={} (chunks-in-RCM={})",
+                dimension.identifier(), enqueued, skippedLive, chunks.size());
+        }
     }
 
     /**
@@ -434,13 +436,35 @@ public class PortalWorldManager {
                         destLevel, chunkX, chunkZ, skyLight, blockLight, sectionsForChunk.length);
                 }
 
-                // Mark sections dirty on the secondary renderer so meshes rebuild.
+                // Mark sections dirty on the secondary renderer so meshes
+                // rebuild. Vanilla path; under Sodium this is a no-op
+                // because Sodium replaces SectionRenderDispatcher's dirty-
+                // tracking. Sodium's own
+                // {@code ClientChunkCacheMixin.onChunkLoaded} fires on
+                // {@code replaceWithPacketData} above and queues a
+                // chunk-load event in the per-{@code ClientLevel}
+                // {@code ChunkTracker}. That queue is drained inside
+                // {@code SodiumWorldRenderer.setupTerrain ->
+                // processChunkEvents} (during the next portal-view render
+                // frame), which registers the chunk's sections in the
+                // {@code RenderSectionManager} the SAME way vanilla chunk
+                // loads do.
+                //
+                // Earlier attempts here also called
+                // {@code SodiumBridge.notifyChunkAddedToRenderer} and
+                // {@code scheduleRebuildForChunk} per-section. Those
+                // direct RSM pokes caused state corruption (garbled
+                // chunk meshes / striped texture artifacts post-teleport
+                // — the chunk graph's neighbor links were broken by
+                // double-registration). The natural Sodium flow is
+                // sufficient; do not manually poke RSM here.
                 LevelRenderer destRenderer = renderers.get(feed.dim);
                 if (destRenderer != null) {
                     int minSectionY = destLevel.getMinSectionY();
                     for (int sy = 0; sy < sectionsForChunk.length; sy++) {
+                        int sectionY = minSectionY + sy;
                         destRenderer.setSectionDirtyWithNeighbors(
-                            chunkX, minSectionY + sy, chunkZ);
+                            chunkX, sectionY, chunkZ);
                     }
                 }
             } catch (Exception e) {

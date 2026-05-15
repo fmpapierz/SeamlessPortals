@@ -37,7 +37,8 @@
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin",
     "client.ViewAreaInvokerMixin",
-    "client.QuadParticleGroupMixin"
+    "client.QuadParticleGroupMixin",
+    "client.compat.SodiumFogOverrideMixin"
   ],
   "mixins": [
     "EntityMixin",
