@@ -180,6 +180,33 @@ public class PortalEntityTracker {
         com.warwa.seamlessportals.mixin.TicketTypeInvoker
             .seamlessportals$invokeRegister("seamlessportals_mirror_view", 40L, 0b0110);
 
+    /**
+     * Pre-warm chunk ticket. Used by
+     * {@link com.warwa.seamlessportals.portal.PortalManager} at portal-
+     * formation time to spread destination chunk loading across many
+     * ticks BEFORE the player actually walks through, so the cross-dim
+     * teleport doesn't trigger a multi-second synchronous worldgen
+     * stall on the server thread.
+     *
+     * <p>Registered HERE (not in PortalManager) because by the time
+     * PortalManager's static init runs (first portal-formation event),
+     * the {@code TICKET_TYPE} registry has been frozen. PortalEntityTracker
+     * is referenced at mod-init time so its static init runs early
+     * enough.
+     *
+     * <p>Flags {@code 0b0010 = 2}: {@code doesLoad} only — chunks load
+     * but don't tick entities (we only need them resident; simulation
+     * defers until the player arrives). Not persistent, doesn't keep
+     * the dimension forcibly active.
+     *
+     * <p>Timeout {@code 1200 ticks (60 s)}: easily outlasts the typical
+     * "walk up to portal and step in" interval, so the chunks remain
+     * loaded by the time the player teleports.
+     */
+    public static final TicketType PORTAL_PREWARM_TICKET =
+        com.warwa.seamlessportals.mixin.TicketTypeInvoker
+            .seamlessportals$invokeRegister("seamlessportals_portal_prewarm", 1200L, 0b0010);
+
     private static void keepChunksLoaded(ServerLevel destLevel, Vec3 center) {
         net.minecraft.world.level.ChunkPos centerChunk = new net.minecraft.world.level.ChunkPos(
             net.minecraft.util.Mth.floor(center.x) >> 4,

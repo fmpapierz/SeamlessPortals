@@ -39,6 +39,13 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             chunkTracker.tick(server);
             entityTracker.tick(server);
+            // IP-style continuous pre-warm: re-add the dest-chunk loading
+            // ticket every tick for every portal within proximity of any
+            // player. Keeps the destination chunks resident as long as
+            // the player is "approaching", so the cross-dim teleport
+            // never has to wait for synchronous worldgen.
+            com.warwa.seamlessportals.portal.PortalManager
+                .getServerInstance().tickPortalPreWarm(server);
         });
     }
 }

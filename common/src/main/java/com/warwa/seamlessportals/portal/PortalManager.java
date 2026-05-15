@@ -38,6 +38,14 @@ public class PortalManager {
     private static PortalManager serverInstance;
     private static PortalManager clientInstance;
 
+    /**
+     * Radius (in chunks) of the pre-warm region around the destination
+     * portal origin. Sized to cover what the player will see immediately
+     * after teleport — vanilla simulation distance is typically 7, plus
+     * a small margin for headroom.
+     */
+    private static final int PREWARM_RADIUS_CHUNKS = 8;
+
     private final Map<ResourceKey<Level>, PortalTracker> trackers = new ConcurrentHashMap<>();
     private final Map<String, PortalLink> linksByPosition = new ConcurrentHashMap<>();
     private final boolean isClient;
@@ -187,6 +195,10 @@ public class PortalManager {
                 tracked.get().getOrigin());
             createLink(source, tracked.get());
             sendLinkToClients(source, tracked.get(), server);
+            preWarmDestinationChunks(tracked.get().getOrigin(), destLevel);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS] Initial pre-warm at {} in {}",
+                tracked.get().getOrigin(), destLevel.dimension().identifier());
             return;
         }
 
@@ -207,6 +219,10 @@ public class PortalManager {
             registerPortal(actualDest);
             createLink(source, actualDest);
             sendLinkToClients(source, actualDest, server);
+            preWarmDestinationChunks(actualDest.getOrigin(), destLevel);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS] Initial pre-warm at {} in {}",
+                actualDest.getOrigin(), destLevel.dimension().identifier());
             return;
         }
 
@@ -233,6 +249,10 @@ public class PortalManager {
             registerPortal(actualDest);
             createLink(source, actualDest);
             sendLinkToClients(source, actualDest, server);
+            preWarmDestinationChunks(actualDest.getOrigin(), destLevel);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS] Initial pre-warm at {} in {} (newly built)",
+                actualDest.getOrigin(), destLevel.dimension().identifier());
         } else {
             // Portal creation failed (e.g., no valid placement), use virtual link as fallback
             SeamlessPortalsConstants.LOGGER.warn(
@@ -250,7 +270,80 @@ public class PortalManager {
             registerPortal(virtualDest);
             createLink(source, virtualDest);
             sendLinkToClients(source, virtualDest, server);
+            preWarmDestinationChunks(virtualDest.getOrigin(), destLevel);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS] Initial pre-warm at {} in {} (virtual)",
+                virtualDest.getOrigin(), destLevel.dimension().identifier());
         }
+    }
+
+    /**
+     * Schedule asynchronous chunk loading around the destination portal
+     * origin so the chunks are resident by the time the player walks
+     * through. Without this, the cross-dim teleport triggers a multi-
+     * second synchronous worldgen stall on the server thread (the player
+     * is dropped into a fresh region; vanilla generates the surrounding
+     * chunks all at once).
+     *
+     * <p>Uses the vanilla chunk-ticket system: {@code addTicketWithRadius}
+     * tells the server's chunk pipeline to load the radius of chunks
+     * over the next several ticks. Spreads the worldgen cost across many
+     * ticks instead of one big stall.
+     *
+     * <p>Called from each destination-establishing branch of
+     * {@link #findOrCreateDestinationPortal} — both for newly-created
+     * destinations (via {@code PortalForcer}) and existing-portal links
+     * (chunks may have been unloaded since the destination portal was
+     * last touched).
+     */
+    /**
+     * Range (in blocks) within which a player "approaching" a portal
+     * triggers continuous pre-warm of that portal's destination chunks.
+     * 32 blocks ≈ 2 chunks — wide enough to start loading well before the
+     * player reaches the portal, narrow enough that we don't pre-warm
+     * portals on the other side of the world.
+     */
+    private static final double PREWARM_PROXIMITY_BLOCKS = 32.0;
+
+    /**
+     * Per-tick hook (called from {@code ServerTickEvents.END_SERVER_TICK}).
+     * For every player in every dim, find portals within
+     * {@link #PREWARM_PROXIMITY_BLOCKS} of the player and re-add the
+     * pre-warm ticket on each portal's destination. The vanilla ticket
+     * timeout (60 s) means each call extends the chunks' resident
+     * lifetime — chunks stay loaded as long as the player stays near
+     * the portal in source dim.
+     *
+     * <p>Modeled after IP's per-player {@code NewChunkTrackingGraph.tick}
+     * pattern (simpler — no rate budget, no distance priority queue,
+     * just "if near portal, ensure dest chunks loaded").
+     */
+    public void tickPortalPreWarm(net.minecraft.server.MinecraftServer server) {
+        if (server == null) return;
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (player == null) continue;
+            ResourceKey<Level> playerDim = player.level().dimension();
+            BlockPos playerPos = player.blockPosition();
+
+            for (PortalLink link : getLinksInRange(playerDim, playerPos, PREWARM_PROXIMITY_BLOCKS)) {
+                PortalInfo dest = link.getDestination();
+                ServerLevel destLevel = server.getLevel(dest.getDimension());
+                if (destLevel == null) continue;
+                preWarmDestinationChunks(dest.getOrigin(), destLevel);
+            }
+        }
+    }
+
+    private void preWarmDestinationChunks(BlockPos destOrigin, ServerLevel destLevel) {
+        net.minecraft.world.level.ChunkPos centerChunk = new net.minecraft.world.level.ChunkPos(
+            destOrigin.getX() >> 4, destOrigin.getZ() >> 4);
+        destLevel.getChunkSource().addTicketWithRadius(
+            com.warwa.seamlessportals.chunk.PortalEntityTracker.PORTAL_PREWARM_TICKET,
+            centerChunk, PREWARM_RADIUS_CHUNKS);
+        // (No log — this runs every server tick from
+        // {@link #tickPortalPreWarm} and would spam. Formation-time
+        // log lives in the formation paths in
+        // {@link #findOrCreateDestinationPortal}.)
     }
 
     /**
