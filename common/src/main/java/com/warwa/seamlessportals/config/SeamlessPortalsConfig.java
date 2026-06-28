@@ -46,6 +46,10 @@ public class SeamlessPortalsConfig {
                 props.load(in);
                 String d = props.getProperty("portalRenderDistance");
                 if (d != null) INSTANCE.setPortalRenderDistance(Integer.parseInt(d.trim()));
+                String depth = props.getProperty("maxPortalRenderDepth");
+                if (depth != null) INSTANCE.setMaxPortalRenderDepth(Integer.parseInt(depth.trim()));
+                String en = props.getProperty("enablePortalRendering");
+                if (en != null) INSTANCE.setEnablePortalRendering(Boolean.parseBoolean(en.trim()));
             } catch (Exception e) {
                 com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
                     "[SEAMLESS] Failed to read config, using defaults: {}", e.toString());
@@ -61,6 +65,8 @@ public class SeamlessPortalsConfig {
             java.nio.file.Path file = configDir.resolve("seamlessportals.properties");
             java.util.Properties props = new java.util.Properties();
             props.setProperty("portalRenderDistance", String.valueOf(INSTANCE.portalRenderDistance));
+            props.setProperty("maxPortalRenderDepth", String.valueOf(INSTANCE.maxPortalRenderDepth));
+            props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"

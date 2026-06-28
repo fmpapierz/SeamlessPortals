@@ -1,0 +1,80 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.fabricmc.fabric-loom'
+}
+
+repositories {
+    // Mod Menu (in-game config screen integration).
+    maven {
+        name = 'TerraformersMC'
+        url = 'https://maven.terraformersmc.com/releases'
+    }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Mod Menu: compiled against so the config screen is reachable from Mod
+    // Menu's mod list. Declared with plain `implementation` to match this
+    // project's fabric-api convention (no loom mod-remapping config in use).
+    // NOT a hard runtime dependency (no "modmenu" entry in fabric.mod.json
+    // depends) — the "modmenu" entrypoint is ignored when Mod Menu is absent.
+    implementation "com.terraformersmc:modmenu:20.0.0-beta.4"
+}
+
+loom {
+    def aw = project(':common').file('src/main/resources/seamlessportals.accesswidener')
+    if (aw.exists()) {
+        accessWidenerPath.set(aw)
+    }
+
+    runs {
+        client {
+            client()
+            setConfigName('Fabric Client')
+            runDir('runs/client')
+        }
+        server {
+            server()
+            setConfigName('Fabric Server')
+            runDir('runs/server')
+        }
+        // Automated title-card capture via the Fabric client-gametest API.
+        // Drives a real client: creates a world, builds + lights a portal,
+        // walks through, frames the nether->overworld portal view and
+        // screenshots it. Triggered by the fabric.client.gametest.modid
+        // system property naming our mod, which routes to the
+        // "fabric-client-gametest" entrypoint in fabric.mod.json.
+        clientGametest {
+            client()
+            setConfigName('Title Card Capture')
+            runDir('runs/gametest')
+            // 'fabric.client.gametest' (presence) ENABLES the client-gametest
+            // framework — its mixin config plugin gates every client-gametest
+            // mixin (incl. the Main hook that starts the runner) on this flag.
+            // 'fabric.client.gametest.modid' then filters which mod's tests run.
+            // Both are required; the modid filter alone is inert.
+            property('fabric.client.gametest', 'true')
+            property('fabric.client.gametest.modid', project.mod_id)
+        }
+    }
+}
+
+processResources {
+    var replaceProperties = [
+        mod_id              : project.mod_id,
+        mod_name            : project.mod_name,
+        mod_version         : project.mod_version,
+        mod_description     : project.mod_description,
+        minecraft_version   : project.minecraft_version,
+        minecraft_version_range : project.minecraft_version_range,
+        fabric_loader_version : project.fabric_loader_version,
+    ]
+    inputs.properties replaceProperties
+    filesMatching('fabric.mod.json') {
+        expand replaceProperties
+    }
+}

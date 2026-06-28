@@ -18,6 +18,9 @@
     ],
     "fabric-client-gametest": [
       "com.warwa.seamlessportals.fabric.gametest.TitleCardCapture"
+    ],
+    "modmenu": [
+      "com.warwa.seamlessportals.fabric.ModMenuIntegration"
     ]
   },
   "accessWidener": "seamlessportals.accesswidener",
