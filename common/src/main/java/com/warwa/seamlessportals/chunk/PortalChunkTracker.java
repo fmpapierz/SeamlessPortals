@@ -68,7 +68,7 @@ public class PortalChunkTracker {
      * client's per-frame chunk-apply + mesh-compile load so the async residency
      * stream-in can't burst into a render-thread freeze.
      */
-    private static final int MAX_CHUNK_SENDS_PER_TICK = 6;
+    private static final int MAX_CHUNK_SENDS_PER_TICK = 12;
 
     public void tick(MinecraftServer server) {
         // Periodically scan for portals near players on the server
@@ -159,15 +159,24 @@ public class PortalChunkTracker {
         ResourceKey<Level> playerDim = player.level().dimension();
         PortalManager manager = PortalManager.getServerInstance();
 
-        int renderDist = SeamlessPortalsConfig.get().getPortalRenderDistance();
-        double range = renderDist * 16.0;
+        // Baseline (far) residency depth — the light "you can see through it from a
+        // distance" feed. The DEEP residency (matching your render distance, so the
+        // dest is preserved and the teleport doesn't reload distant chunks) is
+        // applied per-link, scaled by how close you are to the portal (below).
+        int configDist = SeamlessPortalsConfig.get().getPortalRenderDistance();
+        // Cap the DEEP residency at 16 (1089 chunks) for now — a big jump from the
+        // old 8 (289) without the server cost of holding a full high render distance
+        // (e.g. 22 → 1662 chunks) resident + ticked per portal. Raise toward the
+        // player's view distance once this proves stable.
+        int viewDist = Math.min(16, server.getPlayerList().getViewDistance());
+        double range = Math.max(configDist, viewDist) * 16.0;
 
         List<PortalLink> nearbyLinks = manager.getLinksInRange(playerDim, player.blockPosition(), range);
 
         if (!loggedChunkUpdate) {
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, nearbyLinks={}, renderDist={}, range={}",
-                playerDim.identifier(), nearbyLinks.size(), renderDist, range
+                "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, nearbyLinks={}, configDist={}, viewDist={}, range={}",
+                playerDim.identifier(), nearbyLinks.size(), configDist, viewDist, range
             );
             loggedChunkUpdate = true;
         }
@@ -180,6 +189,20 @@ public class PortalChunkTracker {
             PortalInfo destPortal = link.getDestination();
             ResourceKey<Level> destDim = destPortal.getDimension();
             Vec3 destCenter = destPortal.getCenter();
+
+            // IP-style graduated residency: keep the dest loaded as deep as your
+            // render distance when you're AT the source portal (about to cross →
+            // nothing reloads on teleport), scaling down with distance so we don't
+            // hold a full render distance resident just walking past a portal.
+            double distToPortal = player.position().distanceTo(link.getSource().getCenter());
+            int renderDist;
+            if (distToPortal < 16.0) {
+                renderDist = viewDist;                                  // at the portal → full RD
+            } else if (distToPortal < 48.0) {
+                renderDist = Math.max(configDist, (viewDist * 2) / 3);  // approaching
+            } else {
+                renderDist = configDist;                                // far → light baseline
+            }
 
             int centerChunkX = (int)(destCenter.x) >> 4;
             int centerChunkZ = (int)(destCenter.z) >> 4;
