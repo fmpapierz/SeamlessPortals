@@ -408,13 +408,21 @@ public class PortalWorldManager {
             );
 
             // ClientLevel now takes the LevelExtractor (was LevelRenderer in 26.1.2).
+            // The secondary level's storage radius = the configured dest loading cap
+            // (IP's indirectLoadingRadiusCap, default 8, clamp 1..32). This is the
+            // HARD limit on how deep the dest can be held + meshed as a portal view:
+            // the ClientChunkCache storage is sized here, so chunks beyond it are
+            // dropped (and reload on crossing). Reading the config makes the whole
+            // chain — residency, feed, mesh pump, draw, AND this storage — scale
+            // together when you raise the cap.
+            int destViewRadius = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().getPortalRenderDistance();
             ClientLevel destLevel = new ClientLevel(
                 mc.getConnection(),
                 levelData,
                 dimension,
                 dimensionType,
-                8,  // render distance for portal view (matches portalRenderDistance)
-                8,  // simulation distance
+                destViewRadius,  // render distance (storage radius) = config loading cap
+                destViewRadius,  // simulation distance
                 destExtractor,
                 false,
                 0L,
