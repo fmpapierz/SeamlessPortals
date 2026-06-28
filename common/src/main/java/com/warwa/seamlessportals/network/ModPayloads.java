@@ -66,6 +66,45 @@ public class ModPayloads {
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /**
+     * Server → Client: a REDIRECTED VANILLA chunk packet for a destination
+     * dimension (Phase 4c, IP {@code PacketRedirectionClient} architecture).
+     *
+     * <p>Wraps the real {@link net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket}
+     * (chunk + light in one) plus the target dimension id, so the client can run
+     * the vanilla packet's OWN handler against the destination {@code ClientLevel}
+     * under a world-switch. That drives the engine's native chunk-load tracking on
+     * the dest renderer (the occlusion graph + {@code onChunkReadyToRender}),
+     * replacing the custom snapshot feed + the O(all-sections) manual scan.
+     *
+     * <p>The codec is parameterized over {@link net.minecraft.network.RegistryFriendlyByteBuf}
+     * (not plain {@code FriendlyByteBuf}) because the embedded vanilla packet's
+     * {@code ClientboundLevelChunkPacketData} needs registry access for
+     * block-entity serialization. The {@code String} dim field is widened into the
+     * registry-aware composite via {@code .cast()} — the {@link RemoteEntityDataPayload}
+     * pattern, which already embeds a vanilla packet this way.
+     */
+    public record RedirectedChunkPayload(
+        String dimensionId,
+        net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket innerPacket
+    ) implements CustomPacketPayload {
+        public static final Type<RedirectedChunkPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "redirected_chunk")
+        );
+
+        public static final StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, RedirectedChunkPayload> STREAM_CODEC =
+            StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8.cast(),
+                RedirectedChunkPayload::dimensionId,
+                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket.STREAM_CODEC,
+                RedirectedChunkPayload::innerPacket,
+                RedirectedChunkPayload::new
+            );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record RemoteChunkUnloadPayload(
         String dimensionId,
         int chunkX,

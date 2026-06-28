@@ -255,23 +255,28 @@ public class PortalChunkTracker {
             LevelChunk chunk = destLevel.getChunkSource().getChunkNow(pos.x(), pos.z());
             if (chunk == null) continue;
             {
-                byte[] chunkData = serializeChunkSections(chunk);
+                // Phase 4c: ship the REAL vanilla chunk packet (chunk + all light
+                // sections, null/null filters = full), wrapped in the redirect
+                // payload. The client runs its own handler against the dest
+                // ClientLevel under a world-switch, so the engine's native
+                // chunk-load tracking drives the dest occlusion graph — no custom
+                // snapshot serialize/store/drain, no O(all-sections) manual scan.
+                net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket vanillaPkt =
+                    new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
+                        chunk, destLevel.getLightEngine(), null, null);
 
-                if (chunkData != null && chunkData.length > 0) {
-                    if (!loggedFirstSend) {
-                        SeamlessPortalsConstants.LOGGER.info(
-                            "[SEAMLESS DEBUG] Sending remote chunk [{}, {}] from {} to player {} ({} bytes, {} sections)",
-                            pos.x(), pos.z(), dimId, player.getName().getString(),
-                            chunkData.length, chunk.getSectionsCount()
-                        );
-                        loggedFirstSend = true;
-                    }
-
-                    PlatformHelper.getInstance().sendToClient(player,
-                        new ModPayloads.RemoteChunkDataPayload(dimId, pos.x(), pos.z(), chunkData));
-                    previouslySent.add(pos);
-                    sentThisTick++;
+                if (!loggedFirstSend) {
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS 4C] Sending REDIRECTED vanilla chunk [{}, {}] from {} to player {} ({} sections)",
+                        pos.x(), pos.z(), dimId, player.getName().getString(), chunk.getSectionsCount()
+                    );
+                    loggedFirstSend = true;
                 }
+
+                PlatformHelper.getInstance().sendToClient(player,
+                    new ModPayloads.RedirectedChunkPayload(dimId, vanillaPkt));
+                previouslySent.add(pos);
+                sentThisTick++;
             }
         }
 

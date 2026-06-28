@@ -1,8 +1,10 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.renderer.LevelRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -53,11 +55,33 @@ public abstract class ChunkLightLambdaGuardMixin {
         require = 1
     )
     private Runnable seamlessportals$wrapLightUpdateLambda(Runnable original) {
+        // Capture the context at QUEUE time. For a Phase-4c REDIRECTED chunk, the
+        // queue happens inside RedirectedPacketApplier's world-switch, so this.level
+        // is the DESTINATION ClientLevel and mc.levelRenderer is the dest renderer
+        // here. For a normal active-world chunk, these are just the active world.
+        final ClientLevel capturedLevel = this.level;
+        final Minecraft mc = Minecraft.getInstance();
+        final LevelRenderer capturedRenderer =
+            ((MinecraftAccessorMixin) mc).seamlessportals$getLevelRenderer();
         return () -> {
-            if (this.level == null) {
-                // Listener detached from a level — the queued light update
-                // is stale. Drop it silently; server will resend if needed.
+            if (capturedLevel == null) {
+                // Listener was detached from a level when this was queued — the
+                // light update is stale. Drop it silently; server resends if needed.
                 return;
+            }
+            // The lambda reads this.level (applyLightData / getChunkSource) AND
+            // mc.levelRenderer (the chunk-ready → occlusion-graph signal). For a
+            // redirected chunk it now drains on the DEST's pollLightUpdates while
+            // the listener already points back at the active world — so temporarily
+            // re-establish the captured (dest) context. For a normal chunk
+            // captured == current, so this is a pure no-op (no swap).
+            final MinecraftAccessorMixin macc = (MinecraftAccessorMixin) mc;
+            final ClientLevel currentLevel = this.level;
+            final boolean redirect = (capturedLevel != currentLevel);
+            final LevelRenderer savedRenderer = redirect ? macc.seamlessportals$getLevelRenderer() : null;
+            if (redirect) {
+                this.level = capturedLevel;
+                macc.seamlessportals$setLevelRenderer(capturedRenderer);
             }
             try {
                 original.run();
@@ -66,6 +90,11 @@ public abstract class ChunkLightLambdaGuardMixin {
                     "[SEAMLESS GUARD] NPE in queued light-update lambda "
                         + "(listener.level transient null during teleport): {}",
                     npe.getMessage());
+            } finally {
+                if (redirect) {
+                    this.level = currentLevel;
+                    macc.seamlessportals$setLevelRenderer(savedRenderer);
+                }
             }
         };
     }

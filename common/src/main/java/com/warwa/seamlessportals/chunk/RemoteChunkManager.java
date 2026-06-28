@@ -186,39 +186,29 @@ public class RemoteChunkManager {
      * Get the block state at a specific world position in the remote dimension.
      */
     public static BlockState getRemoteBlockState(ResourceKey<Level> dimension, BlockPos pos) {
-        Map<ChunkPos, LevelChunkSection[]> dimChunks = remoteSections.get(dimension);
-        if (dimChunks == null) return null;
-
-        ChunkPos chunkPos = new ChunkPos(pos.getX() >> 4, pos.getZ() >> 4);
-        LevelChunkSection[] sections = dimChunks.get(chunkPos);
-        if (sections == null) return null;
-
-        // Calculate section index using the REMOTE dimension's min Y, not current world's.
-        // Nether/End: 16 sections starting at Y=0 (minSectionY=0)
-        // Overworld: 24 sections starting at Y=-64 (minSectionY=-4)
-        int minSectionY = getMinSectionY(dimension, sections.length);
-        int sectionIndex = (pos.getY() >> 4) - minSectionY;
-
-        if (sectionIndex < 0 || sectionIndex >= sections.length) return null;
-
-        LevelChunkSection section = sections[sectionIndex];
-        int localX = pos.getX() & 15;
-        int localY = pos.getY() & 15;
-        int localZ = pos.getZ() & 15;
-
-        return section.getBlockState(localX, localY, localZ);
+        // Phase 4c: the dest chunks now live in the real secondary ClientLevel
+        // (landed by the redirected vanilla packet handler), not the snapshot
+        // store. Query the live level directly.
+        net.minecraft.client.multiplayer.ClientLevel level =
+            com.warwa.seamlessportals.client.PortalWorldManager.getLevel(dimension);
+        if (level == null) return null;
+        if (!level.getChunkSource().hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) return null;
+        return level.getBlockState(pos);
     }
 
     /**
      * Check if we have chunks loaded for a given dimension.
+     * Phase 4c: queries the live secondary ClientLevel's chunk cache.
      */
     public static boolean hasDimensionData(ResourceKey<Level> dimension) {
-        Map<ChunkPos, LevelChunkSection[]> dimChunks = remoteSections.get(dimension);
-        return dimChunks != null && !dimChunks.isEmpty();
+        net.minecraft.client.multiplayer.ClientLevel level =
+            com.warwa.seamlessportals.client.PortalWorldManager.getLevel(dimension);
+        return level != null && level.getChunkSource().getLoadedChunksCount() > 0;
     }
 
     /**
-     * Get all loaded chunks for a dimension.
+     * Get all loaded chunks for a dimension (legacy snapshot store; empty under
+     * Phase 4c — kept only for the dormant feed methods).
      */
     public static Map<ChunkPos, LevelChunkSection[]> getChunks(ResourceKey<Level> dimension) {
         return remoteSections.getOrDefault(dimension, Collections.emptyMap());
@@ -226,10 +216,12 @@ public class RemoteChunkManager {
 
     /**
      * Get the number of loaded chunks for a dimension.
+     * Phase 4c: the live secondary ClientLevel's loaded-chunk count.
      */
     public static int getChunkCount(ResourceKey<Level> dimension) {
-        Map<ChunkPos, LevelChunkSection[]> dimChunks = remoteSections.get(dimension);
-        return dimChunks != null ? dimChunks.size() : 0;
+        net.minecraft.client.multiplayer.ClientLevel level =
+            com.warwa.seamlessportals.client.PortalWorldManager.getLevel(dimension);
+        return level != null ? level.getChunkSource().getLoadedChunksCount() : 0;
     }
 
     public static void handleChunkUnload(String dimensionId, int chunkX, int chunkZ) {

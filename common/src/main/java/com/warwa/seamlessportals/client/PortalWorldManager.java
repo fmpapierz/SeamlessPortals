@@ -233,6 +233,28 @@ public class PortalWorldManager {
         return true;
     }
 
+    /** Last monotonic time (ns) a chunk was landed into each dim's secondary level. */
+    private static final Map<ResourceKey<Level>, Long> lastChunkApplyNanos = new ConcurrentHashMap<>();
+
+    /** Record that {@code dim}'s secondary level just received a chunk (called from the feed). */
+    public static void noteChunkApplied(ResourceKey<Level> dim) {
+        lastChunkApplyNanos.put(dim, System.nanoTime());
+    }
+
+    /**
+     * Phase 2/5 safety gate: has {@code dim}'s dest NOT received a chunk for
+     * {@code stableNanos}? The native occlusion-culled render must only run on a
+     * STABLE dest — while chunks are still streaming in, {@code sog.update}'s
+     * propagation churns the render thread (the freeze). The dimension the player
+     * just LEFT is stable (fully loaded as the active world, not being fed), so it
+     * gets the native path; a freshly-lit portal still streaming does not.
+     */
+    public static boolean isDestStable(ResourceKey<Level> dim, long stableNanos) {
+        Long last = lastChunkApplyNanos.get(dim);
+        if (last == null) return true; // never fed by us → not streaming
+        return (System.nanoTime() - last) > stableNanos;
+    }
+
     /**
      * The destination dimension's own {@link ParticleEngine}, or {@code null}
      * if none has been created yet (lazily created by
@@ -647,6 +669,11 @@ public class PortalWorldManager {
                             chunkX, sectionY, chunkZ);
                     }
                 }
+
+                // Phase 2/5 stability gate: this dim just landed a chunk, so it
+                // is still streaming — keep the native occlusion render OFF for it
+                // until the feed goes quiet (see isDestStable).
+                noteChunkApplied(feed.dim);
             } catch (Exception e) {
                 SeamlessPortalsConstants.LOGGER.error(
                     "[SEAMLESS PHASE2] drainPendingFeeds: Failed chunk [{},{}] in {}",

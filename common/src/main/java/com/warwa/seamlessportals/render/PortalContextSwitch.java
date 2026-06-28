@@ -121,6 +121,23 @@ public class PortalContextSwitch {
      * the VANILLA way (Phase 4c: redirected chunk packets that drive the engine's
      * chunk-load tracking correctly) before it is stable enough to drive. Stays
      * off until 4c lands; the gating/scan-skip plumbing remains for re-enabling.
+     *
+     * <p><b>ON again (2026-06-28):</b> the freeze was the dest still STREAMING
+     * while the native path ran, not native-render itself. Two guards now bound
+     * that: the chunk send is throttled (6/tick, no burst) AND the native path is
+     * additionally gated on {@link PortalWorldManager#isDestStable} — it only runs
+     * on a dest that has gone quiet (the dim you just left), never on one whose
+     * chunks are landing this second. Re-enabled to test that combination.
+     *
+     * <p><b>OFF again (2026-06-28, post-4c):</b> Phase 4c (redirected vanilla
+     * chunk packets) landed and the FEED is confirmed working — but the native
+     * path still froze, because {@code sog.update} (the vanilla/Sodium occlusion
+     * graph) genuinely churns on a no-Sodium remote level regardless of how it was
+     * fed. IP's NO-SODIUM remote render does NOT use {@code sog.update}; it uses a
+     * render-distance-BOUNDED BFS ({@code VisibleSectionDiscovery}). So the native
+     * (sog.update) path is wrong for this (vanilla) target. Back on the
+     * captured-frustum path (sog.update SUPPRESSED) with the redirect feed for a
+     * stable build; the manual scan is being replaced by a bounded BFS next.
      */
     public static boolean useContinuousExtract = false;
 
@@ -233,6 +250,16 @@ public class PortalContextSwitch {
      * graph). 4 → an 9×9 loaded patch around the camera.
      */
     private static final int NATIVE_RESIDENCY_RADIUS = 4;
+
+    /**
+     * Phase 2/5 native-render stability window: the dest must have gone this long
+     * (ns) without landing a fed chunk before the native occlusion render is
+     * allowed. While chunks are still streaming, sog.update's propagation churns
+     * the render thread (the freeze). 1s is comfortably past the per-tick feed
+     * cadence so a quiet (fully-loaded) dest qualifies immediately and a streaming
+     * one never does.
+     */
+    private static final long NATIVE_STABLE_NANOS = 1_000_000_000L;
 
     private static final int COMPILE_SCHEDULE_RADIUS_CHUNKS = 8;
     private static final int COMPILE_SCHEDULE_RADIUS_SQ =
@@ -505,15 +532,10 @@ public class PortalContextSwitch {
         destLevel.getChunkSource().updateViewCenter(
             destOrigin.getX() >> 4, destOrigin.getZ() >> 4);
 
-        // Feed chunks incrementally: only when new chunks have arrived from the server.
-        // Feeding is expensive (ByteBuf serialize/deserialize + light + dirty marking),
-        // so we track the count and only re-feed when it increases.
+        // Phase 4c: chunks now arrive via the redirected vanilla packet handler,
+        // which lands them straight into destLevel's ClientChunkCache (no snapshot
+        // feed to drain). getChunkCount reads that live cache.
         int currentCount = RemoteChunkManager.getChunkCount(destDim);
-        int lastCount = lastFedChunkCount.getOrDefault(destDim, 0);
-        if (currentCount > lastCount) {
-            PortalWorldManager.feedExistingChunks(destDim);
-            lastFedChunkCount.put(destDim, currentCount);
-        }
 
         // Require minimum chunks before attempting FBO render.
         if (currentCount < 9) {
@@ -621,15 +643,19 @@ public class PortalContextSwitch {
         // path renders only what's visible, like vanilla/IP. We do NOT capture the
         // frustum in that case (capture makes extract() skip applyFrustum and the
         // CameraRenderState report isFrustumCaptured → render() skips sog.update).
-        // A SPARSE dest (freshly-lit portal, still streaming) is NOT dense, so it
-        // keeps the captured-frustum + manual-scan path — the SOG BFS hangs on an
-        // incomplete graph, which is the whole reason the bypass exists.
-        final boolean nativeRender = useContinuousExtract
-            && PortalWorldManager.isDestResident(
-                destLevel,
-                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.x)),
-                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.z)),
-                NATIVE_RESIDENCY_RADIUS);
+        //
+        // Phase 4c: chunks now arrive via REDIRECTED VANILLA packets, whose handler
+        // runs through the dest ClientLevel under a world-switch — driving the
+        // engine's own chunk-load tracking + onChunkReadyToRender on the dest
+        // renderer, exactly as the main world does. That keeps the SectionOcclusionGraph
+        // coherent as the dest streams in, so sog.update no longer churns on an
+        // incomplete graph. The density/stability gates (which existed only to keep
+        // the native path off a snapshot-fed, SOG-cold dest) are therefore RETIRED:
+        // we drive the engine's native render whenever we render at all (the >=9
+        // chunk gate above still defers to the solid background until there's data).
+        // The manual-scan path below stays compiled as dead code (nativeRender is
+        // always true here) pending its removal.
+        final boolean nativeRender = useContinuousExtract;
 
         if (!nativeRender) {
             // Capture the frustum so extract() skips applyFrustum (the manual scan

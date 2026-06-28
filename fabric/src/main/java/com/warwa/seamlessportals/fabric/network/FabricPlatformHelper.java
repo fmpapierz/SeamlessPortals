@@ -36,6 +36,11 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.RemoteChunkDataPayload.TYPE,
             ModPayloads.RemoteChunkDataPayload.STREAM_CODEC
         );
+        // Phase 4c: redirected vanilla chunk packet (replaces the custom snapshot feed).
+        PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RedirectedChunkPayload.TYPE,
+            ModPayloads.RedirectedChunkPayload.STREAM_CODEC
+        );
         PayloadTypeRegistry.clientboundPlay().register(
             ModPayloads.RemoteChunkUnloadPayload.TYPE,
             ModPayloads.RemoteChunkUnloadPayload.STREAM_CODEC
@@ -144,6 +149,17 @@ public class FabricPlatformHelper implements PlatformHelper {
     }
 
     public static void registerClientHandlers() {
+        // Phase 4c: redirected vanilla chunk packet — run the packet's own handler
+        // against the dest ClientLevel under a world-switch so the engine drives
+        // the dest occlusion graph. Replaces the RemoteChunkDataPayload snapshot.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RedirectedChunkPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RedirectedPacketApplier.applyChunk(payload));
+            }
+        );
+
         ClientPlayNetworking.registerGlobalReceiver(
             ModPayloads.RemoteChunkDataPayload.TYPE,
             (payload, context) -> {
