@@ -63,6 +63,13 @@ public class PortalChunkTracker {
     /** One-shot log confirming Phase-4a residency tickets are being applied. */
     private static boolean loggedResidency = false;
 
+    /**
+     * Max NEW chunks shipped to a player per tick (per dest dim). Bounds the
+     * client's per-frame chunk-apply + mesh-compile load so the async residency
+     * stream-in can't burst into a render-thread freeze.
+     */
+    private static final int MAX_CHUNK_SENDS_PER_TICK = 6;
+
     public void tick(MinecraftServer server) {
         // Periodically scan for portals near players on the server
         scanCooldown--;
@@ -226,8 +233,16 @@ public class PortalChunkTracker {
             );
         }
 
+        // Phase 4a: cap how many NEW chunks we ship per tick. With the async
+        // residency ticket, many chunks finish loading in the same tick; sending
+        // them all at once made the CLIENT receive a 100-chunk burst and try to
+        // mesh-compile it in one frame ("scheduled=100" → render-thread storm /
+        // freeze). Sending a small batch/tick streams the dest in smoothly; the
+        // rest are retried next tick (not marked sent).
+        int sentThisTick = 0;
         for (ChunkPos pos : chunks) {
             if (previouslySent.contains(pos)) continue;
+            if (sentThisTick >= MAX_CHUNK_SENDS_PER_TICK) break;
 
             // Phase 4a: send only chunks ALREADY loaded. The Phase-4a residency
             // ticket loads the dest region ASYNCHRONOUSLY over ticks; getChunkNow
@@ -255,6 +270,7 @@ public class PortalChunkTracker {
                     PlatformHelper.getInstance().sendToClient(player,
                         new ModPayloads.RemoteChunkDataPayload(dimId, pos.x(), pos.z(), chunkData));
                     previouslySent.add(pos);
+                    sentThisTick++;
                 }
             }
         }

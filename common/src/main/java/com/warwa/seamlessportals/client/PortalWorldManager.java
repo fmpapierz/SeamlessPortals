@@ -212,6 +212,28 @@ public class PortalWorldManager {
     }
 
     /**
+     * Phase 2/5 safety gate: is the dest level DENSE enough (every chunk in a
+     * small radius around the view center is loaded) to safely drive the native
+     * occlusion-graph render? The SectionOcclusionGraph BFS / sog.update spins /
+     * hangs on a SPARSE, still-streaming secondary (e.g. a freshly-lit portal
+     * whose nether side has a handful of chunks) — which is exactly why the
+     * captured-frustum bypass + manual scan exist. We only switch a dest to the
+     * native (occlusion-culled) render path when this returns true; otherwise the
+     * manual scan handles it. The dimension the player just LEFT is always dense
+     * (it was the active world), so its heavy mirror render gets the native path.
+     */
+    public static boolean isDestResident(ClientLevel level, int centerSecX, int centerSecZ, int radius) {
+        if (level == null) return false;
+        net.minecraft.client.multiplayer.ClientChunkCache cache = level.getChunkSource();
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                if (!cache.hasChunk(centerSecX + dx, centerSecZ + dz)) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * The destination dimension's own {@link ParticleEngine}, or {@code null}
      * if none has been created yet (lazily created by
      * {@link #getOrCreateParticleEngine} / {@link #tickCachedParticles}).

@@ -106,15 +106,21 @@ public class PortalContextSwitch {
      * has a SINGLE renderer consumer ({@code SectionOcclusionGraph.update}),
      * verified, so this is side-effect-free on the display.
      *
-     * <p><b>DISABLED (2026-06-27):</b> enabling {@code sog.update} HANGS the
-     * render thread when the dest level is SPARSE / still streaming (e.g. a
-     * freshly-lit portal whose nether side has only a couple dozen chunks loaded)
-     * — {@code sog.update}'s synchronous {@code runPartialUpdate}/graph BFS pegs
-     * the thread on the incomplete section graph. This is the exact reason the
-     * mod captured the frustum to bypass the SOG in the first place. Warming the
-     * occlusion graph is only safe once the dest is FULLY resident (Phase 4), so
-     * this stays off until residency is complete and the build is gated on a
-     * sufficiently-loaded dest. Flip true only with that in place.
+     * <p><b>Now gated (2026-06-27):</b> enabling {@code sog.update} HANGS the
+     * render thread when the dest level is SPARSE / still streaming. So the
+     * native (occlusion-culled) path — including this flag's effect — is applied
+     * ONLY when {@link com.warwa.seamlessportals.client.PortalWorldManager#isDestResident}
+     * reports the dest dense around the view center; a sparse dest falls back to
+     * the captured-frustum + manual-scan path (no hang). Set this master flag
+     * false to force the manual path for ALL dests (full rollback).
+     *
+     * <p><b>OFF again (2026-06-27):</b> even gated on density, the native path
+     * tipped over during the initial chunk STREAM-IN — the dest is still
+     * receiving chunks while being viewed, so {@code sog.update} churns its
+     * propagation queue on the render thread. The native path needs the dest fed
+     * the VANILLA way (Phase 4c: redirected chunk packets that drive the engine's
+     * chunk-load tracking correctly) before it is stable enough to drive. Stays
+     * off until 4c lands; the gating/scan-skip plumbing remains for re-enabling.
      */
     public static boolean useContinuousExtract = false;
 
@@ -220,6 +226,14 @@ public class PortalContextSwitch {
      * See memory: {@code step1_5_viewarea_sync_radius_fix.md},
      * {@code viewarea_reposition_mesh_loss.md}.
      */
+    /**
+     * Phase 2/5 native-render gate radius: every chunk within this many chunks of
+     * the dest view center must be loaded for the dest to count as "dense" and use
+     * the native occlusion-culled render (else the SOG BFS could hang on a sparse
+     * graph). 4 → an 9×9 loaded patch around the camera.
+     */
+    private static final int NATIVE_RESIDENCY_RADIUS = 4;
+
     private static final int COMPILE_SCHEDULE_RADIUS_CHUNKS = 8;
     private static final int COMPILE_SCHEDULE_RADIUS_SQ =
         COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
@@ -597,13 +611,32 @@ public class PortalContextSwitch {
         Frustum destFrustum = new Frustum(viewMatrix, projMatrix);
         destFrustum.prepare(destCameraPos.x, destCameraPos.y, destCameraPos.z);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setCullFrustum(destFrustum);
-        // Also CAPTURE the frustum: this makes LevelExtractor.extract() skip the
-        // per-frame applyFrustum() → SectionOcclusionGraph BFS (verified the
-        // freeze cause via thread dump: extract :130 → SectionOcclusionGraph
-        // .addSectionsInFrustum pegged the render thread on the sparse secondary
-        // level) and skip the async graph full-update. We supply visibleSections
-        // ourselves below, so vanilla's occlusion-graph cull is unnecessary here.
-        ((CameraInvokerMixin) virtualCamera).seamlessportals$setCapturedFrustum(destFrustum);
+
+        // Phase 2/5 (IP "live window") NATIVE-RENDER GATE. When the dest is DENSE
+        // around the view center (the dimension you just LEFT always is), drive
+        // the engine's own occlusion-graph cull — extract()'s applyFrustum +
+        // render()'s sog.update, O(visible) — instead of the O(all
+        // viewArea.sections) manual scan. That manual scan over a full-RD mirror
+        // (13k–19k sections) is the multi-second post-crossing freeze; the native
+        // path renders only what's visible, like vanilla/IP. We do NOT capture the
+        // frustum in that case (capture makes extract() skip applyFrustum and the
+        // CameraRenderState report isFrustumCaptured → render() skips sog.update).
+        // A SPARSE dest (freshly-lit portal, still streaming) is NOT dense, so it
+        // keeps the captured-frustum + manual-scan path — the SOG BFS hangs on an
+        // incomplete graph, which is the whole reason the bypass exists.
+        final boolean nativeRender = useContinuousExtract
+            && PortalWorldManager.isDestResident(
+                destLevel,
+                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.x)),
+                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.z)),
+                NATIVE_RESIDENCY_RADIUS);
+
+        if (!nativeRender) {
+            // Capture the frustum so extract() skips applyFrustum (the manual scan
+            // below supplies visibleSections) and sog.update is skipped (no hang on
+            // a sparse graph).
+            ((CameraInvokerMixin) virtualCamera).seamlessportals$setCapturedFrustum(destFrustum);
+        }
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setInitialized(true);
 
         // ===== 3. Direct section compilation (sparse chunks, bypass occlusion graph) =====
@@ -733,6 +766,12 @@ public class PortalContextSwitch {
                 destExtractor != null ? destExtractor.sectionUpdateTracker : null;
             java.util.Set<Long> schedSet =
                 portalCompileScheduled.computeIfAbsent(destDim, k -> new java.util.HashSet<>());
+            // Native path SKIPS the O(all viewArea.sections) manual scan (this is
+            // the post-crossing freeze). extract()'s applyFrustum (occlusion-graph
+            // BFS) supplies visibleSections and its sectionUpdates loop schedules
+            // compiles — like vanilla/IP. The compile-count logs below self-skip
+            // (compiled/scheduled stay 0).
+            if (!nativeRender)
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
                 if (section == null) continue;
                 long sectionNode = section.getSectionNode();
@@ -852,7 +891,9 @@ public class PortalContextSwitch {
         // SOLE renderer consumer of isFrustumCaptured is SectionOcclusionGraph
         // .update (verified), so this only warms the dest graph; the display path
         // (captured-frustum extract skip + manual scan) is unchanged.
-        if (useContinuousExtract) {
+        if (nativeRender) {
+            // Native path: ensure the dest graph build runs (we already left the
+            // frustum un-captured above; this is belt-and-suspenders).
             destCameraState.isFrustumCaptured = false;
         }
         // Override projection from main camera (same FOV/aspect)
@@ -981,12 +1022,15 @@ public class PortalContextSwitch {
                             destDim.identifier(), mc.particleEngine.countParticles(),
                             destParticlesActive);
                     }
-                    // Re-assert the portal-view visible-section set that extract(...)
-                    // just cleared (vanilla applyFrustum) — direct frustum cull over
-                    // the dest ViewArea, same technique as the section loop above but
-                    // population-only (compiles were already scheduled there).
-                    populateVisibleSectionsByFrustum(
-                        destRenderer, viewArea, destFrustum, destLevel);
+                    // Manual path only: re-assert the portal-view visible-section
+                    // set from the manual scan result. On the NATIVE path, extract()'s
+                    // applyFrustum (occlusion-graph BFS) already populated
+                    // visibleSections from the SOG — overwriting it here with the
+                    // (empty) prebuilt manual-scan list would blank the view.
+                    if (!nativeRender) {
+                        populateVisibleSectionsByFrustum(
+                            destRenderer, viewArea, destFrustum, destLevel);
+                    }
 
                     // 26.2: ChunkSectionsToRender is produced by
                     // prepareChunkRenders(Matrix4fc) (render(...) calls it internally).
