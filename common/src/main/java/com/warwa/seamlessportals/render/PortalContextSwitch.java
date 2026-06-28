@@ -266,6 +266,22 @@ public class PortalContextSwitch {
         COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
 
     /**
+     * Max horizontal radius (chunks, squared) of sections the portal-view scan
+     * adds to {@code visibleSections}. The manual frustum cull alone admits every
+     * in-frustum section out to the full render distance (logs showed ~10k–19k
+     * "Direct compilation" sections), but the portal view is fog-limited to
+     * {@code envEnd≈96} blocks (~6 chunks) and only {@code COMPILE_SCHEDULE_RADIUS}
+     * (8 chunks) ever gets compiled — everything beyond is blank or fogged. So
+     * sections past this radius are pure per-frame scan+draw waste (and the heavy
+     * transition-frame cost that lengthens the post-crossing stutter). 11 chunks
+     * keeps a comfortable margin past the fog/compile horizon while trimming the
+     * far thousands.
+     */
+    private static final int PORTAL_VIEW_DRAW_RADIUS_CHUNKS = 11;
+    private static final int PORTAL_VIEW_DRAW_RADIUS_SQ =
+        PORTAL_VIEW_DRAW_RADIUS_CHUNKS * PORTAL_VIEW_DRAW_RADIUS_CHUNKS;
+
+    /**
      * Atomically swap primary client state to the destination for the duration
      * of {@code renderCallback}, then restore in {@code finally}.
      *
@@ -807,6 +823,16 @@ public class PortalContextSwitch {
                 // Frustum cull: skip sections whose bounding box is
                 // outside the portal-view cone.
                 if (!destFrustum.isVisible(section.getBoundingBox())) continue;
+                // View-distance bound: the frustum admits in-cone sections out to
+                // the full render distance, but the portal view is fog-limited and
+                // only the compile-radius is ever meshed — beyond PORTAL_VIEW_DRAW_RADIUS
+                // is blank/fogged, so skip it entirely instead of adding thousands of
+                // dead sections to visibleSections (the heavy transition-frame cost).
+                {
+                    int rdx = sx - camSecX;
+                    int rdz = sz - camSecZ;
+                    if (rdx * rdx + rdz * rdz > PORTAL_VIEW_DRAW_RADIUS_SQ) continue;
+                }
                 net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
                     sut != null ? sut.getDirtyState(sectionNode) : null;
                 boolean uncompiled = section.sectionMesh.get()

@@ -826,6 +826,27 @@ public class PortalWorldManager {
             }
         }
 
+        // INSTANT REPAINT (fixes the "blank for a second" on entering the heavier
+        // overworld): the demoted renderer preserved its WARM SectionOcclusionGraph
+        // currentGraph (built while it was the active world). invalidate() above only
+        // schedules an ASYNC full rebuild, so applyFrustum waits for it → blank until
+        // it lands (~1s for the big overworld). Force needsFrustumUpdate=true so the
+        // FIRST post-promote LevelExtractor.extract → applyFrustum repopulates
+        // visibleSections from that warm currentGraph IMMEDIATELY (no rebuild wait);
+        // the invalidate's rebuild then refines in the background, no blank. For a
+        // COLD graph (a dim never yet active, e.g. nether first visit) currentGraph
+        // is empty so this is a harmless no-op — that path keeps today's behavior.
+        try {
+            var sog = renderer.sectionOcclusionGraph();
+            if (sog != null) {
+                ((com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphAccessorMixin) (Object) sog)
+                    .seamlessportals$getNeedsFrustumUpdate().set(true);
+            }
+        } catch (Exception e) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PHASE2] SOG frustum-repaint on promote failed: {}", e.toString());
+        }
+
         // Wipe any entities that accumulated in this level while it was
         // a cached mirror target. Phase 2a's RemoteEntityApplier added
         // mirrored entities via level.addEntity(...); those live in the
