@@ -36,6 +36,33 @@ public class PortalChunkTracker {
 
     private int scanCooldown = 0;
 
+    /**
+     * Phase 4a (IP "live window" residency): keep each player's nearby
+     * portal-destination chunks LOADED on the server so the dest dimension is
+     * dense + resident — sendable to the client, and already loaded when the
+     * player crosses (→ no chunk resend / reprocess).
+     *
+     * <p>Flags {@code 0b0010 = LOADING ONLY} — NOT {@code SIMULATION} (4) and NOT
+     * {@code KEEP_DIMENSION_ACTIVE} (8). The wide-radius residency must not make
+     * all ~289 chunks block-tick: giving them {@code SIMULATION} burst-ticked the
+     * whole nether region (lava/fire/fluid) at once and overloaded the server
+     * ("Can't keep up! Running 4s behind"). Liveness through the portal is
+     * provided client-side by {@code PortalWorldManager.tickRemoteWorlds}
+     * (Phase 1), and authoritative near-portal simulation (cross-dim fire) by
+     * {@code PortalEntityTracker.MIRROR_VIEW_TICKET} (radius 3, SIMULATION) — so
+     * this layer only needs the chunks resident, not ticking. ({@code
+     * KEEP_DIMENSION_ACTIVE} is likewise avoided — the shipped PORTAL ticket,
+     * flags 15, floods the nether with a piglin every tick.) Timeout 200t,
+     * re-added every tick by {@link #updatePlayerPortalChunks} so it auto-expires
+     * ~10 s after the player leaves the portal.
+     */
+    private static final net.minecraft.server.level.TicketType SEAMLESS_CHUNK_TICKET =
+        com.warwa.seamlessportals.mixin.TicketTypeInvoker
+            .seamlessportals$invokeRegister("seamlessportals_chunk_residency", 200L, 0b0010);
+
+    /** One-shot log confirming Phase-4a residency tickets are being applied. */
+    private static boolean loggedResidency = false;
+
     public void tick(MinecraftServer server) {
         // Periodically scan for portals near players on the server
         scanCooldown--;
@@ -150,6 +177,26 @@ public class PortalChunkTracker {
             int centerChunkX = (int)(destCenter.x) >> 4;
             int centerChunkZ = (int)(destCenter.z) >> 4;
 
+            // Phase 4a: hold the dest region loaded + simulated so it is dense
+            // and resident on the server — sendable now, and already loaded when
+            // the player crosses (no resend / reprocess). Re-added every tick;
+            // expires ~10 s after the player leaves the portal.
+            ServerLevel destResLevel = server.getLevel(destDim);
+            if (destResLevel != null) {
+                destResLevel.getChunkSource().addTicketWithRadius(
+                    SEAMLESS_CHUNK_TICKET,
+                    new ChunkPos(centerChunkX, centerChunkZ), renderDist);
+                if (!loggedResidency) {
+                    loggedResidency = true;
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS RESIDENCY] Holding {} chunks loaded around dest portal "
+                            + "[{},{}] in {} (radius {}); dest loadedChunks≈{}",
+                        (2 * renderDist + 1) * (2 * renderDist + 1),
+                        centerChunkX, centerChunkZ, destDim.identifier(), renderDist,
+                        destResLevel.getChunkSource().getLoadedChunksCount());
+                }
+            }
+
             // Collect chunks around the destination portal
             for (int dx = -renderDist; dx <= renderDist; dx++) {
                 for (int dz = -renderDist; dz <= renderDist; dz++) {
@@ -182,22 +229,17 @@ public class PortalChunkTracker {
         for (ChunkPos pos : chunks) {
             if (previouslySent.contains(pos)) continue;
 
-            // Force-load the chunk in the destination dimension if not loaded
-            // This is necessary because the nether may not have any loaded chunks
-            // when the player hasn't visited it yet
-            LevelChunk chunk;
-            try {
-                chunk = destLevel.getChunk(pos.x(), pos.z());
-            } catch (Exception e) {
-                if (loggedFirstSend) {
-                    SeamlessPortalsConstants.LOGGER.debug(
-                        "[SEAMLESS] Failed to load chunk [{}, {}] from {} - {}",
-                        pos.x(), pos.z(), dimId, e.getMessage()
-                    );
-                }
-                continue; // Skip if chunk can't be loaded
-            }
-            if (chunk != null) {
+            // Phase 4a: send only chunks ALREADY loaded. The Phase-4a residency
+            // ticket loads the dest region ASYNCHRONOUSLY over ticks; getChunkNow
+            // is non-blocking, so an unloaded chunk is skipped (NOT marked sent,
+            // so retried next tick as the ticket fills it in) instead of being
+            // force-loaded. The old synchronous getChunk(...) force-loaded all
+            // ~289 nether chunks in one tick and stalled the server
+            // ("Can't keep up! Running 3.6s behind"). Now the dest streams in
+            // smoothly with no server hitch.
+            LevelChunk chunk = destLevel.getChunkSource().getChunkNow(pos.x(), pos.z());
+            if (chunk == null) continue;
+            {
                 byte[] chunkData = serializeChunkSections(chunk);
 
                 if (chunkData != null && chunkData.length > 0) {

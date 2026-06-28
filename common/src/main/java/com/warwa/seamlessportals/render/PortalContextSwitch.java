@@ -89,6 +89,35 @@ public class PortalContextSwitch {
      */
     public static boolean destParticlesActive = false;
 
+    /**
+     * Phase 2 (IP "live window"): keep the destination renderer's
+     * {@code SectionOcclusionGraph} WARM every frame so a crossing finds it
+     * already primed. When true, the dest {@code CameraRenderState} is reported
+     * as NOT frustum-captured, so {@code LevelRenderer.render()}'s
+     * {@code sectionOcclusionGraph.update(...)} (the async graph build, gated on
+     * {@code !isFrustumCaptured}) actually runs for the virtual (≈ post-teleport)
+     * camera. The DISPLAY path is unchanged: the captured frustum still makes the
+     * dest {@code extract()} skip {@code applyFrustum}, and the manual section
+     * scan still populates {@code visibleSections}. The build leaves
+     * {@code needsFrustumUpdate} set (unconsumed, since the dest extract skips
+     * applyFrustum), so on promotion the main extract consumes it and fills
+     * {@code visibleSections} from the warm graph — enabling Phase 3 to drop the
+     * post-promote SOG re-prime → instant crossings. {@code isFrustumCaptured}
+     * has a SINGLE renderer consumer ({@code SectionOcclusionGraph.update}),
+     * verified, so this is side-effect-free on the display.
+     *
+     * <p><b>DISABLED (2026-06-27):</b> enabling {@code sog.update} HANGS the
+     * render thread when the dest level is SPARSE / still streaming (e.g. a
+     * freshly-lit portal whose nether side has only a couple dozen chunks loaded)
+     * — {@code sog.update}'s synchronous {@code runPartialUpdate}/graph BFS pegs
+     * the thread on the incomplete section graph. This is the exact reason the
+     * mod captured the frustum to bypass the SOG in the first place. Warming the
+     * occlusion graph is only safe once the dest is FULLY resident (Phase 4), so
+     * this stays off until residency is complete and the build is gated on a
+     * sufficiently-loaded dest. Flip true only with that in place.
+     */
+    public static boolean useContinuousExtract = false;
+
     /** Temporary diagnostic throttle for the post-crossing compile-sweep timing. */
     private static int portalHitchLogCount = 0;
 
@@ -815,6 +844,17 @@ public class PortalContextSwitch {
         // ===== 6. Build CameraRenderState for destination =====
         CameraRenderState destCameraState = destLRS.cameraRenderState;
         virtualCamera.extractRenderState(destCameraState, partialTick);
+        // Phase 2 (IP "live window"): re-enable the dest occlusion-graph build in
+        // destRenderer.render() (LevelRenderer.render → sectionOcclusionGraph
+        // .update(...), gated on !isFrustumCaptured). extractRenderState just set
+        // this true from our captured frustum, which would skip the build and
+        // leave the graph cold — the root of the post-teleport blank/prime. The
+        // SOLE renderer consumer of isFrustumCaptured is SectionOcclusionGraph
+        // .update (verified), so this only warms the dest graph; the display path
+        // (captured-frustum extract skip + manual scan) is unchanged.
+        if (useContinuousExtract) {
+            destCameraState.isFrustumCaptured = false;
+        }
         // Override projection from main camera (same FOV/aspect)
         destCameraState.projectionMatrix.set(mainCameraState.projectionMatrix);
 

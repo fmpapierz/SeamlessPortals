@@ -105,6 +105,24 @@ public class PortalWorldManager {
     private static int particleDiagCount = 0;
 
     /**
+     * Phase 1 (IP "live window") master switch: tick every RESIDENT remote
+     * ClientLevel each client tick like the active world, so the destination is
+     * ALIVE through the portal — entities walk, fluids flow, fire spreads, block
+     * entities run, light updates — instead of a frozen snapshot. Flip false to
+     * revert to the prior per-entity mirror tick ({@link #tickCachedEntities}).
+     * Mirrors {@code IPGlobal.isClientRemoteTickingEnabled}.
+     */
+    public static boolean isClientRemoteTickingEnabled = true;
+
+    /**
+     * True only while {@link #tickRemoteWorlds} is ticking a remote (non-active)
+     * level — {@code mc.level} + {@code mc.particleEngine} are temporarily
+     * swapped to it. Lets other client code recognise a remote-world tick.
+     * Mirrors {@code ClientWorldLoader.isClientRemoteTicking}.
+     */
+    public static boolean isClientRemoteTicking = false;
+
+    /**
      * Renderers that were just promoted and need a synchronous
      * {@link net.minecraft.client.renderer.SectionOcclusionGraph} prime on
      * their next {@code cullTerrain} call, to avoid the 1-2 blank-terrain
@@ -738,14 +756,25 @@ public class PortalWorldManager {
         // .update() schedules the async rebuild, whose completion flips
         // needsFrustumUpdate=true so the next extract()'s applyFrustum runs and
         // repopulates visibleSections.
-        try {
-            var sog = renderer.sectionOcclusionGraph();
-            if (sog != null) {
-                sog.invalidate();
+        // Phase 3 (IP "live window"): when continuous-extract keeps the dest
+        // SectionOcclusionGraph WARM (Phase 2), do NOT invalidate it on promote.
+        // The warm graph is already built for the virtual (≈ post-teleport) camera
+        // and left needsFrustumUpdate set (the dest extract skipped applyFrustum
+        // via the captured frustum), so the FIRST main extract after promotion
+        // consumes it and repopulates visibleSections immediately — no async
+        // rebuild, no blank frames, instant. Invalidating would discard that
+        // warmth and reintroduce the rebuild stall. When continuous-extract is
+        // off, keep the legacy invalidate (cold renderer needs the rebuild).
+        if (!com.warwa.seamlessportals.render.PortalContextSwitch.useContinuousExtract) {
+            try {
+                var sog = renderer.sectionOcclusionGraph();
+                if (sog != null) {
+                    sog.invalidate();
+                }
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS PHASE2] SOG invalidate on promote failed: {}", e.toString());
             }
-        } catch (Exception e) {
-            SeamlessPortalsConstants.LOGGER.warn(
-                "[SEAMLESS PHASE2] SOG invalidate on promote failed: {}", e.toString());
         }
 
         // Wipe any entities that accumulated in this level while it was
@@ -891,6 +920,71 @@ public class PortalWorldManager {
      * (which shouldn't ever be in a cached level but a defense-in-depth
      * guard doesn't cost anything).
      */
+    /**
+     * Phase 1 of the IP "live window" migration — tick every RESIDENT remote
+     * ClientLevel each client tick exactly like the active world, so the
+     * destination dimension is genuinely LIVE through the portal (entities,
+     * fluids, fire, block entities, light), not a frozen snapshot. Faithful port
+     * of IP {@code ClientWorldLoader.tick}/{@code tickRemoteWorld} (lines
+     * 111-174).
+     *
+     * <p>Each remote level is ticked inside a MINIMAL context swap: {@code mc.level}
+     * and {@code mc.particleEngine} point at the remote dim for the duration.
+     * The renderer/extractor are NOT swapped — in 26.2 a {@link ClientLevel}
+     * routes its own block/section dirties to the {@link LevelExtractor} it was
+     * constructed with ({@code ClientLevel.setBlocksDirty → this.levelExtractor},
+     * verified), so dest updates land on the dest renderer regardless. The
+     * particle engine IS swapped because {@code ClientLevel.addParticle} routes
+     * through {@code mc.particleEngine}.
+     *
+     * <p>Supersedes {@link #tickCachedEntities} (the old mirrored-entity-only
+     * hand-tick); when {@link #isClientRemoteTickingEnabled} is off it falls back
+     * to that for a clean rollback. Ambient particles stay in
+     * {@link #tickCachedParticles}.
+     */
+    public static void tickRemoteWorlds() {
+        if (!isClientRemoteTickingEnabled) {
+            tickCachedEntities();
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        if (active == null || mc.player == null) return;
+
+        ParticleEngine globalEngine = mc.particleEngine;
+        com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin mcAccess =
+            (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
+
+        isClientRemoteTicking = true;
+        try {
+            for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+                ClientLevel cached = e.getValue();
+                if (cached == null || cached == active) continue;
+                ParticleEngine engine = getOrCreateParticleEngine(cached);
+
+                mc.level = cached;
+                if (engine != null) mcAccess.seamlessportals$setParticleEngine(engine);
+                try {
+                    cached.tickEntities();
+                    cached.tick(() -> true);
+                    cached.pollLightUpdates();
+                } catch (Throwable t) {
+                    // Remote tick is best-effort — never crash the client tick.
+                } finally {
+                    if (engine != null) mcAccess.seamlessportals$setParticleEngine(globalEngine);
+                    mc.level = active;
+                }
+            }
+        } finally {
+            isClientRemoteTicking = false;
+            // Defensive: guarantee the active context is restored.
+            if (mc.level != active) mc.level = active;
+            if (mc.particleEngine != globalEngine) {
+                mcAccess.seamlessportals$setParticleEngine(globalEngine);
+            }
+        }
+    }
+
     public static void tickCachedEntities() {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel active = mc.level;

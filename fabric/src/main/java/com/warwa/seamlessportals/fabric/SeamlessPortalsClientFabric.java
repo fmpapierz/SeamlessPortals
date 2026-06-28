@@ -42,10 +42,12 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // Keep cached (dormant) levels' gameTime in sync with the active
             // mc.level so portal-view rendering doesn't show stale time-of-day.
             com.warwa.seamlessportals.client.PortalWorldManager.syncTimeToCachedLevels();
-            // Phase 2a.5: tick mirrored entities in cached levels so their
-            // interpolation handlers advance and animations run. Without
-            // this, mobs visible through portals are frozen / spazzing.
-            com.warwa.seamlessportals.client.PortalWorldManager.tickCachedEntities();
+            // IP "live window" Phase 1: tick every resident remote world fully
+            // (entities, fluids, fire, block entities, light) so the destination
+            // is ALIVE through the portal, not a frozen snapshot. Falls back to
+            // the legacy per-entity mirror tick when isClientRemoteTickingEnabled
+            // is off.
+            com.warwa.seamlessportals.client.PortalWorldManager.tickRemoteWorlds();
             // Spawn + tick each cached destination dimension's ambient particles
             // (flame, lava, nether portal, fog) in its OWN per-dest ParticleEngine
             // so they render inside the portal view.
