@@ -27,6 +27,7 @@
     "client.ChunkPacketGuardMixin",
     "client.SectionOcclusionGraphAccessorMixin",
     "client.SectionOcclusionGraphPartialUpdateSkipMixin",
+    "client.LevelExtractorFlashBridgeMixin",
     "client.LevelRendererCullTerrainMixin",
     "client.LivingEntityRendererDiagMixin",
     "client.ApplyLightDataGuardMixin",

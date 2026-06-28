@@ -186,6 +186,42 @@ public class PortalContextSwitch {
         lastNativeState = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
+     * Phase 5 flash-bridge window (monotonic ns). While active, the MAIN render's
+     * {@code LevelExtractor.applyFrustum} populates visibleSections via the bounded
+     * {@link VisibleSectionDiscovery} flood-fill instead of the freshly-promoted,
+     * still-COLD {@link net.minecraft.client.renderer.SectionOcclusionGraph}. So the
+     * dimension you just entered paints terrain IMMEDIATELY (no blank/sky flash)
+     * while the engine rebuilds its occlusion graph in the background; once the
+     * window expires the warm graph takes back over (with cave-culling). Bounded
+     * flood-fill = no freeze (unlike sog.update on a bulk-loaded graph).
+     */
+    private static volatile long promoteBridgeMinUntilNanos = 0L;
+    private static volatile long promoteBridgeMaxUntilNanos = 0L;
+
+    /** Arm the post-promote flash-bridge (called from promoteToMain). */
+    public static void armPromoteBridge() {
+        long now = System.nanoTime();
+        promoteBridgeMinUntilNanos = now + 1_000_000_000L; // always-bridge floor (~1s)
+        promoteBridgeMaxUntilNanos = now + 8_000_000_000L; // bridge-until-rebuilt cap (~8s)
+    }
+
+    /** Within the floor window — always bridge (covers the first frames + small dests). */
+    public static boolean isPromoteBridgeMinActive() {
+        return System.nanoTime() < promoteBridgeMinUntilNanos;
+    }
+
+    /**
+     * Within the max (safety-capped) window. Past the floor, the bridge mixin
+     * additionally checks the renderer's SOG full-update task: it keeps bridging
+     * until that rebuild is DONE (so a big demoted overworld never falls back to a
+     * half-built graph → no "blank a second later"). Also used by the
+     * runPartialUpdate flood-skip to cover the post-promote main render.
+     */
+    public static boolean isPromoteBridgeActive() {
+        return System.nanoTime() < promoteBridgeMaxUntilNanos;
+    }
+
+    /**
      * Frame-scoped frustum-cull result. Built ONCE by the doFboRender section
      * sweep (the {@code for (viewArea.sections)} loop) and reused by
      * {@link #populateVisibleSectionsByFrustum}, so the portal view runs the

@@ -5,10 +5,14 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SectionOcclusionGraph;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.concurrent.Future;
 
 /**
  * Stops the portal-view (secondary renderer) occlusion-graph build from FREEZING
@@ -36,11 +40,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(SectionOcclusionGraph.class)
 public abstract class SectionOcclusionGraphPartialUpdateSkipMixin {
 
+    @Shadow private @Nullable Future<?> fullUpdateTask;
+
     @Inject(method = "runPartialUpdate", at = @At("HEAD"), cancellable = true, require = 0)
     private void seamlessportals$skipSyncFloodDuringPortalView(
             CameraRenderState camera, LongSet loadedExpectedChunks, CallbackInfo ci) {
-        if (PortalContextSwitch.isRenderingPortal
-                && Minecraft.getInstance().isSameThread()) {
+        // Skip the synchronous flood during a portal-view render (the secondary's
+        // bulk-loaded graph) AND during the post-promote bridge (the entered dim's
+        // first-frame main render, which floods on a big demoted overworld — the
+        // "small freeze"). In both cases the async scheduleFullUpdate still builds
+        // the graph off-thread; the bridge paints terrain via VisibleSectionDiscovery
+        // meanwhile.
+        if ((PortalContextSwitch.isRenderingPortal || PortalContextSwitch.isPromoteBridgeActive())
+                && Minecraft.getInstance().isSameThread()
+                // Only skip while the async full rebuild is still in flight — that's
+                // when currentGraph still holds the huge bulk-load propagation seed
+                // that would flood. Once it completes, currentGraph is replaced with a
+                // fresh graph and the incremental runPartialUpdate is cheap again, so
+                // let it run (keeps occlusion current without re-flooding).
+                && (this.fullUpdateTask == null || !this.fullUpdateTask.isDone())) {
             ci.cancel();
         }
     }

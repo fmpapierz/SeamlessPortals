@@ -856,6 +856,14 @@ public class PortalWorldManager {
                 "[SEAMLESS PHASE2] SOG frustum-repaint on promote failed: {}", e.toString());
         }
 
+        // Phase 5 flash-bridge: for ~1.5s the main render's applyFrustum paints
+        // visibleSections via the bounded VisibleSectionDiscovery flood-fill instead
+        // of the cold just-promoted occlusion graph — so the entered dim shows
+        // terrain immediately (no sky/blank flash) while the engine rebuilds the
+        // graph in the background. The needsFrustumUpdate force above makes the
+        // FIRST post-promote applyFrustum actually run so the bridge engages.
+        com.warwa.seamlessportals.render.PortalContextSwitch.armPromoteBridge();
+
         // Wipe any entities that accumulated in this level while it was
         // a cached mirror target. Phase 2a's RemoteEntityApplier added
         // mirrored entities via level.addEntity(...); those live in the
