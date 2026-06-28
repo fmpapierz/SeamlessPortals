@@ -1,9 +1,9 @@
 package com.warwa.seamlessportals.render;
 
+import com.warwa.seamlessportals.mixin.client.ViewAreaInvokerMixin;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.SectionUpdateTracker;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.chunk.CompiledSectionMesh;
@@ -93,14 +93,13 @@ public final class VisibleSectionDiscovery {
         long node = SectionPos.asLong(cx, cy, cz);
         if (!SCRATCH_VISITED.add(node)) return; // already visited this run
 
-        // 26.2: fetch the RenderSection by the section's origin block pos. Returns
-        // null when (cx,cy,cz) is outside the ViewArea grid (incl. above/below world),
-        // which naturally bounds the fill.
+        // 26.2: fetch the RenderSection by packed section node (no BlockPos alloc).
+        // getRenderSection(SectionPos.asLong(cx,cy,cz)) is exactly equivalent to
+        // getRenderSectionAt(blockPos) — both bottom out in RotatingSectionStorage
+        // .getValue(node). Returns null when (cx,cy,cz) is outside the grid (incl.
+        // above/below world), which naturally bounds the fill.
         SectionRenderDispatcher.RenderSection section =
-            viewArea.getRenderSectionAt(new BlockPos(
-                SectionPos.sectionToBlockCoord(cx),
-                SectionPos.sectionToBlockCoord(cy),
-                SectionPos.sectionToBlockCoord(cz)));
+            ((ViewAreaInvokerMixin) (Object) viewArea).seamlessportals$invokeGetRenderSection(node);
         if (section == null) return;
 
         if (skipFrustum || frustum.isVisible(section.getBoundingBox())) {
@@ -197,10 +196,7 @@ public final class VisibleSectionDiscovery {
         if (!SCRATCH_VISITED.add(node)) return; // already visited this run
 
         SectionRenderDispatcher.RenderSection section =
-            viewArea.getRenderSectionAt(new BlockPos(
-                SectionPos.sectionToBlockCoord(cx),
-                SectionPos.sectionToBlockCoord(cy),
-                SectionPos.sectionToBlockCoord(cz)));
+            ((ViewAreaInvokerMixin) (Object) viewArea).seamlessportals$invokeGetRenderSection(node);
         if (section == null) return; // outside the grid (incl. above/below world) → bounds the fill
 
         // Frustum-culled sections are neither drawn NOR expanded through (the flood

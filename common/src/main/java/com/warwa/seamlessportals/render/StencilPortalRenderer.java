@@ -26,6 +26,11 @@ public class StencilPortalRenderer {
 
     private static int framesRendered = 0;
 
+    // TEMP DIAGNOSTIC (remove once the periodic stutter is root-caused): wall-clock
+    // of the previous outer portal-render frame, to detect render-thread frame-gap
+    // spikes. The FBO BFS is confirmed 0ms, so a spike here points OUTSIDE it.
+    private static long seamlessLastFrameNanos = 0L;
+
     /**
      * Resolved set of portal planes to render this frame, plus the link used for
      * the destination lookup. Discovered identically by both render phases so
@@ -114,6 +119,20 @@ public class StencilPortalRenderer {
         // Recursion guard: renderLevel() on secondary renderer triggers AFTER_TRANSLUCENT_TERRAIN
         // which calls this method again. Match IP's PortalRendering.isRendering() check.
         if (PortalContextSwitch.isRenderingPortal) return;
+
+        // TEMP DIAGNOSTIC: render-thread frame-gap spike detector. Logs when the gap
+        // since the previous outer frame exceeds ~30ms (FPS < ~33). Correlate the
+        // timestamps with debug.log (remote_block_update bursts, compile sweeps,
+        // chunk applies) to attribute the periodic stutter.
+        long seamlessNow = System.nanoTime();
+        if (seamlessLastFrameNanos != 0L) {
+            long seamlessGapMs = (seamlessNow - seamlessLastFrameNanos) / 1_000_000L;
+            if (seamlessGapMs >= 30L) {
+                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS SPIKE] render frame gap {}ms (frame #{})", seamlessGapMs, framesRendered);
+            }
+        }
+        seamlessLastFrameNanos = seamlessNow;
 
         RenderTargets targets = resolveRenderTargets();
 
