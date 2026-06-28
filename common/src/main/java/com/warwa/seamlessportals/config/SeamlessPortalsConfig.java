@@ -62,8 +62,16 @@ public class SeamlessPortalsConfig {
     public int getMaxPortalRenderDepth() { return maxPortalRenderDepth; }
     public void setMaxPortalRenderDepth(int depth) { this.maxPortalRenderDepth = Math.max(0, Math.min(3, depth)); }
 
+    /**
+     * The destination loading/mesh DEPTH cap (chunks) — the analogue of IP's
+     * {@code indirectLoadingRadiusCap}. The dest is kept loaded + meshed up to this
+     * deep around the portal (graduated by distance, IP-style), so on crossing those
+     * chunks don't reload. Default 8 = exactly IP's default. Raise toward your render
+     * distance for a more seamless (but heavier — ~depth² chunks held + meshed per
+     * portal) crossing; IP clamps the same knob to 1..32.
+     */
     public int getPortalRenderDistance() { return portalRenderDistance; }
-    public void setPortalRenderDistance(int distance) { this.portalRenderDistance = Math.max(1, Math.min(16, distance)); }
+    public void setPortalRenderDistance(int distance) { this.portalRenderDistance = Math.max(1, Math.min(32, distance)); }
 
     public boolean isEnablePortalRendering() { return enablePortalRendering; }
     public void setEnablePortalRendering(boolean enable) { this.enablePortalRendering = enable; }

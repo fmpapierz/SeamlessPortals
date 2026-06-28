@@ -347,25 +347,18 @@ public class PortalContextSwitch {
      */
     private static final int NATIVE_MAX_LOADED_CHUNKS = 500;
 
-    private static final int COMPILE_SCHEDULE_RADIUS_CHUNKS = 8;
-    private static final int COMPILE_SCHEDULE_RADIUS_SQ =
-        COMPILE_SCHEDULE_RADIUS_CHUNKS * COMPILE_SCHEDULE_RADIUS_CHUNKS;
-
     /**
-     * Max horizontal radius (chunks, squared) of sections the portal-view scan
-     * adds to {@code visibleSections}. The manual frustum cull alone admits every
-     * in-frustum section out to the full render distance (logs showed ~10k–19k
-     * "Direct compilation" sections), but the portal view is fog-limited to
-     * {@code envEnd≈96} blocks (~6 chunks) and only {@code COMPILE_SCHEDULE_RADIUS}
-     * (8 chunks) ever gets compiled — everything beyond is blank or fogged. So
-     * sections past this radius are pure per-frame scan+draw waste (and the heavy
-     * transition-frame cost that lengthens the post-crossing stutter). 11 chunks
-     * keeps a comfortable margin past the fog/compile horizon while trimming the
-     * far thousands.
+     * IP-faithful: the portal view draws + meshes exactly as deep as the dest is
+     * kept loaded — the configured loading cap (IP's indirectLoadingRadiusCap,
+     * default 8, clamp 1..32). So you draw/mesh exactly what's resident; raising
+     * the config widens both the resident region AND what the portal view shows
+     * and pre-meshes. Squared, for the scan's distance gates. Read live so a config
+     * change takes effect without restart.
      */
-    private static final int PORTAL_VIEW_DRAW_RADIUS_CHUNKS = 11;
-    private static final int PORTAL_VIEW_DRAW_RADIUS_SQ =
-        PORTAL_VIEW_DRAW_RADIUS_CHUNKS * PORTAL_VIEW_DRAW_RADIUS_CHUNKS;
+    private static int destDepthRadiusSq() {
+        int d = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().getPortalRenderDistance();
+        return d * d;
+    }
 
     /**
      * Atomically swap primary client state to the destination for the duration
@@ -952,7 +945,7 @@ public class PortalContextSwitch {
                 {
                     int rdx = sx - camSecX;
                     int rdz = sz - camSecZ;
-                    if (rdx * rdx + rdz * rdz > PORTAL_VIEW_DRAW_RADIUS_SQ) continue;
+                    if (rdx * rdx + rdz * rdz > destDepthRadiusSq()) continue;
                 }
                 net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
                     sut != null ? sut.getDirtyState(sectionNode) : null;
@@ -976,7 +969,7 @@ public class PortalContextSwitch {
                 if (wantCompile) {
                     int dx = sx - camSecX;
                     int dz = sz - camSecZ;
-                    if (dx * dx + dz * dz > COMPILE_SCHEDULE_RADIUS_SQ) {
+                    if (dx * dx + dz * dz > destDepthRadiusSq()) {
                         skippedFar++;
                     } else if (System.nanoTime() - compileSweepStartNs < PORTAL_VIEW_COMPILE_BUDGET_NS) {
                         section.compileAsync(cache.createRegion(destLevel, sectionNode));

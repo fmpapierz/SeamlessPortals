@@ -159,24 +159,24 @@ public class PortalChunkTracker {
         ResourceKey<Level> playerDim = player.level().dimension();
         PortalManager manager = PortalManager.getServerInstance();
 
-        // Baseline (far) residency depth — the light "you can see through it from a
-        // distance" feed. The DEEP residency (matching your render distance, so the
-        // dest is preserved and the teleport doesn't reload distant chunks) is
-        // applied per-link, scaled by how close you are to the portal (below).
-        int configDist = SeamlessPortalsConfig.get().getPortalRenderDistance();
-        // Cap the DEEP residency at 16 (1089 chunks) for now — a big jump from the
-        // old 8 (289) without the server cost of holding a full high render distance
-        // (e.g. 22 → 1662 chunks) resident + ticked per portal. Raise toward the
-        // player's view distance once this proves stable.
-        int viewDist = Math.min(16, server.getPlayerList().getViewDistance());
-        double range = Math.max(configDist, viewDist) * 16.0;
+        // EXACT IP loading model (ChunkVisibility.getDirectLoadingDistance +
+        // getCappedLoadingDistance): graduate the loaded depth by the player's
+        // BLOCK distance to the portal (full load distance < 5 blocks, 2/3 < 15,
+        // else 1/3), then CAP it by the config (IP's indirectLoadingRadiusCap,
+        // default 8, clamp 1..32). With the default cap the dest loads 8 chunks
+        // deep — identical to IP; the far ring reloads on crossing, exactly as IP
+        // does. Raise the config toward your render distance for a more seamless
+        // (heavier) crossing.
+        int loadDistance = server.getPlayerList().getViewDistance(); // IP McHelper.getPlayerLoadDistance
+        int cap = SeamlessPortalsConfig.get().getPortalRenderDistance();
+        double range = Math.max(cap, loadDistance) * 16.0;
 
         List<PortalLink> nearbyLinks = manager.getLinksInRange(playerDim, player.blockPosition(), range);
 
         if (!loggedChunkUpdate) {
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, nearbyLinks={}, configDist={}, viewDist={}, range={}",
-                playerDim.identifier(), nearbyLinks.size(), configDist, viewDist, range
+                "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, nearbyLinks={}, loadDistance={}, cap={}, range={}",
+                playerDim.identifier(), nearbyLinks.size(), loadDistance, cap, range
             );
             loggedChunkUpdate = true;
         }
@@ -190,19 +190,18 @@ public class PortalChunkTracker {
             ResourceKey<Level> destDim = destPortal.getDimension();
             Vec3 destCenter = destPortal.getCenter();
 
-            // IP-style graduated residency: keep the dest loaded as deep as your
-            // render distance when you're AT the source portal (about to cross →
-            // nothing reloads on teleport), scaling down with distance so we don't
-            // hold a full render distance resident just walking past a portal.
-            double distToPortal = player.position().distanceTo(link.getSource().getCenter());
-            int renderDist;
-            if (distToPortal < 16.0) {
-                renderDist = viewDist;                                  // at the portal → full RD
-            } else if (distToPortal < 48.0) {
-                renderDist = Math.max(configDist, (viewDist * 2) / 3);  // approaching
+            // IP getDirectLoadingDistance(loadDistance, distanceToPortalBlocks):
+            double distBlocks = player.position().distanceTo(link.getSource().getCenter());
+            int target;
+            if (distBlocks < 5.0) {
+                target = loadDistance;
+            } else if (distBlocks < 15.0) {
+                target = (loadDistance * 2) / 3;
             } else {
-                renderDist = configDist;                                // far → light baseline
+                target = loadDistance / 3;
             }
+            // IP getCappedLoadingDistance: cap by indirectLoadingRadiusCap (config).
+            int renderDist = Math.max(1, Math.min(target, cap));
 
             int centerChunkX = (int)(destCenter.x) >> 4;
             int centerChunkZ = (int)(destCenter.z) >> 4;

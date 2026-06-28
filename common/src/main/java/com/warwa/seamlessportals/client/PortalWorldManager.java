@@ -1329,9 +1329,16 @@ public class PortalWorldManager {
      * Called from {@code ClientTickEvents.END_CLIENT_TICK} alongside the
      * chunk-feed drain.
      */
-    private static final int COMPILE_PUMP_RADIUS_CHUNKS = 8;
-    private static final int COMPILE_PUMP_RADIUS_SQ =
-        COMPILE_PUMP_RADIUS_CHUNKS * COMPILE_PUMP_RADIUS_CHUNKS;
+    // IP-faithful: the background mesh pump compiles the dest exactly as deep as it
+    // is kept loaded (the config loading cap, IP's indirectLoadingRadiusCap; default
+    // 8, clamp 1..32), so the chunks you'll land in are meshed BEFORE you cross —
+    // IP's continuous worldRenderer.tick() equivalent. Read live so a config change
+    // takes effect without restart. viewArea iteration cost is unchanged; only more
+    // sections pass the radius gate to compile, still budget-capped.
+    private static int compilePumpRadiusSq() {
+        int d = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().getPortalRenderDistance();
+        return d * d;
+    }
     /**
      * Per-tick async-compile budget. Bounded to avoid client-tick
      * freeze: each rebuildSectionAsync call has synchronous chunk-
@@ -1437,7 +1444,7 @@ public class PortalWorldManager {
             int distSq = dx * dx + dz * dz;
             // Skip inner radius (already handled by Pass 1).
             if (distSq <= COMPILE_PUMP_PRIORITY_RADIUS_SQ) continue;
-            if (distSq > COMPILE_PUMP_RADIUS_SQ) continue;
+            if (distSq > compilePumpRadiusSq()) continue;
             if (!level.getChunkSource().hasChunk(sx, sz)) continue;
             // 26.2: dirty state + async compile moved to the LevelExtractor's
             // SectionUpdateTracker (D2).
