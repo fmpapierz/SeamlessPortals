@@ -233,26 +233,39 @@ public class PortalWorldManager {
         return true;
     }
 
-    /** Last monotonic time (ns) a chunk was landed into each dim's secondary level. */
-    private static final Map<ResourceKey<Level>, Long> lastChunkApplyNanos = new ConcurrentHashMap<>();
-
-    /** Record that {@code dim}'s secondary level just received a chunk (called from the feed). */
-    public static void noteChunkApplied(ResourceKey<Level> dim) {
-        lastChunkApplyNanos.put(dim, System.nanoTime());
-    }
+    /** Per-dim: last observed loaded-chunk count + the time it last CHANGED. */
+    private static final Map<ResourceKey<Level>, Integer> lastLoadedCount = new ConcurrentHashMap<>();
+    private static final Map<ResourceKey<Level>, Long> lastCountChangeNanos = new ConcurrentHashMap<>();
 
     /**
-     * Phase 2/5 safety gate: has {@code dim}'s dest NOT received a chunk for
-     * {@code stableNanos}? The native occlusion-culled render must only run on a
-     * STABLE dest — while chunks are still streaming in, {@code sog.update}'s
-     * propagation churns the render thread (the freeze). The dimension the player
-     * just LEFT is stable (fully loaded as the active world, not being fed), so it
-     * gets the native path; a freshly-lit portal still streaming does not.
+     * Phase 2 safety gate: is {@code level}'s loaded-chunk count UNCHANGED for at
+     * least {@code stableNanos}? The native occlusion-culled render warms (and
+     * displays from) the engine's SectionOcclusionGraph, whose {@code sog.update}
+     * propagation CHURNS the render thread while chunks are still streaming in (the
+     * freeze). So it must run ONLY on a settled dest.
+     *
+     * <p>Count-based (not last-apply-time): a freshly-lit portal's nether is still
+     * GROWING its loaded count → unstable; the dimension you just left (already
+     * fully loaded) keeps a flat count even though the redirect feed RE-sends its
+     * already-resident chunks on it becoming a dest — so it settles quickly and
+     * earns the warm native path. This is what makes the post-teleport graph warm
+     * for the new view (no blank flash).
+     *
+     * <p>Called every portal-view frame, so it doubles as the per-dim sampler.
      */
-    public static boolean isDestStable(ResourceKey<Level> dim, long stableNanos) {
-        Long last = lastChunkApplyNanos.get(dim);
-        if (last == null) return true; // never fed by us → not streaming
-        return (System.nanoTime() - last) > stableNanos;
+    public static boolean isDestStable(ClientLevel level, long stableNanos) {
+        if (level == null) return false;
+        ResourceKey<Level> dim = level.dimension();
+        int count = level.getChunkSource().getLoadedChunksCount();
+        Integer prev = lastLoadedCount.get(dim);
+        long now = System.nanoTime();
+        if (prev == null || prev != count) {
+            lastLoadedCount.put(dim, count);
+            lastCountChangeNanos.put(dim, now);
+            return false;
+        }
+        Long changed = lastCountChangeNanos.get(dim);
+        return changed != null && (now - changed) > stableNanos;
     }
 
     /**
@@ -670,10 +683,6 @@ public class PortalWorldManager {
                     }
                 }
 
-                // Phase 2/5 stability gate: this dim just landed a chunk, so it
-                // is still streaming — keep the native occlusion render OFF for it
-                // until the feed goes quiet (see isDestStable).
-                noteChunkApplied(feed.dim);
             } catch (Exception e) {
                 SeamlessPortalsConstants.LOGGER.error(
                     "[SEAMLESS PHASE2] drainPendingFeeds: Failed chunk [{},{}] in {}",

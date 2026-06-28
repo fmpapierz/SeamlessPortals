@@ -138,11 +138,31 @@ public class PortalContextSwitch {
      * (sog.update) path is wrong for this (vanilla) target. Back on the
      * captured-frustum path (sog.update SUPPRESSED) with the redirect feed for a
      * stable build; the manual scan is being replaced by a bounded BFS next.
+     *
+     * <p><b>ON again (2026-06-28, warm-graph):</b> re-enabled to WARM the dest
+     * SectionOcclusionGraph for the post-teleport view (kills the residual blank
+     * flash). Now gated on a robust COUNT-BASED {@link PortalWorldManager#isDestStable}
+     * (loaded-chunk count flat for a window) + density — so sog.update only runs on
+     * a SETTLED dest and can't churn on a streaming one (the earlier hangs). Set
+     * false here for an instant rollback to the pure manual-scan path.
+     *
+     * <p><b>OFF — CONFIRMED DEAD END (2026-06-28):</b> the native path froze the
+     * instant it activated on a FULLY-SETTLED 289-chunk nether (count flat, not
+     * streaming) — log {@code [SEAMLESS WARM] ... -> true} was the last line. So
+     * {@code sog.update} hangs in the mod's hand-built secondary renderer
+     * REGARDLESS of stability; it is not a streaming problem but a fundamental
+     * incompatibility (the secondary renderer is set up in a way sog.update can't
+     * drive). The native/warm-graph path stays OFF; the teleport keeps the
+     * captured-frustum manual scan + the warm-currentGraph promote repaint.
      */
     public static boolean useContinuousExtract = false;
 
     /** Temporary diagnostic throttle for the post-crossing compile-sweep timing. */
     private static int portalHitchLogCount = 0;
+
+    /** Per-dim last-logged native(sog.update)-render on/off state (warm-path diagnostic). */
+    private static final java.util.Map<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, Boolean>
+        lastNativeState = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Frame-scoped frustum-cull result. Built ONCE by the doFboRender section
@@ -669,9 +689,34 @@ public class PortalContextSwitch {
         // the native path off a snapshot-fed, SOG-cold dest) are therefore RETIRED:
         // we drive the engine's native render whenever we render at all (the >=9
         // chunk gate above still defers to the solid background until there's data).
-        // The manual-scan path below stays compiled as dead code (nativeRender is
-        // always true here) pending its removal.
-        final boolean nativeRender = useContinuousExtract;
+        //
+        // Phase 2 (warm-graph): the native path drives the engine's SectionOcclusionGraph
+        // (sog.update), which both DISPLAYS the dest occlusion-culled AND keeps the
+        // graph WARM for the virtual (≈ post-teleport) camera — so on promote the
+        // main render finds a current graph and there's NO blank flash. But sog.update
+        // CHURNS the render thread while chunks stream in, so we gate it on a SETTLED
+        // dest: dense around the view center AND its loaded-chunk count flat for
+        // NATIVE_STABLE_NANOS. A still-streaming dest (freshly-lit portal) stays on the
+        // captured-frustum manual scan (sog.update suppressed) until it settles.
+        final boolean nativeRender = useContinuousExtract
+            && PortalWorldManager.isDestResident(
+                destLevel,
+                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.x)),
+                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.z)),
+                NATIVE_RESIDENCY_RADIUS)
+            && PortalWorldManager.isDestStable(destLevel, NATIVE_STABLE_NANOS);
+
+        // One-shot per-dim diagnostic: log the transition into the warm native
+        // path (and out of it), so the log shows exactly when sog.update starts
+        // driving a dim — and, if it ever hangs, which dim it hung on.
+        Boolean prevNative = lastNativeState.get(destDim);
+        if (prevNative == null || prevNative != nativeRender) {
+            lastNativeState.put(destDim, nativeRender);
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS WARM] native(sog.update) render for {} -> {} (loadedChunks={})",
+                destDim.identifier(), nativeRender,
+                destLevel.getChunkSource().getLoadedChunksCount());
+        }
 
         if (!nativeRender) {
             // Capture the frustum so extract() skips applyFrustum (the manual scan
