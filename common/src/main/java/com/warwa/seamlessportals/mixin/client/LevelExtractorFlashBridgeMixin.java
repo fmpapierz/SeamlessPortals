@@ -42,6 +42,23 @@ public abstract class LevelExtractorFlashBridgeMixin {
 
     @Inject(method = "applyFrustum", at = @At("HEAD"), cancellable = true, require = 0)
     private void seamlessportals$flashBridge(Frustum frustum, CallbackInfo ci) {
+        // FBO portal-view render: doFboRender's bounded flood-fill
+        // (VisibleSectionDiscovery) already fills this secondary renderer's
+        // visibleSections every frame, so SKIP the vanilla SOG frustum walk
+        // (applyFrustum → addSectionsInFrustum). That walk is an occlusion-tree
+        // traversal over the BULK-LOADED secondary world and is the lit-portal
+        // stutter: it runs whenever the virtual camera rotates / the graph signals
+        // a frustum update, freezing the render thread 100–766ms (confirmed by two
+        // thread dumps frozen in Frustum.offsetToFullyIncludeCameraCube ←
+        // SectionOcclusionGraph.addSectionsInFrustum ← LevelExtractor.applyFrustum ←
+        // doFboRender). The flood-fill is frustum-only (no occlusion culling) —
+        // exactly IP's portal-view model — and never touches the graph, so the
+        // visibleSections it set survive untouched. Cancelling at HEAD also avoids
+        // applyFrustum clearing them.
+        if (PortalContextSwitch.isRenderingPortal) {
+            ci.cancel();
+            return;
+        }
         if (!PortalContextSwitch.isPromoteBridgeActive()) {
             return; // window fully expired → engine occlusion graph drives the cull
         }
