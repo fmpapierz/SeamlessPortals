@@ -33,6 +33,47 @@ public class StencilPortalRenderer {
     private static long seamlessLastGcCount = 0L;
     private static long seamlessLastGcMs = 0L;
     private static java.util.List<java.lang.management.GarbageCollectorMXBean> seamlessGcBeans;
+    // Render-thread stall watchdog: a daemon thread auto-dumps the render thread's
+    // stack when a frame stalls >120ms, capturing the EXACT slow method (the spike
+    // detector only sees the gap AFTER the slow frame). TEMP — remove once fixed.
+    private static volatile long seamlessRenderHeartbeat = 0L;
+    private static volatile Thread seamlessRenderThread;
+    private static boolean seamlessWatchdogStarted = false;
+
+    private static void seamlessStartStallWatchdog() {
+        Thread t = new Thread(() -> {
+            long lastDumpedHeartbeat = 0L;
+            while (true) {
+                try {
+                    Thread.sleep(40L);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                long hb = seamlessRenderHeartbeat;
+                Thread rt = seamlessRenderThread;
+                if (rt == null || hb == 0L) {
+                    continue;
+                }
+                long stuckMs = (System.nanoTime() - hb) / 1_000_000L;
+                if (stuckMs >= 120L && hb != lastDumpedHeartbeat) {
+                    lastDumpedHeartbeat = hb;
+                    StackTraceElement[] stack = rt.getStackTrace();
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("[SEAMLESS STUCK] render thread stalled ~").append(stuckMs).append("ms in:");
+                    int n = 0;
+                    for (StackTraceElement el : stack) {
+                        sb.append("\n  at ").append(el);
+                        if (++n >= 16) {
+                            break;
+                        }
+                    }
+                    com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(sb.toString());
+                }
+            }
+        }, "seamless-stall-watchdog");
+        t.setDaemon(true);
+        t.start();
+    }
 
     /**
      * Resolved set of portal planes to render this frame, plus the link used for
@@ -154,6 +195,13 @@ public class StencilPortalRenderer {
         seamlessLastFrameNanos = seamlessNow;
         seamlessLastGcCount = seamlessGcCount;
         seamlessLastGcMs = seamlessGcMs;
+        // Heartbeat for the stall watchdog (started once).
+        seamlessRenderHeartbeat = seamlessNow;
+        if (!seamlessWatchdogStarted) {
+            seamlessWatchdogStarted = true;
+            seamlessRenderThread = Thread.currentThread();
+            seamlessStartStallWatchdog();
+        }
 
         RenderTargets targets = resolveRenderTargets();
 
