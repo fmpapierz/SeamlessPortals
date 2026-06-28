@@ -28,8 +28,11 @@ public class StencilPortalRenderer {
 
     // TEMP DIAGNOSTIC (remove once the periodic stutter is root-caused): wall-clock
     // of the previous outer portal-render frame, to detect render-thread frame-gap
-    // spikes. The FBO BFS is confirmed 0ms, so a spike here points OUTSIDE it.
+    // spikes, plus GC accounting to attribute each spike to GC-vs-CPU.
     private static long seamlessLastFrameNanos = 0L;
+    private static long seamlessLastGcCount = 0L;
+    private static long seamlessLastGcMs = 0L;
+    private static java.util.List<java.lang.management.GarbageCollectorMXBean> seamlessGcBeans;
 
     /**
      * Resolved set of portal planes to render this frame, plus the link used for
@@ -125,14 +128,32 @@ public class StencilPortalRenderer {
         // timestamps with debug.log (remote_block_update bursts, compile sweeps,
         // chunk applies) to attribute the periodic stutter.
         long seamlessNow = System.nanoTime();
+        if (seamlessGcBeans == null) {
+            seamlessGcBeans = java.lang.management.ManagementFactory.getGarbageCollectorMXBeans();
+        }
+        long seamlessGcCount = 0L, seamlessGcMs = 0L;
+        for (java.lang.management.GarbageCollectorMXBean gc : seamlessGcBeans) {
+            long c = gc.getCollectionCount();
+            if (c > 0) seamlessGcCount += c;
+            long t = gc.getCollectionTime();
+            if (t > 0) seamlessGcMs += t;
+        }
         if (seamlessLastFrameNanos != 0L) {
             long seamlessGapMs = (seamlessNow - seamlessLastFrameNanos) / 1_000_000L;
             if (seamlessGapMs >= 30L) {
+                // GC delta since the previous frame attributes the spike: nonzero
+                // collections/ms ⇒ this freeze was a GC pause (reduce reload-window
+                // allocation); zero ⇒ CPU work (chunk-apply / mesh upload).
+                long dGcCount = seamlessGcCount - seamlessLastGcCount;
+                long dGcMs = seamlessGcMs - seamlessLastGcMs;
                 com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS SPIKE] render frame gap {}ms (frame #{})", seamlessGapMs, framesRendered);
+                    "[SEAMLESS SPIKE] render frame gap {}ms (frame #{}) | GC since last frame: {} collections {}ms",
+                    seamlessGapMs, framesRendered, dGcCount, dGcMs);
             }
         }
         seamlessLastFrameNanos = seamlessNow;
+        seamlessLastGcCount = seamlessGcCount;
+        seamlessLastGcMs = seamlessGcMs;
 
         RenderTargets targets = resolveRenderTargets();
 
