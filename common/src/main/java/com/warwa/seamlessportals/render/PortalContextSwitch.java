@@ -154,6 +154,27 @@ public class PortalContextSwitch {
      * incompatibility (the secondary renderer is set up in a way sog.update can't
      * drive). The native/warm-graph path stays OFF; the teleport keeps the
      * captured-frustum manual scan + the warm-currentGraph promote repaint.
+     *
+     * <p><b>ON again (2026-06-28, root-caused):</b> the hang was {@code sog.update}
+     * → {@code runPartialUpdate}'s UNBOUNDED synchronous occlusion flood over the
+     * secondary's whole bulk-loaded 289-chunk section set. {@link
+     * com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphPartialUpdateSkipMixin}
+     * now SKIPS that synchronous flood during a portal-view render and lets the
+     * async {@code scheduleFullUpdate} build the graph off-thread instead. With the
+     * render-thread flood removed, the native path can warm the dest graph safely
+     * (still gated on a settled/dense dest). Set false for instant rollback.
+     *
+     * <p><b>OFF — INTERMITTENT FREEZE (2026-06-28):</b> with the flood-skip + a
+     * 500-chunk cap, the native warm path STILL froze non-deterministically even on
+     * the small (289-chunk) nether that had warmed fine moments earlier. The
+     * deterministic sync flood is gone, but the remaining fragility (most likely the
+     * heavy async full-build — a per-node ray-march BFS — saturating the shared
+     * Util.backgroundExecutor ForkJoinPool that also serves chunk meshing) makes it
+     * unreliable. Intermittent freezes are unshippable, so the native warm path is
+     * OFF. Reliable best = captured-frustum manual scan + warm-currentGraph promote
+     * repaint: nether tiny-hiccup, overworld brief flash, NO freeze. Truly-instant
+     * needs Phase 5 (a real engine renderer for the secondary so sog.update is
+     * native + reliable) — a major rewrite, not an incremental gate.
      */
     public static boolean useContinuousExtract = false;
 
@@ -280,6 +301,15 @@ public class PortalContextSwitch {
      * one never does.
      */
     private static final long NATIVE_STABLE_NANOS = 1_000_000_000L;
+
+    /**
+     * Max loaded-chunk count for which the native warm-graph path is allowed. The
+     * first native frame does O(loadedChunks) occlusion-graph setup; a residency-
+     * bounded fresh dest (~289) is fine, but a demoted full-RD dim (e.g. 1662 at
+     * high render distance) freezes the render thread on activation. Above this,
+     * stay on the manual scan (no warm, brief promote flash, but no freeze).
+     */
+    private static final int NATIVE_MAX_LOADED_CHUNKS = 500;
 
     private static final int COMPILE_SCHEDULE_RADIUS_CHUNKS = 8;
     private static final int COMPILE_SCHEDULE_RADIUS_SQ =
@@ -698,13 +728,23 @@ public class PortalContextSwitch {
         // dest: dense around the view center AND its loaded-chunk count flat for
         // NATIVE_STABLE_NANOS. A still-streaming dest (freshly-lit portal) stays on the
         // captured-frustum manual scan (sog.update suppressed) until it settles.
+        // ...AND the dest must be SMALL ENOUGH to warm safely. The runPartialUpdate
+        // flood-skip handles the synchronous BFS, but the first native frame still
+        // does O(loadedChunks) graph setup (updateLoadedChunks/updateEmptySections +
+        // the async full-build dispatch over the whole graph). A residency-bounded
+        // fresh dest (~289 chunks, the nether) warms fine and teleports instantly;
+        // the DEMOTED dim carries its full active render distance (1662 chunks at
+        // high RD) and overwhelms that setup on activation → freeze. Cap warming to
+        // dests under NATIVE_MAX_LOADED_CHUNKS; bigger dests keep the manual scan
+        // (brief promote flash, but no freeze).
         final boolean nativeRender = useContinuousExtract
             && PortalWorldManager.isDestResident(
                 destLevel,
                 net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.x)),
                 net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destCameraPos.z)),
                 NATIVE_RESIDENCY_RADIUS)
-            && PortalWorldManager.isDestStable(destLevel, NATIVE_STABLE_NANOS);
+            && PortalWorldManager.isDestStable(destLevel, NATIVE_STABLE_NANOS)
+            && destLevel.getChunkSource().getLoadedChunksCount() <= NATIVE_MAX_LOADED_CHUNKS;
 
         // One-shot per-dim diagnostic: log the transition into the warm native
         // path (and out of it), so the log shows exactly when sog.update starts
