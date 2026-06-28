@@ -931,64 +931,21 @@ public class PortalContextSwitch {
             // BFS) supplies visibleSections and its sectionUpdates loop schedules
             // compiles — like vanilla/IP. The compile-count logs below self-skip
             // (compiled/scheduled stay 0).
-            if (!nativeRender)
-            for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
-                if (section == null) continue;
-                long sectionNode = section.getSectionNode();
-                int sx = net.minecraft.core.SectionPos.x(sectionNode);
-                int sz = net.minecraft.core.SectionPos.z(sectionNode);
-                if (!destLevel.getChunkSource().hasChunk(sx, sz)) continue;
-                // Frustum cull: skip sections whose bounding box is
-                // outside the portal-view cone.
-                if (!destFrustum.isVisible(section.getBoundingBox())) continue;
-                // View-distance bound: the frustum admits in-cone sections out to
-                // the full render distance, but the portal view is fog-limited and
-                // only the compile-radius is ever meshed — beyond PORTAL_VIEW_DRAW_RADIUS
-                // is blank/fogged, so skip it entirely instead of adding thousands of
-                // dead sections to visibleSections (the heavy transition-frame cost).
-                {
-                    int rdx = sx - camSecX;
-                    int rdz = sz - camSecZ;
-                    if (rdx * rdx + rdz * rdz > destDepthRadiusSq()) continue;
-                }
-                net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
-                    sut != null ? sut.getDirtyState(sectionNode) : null;
-                boolean uncompiled = section.sectionMesh.get()
-                    == net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED;
-                // A compiled section clears its one-shot uncompiled-schedule guard.
-                if (!uncompiled) schedSet.remove(sectionNode);
-                // Schedule a compile if the section is dirty OR is UNCOMPILED and
-                // not already scheduled. The old dirty-only path left
-                // UNCOMPILED-but-not-dirty sections permanently blank — the "blank
-                // curtain below eye level" bug: a demoted renderer's return-portal
-                // camera looks at sections it never compiled (or that were recycled
-                // when the player explored away), and the fresh demote tracker marks
-                // nothing dirty, so they were never scheduled and drew nothing
-                // forever. compileAsync's createCompileTask cancels any in-flight
-                // task (SectionRenderDispatcher.java:313), so uncompiled scheduling
-                // is guarded by schedSet to fire exactly ONCE per section (else each
-                // frame would cancel+restart the compile and it would never finish).
-                boolean wantCompile = (ds != null && ds.isDirty())
-                    || (uncompiled && !schedSet.contains(sectionNode));
-                if (wantCompile) {
-                    int dx = sx - camSecX;
-                    int dz = sz - camSecZ;
-                    if (dx * dx + dz * dz > destDepthRadiusSq()) {
-                        skippedFar++;
-                    } else if (System.nanoTime() - compileSweepStartNs < PORTAL_VIEW_COMPILE_BUDGET_NS) {
-                        section.compileAsync(cache.createRegion(destLevel, sectionNode));
-                        if (ds != null) ds.setNotDirty();
-                        if (uncompiled) schedSet.add(sectionNode);
-                        scheduledAsync++;
-                    } else {
-                        // Budget spent this frame — leave this section dirty/
-                        // uncompiled so it is picked up next frame + by the pump.
-                        deferredCompiles++;
-                    }
-                }
-                visibleSections.add(section);
-                prebuiltVisibleSections.add(section);
-                compiled++;
+            // Bounded flood-fill replaces the old O(all viewArea.sections) per-frame
+            // scan (the dominant teleport-stutter cost: ~78K–101K iterations/frame at
+            // render distance 32, just to find the few thousand visible through the
+            // portal). VisibleSectionDiscovery walks ONLY the connected, in-cone,
+            // in-radius sections and folds in the same hasChunk gate + budgeted
+            // dirty/UNCOMPILED async-compile scheduling + dual-list population the old
+            // scan did. It never touches SectionOcclusionGraph, so the sog.update hang
+            // cannot return. Bound = the same 2D horizontal cylinder (destDepthRadiusSq,
+            // full Y column) the old scan admitted on.
+            if (!nativeRender) {
+                scheduledAsync = VisibleSectionDiscovery.discoverAndScheduleForPortalView(
+                    viewArea, destCameraPos, destFrustum, destDepthRadiusSq(),
+                    destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS,
+                    visibleSections, prebuiltVisibleSections);
+                compiled = visibleSections.size();
             }
             if (phase2SuccessCount == 0 && compiled > 0) {
                 SeamlessPortalsConstants.LOGGER.info(
