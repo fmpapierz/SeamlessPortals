@@ -215,7 +215,7 @@ public final class SeamlessClientTeleport {
             return true;
         }
 
-        LevelRenderState sharedState = mc.gameRenderer.getGameRenderState().levelRenderState;
+        LevelRenderState sharedState = mc.gameRenderer.gameRenderState().levelRenderState;
         PortalWorldManager.Promotion promotion = PortalWorldManager.promoteToMain(destDim, sharedState);
         if (promotion == null) {
             SeamlessPortalsConstants.LOGGER.warn(
@@ -242,16 +242,30 @@ public final class SeamlessClientTeleport {
         ((MinecraftAccessorMixin) mc).seamlessportals$setLevelRenderer(promotion.renderer());
         mc.level = promotion.level();
 
-        // 2. Seed lastCameraSection* on promoted renderer so the first
-        // cullTerrain doesn't wipe ViewArea meshes (matches HandleRespawnMixin
-        // line ~218 rationale: viewarea_reposition_mesh_loss).
-        int csx = SectionPos.posToSectionCoord(destPos.x);
-        int csy = SectionPos.posToSectionCoord(destPos.y);
-        int csz = SectionPos.posToSectionCoord(destPos.z);
+        // 2. Seed the promoted renderer's ViewArea center to the destination
+        // section so the first vanilla repositionCamera is a no-op and doesn't
+        // wipe ViewArea meshes (matches HandleRespawnMixin rationale:
+        // viewarea_reposition_mesh_loss).
+        //
+        // 26.2: the {@code lastCameraSectionX/Y/Z} int fields were removed from
+        // LevelRenderer; the camera-section gate now lives inside
+        // {@code ViewArea.repositionCamera(SectionPos)} (returns true iff the
+        // grid actually moved). We seed the center directly via that public
+        // method. If the ViewArea is already centered on this section
+        // (common — the cached renderer for destDim was last positioned here),
+        // repositionCenter returns false and nothing is relocated/wiped.
+        //
+        // SEAMLESS-26.2-TODO: unlike the old pure field-write seed, calling
+        // repositionCamera here WILL relocate slots (and reset their meshes) if
+        // the cached ViewArea center differs from destPos's section. Verify at
+        // runtime that promotion leaves the ViewArea centered at destPos's
+        // section (no first-frame mesh wipe). If a flash reappears, the seed may
+        // need to pre-set the RotatingSectionStorage center without the reset.
         LevelRendererAccessorMixin rAcc = (LevelRendererAccessorMixin) (Object) promotion.renderer();
-        rAcc.seamlessportals$setLastCameraSectionX(csx);
-        rAcc.seamlessportals$setLastCameraSectionY(csy);
-        rAcc.seamlessportals$setLastCameraSectionZ(csz);
+        net.minecraft.client.renderer.ViewArea rViewArea = rAcc.seamlessportals$getViewArea();
+        if (rViewArea != null) {
+            rViewArea.repositionCamera(SectionPos.of(destPos));
+        }
 
         // 3. Demote outgoing primary.
         if (oldRenderer != null && oldRenderer != promotion.renderer()) {
@@ -348,7 +362,7 @@ public final class SeamlessClientTeleport {
         // different, default-colored flash. The explicit re-tick here
         // ensures the first render frame post-swap sees correct dest fog.
         try {
-            net.minecraft.client.Camera mainCamera = mc.gameRenderer.getMainCamera();
+            net.minecraft.client.Camera mainCamera = mc.gameRenderer.mainCamera();
             if (mainCamera != null) {
                 mainCamera.attributeProbe().reset();
                 // Populate with destination values so no lerp and no

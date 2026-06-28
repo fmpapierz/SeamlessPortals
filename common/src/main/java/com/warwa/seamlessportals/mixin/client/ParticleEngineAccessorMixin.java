@@ -2,6 +2,7 @@ package com.warwa.seamlessportals.mixin.client;
 
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.ParticleEngine;
+import net.minecraft.client.particle.ParticleResources;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.gen.Accessor;
@@ -33,4 +34,14 @@ public interface ParticleEngineAccessorMixin {
     @Accessor("level")
     @Mutable
     void seamlessportals$setLevel(ClientLevel level);
+
+    /**
+     * The engine's shared {@code private final ParticleResources resourceManager}
+     * (sprite atlases + registered particle providers). Read-only data, safe to
+     * SHARE across engines — {@link com.warwa.seamlessportals.client.PortalWorldManager}
+     * reuses the global engine's resources to construct each per-destination
+     * {@link ParticleEngine} without a separate resource reload.
+     */
+    @Accessor("resourceManager")
+    ParticleResources seamlessportals$getResourceManager();
 }

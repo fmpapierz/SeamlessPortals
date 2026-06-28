@@ -69,7 +69,7 @@ public abstract class LevelRendererCullTerrainMixin {
         if (!PortalWorldManager.consumePendingPrime(self)) {
             return;
         }
-        SectionOcclusionGraph sog = self.getSectionOcclusionGraph();
+        SectionOcclusionGraph sog = self.sectionOcclusionGraph();
         Future<?> task =
             ((SectionOcclusionGraphAccessorMixin) (Object) sog)
                 .seamlessportals$getFullUpdateTask();

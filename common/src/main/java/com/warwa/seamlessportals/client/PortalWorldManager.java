@@ -3,12 +3,15 @@ package com.warwa.seamlessportals.client;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.GameRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.extract.LevelExtractor;
+import com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor;
 import com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
@@ -63,6 +66,43 @@ public class PortalWorldManager {
      */
     private static final Map<ResourceKey<Level>, LevelRenderer> renderers = new ConcurrentHashMap<>();
     private static final Map<ResourceKey<Level>, ClientLevel> levels = new ConcurrentHashMap<>();
+    /**
+     * Per-dimension {@link LevelExtractor} (26.2 render split). Owns the
+     * dimension's {@code setLevel} / dirty-marking / {@code extract} duties that
+     * used to live on {@link LevelRenderer}, plus the {@code SectionUpdateTracker}.
+     * One entry per secondary renderer, created alongside it in
+     * {@link #createRenderer}.
+     */
+    private static final Map<ResourceKey<Level>, LevelExtractor> extractors = new ConcurrentHashMap<>();
+
+    /**
+     * Per-destination {@link ParticleEngine}. A SEPARATE engine per cached dest
+     * dim so the dest particle extract pulls only that dim's particles and can
+     * never corrupt the source world's (each engine owns its own particle-group
+     * map). Holds the destination's ambient particles (flame, lava, nether
+     * portal, fog), spawned by {@link #tickCachedParticles} via the dest level's
+     * {@code animateTick} and rendered into the portal FBO when
+     * {@link com.warwa.seamlessportals.render.PortalContextSwitch#withSwitchedWorld}
+     * swaps {@code mc.particleEngine} to it. Created lazily
+     * ({@link #getOrCreateParticleEngine}); removed alongside the renderer/level
+     * in {@link #removeRenderer}/{@link #promoteToMain}/{@link #cleanup}.
+     */
+    private static final Map<ResourceKey<Level>, ParticleEngine> particleEngines = new ConcurrentHashMap<>();
+
+    /**
+     * True only while {@link #tickCachedParticles} is spawning/ticking a cached
+     * destination dimension's particles. Signals
+     * {@link com.warwa.seamlessportals.mixin.client.ClientLevelMixin} to bypass
+     * vanilla's main-camera distance gate in {@code ClientLevel.doAddParticle}:
+     * at tick time the main camera is the SOURCE world's, but these particles
+     * spawn at DEST-world coordinates (always >32 blocks away / a different dim),
+     * so the gate would cull every non-override ambient particle. The
+     * {@code animateTick} ±32 radius already bounds them around the dest view.
+     */
+    public static boolean spawningDestParticles = false;
+
+    /** Temporary diagnostic throttle — first N dest-particle ticks logged. */
+    private static int particleDiagCount = 0;
 
     /**
      * Renderers that were just promoted and need a synchronous
@@ -138,8 +178,72 @@ public class PortalWorldManager {
         return levels.get(dimension);
     }
 
+    /**
+     * 26.2 render split: the per-dimension {@link LevelExtractor} that owns the
+     * {@code setLevel} / dirty-marking / {@code extract} duties that used to live
+     * on {@link LevelRenderer}, plus the {@code SectionUpdateTracker}. Returns
+     * {@code null} for a dim with no secondary renderer (e.g. the starting dim's
+     * vanilla {@code mc.levelRenderer}, whose extractor is {@code mc.levelExtractor}).
+     */
+    public static LevelExtractor getExtractor(ResourceKey<Level> dimension) {
+        return extractors.get(dimension);
+    }
+
     public static boolean hasRenderer(ResourceKey<Level> dimension) {
         return renderers.containsKey(dimension);
+    }
+
+    /**
+     * The destination dimension's own {@link ParticleEngine}, or {@code null}
+     * if none has been created yet (lazily created by
+     * {@link #getOrCreateParticleEngine} / {@link #tickCachedParticles}).
+     */
+    public static ParticleEngine getParticleEngine(ResourceKey<Level> dimension) {
+        return particleEngines.get(dimension);
+    }
+
+    /**
+     * Get or lazily create the per-destination {@link ParticleEngine} for
+     * {@code level}, bound to that level. Reuses the global engine's shared
+     * {@link net.minecraft.client.particle.ParticleResources} (read-only sprite
+     * + provider data), so no separate resource reload is needed. Particles
+     * spawned via {@code level.addParticle} land here whenever
+     * {@code mc.particleEngine} is swapped to this engine (the dest render and
+     * {@link #tickCachedParticles}). Returns {@code null} only if there is no
+     * global engine to source resources from.
+     */
+    public static ParticleEngine getOrCreateParticleEngine(ClientLevel level) {
+        if (level == null) return null;
+        return particleEngines.computeIfAbsent(level.dimension(), k -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.particleEngine == null) return null;
+            net.minecraft.client.particle.ParticleResources resources =
+                ((com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin) mc.particleEngine)
+                    .seamlessportals$getResourceManager();
+            return new ParticleEngine(level, resources);
+        });
+    }
+
+    /**
+     * 26.2: schedule an async chunk-section compile iff the section is dirty in the
+     * extractor's SectionUpdateTracker. Replaces the old
+     * {@code if (section.isDirty()) { section.rebuildSectionAsync(cache); section.setNotDirty(); }}.
+     * Returns true if a compile was scheduled.
+     */
+    public static boolean scheduleCompileIfDirty(
+            net.minecraft.client.renderer.extract.LevelExtractor extractor,
+            net.minecraft.client.multiplayer.ClientLevel level,
+            net.minecraft.client.renderer.chunk.RenderRegionCache cache,
+            net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section) {
+        if (extractor == null) return false;
+        net.minecraft.client.SectionUpdateTracker sut = extractor.sectionUpdateTracker;
+        if (sut == null) return false;
+        net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
+            sut.getDirtyState(section.getSectionNode());
+        if (ds == null || !ds.isDirty()) return false;
+        section.compileAsync(cache.createRegion(level, section.getSectionNode()));
+        ds.setNotDirty();
+        return true;
     }
 
     /**
@@ -156,7 +260,7 @@ public class PortalWorldManager {
         SeamlessPortalsConstants.LOGGER.info("[SEAMLESS PHASE2] Creating secondary renderer for {}", dimension.identifier());
 
         try {
-            GameRenderState gameRenderState = mc.gameRenderer.getGameRenderState();
+            GameRenderState gameRenderState = mc.gameRenderer.gameRenderState();
 
             // Create SEPARATE RenderBuffers for the secondary renderer.
             // The main renderer's buffers are in use during AFTER_TRANSLUCENT_TERRAIN
@@ -165,28 +269,52 @@ public class PortalWorldManager {
             // position triggers entity rendering.
             RenderBuffers destRenderBuffers = new RenderBuffers(4);
 
-            // Create SEPARATE FeatureRenderDispatcher (has mutable per-frame state)
-            SubmitNodeStorage destSubmitNodes = new SubmitNodeStorage();
+            // Create SEPARATE FeatureRenderDispatcher (has mutable per-frame state).
+            // 26.2: the old 8-arg buffer-source ctor is gone (MultiBufferSource
+            // removed). The dispatcher now takes its RenderBuffers (it pulls the
+            // shared StagedVertexBuffer from it) + model/atlas/font/state.
             FeatureRenderDispatcher destFeatureDispatcher = new FeatureRenderDispatcher(
-                destSubmitNodes,
+                destRenderBuffers,
                 mc.getModelManager(),
-                destRenderBuffers.bufferSource(),
                 mc.getAtlasManager(),
-                destRenderBuffers.outlineBufferSource(),
-                destRenderBuffers.crumblingBufferSource(),
                 mc.font,
                 gameRenderState
             );
 
-            // Create secondary LevelRenderer with its OWN RenderBuffers
+            // Create secondary LevelRenderer. 26.2's ctor no longer takes
+            // RenderBuffers/FeatureRenderDispatcher explicitly — it derives them
+            // from the passed GameRenderer (the MAIN ones). We construct it, then
+            // override those two now-final fields with our isolated instances
+            // below, preserving the per-secondary isolation the old ctor gave us.
+            int rtWidth = mc.gameRenderer.mainRenderTarget().width;
+            int rtHeight = mc.gameRenderer.mainRenderTarget().height;
             LevelRenderer destRenderer = new LevelRenderer(
-                mc,
                 mc.getEntityRenderDispatcher(),
                 mc.getBlockEntityRenderDispatcher(),
-                destRenderBuffers,       // SEPARATE — avoids buffer conflicts
-                gameRenderState,         // SHARED
-                destFeatureDispatcher    // SEPARATE
+                mc.getModelManager(),
+                mc.getTextureManager(),
+                mc.getAtlasManager(),
+                mc.getShaderManager(),
+                mc.gameRenderer,
+                rtWidth,
+                rtHeight
             );
+
+            LevelRendererAccessorMixin destRendererAccess =
+                (LevelRendererAccessorMixin) destRenderer;
+            // Give the secondary renderer its OWN LevelRenderState so extraction
+            // doesn't corrupt the main renderer's shared state, and override to
+            // the isolated buffers + dispatcher (see ctor note above).
+            LevelRenderState destState = new LevelRenderState();
+            destRendererAccess.seamlessportals$setLevelRenderState(destState);
+            destRendererAccess.seamlessportals$setRenderBuffers(destRenderBuffers);
+            destRendererAccess.seamlessportals$setFeatureRenderDispatcher(destFeatureDispatcher);
+
+            // 26.2 render split: setLevel / dirty / extract moved off
+            // LevelRenderer onto a LevelExtractor. Each secondary gets its own
+            // extractor bound to its isolated LevelRenderState + renderer.
+            LevelExtractor destExtractor =
+                new LevelExtractor(mc, destState, destRenderer);
 
             // Subphase 1 (2026-04-17): unified renderer map — no separate
             // dormantLevels to reuse from. Create a fresh ClientLevel. If
@@ -204,6 +332,7 @@ public class PortalWorldManager {
                 Difficulty.NORMAL, false, false
             );
 
+            // ClientLevel now takes the LevelExtractor (was LevelRenderer in 26.1.2).
             ClientLevel destLevel = new ClientLevel(
                 mc.getConnection(),
                 levelData,
@@ -211,28 +340,24 @@ public class PortalWorldManager {
                 dimensionType,
                 8,  // render distance for portal view (matches portalRenderDistance)
                 8,  // simulation distance
-                destRenderer,
+                destExtractor,
                 false,
                 0L,
                 mc.level.getSeaLevel()
             );
 
-            // Give the secondary renderer its OWN LevelRenderState so that
-            // extractLevel() doesn't corrupt the main renderer's shared state.
-            // MC 26.1.2 shares LevelRenderState via GameRenderState (line 190),
-            // but IP's architecture requires each renderer to have isolated state.
-            ((LevelRendererAccessorMixin) destRenderer).seamlessportals$setLevelRenderState(
-                new LevelRenderState());
+            // Connect extractor to level (creates chunk infrastructure via
+            // allChanged() -> levelRenderer.invalidateCompiledGeometry()).
+            destExtractor.setLevel(destLevel);
 
-            // Connect renderer to level (triggers chunk infrastructure creation)
-            destRenderer.setLevel(destLevel);
-
-            // Initialize sky renderer + entity outline target.
-            // onResourceManagerReload() creates SkyRenderer (line 218 in LevelRenderer.java).
-            // Without this, extractLevel() crashes with NPE on skyRenderer.extractRenderState().
-            destRenderer.onResourceManagerReload(mc.getResourceManager());
+            // Initialize sky renderer + entity outline target + resources.
+            // 26.2: onResourceManagerReload moved to LevelExtractor (it
+            // implements ResourceManagerReloadListener). Without it, extract()
+            // crashes on null sky/resource state.
+            destExtractor.onResourceManagerReload(mc.getResourceManager());
 
             levels.put(dimension, destLevel);
+            extractors.put(dimension, destExtractor);
 
             SeamlessPortalsConstants.LOGGER.info(
                 "[SEAMLESS PHASE2] Secondary renderer created for {} (sections={})",
@@ -280,6 +405,9 @@ public class PortalWorldManager {
     /** How many chunks to feed per drain call. Each chunk ≈ 10ms → 6 → ~60ms worst case per tick. */
     private static final int FEEDS_PER_DRAIN = 6;
 
+    /** Temporary diagnostic throttle for the per-tick chunk-feed cost. */
+    private static int feedDiagCount = 0;
+
     /**
      * Enqueue a SMALL radius of RemoteChunkManager chunks around each portal
      * in the given dimension. The chunks are fed into the secondary ClientLevel
@@ -293,7 +421,17 @@ public class PortalWorldManager {
      * visible. More distant chunks are still held in RemoteChunkManager and
      * can be lazily queued later if we ever need them.
      */
-    private static final int FEED_RADIUS_CHUNKS = 3; // 7x7 = 49 chunks per portal
+    // 2026-06-27: raised 3 → 8 so the destination dim becomes FULLY resident
+    // while the player is near a portal (the cached level's own render distance
+    // is 8 — see createRenderer — so this fills it), instead of only a 49-chunk
+    // patch around the portal mouth. The feed is batched + time-budgeted
+    // (drainPendingFeeds: ≤8ms/tick), so the larger set just drains over MORE
+    // ticks at the SAME per-tick cost — the approach stays smooth, and a crossing
+    // then finds the world already built (no post-teleport chunk stream / mesh
+    // storm, which was the multi-second teleport stutter). The radius-8 compile
+    // pump (COMPILE_PUMP_RADIUS_CHUNKS) builds the meshes for the fed chunks in
+    // the background, so they are ready too.
+    private static final int FEED_RADIUS_CHUNKS = 8; // 17x17 = 289 chunks per portal
 
     public static void feedExistingChunks(ResourceKey<Level> dimension) {
         ClientLevel destLevel = levels.get(dimension);
@@ -458,12 +596,14 @@ public class PortalWorldManager {
                 // — the chunk graph's neighbor links were broken by
                 // double-registration). The natural Sodium flow is
                 // sufficient; do not manually poke RSM here.
-                LevelRenderer destRenderer = renderers.get(feed.dim);
-                if (destRenderer != null) {
+                // 26.2: setSectionDirtyWithNeighbors moved off LevelRenderer
+                // onto the dimension's LevelExtractor (D3).
+                LevelExtractor destExtractor = extractors.get(feed.dim);
+                if (destExtractor != null) {
                     int minSectionY = destLevel.getMinSectionY();
                     for (int sy = 0; sy < sectionsForChunk.length; sy++) {
                         int sectionY = minSectionY + sy;
-                        destRenderer.setSectionDirtyWithNeighbors(
+                        destExtractor.setSectionDirtyWithNeighbors(
                             chunkX, sectionY, chunkZ);
                     }
                 }
@@ -474,6 +614,19 @@ public class PortalWorldManager {
             }
 
             processed++;
+        }
+
+        // Diagnostic (temporary): real per-chunk feed cost + remaining backlog,
+        // so we know whether the wider FEED_RADIUS stays within the per-tick
+        // budget during approach (the old "≈10ms/chunk" note predates the
+        // time-budgeted drain).
+        long drainMs = (System.nanoTime() - drainStart) / 1_000_000L;
+        if (processed > 0 && feedDiagCount < 80) {
+            feedDiagCount++;
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS FEED] drained {} chunks in {}ms (~{}us/chunk) pending={}",
+                processed, drainMs,
+                (drainMs * 1000L) / processed, pendingFeeds.size());
         }
 
         // Log when a dimension's feed queue fully drains.
@@ -498,10 +651,20 @@ public class PortalWorldManager {
     public static void removeRenderer(ResourceKey<Level> dimension) {
         LevelRenderer renderer = renderers.remove(dimension);
         ClientLevel level = levels.remove(dimension);
+        // 26.2: setLevel moved off LevelRenderer onto the LevelExtractor (D4).
+        LevelExtractor extractor = extractors.remove(dimension);
+        // Drop this dim's per-dest particle engine (clears its particles +
+        // tracking emitters via setLevel(null)).
+        ParticleEngine particleEngine = particleEngines.remove(dimension);
+        if (particleEngine != null) {
+            particleEngine.setLevel(null);
+        }
 
         if (renderer != null) {
             try {
-                renderer.setLevel(null);
+                if (extractor != null) {
+                    extractor.setLevel(null);
+                }
                 renderer.close();
             } catch (Exception e) {
                 SeamlessPortalsConstants.LOGGER.error(
@@ -535,11 +698,55 @@ public class PortalWorldManager {
         initializeIfNeeded();
         LevelRenderer renderer = renderers.remove(dim);
         ClientLevel level = levels.remove(dim);
+        // The dim is becoming primary — its cached per-dest particle engine is
+        // obsolete (the global mc.particleEngine handles the active dim). Drop it.
+        ParticleEngine promotedEngine = particleEngines.remove(dim);
+        if (promotedEngine != null) {
+            promotedEngine.setLevel(null);
+        }
         if (renderer == null || level == null) {
             return null;
         }
         ((LevelRendererAccessorMixin) renderer)
             .seamlessportals$setLevelRenderState(sharedState);
+
+        // Clear the stale visibleSections this renderer accumulated as a
+        // portal-view secondary. We populate visibleSections MANUALLY for the
+        // FBO render (the "Direct compilation" loop), holding RenderSection
+        // objects by their then-current section node. On promotion to main, the
+        // post-teleport viewArea.repositionCamera RELOCATES those nodes; if the
+        // stale list leaks into the main render, GameRenderer.extract() (which
+        // iterates levelRenderer.visibleSections(), LevelExtractor.java:152)
+        // feeds the now-relocated nodes into sectionUpdateRenderStates, and
+        // LevelRenderer.compileSections does viewArea.getRenderSection(staleNode)
+        // → null → NPE (the teleport crash, RenderSection.wasPreviouslyEmpty()).
+        // clearVisibleSections() is vanilla's own reset (LevelRenderer.java:873);
+        // extract()'s applyFrustum repopulates it from the new camera next frame.
+        renderer.clearVisibleSections();
+        // Clear this dim's portal-view compile-schedule guard — it's no longer a
+        // dest; stale entries would block recompiling when it next becomes a dest.
+        com.warwa.seamlessportals.render.PortalContextSwitch.clearCompileSchedule(dim);
+
+        // 26.2: re-prime the promoted renderer's SectionOcclusionGraph so its
+        // visibleSections actually repopulate for the main render. The mod's
+        // 26.1.2 sync-prime (consumePendingPrime via a cullTerrain @Inject) is
+        // DEAD in 26.2 — cull moved to LevelExtractor.extract()->applyFrustum,
+        // which is gated on a frustum/camera-rotation change and so never
+        // repopulates visibleSections after a renderer swap (log DIAG #1:
+        // promoted renderer has visibleSections=0 -> blank main terrain).
+        // invalidate() sets needsFullUpdate; render()'s SectionOcclusionGraph
+        // .update() schedules the async rebuild, whose completion flips
+        // needsFrustumUpdate=true so the next extract()'s applyFrustum runs and
+        // repopulates visibleSections.
+        try {
+            var sog = renderer.sectionOcclusionGraph();
+            if (sog != null) {
+                sog.invalidate();
+            }
+        } catch (Exception e) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PHASE2] SOG invalidate on promote failed: {}", e.toString());
+        }
 
         // Wipe any entities that accumulated in this level while it was
         // a cached mirror target. Phase 2a's RemoteEntityApplier added
@@ -566,6 +773,39 @@ public class PortalWorldManager {
                     net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
                 promoteWiped++;
             } catch (Exception ignored) {}
+        }
+
+        // 26.2 CRITICAL: re-point mc.levelExtractor onto the PROMOTED renderer.
+        // mc.levelExtractor is the SINGLE main extractor (public final, bound once
+        // to the ORIGINAL renderer at Minecraft.java:649). GameRenderer.extract()
+        // drives mc.levelExtractor — NOT mc.levelRenderer — so swapping only
+        // mc.levelRenderer (as the 26.1.2 path did, before LevelExtractor existed)
+        // leaves extract() populating the OLD renderer's visibleSections while
+        // render() uses the promoted one with 0 visibleSections -> blank terrain
+        // after teleport (PROVEN: log DIAG #1 oldRenderer=1225, promoted=0).
+        //
+        // We re-point its fields DIRECTLY (levelRenderer -> promoted renderer,
+        // level -> dest level, sectionUpdateTracker -> the per-dimension
+        // destExtractor's already-correct tracker) rather than calling setLevel(),
+        // because setLevel() -> allChanged() sets shouldInvalidateCompiledGeometry
+        // -> extract() runs invalidateCompiledGeometry -> WIPES the cached meshes
+        // this cached-renderer promotion exists to preserve (LevelExtractor.java
+        // :393/:406). levelRenderState stays mc.levelExtractor's shared state,
+        // already consistent (the promoted renderer was set to sharedState above).
+        // Remove dim from extractors to match the renderers/levels removals above.
+        LevelExtractor destExtractor = extractors.remove(dim);
+        LevelExtractorAccessor mainExt =
+            (LevelExtractorAccessor) (Object) mc0.levelExtractor;
+        mainExt.seamlessportals$setLevelRenderer(renderer);
+        mainExt.seamlessportals$setLevel(level);
+        if (destExtractor != null) {
+            mainExt.seamlessportals$setSectionUpdateTracker(
+                ((LevelExtractorAccessor) (Object) destExtractor)
+                    .seamlessportals$getSectionUpdateTracker());
+        } else {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PHASE2] No destExtractor for {} on promote — "
+                    + "mc.levelExtractor.sectionUpdateTracker left stale", dim.identifier());
         }
 
         // Flag this renderer for synchronous SOG prime on its next
@@ -695,12 +935,125 @@ public class PortalWorldManager {
         }
     }
 
+    /**
+     * Spawn + tick each cached destination dimension's ambient particles (flame,
+     * lava, nether portal, fog) in its OWN {@link ParticleEngine}, so they are
+     * present to render inside the portal view.
+     *
+     * <p>Mirrors vanilla's per-tick {@code level.animateTick(...) +
+     * particleEngine.tick()} ({@code Minecraft.tick}), but for the non-active
+     * cached levels: vanilla only animates/ticks particles for {@code mc.level}.
+     * For each cached dim we swap {@code mc.particleEngine} to that dim's engine
+     * across BOTH the {@code animateTick} spawn ({@code ClientLevel.addParticle}
+     * routes to {@code mc.particleEngine}) AND the engine tick (a particle's own
+     * tick can spawn sub-particles the same way), then restore it. The dest level
+     * is animate-ticked only when a nearby portal in the active dim looks into it,
+     * around the through-portal 1:1 mirror of the player (same transform the dest
+     * camera uses) — so particles spawn where they will actually be seen. Every
+     * cached engine is ticked regardless, so existing particles age out and die.
+     *
+     * <p>Thread-safety: this runs on the client tick, and the render-time swap in
+     * {@link com.warwa.seamlessportals.render.PortalContextSwitch#withSwitchedWorld}
+     * runs on the same (client/render) thread; the two never overlap, and every
+     * swap here is restored before the loop body returns.
+     */
+    public static void tickCachedParticles() {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        net.minecraft.client.player.LocalPlayer player = mc.player;
+        if (active == null || player == null) return;
+        ParticleEngine globalEngine = mc.particleEngine;
+        if (globalEngine == null) return;
+
+        com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin mcAccess =
+            (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
+
+        // Drop engines whose level is no longer cached (dim promoted/removed).
+        particleEngines.keySet().removeIf(dim -> !levels.containsKey(dim));
+
+        // For each dest dim viewed through a nearby portal, the center to spawn
+        // ambient particles around: the DEST PORTAL ORIGIN. It is always inside
+        // the fed-chunk radius (FEED_RADIUS_CHUNKS, ~48 blocks ⊇ animateTick's ±32
+        // scan) so samples hit LOADED chunks, AND it is exactly the region framed
+        // by the portal opening, so the particles spawn where they are seen. (The
+        // transformed player position drifts out of the fed region when standing
+        // far from the portal → empty-chunk samples → no particles.) One entry per
+        // dim (first nearby portal that links to it).
+        Map<ResourceKey<Level>, net.minecraft.core.BlockPos> animateCenters =
+            new java.util.HashMap<>();
+        try {
+            com.warwa.seamlessportals.portal.PortalManager pm =
+                com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
+            com.warwa.seamlessportals.portal.PortalTracker tracker =
+                pm.getTracker(active.dimension());
+            if (tracker != null) {
+                net.minecraft.core.BlockPos playerPos = player.blockPosition();
+                double range = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
+                    .getPortalRenderDistance() * 16.0;
+                for (com.warwa.seamlessportals.portal.PortalInfo srcPortal :
+                        tracker.getPortalsInRange(playerPos, range)) {
+                    if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig
+                            .shouldRenderThrough(srcPortal.getType())) continue;
+                    java.util.Optional<com.warwa.seamlessportals.portal.PortalLink> linkOpt =
+                        pm.getLinkForPortal(srcPortal.getPortalId());
+                    if (linkOpt.isEmpty()) continue;
+                    com.warwa.seamlessportals.portal.PortalLink link = linkOpt.get();
+                    com.warwa.seamlessportals.portal.PortalInfo destPortal = link.getDestination();
+                    ResourceKey<Level> destDim = destPortal.getDimension();
+                    if (destDim.equals(active.dimension())) continue;
+                    animateCenters.putIfAbsent(destDim, destPortal.getOrigin());
+                }
+            }
+        } catch (Throwable t) {
+            // Best-effort discovery; particles are non-critical, never crash the tick.
+        }
+
+        for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+            ResourceKey<Level> dim = e.getKey();
+            ClientLevel cached = e.getValue();
+            if (cached == null || cached == active) continue;
+            ParticleEngine engine = getOrCreateParticleEngine(cached);
+            if (engine == null) continue;
+            net.minecraft.core.BlockPos center = animateCenters.get(dim);
+            // Route this dim's spawns (animateTick) + sub-spawns (tick) into its
+            // own engine by making it the live mc.particleEngine for the duration.
+            mcAccess.seamlessportals$setParticleEngine(engine);
+            spawningDestParticles = true;
+            try {
+                if (center != null) {
+                    cached.animateTick(center.getX(), center.getY(), center.getZ());
+                }
+                engine.tick();
+            } catch (Throwable t) {
+                // Mirror-only — never crash the client tick on a particle hiccup.
+            } finally {
+                spawningDestParticles = false;
+                mcAccess.seamlessportals$setParticleEngine(globalEngine);
+            }
+            // Diagnostic (gated, temporary): confirm the dest engine actually
+            // accumulates ambient particles after animateTick + tick.
+            if (center != null && particleDiagCount < 12) {
+                particleDiagCount++;
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS PARTICLE] tick dim={} center=({},{},{}) engine=[{}]",
+                    dim.identifier(),
+                    center.getX(), center.getY(), center.getZ(), engine.countParticles());
+            }
+        }
+    }
+
     public static void demoteFromMain(
             ResourceKey<Level> dim,
             LevelRenderer renderer,
             ClientLevel level) {
+        LevelRenderState demotedState = new LevelRenderState();
         ((LevelRendererAccessorMixin) renderer)
-            .seamlessportals$setLevelRenderState(new LevelRenderState());
+            .seamlessportals$setLevelRenderState(demotedState);
+        // Clear this dim's portal-view compile-schedule guard so it re-evaluates
+        // sections fresh as a dest — stale scheduled-but-cancelled entries (from
+        // its prior dest stint before promotion) otherwise leave comp=0 and the
+        // portal view shows the source sky instead of this dim's terrain.
+        com.warwa.seamlessportals.render.PortalContextSwitch.clearCompileSchedule(dim);
 
         // Wipe cached entity state from the demoted level. While the level
         // is dormant the server isn't sending entity-tracking updates for
@@ -728,10 +1081,36 @@ public class PortalWorldManager {
             } catch (Exception ignored) {}
         }
 
+        // The demoted renderer was the vanilla main (driven by the shared
+        // mc.levelExtractor); as a secondary it needs its OWN per-dimension
+        // LevelExtractor so the portal-view doFboRender's extract() actually runs.
+        // Without it getExtractor(dim) is null (PROVEN: log DIAG-STATE
+        // dest=overworld extractorNull=true), extract() is SKIPPED, and entities,
+        // clouds, particles, and fluid (dirty-section) updates never populate in
+        // the portal view — while terrain still renders because it draws from
+        // visibleSections, not the render-state. createRenderer builds this for
+        // dims born as secondaries; demote (the STARTING dim becoming a secondary)
+        // was missing it. Bind to the same demotedState the renderer now uses, and
+        // set level + tracker DIRECTLY (NOT setLevel(), which calls allChanged() ->
+        // invalidateCompiledGeometry -> wipes the meshes this demote preserves).
+        try {
+            LevelExtractor demotedExtractor = new LevelExtractor(mc, demotedState, renderer);
+            LevelExtractorAccessor dea = (LevelExtractorAccessor) (Object) demotedExtractor;
+            dea.seamlessportals$setLevel(level);
+            dea.seamlessportals$setSectionUpdateTracker(
+                new net.minecraft.client.SectionUpdateTracker(
+                    level, mc.options.getEffectiveRenderDistance()));
+            demotedExtractor.onResourceManagerReload(mc.getResourceManager());
+            extractors.put(dim, demotedExtractor);
+        } catch (Exception e) {
+            SeamlessPortalsConstants.LOGGER.error(
+                "[SEAMLESS PHASE2] Failed to create demoted extractor for {}", dim.identifier(), e);
+        }
+
         renderers.put(dim, renderer);
         levels.put(dim, level);
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, cleared {} stale entities (kept {})",
+            "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, created extractor, cleared {} stale entities (kept {})",
             dim.identifier(), toRemove.size(), kept);
     }
 
@@ -858,9 +1237,9 @@ public class PortalWorldManager {
             int dz = sz - camSecZ;
             if (dx * dx + dz * dz > COMPILE_PUMP_PRIORITY_RADIUS_SQ) continue;
             if (!level.getChunkSource().hasChunk(sx, sz)) continue;
-            if (!section.isDirty()) continue;
-            section.rebuildSectionAsync(cache);
-            section.setNotDirty();
+            // 26.2: dirty state + async compile moved to the LevelExtractor's
+            // SectionUpdateTracker (D2).
+            if (!scheduleCompileIfDirty(extractors.get(dim), level, cache, section)) continue;
             scheduled++;
         }
 
@@ -879,9 +1258,9 @@ public class PortalWorldManager {
             if (distSq <= COMPILE_PUMP_PRIORITY_RADIUS_SQ) continue;
             if (distSq > COMPILE_PUMP_RADIUS_SQ) continue;
             if (!level.getChunkSource().hasChunk(sx, sz)) continue;
-            if (!section.isDirty()) continue;
-            section.rebuildSectionAsync(cache);
-            section.setNotDirty();
+            // 26.2: dirty state + async compile moved to the LevelExtractor's
+            // SectionUpdateTracker (D2).
+            if (!scheduleCompileIfDirty(extractors.get(dim), level, cache, section)) continue;
             scheduled++;
         }
         return scheduled;
@@ -903,15 +1282,28 @@ public class PortalWorldManager {
      * release GPU resources when appropriate.
      */
     public static void cleanup() {
-        for (LevelRenderer renderer : renderers.values()) {
+        // 26.2: setLevel(null) moved off LevelRenderer onto the per-dimension
+        // LevelExtractor (D4) — release each secondary's ViewArea via its
+        // extractor. The vanilla mc.levelRenderer's extractor is mc.levelExtractor
+        // (not in our map), so Minecraft's own cleanup handles that one.
+        for (LevelExtractor extractor : extractors.values()) {
             try {
-                renderer.setLevel(null);
+                extractor.setLevel(null);
             } catch (Exception e) {
                 SeamlessPortalsConstants.LOGGER.error("[SEAMLESS PHASE2] Error cleaning up renderer", e);
             }
         }
+        for (ParticleEngine particleEngine : particleEngines.values()) {
+            try {
+                particleEngine.setLevel(null);
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.error("[SEAMLESS PHASE2] Error cleaning up particle engine", e);
+            }
+        }
         renderers.clear();
         levels.clear();
+        extractors.clear();
+        particleEngines.clear();
         initialized = false;
     }
 }

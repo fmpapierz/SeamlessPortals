@@ -1,5 +1,6 @@
 package com.warwa.seamlessportals.render;
 
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.vertex.*;
 import com.warwa.seamlessportals.portal.PortalInfo;
 import net.minecraft.client.Camera;
@@ -47,7 +48,7 @@ public class PortalShapeRenderer {
             // Query FBO BEFORE draw (should be 0 from Fabric callback)
             int fboBefore = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
 
-            PortalRenderTypes.portalStencilOnly().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalStencilOnly(), mesh);
 
             // Query FBO AFTER draw (should be 0 again after RenderPass closes)
             int fboAfter = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
@@ -123,7 +124,7 @@ public class PortalShapeRenderer {
             new com.mojang.blaze3d.vertex.ByteBufferBuilder(4 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
         com.mojang.blaze3d.vertex.BufferBuilder builder =
             new com.mojang.blaze3d.vertex.BufferBuilder(byteBuf,
-                com.mojang.blaze3d.vertex.VertexFormat.Mode.QUADS,
+                PrimitiveTopology.QUADS,
                 DefaultVertexFormat.POSITION_COLOR);
 
         if (axis == Direction.Axis.X) {
@@ -142,7 +143,7 @@ public class PortalShapeRenderer {
 
         com.mojang.blaze3d.vertex.MeshData mesh = builder.build();
         if (mesh != null) {
-            PortalRenderTypes.portalDepthClear().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalDepthClear(), mesh);
         }
     }
 
@@ -199,7 +200,7 @@ public class PortalShapeRenderer {
             new com.mojang.blaze3d.vertex.ByteBufferBuilder(4 * com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR.getVertexSize());
         com.mojang.blaze3d.vertex.BufferBuilder builder =
             new com.mojang.blaze3d.vertex.BufferBuilder(byteBuf,
-                com.mojang.blaze3d.vertex.VertexFormat.Mode.QUADS,
+                PrimitiveTopology.QUADS,
                 com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_COLOR);
 
         if (axis == Direction.Axis.X) {
@@ -218,7 +219,7 @@ public class PortalShapeRenderer {
 
         com.mojang.blaze3d.vertex.MeshData mesh = builder.build();
         if (mesh != null) {
-            PortalRenderTypes.portalNoDepthColor().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalNoDepthColor(), mesh);
         }
     }
 
@@ -263,7 +264,7 @@ public class PortalShapeRenderer {
         int color = 0x01000000; // alpha=1, invisible but won't be discarded
 
         ByteBufferBuilder byteBuf = new ByteBufferBuilder(4 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
-        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        BufferBuilder builder = new BufferBuilder(byteBuf, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
         // NetherPortalBlock.AXIS = the WIDTH direction of the portal.
         // axis=X: width extends along X, portal face is perpendicular to Z → quad in XY plane
@@ -287,7 +288,7 @@ public class PortalShapeRenderer {
 
         MeshData mesh = builder.build();
         if (mesh != null) {
-            PortalRenderTypes.portalStencilOnly().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalStencilOnly(), mesh);
         }
     }
 
@@ -352,7 +353,7 @@ public class PortalShapeRenderer {
         // Faces are wound so their normals point OUTWARD from the box
         // center, matching vanilla CCW-front-face convention.
         ByteBufferBuilder byteBuf = new ByteBufferBuilder(24 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
-        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        BufferBuilder builder = new BufferBuilder(byteBuf, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
         float x0 = minX - cx;
         float x1 = maxX - cx;
@@ -394,7 +395,7 @@ public class PortalShapeRenderer {
 
         MeshData mesh = builder.build();
         if (mesh != null) {
-            PortalRenderTypes.portalStencilWithDepth().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalStencilWithDepth(), mesh);
         }
     }
 
@@ -455,7 +456,7 @@ public class PortalShapeRenderer {
         int color = 0x01000000;
 
         ByteBufferBuilder byteBuf = new ByteBufferBuilder(4 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
-        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        BufferBuilder builder = new BufferBuilder(byteBuf, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
         if (axis == Direction.Axis.X) {
             float z = ((minZ + maxZ) / 2.0f) - cz;
@@ -473,7 +474,7 @@ public class PortalShapeRenderer {
 
         MeshData mesh = builder.build();
         if (mesh != null) {
-            PortalRenderTypes.portalStencilWithDepth().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalStencilWithDepth(), mesh);
         }
     }
 
@@ -483,7 +484,7 @@ public class PortalShapeRenderer {
     public static void drawPortalShapeWithDepth(PortalInfo portal, Camera camera) {
         MeshData mesh = buildPortalQuadMesh(portal, camera, 0x01000000);
         if (mesh != null) {
-            PortalRenderTypes.portalStencilOnly().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalStencilOnly(), mesh);
         }
     }
 
@@ -503,7 +504,7 @@ public class PortalShapeRenderer {
         float cz = (float) camPos.z;
 
         ByteBufferBuilder byteBuf = new ByteBufferBuilder(4 * DefaultVertexFormat.POSITION_COLOR.getVertexSize());
-        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        BufferBuilder builder = new BufferBuilder(byteBuf, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
         // axis = WIDTH direction. axis=X → width along X, face perp to Z → XY quad
         //                        axis=Z → width along Z, face perp to X → ZY quad

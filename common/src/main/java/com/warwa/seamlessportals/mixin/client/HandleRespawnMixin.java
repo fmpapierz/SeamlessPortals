@@ -14,6 +14,7 @@ import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.extract.LevelExtractor;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.stats.StatsCounter;
 import net.minecraft.core.Holder;
@@ -219,7 +220,7 @@ public abstract class HandleRespawnMixin {
                 + "Lnet/minecraft/client/multiplayer/ClientLevel$ClientLevelData;"
                 + "Lnet/minecraft/resources/ResourceKey;"
                 + "Lnet/minecraft/core/Holder;"
-                + "IILnet/minecraft/client/renderer/LevelRenderer;ZJI)"
+                + "IILnet/minecraft/client/renderer/extract/LevelExtractor;ZJI)"
                 + "Lnet/minecraft/client/multiplayer/ClientLevel;"))
     private ClientLevel seamlessportals$redirectNewClientLevel(
             ClientPacketListener connection,
@@ -228,7 +229,7 @@ public abstract class HandleRespawnMixin {
             Holder<DimensionType> dimensionType,
             int serverChunkRadius,
             int serverSimulationDistance,
-            LevelRenderer levelRenderer,
+            LevelExtractor levelExtractor,
             boolean isDebug,
             long seed,
             int seaLevel) {
@@ -249,7 +250,7 @@ public abstract class HandleRespawnMixin {
         if (seamlessportals$seamlessTransition) {
             Minecraft mc = Minecraft.getInstance();
             LevelRenderState sharedState =
-                mc.gameRenderer.getGameRenderState().levelRenderState;
+                mc.gameRenderer.gameRenderState().levelRenderState;
             PortalWorldManager.Promotion promotion =
                 PortalWorldManager.promoteToMain(dimension, sharedState);
             if (promotion != null) {
@@ -267,7 +268,7 @@ public abstract class HandleRespawnMixin {
                 dimension.identifier());
         }
         return new ClientLevel(connection, levelData, dimension, dimensionType,
-            serverChunkRadius, serverSimulationDistance, levelRenderer,
+            serverChunkRadius, serverSimulationDistance, levelExtractor,
             isDebug, seed, seaLevel);
     }
 
@@ -344,16 +345,28 @@ public abstract class HandleRespawnMixin {
         //
         // See memory: viewarea_reposition_mesh_loss.md,
         // step1_5_viewarea_sync_radius_fix.md.
+        // 26.2: the {@code lastCameraSectionX/Y/Z} fields were removed from
+        // LevelRenderer; the camera-section gate now lives inside
+        // {@code ViewArea.repositionCamera(SectionPos)}. Seed the promoted
+        // renderer's ViewArea center directly to the preserved player's section
+        // so the first vanilla repositionCamera is a no-op (returns false → no
+        // slot relocation / mesh reset). See LevelRendererAccessorMixin and
+        // SeamlessClientTeleport for the matching translation.
+        //
+        // SEAMLESS-26.2-TODO: unlike the old pure field-write seed, this WILL
+        // relocate+reset slots if the cached ViewArea center differs from the
+        // preserved player's section. Verify no first-frame mesh wipe at runtime
+        // (viewarea_reposition_mesh_loss).
         LocalPlayer preservedPlayer = mc.player;
         if (preservedPlayer != null) {
-            int csx = net.minecraft.core.SectionPos.posToSectionCoord(preservedPlayer.getX());
-            int csy = net.minecraft.core.SectionPos.posToSectionCoord(preservedPlayer.getY());
-            int csz = net.minecraft.core.SectionPos.posToSectionCoord(preservedPlayer.getZ());
             LevelRendererAccessorMixin accessor =
                 (LevelRendererAccessorMixin) (Object) promotion.renderer();
-            accessor.seamlessportals$setLastCameraSectionX(csx);
-            accessor.seamlessportals$setLastCameraSectionY(csy);
-            accessor.seamlessportals$setLastCameraSectionZ(csz);
+            net.minecraft.client.renderer.ViewArea viewArea =
+                accessor.seamlessportals$getViewArea();
+            if (viewArea != null) {
+                viewArea.repositionCamera(
+                    net.minecraft.core.SectionPos.of(preservedPlayer.position()));
+            }
         }
 
         // ===== Demote outgoing primary (stash meshes for future return) =====

@@ -108,11 +108,14 @@ public class PortalDimensionManager {
 
             // Mark sections dirty on the secondary renderer for mesh compilation.
             // ClientChunkCache events go to mc.levelRenderer (main), not ours.
-            net.minecraft.client.renderer.LevelRenderer destRenderer =
-                PortalWorldManager.getOrCreateRenderer(dimension);
-            if (destRenderer != null) {
+            // 26.2: setSectionDirtyWithNeighbors moved off LevelRenderer onto the
+            // dimension's LevelExtractor (D3).
+            PortalWorldManager.getOrCreateRenderer(dimension);
+            net.minecraft.client.renderer.extract.LevelExtractor destExtractor =
+                PortalWorldManager.getExtractor(dimension);
+            if (destExtractor != null) {
                 for (int sy = 0; sy < sectionCount; sy++) {
-                    destRenderer.setSectionDirtyWithNeighbors(chunkX, minSectionY + sy, chunkZ);
+                    destExtractor.setSectionDirtyWithNeighbors(chunkX, minSectionY + sy, chunkZ);
                 }
             }
 

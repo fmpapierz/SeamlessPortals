@@ -5,3 +5,10 @@ accessible method net/minecraft/client/renderer/rendertype/RenderType create (Lj
 
 # Make RenderPipelines.register accessible for registering custom pipelines
 accessible method net/minecraft/client/renderer/RenderPipelines register (Lcom/mojang/blaze3d/pipeline/RenderPipeline;)Lcom/mojang/blaze3d/pipeline/RenderPipeline;
+
+# 26.2: ViewArea.sections is now private final RotatingSectionStorage<RenderSection>.
+# Widen for the portal-view section-iteration loops.
+accessible field net/minecraft/client/renderer/ViewArea sections Lnet/minecraft/client/RotatingSectionStorage;
+
+# 26.2: the section dirty/rebuild state moved onto the LevelExtractor's SectionUpdateTracker.
+accessible field net/minecraft/client/renderer/extract/LevelExtractor sectionUpdateTracker Lnet/minecraft/client/SectionUpdateTracker;

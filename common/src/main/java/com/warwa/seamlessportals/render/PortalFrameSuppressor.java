@@ -63,6 +63,16 @@ public final class PortalFrameSuppressor {
         UUID id = destPortal.getPortalId();
         if (!firstPassHandled.add(id)) return;
 
+        // 26.2: the section dirty flag moved off RenderSection onto the
+        // dimension's LevelExtractor SectionUpdateTracker. Look up the
+        // extractor for the destination dim and mark via its tracker.
+        net.minecraft.client.renderer.extract.LevelExtractor ext =
+            com.warwa.seamlessportals.client.PortalWorldManager.getExtractor(
+                destPortal.getDimension());
+        if (ext == null) return;
+        net.minecraft.client.SectionUpdateTracker tracker = ext.sectionUpdateTracker;
+        if (tracker == null) return;
+
         BlockPos origin = destPortal.getOrigin();
         int dSecX = SectionPos.blockToSectionCoord(origin.getX());
         int dSecZ = SectionPos.blockToSectionCoord(origin.getZ());
@@ -77,7 +87,9 @@ public final class PortalFrameSuppressor {
             if (Math.abs(sx - dSecX) <= FORCE_DIRTY_RADIUS
                     && Math.abs(sy - dSecY) <= FORCE_DIRTY_RADIUS
                     && Math.abs(sz - dSecZ) <= FORCE_DIRTY_RADIUS) {
-                section.setDirty(false);
+                net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
+                    tracker.getDirtyState(node);
+                if (ds != null) ds.setDirty(false);
             }
         }
     }

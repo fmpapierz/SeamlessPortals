@@ -1,9 +1,12 @@
 package com.warwa.seamlessportals.mixin.client;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.GlobalSettingsUniform;
 import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
+import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.fog.FogRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
@@ -40,4 +43,35 @@ public interface GameRendererAccessorMixin {
     @Accessor("lightmap")
     @Mutable
     void seamlessportals$setLightmap(Lightmap lightmap);
+
+    /**
+     * The {@code globalSettingsUniform} private field has no public getter in
+     * 26.2 (only {@code update(...)}/{@code close()} are called internally).
+     * Portal rendering re-drives {@code globalSettingsUniform.update(...)} with
+     * the destination camera/time inside the switched-world render, so it needs
+     * to reach the instance directly.
+     */
+    @Accessor("globalSettingsUniform")
+    GlobalSettingsUniform seamlessportals$getGlobalSettingsUniform();
+
+    @Accessor("renderBuffers")
+    RenderBuffers seamlessportals$getRenderBuffers();
+
+    @Accessor("renderBuffers")
+    @Mutable
+    void seamlessportals$setRenderBuffers(RenderBuffers renderBuffers);
+
+    /**
+     * 26.2: {@code mainRenderTarget} moved off {@code Minecraft} onto
+     * {@code GameRenderer} (field {@code GameRenderer.mainRenderTarget} at
+     * GameRenderer:104; public getter {@code GameRenderer.mainRenderTarget()}).
+     * Portal FBO rendering swaps it to the secondary FBO before the
+     * switched-world render and restores it after (see
+     * {@link com.warwa.seamlessportals.render.PortalContextSwitch#withSwitchedWorld}).
+     * The getter side uses the public {@code mc.gameRenderer.mainRenderTarget()};
+     * only the setter needs an accessor.
+     */
+    @Accessor("mainRenderTarget")
+    @Mutable
+    void seamlessportals$setMainRenderTarget(RenderTarget target);
 }

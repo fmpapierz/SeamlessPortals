@@ -86,11 +86,15 @@ public final class RemoteBlockUpdater {
         // and idempotent — the framework merges duplicate scheduled work.
         if (PortalWorldManager.hasRenderer(dim)) {
             LevelRenderer renderer = PortalWorldManager.getOrCreateRenderer(dim);
-            if (renderer != null) {
+            // 26.2: setSectionDirtyWithNeighbors + the section dirty/compile API
+            // moved off LevelRenderer onto the dimension's LevelExtractor (D2/D3).
+            net.minecraft.client.renderer.extract.LevelExtractor extractor =
+                PortalWorldManager.getExtractor(dim);
+            if (renderer != null && extractor != null) {
                 int sx = SectionPos.blockToSectionCoord(pos.getX());
                 int sy = SectionPos.blockToSectionCoord(pos.getY());
                 int sz = SectionPos.blockToSectionCoord(pos.getZ());
-                renderer.setSectionDirtyWithNeighbors(sx, sy, sz);
+                extractor.setSectionDirtyWithNeighbors(sx, sy, sz);
 
                 // Force rebuild of the central section now, bypassing any
                 // radius-cull in the per-frame / per-tick compile pumps.
@@ -104,9 +108,9 @@ public final class RemoteBlockUpdater {
                             ((com.warwa.seamlessportals.mixin.client.ViewAreaInvokerMixin)
                                 (Object) va).seamlessportals$invokeGetRenderSection(node);
                         if (rs != null) {
-                            rs.rebuildSectionAsync(
-                                new net.minecraft.client.renderer.chunk.RenderRegionCache());
-                            rs.setNotDirty();
+                            PortalWorldManager.scheduleCompileIfDirty(
+                                extractor, cachedLevel,
+                                new net.minecraft.client.renderer.chunk.RenderRegionCache(), rs);
                         }
                     }
                 } catch (Throwable t) {

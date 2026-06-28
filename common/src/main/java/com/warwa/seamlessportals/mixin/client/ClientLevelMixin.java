@@ -18,10 +18,41 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientLevel.class)
 public abstract class ClientLevelMixin {
+
+    /**
+     * Bypass {@code ClientLevel.doAddParticle}'s main-camera distance gate while
+     * spawning a cached destination dimension's ambient particles.
+     *
+     * <p>Vanilla only creates a non-override particle when it is within 32 blocks
+     * of {@code mc.gameRenderer.mainCamera()}
+     * ({@code camera.position().distanceToSqr(x,y,z) > 1024.0} → skip). During
+     * {@link com.warwa.seamlessportals.client.PortalWorldManager#tickCachedParticles}
+     * the main camera is the SOURCE world's, but the particles spawn at the
+     * DESTINATION world's coordinates — always far away (or another dimension) —
+     * so every flame/lava/portal/fog particle would be culled before creation.
+     * The {@code animateTick} ±32 radius already bounds them around the dest view,
+     * so we report distance 0 (in range) for those spawns only. The main world's
+     * spawns ({@code spawningDestParticles == false}) keep vanilla behavior.
+     */
+    @Redirect(
+        method = "doAddParticle",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/phys/Vec3;distanceToSqr(DDD)D"
+        )
+    )
+    private double seamlessportals$bypassDistanceForDestParticles(
+            net.minecraft.world.phys.Vec3 cameraPos, double x, double y, double z) {
+        if (com.warwa.seamlessportals.client.PortalWorldManager.spawningDestParticles) {
+            return 0.0;
+        }
+        return cameraPos.distanceToSqr(x, y, z);
+    }
 
     @Unique
     private static boolean seamlessportals$loggedChunkScan = false;

@@ -98,7 +98,7 @@ public class DimensionRenderHelper {
 
         // Night vision
         if (mc.player.hasEffect(MobEffects.NIGHT_VISION)) {
-            renderState.nightVisionEffectIntensity = GameRenderer.getNightVisionScale(mc.player, partialTicks);
+            renderState.nightVisionEffectIntensity = GameRenderer.nightVisionScale(mc.player, partialTicks);
         } else {
             float waterVision = mc.player.getWaterVision();
             if (waterVision > 0.0F && mc.player.hasEffect(MobEffects.CONDUIT_POWER)) {

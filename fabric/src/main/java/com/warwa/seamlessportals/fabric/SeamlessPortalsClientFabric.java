@@ -16,14 +16,13 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
 
         FabricPlatformHelper.registerClientHandlers();
 
-        // Hook AFTER translucent terrain so our portal content renders
-        // ON TOP of everything including water, clouds, and translucent blocks.
-        // The stencil mask clips to the portal shape regardless of render order.
-        //
-        // NOTE: IP hooks between solid and translucent because it re-renders
-        // the entire destination world (including its own translucent pass).
-        // For Phase 1 (colored blocks), rendering last avoids overworld bleed.
-        // For Phase 2 (context-switch), we'll need to revisit this hook point.
+        // Phase 2 (stencil mask + composite) at AFTER_TRANSLUCENT_TERRAIN: this is
+        // the ONLY point where the framegraph's camera/projection matrices are live
+        // (moving it to renderLevel RETURN composites in the wrong screen position).
+        // NOTE: the source overworld sky/celestial renders later in the SAME
+        // framegraph and paints over this composite (the "blank curtain") — fixing
+        // that needs to occlude the source sky in the portal region, not re-time
+        // this composite. See GameRendererPortalPrepareMixin for the diagnosis.
         LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
             StencilPortalRenderer.renderPortals();
         });
@@ -47,6 +46,10 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // interpolation handlers advance and animations run. Without
             // this, mobs visible through portals are frozen / spazzing.
             com.warwa.seamlessportals.client.PortalWorldManager.tickCachedEntities();
+            // Spawn + tick each cached destination dimension's ambient particles
+            // (flame, lava, nether portal, fog) in its OWN per-dest ParticleEngine
+            // so they render inside the portal view.
+            com.warwa.seamlessportals.client.PortalWorldManager.tickCachedParticles();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

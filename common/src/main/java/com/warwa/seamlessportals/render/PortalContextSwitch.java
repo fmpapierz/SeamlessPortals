@@ -1,5 +1,6 @@
 package com.warwa.seamlessportals.render;
 
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
@@ -13,7 +14,6 @@ import com.warwa.seamlessportals.client.PortalWorldManager;
 import com.warwa.seamlessportals.mixin.client.CameraInvokerMixin;
 import com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin;
 import com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin;
-import com.warwa.seamlessportals.mixin.client.MinecraftRenderTargetMixin;
 import com.warwa.seamlessportals.portal.PortalInfo;
 import com.warwa.seamlessportals.portal.PortalLink;
 import com.warwa.seamlessportals.portal.PortalTransform;
@@ -42,7 +42,9 @@ import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
 
+import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 
@@ -70,6 +72,38 @@ public class PortalContextSwitch {
      */
     public static boolean isRenderingPortal = false;
 
+    /**
+     * True while {@link #withSwitchedWorld} has swapped {@code mc.particleEngine}
+     * to the destination dimension's OWN {@link net.minecraft.client.particle.ParticleEngine}
+     * (per-dest engine, holding only that dim's particles).
+     *
+     * <p>When true, {@link com.warwa.seamlessportals.mixin.client.ParticleEnginePortalSkipMixin}
+     * LETS the dest particle extract run — a separate engine has its own
+     * particle-group map, so the extract cannot corrupt the source world's
+     * shared render state (the bug that originally forced the blanket skip).
+     * When false during a portal render (no dest engine yet / creation failed),
+     * the extract is still skipped to protect the main world's particles.
+     *
+     * <p>Single-threaded with the render: set/cleared only inside
+     * {@link #withSwitchedWorld} on the render thread.
+     */
+    public static boolean destParticlesActive = false;
+
+    /** Temporary diagnostic throttle for the post-crossing compile-sweep timing. */
+    private static int portalHitchLogCount = 0;
+
+    /**
+     * Frame-scoped frustum-cull result. Built ONCE by the doFboRender section
+     * sweep (the {@code for (viewArea.sections)} loop) and reused by
+     * {@link #populateVisibleSectionsByFrustum}, so the portal view runs the
+     * O(all viewArea.sections) frustum scan ONCE per FBO frame instead of twice
+     * (the sweep, then an identical re-scan after extract() clears
+     * visibleSections). Same predicate + same fixed {@code destFrustum} ⇒
+     * identical result. Render-thread only.
+     */
+    private static final it.unimi.dsi.fastutil.objects.ObjectArrayList<SectionRenderDispatcher.RenderSection>
+        prebuiltVisibleSections = new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
+
     // Lightmap is now managed by DimensionRenderHelper (per dimension, real values).
 
     /**
@@ -81,10 +115,60 @@ public class PortalContextSwitch {
     /** Secondary FBO for portal world rendering. Matches IP's SecondaryFrameBuffer. */
     private static TextureTarget secondaryFbo = null;
 
+    /**
+     * Two-phase render hand-off flag.
+     *
+     * <p>Phase 1 ({@link #prepareDestinationWorld}, run from
+     * {@code GameRenderer.renderLevel} HEAD — BEFORE the main frame's framegraph)
+     * renders the destination world into {@link #secondaryFbo} and sets this
+     * {@code true} when the FBO holds drawable destination geometry.
+     *
+     * <p>Phase 2 ({@link #compositeDestinationWorld}, run from Fabric's
+     * {@code AFTER_TRANSLUCENT_TERRAIN} — INSIDE the main framegraph, after the
+     * stencil mask is written) reads it: {@code true} → composite the secondary
+     * FBO through the stencil; {@code false} → fall back to the colored-block /
+     * background draw (which paints directly to the main FBO through the stencil
+     * and therefore must stay in phase 2).
+     *
+     * <p>Reset to {@code false} at the START of every phase 1 (i.e. once per main
+     * frame, via {@link #beginPortalFrame}) so a stale FBO from a previous frame is
+     * never composited.
+     */
+    private static boolean fboReadyThisFrame = false;
+
+    /**
+     * Per-frame reset of the two-phase hand-off state. Call once at the very start
+     * of phase 1 (from {@code GameRenderer.renderLevel} HEAD), unconditionally —
+     * even when there are no portals this frame — so a {@code true} flag left from a
+     * previous frame can never cause a stale composite.
+     */
+    public static void beginPortalFrame() {
+        fboReadyThisFrame = false;
+    }
+
+    /**
+     * Clear the per-dim uncompiled-section schedule guard. Called on promote /
+     * demote: when a dimension changes render role, any sections it had scheduled
+     * while a previous dest get their compiles cancelled (createCompileTask's
+     * cancelTasks on the role swap), leaving STALE "already scheduled" entries that
+     * block re-scheduling forever. Next time it's a dest, its terrain never
+     * recompiles ({@code comp=0} with {@code visSec>0} in the log) and the portal
+     * view falls back to the SOURCE sky — the "blank curtain = overworld sky" bug.
+     */
+    public static void clearCompileSchedule(ResourceKey<Level> dim) {
+        portalCompileScheduled.remove(dim);
+    }
+
     private static int phase2FailCount = 0;
     private static int phase2SuccessCount = 0;
     /** Tracks chunk count at last feed per dimension. Feed only when new chunks arrive. */
     private static final java.util.Map<ResourceKey<Level>, Integer> lastFedChunkCount = new java.util.HashMap<>();
+    /** Per-dim one-shot guard for scheduling UNCOMPILED portal-view sections.
+     *  compileAsync cancels any in-flight task, so an uncompiled section must be
+     *  scheduled exactly once (not every frame) or its compile never finishes.
+     *  An entry is removed once the section's mesh becomes compiled. */
+    private static final java.util.Map<ResourceKey<Level>, java.util.Set<Long>> portalCompileScheduled =
+        new java.util.HashMap<>();
 
     /**
      * How far (in chunks) from the destination camera we will consider
@@ -180,12 +264,22 @@ public class PortalContextSwitch {
             (GameRendererAccessorMixin) mc.gameRenderer;
         com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin mcAccess =
             (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
-        com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin particleAccess =
-            (com.warwa.seamlessportals.mixin.client.ParticleEngineAccessorMixin) mc.particleEngine;
         com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin destRendererAccess =
             (com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) destRenderer;
 
-        com.mojang.blaze3d.pipeline.RenderTarget savedMainRT = mc.getMainRenderTarget();
+        // Per-destination ParticleEngine. We swap the WHOLE engine (not just its
+        // level) so the dest extract pulls THIS dim's particles and the shared
+        // particle-group corruption that forced the old blanket extract-skip can
+        // never happen (separate engine = separate groups). Lazily created here
+        // if the cached-particle tick hasn't yet. Null only if creation failed
+        // (e.g. no global engine) — then we leave the main engine in place and
+        // {@code destParticlesActive} stays false so the skip mixin still
+        // protects the source particles.
+        net.minecraft.client.particle.ParticleEngine savedParticleEngine = mc.particleEngine;
+        net.minecraft.client.particle.ParticleEngine destParticleEngine =
+            com.warwa.seamlessportals.client.PortalWorldManager.getOrCreateParticleEngine(destLevel);
+
+        com.mojang.blaze3d.pipeline.RenderTarget savedMainRT = mc.gameRenderer.mainRenderTarget();
         ClientLevel savedLevel = mc.level;
         LevelRenderer savedRenderer = mc.levelRenderer;
         Camera savedMainCamera = gameRendererAccess.seamlessportals$getMainCamera();
@@ -198,68 +292,59 @@ public class PortalContextSwitch {
         // existing per-renderer buffers; no crash).
         net.minecraft.client.renderer.RenderBuffers pooledBuffers = PortalRenderBuffersPool.acquire();
         net.minecraft.client.renderer.RenderBuffers savedMcBuffers =
-            mcAccess.seamlessportals$getRenderBuffers();
+            gameRendererAccess.seamlessportals$getRenderBuffers();
         net.minecraft.client.renderer.RenderBuffers savedDestRendererBuffers =
             destRendererAccess.seamlessportals$getRenderBuffers();
 
-        // Phase 2b fix — the secondary renderer's FeatureRenderDispatcher
-        // owns its own bufferSource refs (final, set at construction from
-        // destRenderBuffers.bufferSource()). When we swap the renderer's
-        // RenderBuffers to pooledBuffers below, the dispatcher's refs stay
-        // pointed at destRenderBuffers and nothing in vanilla flushes that
-        // buffer during the portal render — entity equipment items
-        // (bow/sword/armor) submitted through itemFeatureRenderer.renderSolid
-        // go there and never draw.
+        // 26.2 (submit model): the old MultiBufferSource/OutlineBufferSource
+        // dispatcher buffer-source swap is GONE (D6). FeatureRenderDispatcher no
+        // longer holds bufferSource/outlineBufferSource/crumblingBufferSource
+        // fields — it takes its StagedVertexBuffer from its own RenderBuffers and
+        // collects submissions via SubmitNodeStorage. The Phase 2b "stash + swap +
+        // restore the dispatcher's buffer-source refs" block was therefore removed.
         //
-        // Solution: read the dispatcher via LevelRenderer accessor, stash
-        // its current refs, overwrite to pooledBuffers' refs for the
-        // duration of the render callback, restore after.
-        com.warwa.seamlessportals.mixin.client.FeatureRenderDispatcherAccessorMixin destDispatcherAccess =
-            (com.warwa.seamlessportals.mixin.client.FeatureRenderDispatcherAccessorMixin)
-                (Object) destRendererAccess.seamlessportals$getFeatureRenderDispatcher();
-        net.minecraft.client.renderer.MultiBufferSource.BufferSource savedDestDispatcherBuffers =
-            destDispatcherAccess.seamlessportals$getBufferSource();
-        net.minecraft.client.renderer.OutlineBufferSource savedDestDispatcherOutline =
-            destDispatcherAccess.seamlessportals$getOutlineBufferSource();
-        net.minecraft.client.renderer.MultiBufferSource.BufferSource savedDestDispatcherCrumbling =
-            destDispatcherAccess.seamlessportals$getCrumblingBufferSource();
+        // SEAMLESS-26.2-TODO: the dispatcher's per-frame isolation is now via its
+        // own StagedVertexBuffer (from its isolated RenderBuffers), not swappable
+        // buffer-source refs. The old swap existed so entity equipment items
+        // (bow/sword/armor, submitted through the item feature renderer) would
+        // flush to the pooled buffer and actually draw in the portal view; that
+        // mechanism no longer exists. Verify entity/item rendering in the portal
+        // view at runtime.
 
         try {
-            ((MinecraftRenderTargetMixin) (Object) mc)
-                .seamlessportals$setMainRenderTarget(destMainRT);
+            gameRendererAccess.seamlessportals$setMainRenderTarget(destMainRT);
             mc.level = destLevel;
             mcAccess.seamlessportals$setLevelRenderer(destRenderer);
             gameRendererAccess.seamlessportals$setMainCamera(destCamera);
             gameRendererAccess.seamlessportals$setLightmap(destLightmap);
             mc.hitResult = null;
             if (player != null) player.noPhysics = true;
-            particleAccess.seamlessportals$setLevel(destLevel);
+            if (destParticleEngine != null) {
+                mcAccess.seamlessportals$setParticleEngine(destParticleEngine);
+                destParticlesActive = true;
+            }
             if (pooledBuffers != null) {
-                mcAccess.seamlessportals$setRenderBuffers(pooledBuffers);
+                gameRendererAccess.seamlessportals$setRenderBuffers(pooledBuffers);
                 destRendererAccess.seamlessportals$setRenderBuffers(pooledBuffers);
-                destDispatcherAccess.seamlessportals$setBufferSource(pooledBuffers.bufferSource());
-                destDispatcherAccess.seamlessportals$setOutlineBufferSource(pooledBuffers.outlineBufferSource());
-                destDispatcherAccess.seamlessportals$setCrumblingBufferSource(pooledBuffers.crumblingBufferSource());
             }
 
             renderCallback.run();
         } finally {
             if (pooledBuffers != null) {
-                destDispatcherAccess.seamlessportals$setCrumblingBufferSource(savedDestDispatcherCrumbling);
-                destDispatcherAccess.seamlessportals$setOutlineBufferSource(savedDestDispatcherOutline);
-                destDispatcherAccess.seamlessportals$setBufferSource(savedDestDispatcherBuffers);
                 destRendererAccess.seamlessportals$setRenderBuffers(savedDestRendererBuffers);
-                mcAccess.seamlessportals$setRenderBuffers(savedMcBuffers);
+                gameRendererAccess.seamlessportals$setRenderBuffers(savedMcBuffers);
             }
-            particleAccess.seamlessportals$setLevel(savedLevel);
+            destParticlesActive = false;
+            if (destParticleEngine != null) {
+                mcAccess.seamlessportals$setParticleEngine(savedParticleEngine);
+            }
             if (player != null) player.noPhysics = savedNoPhysics;
             mc.hitResult = savedHitResult;
             gameRendererAccess.seamlessportals$setLightmap(savedLightmap);
             gameRendererAccess.seamlessportals$setMainCamera(savedMainCamera);
             mcAccess.seamlessportals$setLevelRenderer(savedRenderer);
             mc.level = savedLevel;
-            ((MinecraftRenderTargetMixin) (Object) mc)
-                .seamlessportals$setMainRenderTarget(savedMainRT);
+            gameRendererAccess.seamlessportals$setMainRenderTarget(savedMainRT);
             PortalRenderBuffersPool.release(pooledBuffers);
         }
     }
@@ -271,20 +356,87 @@ public class PortalContextSwitch {
     }
 
     /**
-     * Render the destination dimension through the stencil mask.
-     * Tries FBO rendering first, falls back to colored blocks, then background.
+     * PHASE 1 — render the destination world into the secondary FBO.
      *
-     * The background fallback ensures the portal is always visible even when
-     * destination chunks haven't arrived yet (e.g., nether side after dimension change).
-     * Without it, SectionCompilerMixin hides the purple swirl but nothing replaces it.
+     * <p>Runs from {@code GameRenderer.renderLevel} HEAD (via
+     * {@link com.warwa.seamlessportals.mixin.client.GameRendererPortalPrepareMixin}),
+     * BEFORE the main frame's {@code levelRenderer.render(...)} framegraph is built
+     * or executed. This is the move that fixes the "overworld blanks" bug: the heavy
+     * nested {@code destRenderer.render(...)} (itself a full deferred framegraph) is
+     * no longer issued from {@code AFTER_TRANSLUCENT_TERRAIN} (which fires mid-main-
+     * framegraph and disrupted the imported "main" target), so it cannot blank the
+     * overworld.
+     *
+     * <p>Only the heavy FBO render happens here. The composite onto the screen, and
+     * the colored-block / background fallbacks (which draw directly to the main FBO
+     * through the stencil mask), are deferred to {@link #compositeDestinationWorld}
+     * in phase 2 — they need the stencil mask, which is written in
+     * {@code AFTER_TRANSLUCENT_TERRAIN}.
+     *
+     * <p>Sets {@link #fboReadyThisFrame} from the render result. The per-frame
+     * reset to {@code false} happens earlier in {@link #beginPortalFrame} (called
+     * unconditionally at phase-1 entry), so a stale FBO from a previous frame is
+     * never composited even on frames where this method isn't reached.
      */
-    public static void renderDestinationWorld(PortalInfo srcPortal, PortalLink link, Camera camera) {
+    public static void prepareDestinationWorld(PortalInfo srcPortal, PortalLink link, Camera camera) {
         PortalInfo destPortal = link.getDestination();
         ResourceKey<Level> destDim = destPortal.getDimension();
 
-        if (tryFboRender(srcPortal, link, camera, destDim)) {
+        // tryFboRender renders the dest world into secondaryFbo (no composite).
+        // On success the FBO holds drawable geometry → mark it ready so phase 2
+        // composites it through the stencil. On failure (chunks not ready / no
+        // geometry yet) leave it false → phase 2 takes the fallback path.
+        try {
+            fboReadyThisFrame = tryFboRender(srcPortal, link, camera, destDim);
+        } finally {
+            // CRITICAL (phase-split fix): leave the GL stencil in a benign state
+            // before returning to vanilla GameRenderer.renderLevel, which is about
+            // to build + execute the MAIN frame's framegraph against a freshly
+            // CLEARED stencil buffer (all zeros).
+            //
+            // doFboRender's inner cleanup re-enables GL_STENCIL_TEST with
+            // glStencilFunc(EQUAL, 1) / glStencilMask(0x00) — correct in the OLD
+            // design, where the heavy render ran INSIDE phase 2 right after the
+            // mask was written (value 1) and immediately before the EQUAL(1)
+            // composite. In the NEW design phase 1 runs at renderLevel HEAD, so
+            // that EQUAL(1) would otherwise persist into the main world render and
+            // reject every fragment (stencil==0 everywhere) → the overworld would
+            // blank again, this time via the stencil. Reset it here so the main
+            // framegraph renders unmasked. Phase 2 re-enables + writes the mask
+            // itself from AFTER_TRANSLUCENT_TERRAIN.
+            org.lwjgl.opengl.GL11.glStencilMask(0xFF);
+            org.lwjgl.opengl.GL11.glStencilFunc(org.lwjgl.opengl.GL11.GL_ALWAYS, 0, 0xFF);
+            org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
+        }
+    }
+
+    /**
+     * PHASE 2 — put the destination view on screen through the stencil mask.
+     *
+     * <p>Runs from Fabric's {@code AFTER_TRANSLUCENT_TERRAIN} (via
+     * {@link StencilPortalRenderer}), INSIDE the main frame's framegraph, AFTER the
+     * portal stencil mask has been written. This is intentionally lightweight: a
+     * single textured-quad composite (or a small fallback mesh) — none of it nests a
+     * framegraph, so it is safe to issue mid-main-render.
+     *
+     * <ul>
+     *   <li>FBO ready (phase 1 drew the dest world) → composite the secondary FBO
+     *       through the stencil (EQUAL 1) onto the screen.</li>
+     *   <li>FBO not ready → fall back to colored blocks if remote chunk data exists,
+     *       else a solid background, so the portal is always visible even before
+     *       destination chunks arrive (e.g. immediately after a dimension change).
+     *       Without it, SectionCompilerMixin hides the purple swirl but nothing
+     *       replaces it.</li>
+     * </ul>
+     */
+    public static void compositeDestinationWorld(PortalInfo srcPortal, PortalLink link, Camera camera) {
+        if (fboReadyThisFrame) {
+            compositePortalFbo();
             return;
         }
+
+        PortalInfo destPortal = link.getDestination();
+        ResourceKey<Level> destDim = destPortal.getDimension();
 
         if (RemoteChunkManager.hasDimensionData(destDim)) {
             renderColoredBlocks(srcPortal, link, camera, destDim);
@@ -409,16 +561,52 @@ public class PortalContextSwitch {
 
         // Build frustum
         CameraRenderState mainCameraState =
-            mc.gameRenderer.getGameRenderState().levelRenderState.cameraRenderState;
+            mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
         Matrix4f viewMatrix = new Matrix4f();
         virtualCamera.getViewRotationMatrix(viewMatrix);
         Matrix4f projMatrix = new Matrix4f(mainCameraState.projectionMatrix);
         Frustum destFrustum = new Frustum(viewMatrix, projMatrix);
         destFrustum.prepare(destCameraPos.x, destCameraPos.y, destCameraPos.z);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setCullFrustum(destFrustum);
+        // Also CAPTURE the frustum: this makes LevelExtractor.extract() skip the
+        // per-frame applyFrustum() → SectionOcclusionGraph BFS (verified the
+        // freeze cause via thread dump: extract :130 → SectionOcclusionGraph
+        // .addSectionsInFrustum pegged the render thread on the sparse secondary
+        // level) and skip the async graph full-update. We supply visibleSections
+        // ourselves below, so vanilla's occlusion-graph cull is unnecessary here.
+        ((CameraInvokerMixin) virtualCamera).seamlessportals$setCapturedFrustum(destFrustum);
         ((CameraInvokerMixin) virtualCamera).seamlessportals$setInitialized(true);
 
         // ===== 3. Direct section compilation (sparse chunks, bypass occlusion graph) =====
+        // 26.2 render split: setLevel/dirty/extract moved off LevelRenderer onto
+        // the dimension's LevelExtractor. The section-compile loop + the level
+        // extract below route through it.
+        net.minecraft.client.renderer.extract.LevelExtractor destExtractor =
+            PortalWorldManager.getExtractor(destDim);
+
+        // CRITICAL (26.2): destExtractor.extract() populates the extractor's OWN
+        // (final) LevelRenderState, but the renderer's levelRenderState reference
+        // can DIVERGE from it — promoteToMain re-binds a renderer to the shared
+        // main state (PortalWorldManager.java:611). When they differ, render()
+        // reads the renderer's state while extract() wrote the extractor's, so
+        // entities, clouds, and particles (which all live in the render-state)
+        // silently vanish in the portal view — while terrain still renders because
+        // it draws from visibleSections on the renderer, not the render-state.
+        // Re-bind the renderer to the extractor's state so render() sees what
+        // extract() writes.
+        boolean seamlessStateWasMismatched = false;
+        if (destExtractor != null) {
+            LevelRenderState extractorState =
+                ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) destExtractor)
+                    .seamlessportals$getLevelRenderState();
+            LevelRenderState rendererState =
+                ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState();
+            if (rendererState != extractorState) {
+                seamlessStateWasMismatched = true;
+                ((LevelRendererAccessorMixin) destRenderer)
+                    .seamlessportals$setLevelRenderState(extractorState);
+            }
+        }
         LevelRenderState destLRS =
             ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState();
         net.minecraft.client.renderer.ViewArea viewArea =
@@ -431,7 +619,7 @@ public class PortalContextSwitch {
             viewArea.repositionCamera(cameraSectionPos);
             destLevel.getChunkSource().updateViewCenter(cameraSectionPos.x(), cameraSectionPos.z());
 
-            SectionRenderDispatcher dispatcher = destRenderer.getSectionRenderDispatcher();
+            SectionRenderDispatcher dispatcher = destRenderer.sectionRenderDispatcher();
             // CRITICAL: Tell the dispatcher where the camera is.
             // Vanilla calls this in cullTerrain() every frame (LevelRenderer.java:401).
             // Without it, the terrain shader doesn't know the camera position
@@ -442,6 +630,7 @@ public class PortalContextSwitch {
                 new net.minecraft.client.renderer.chunk.RenderRegionCache();
 
             visibleSections.clear();
+            prebuiltVisibleSections.clear();
             int compiled = 0;
             // PortalFrameSuppressor DISABLED:
             // User expects to see the destination obsidian frame through the
@@ -479,14 +668,20 @@ public class PortalContextSwitch {
             int camSecZ = cameraSectionPos.z();
             int scheduledAsync = 0;
             int skippedFar = 0;
-            // Per-frame cap on async-compile scheduling. Each
-            // rebuildSectionAsync has synchronous chunk-snapshot work
-            // (~1ms/section). Without a cap, post-teleport this loop
-            // schedules 4000+ compiles in one frame = 4+ seconds of
-            // frame stall. 128/frame keeps the worst case ~128ms, and
-            // remaining dirty sections get scheduled on subsequent
-            // frames + by the per-tick compile pump.
-            final int PORTAL_VIEW_COMPILE_BUDGET = 128;
+            int deferredCompiles = 0;
+            // Per-frame TIME budget on async-compile scheduling. Each
+            // compileAsync does a synchronous RenderRegionCache.createRegion
+            // chunk-snapshot (~1ms/section) ON THE RENDER THREAD. The old fixed
+            // count of 128/frame therefore stalled the render thread ~128ms per
+            // frame for the dozens of frames it took to drain a post-crossing
+            // backlog — the multi-second near-freeze + FPS collapse on teleport.
+            // A TIME budget caps the per-frame render-thread stall to a small
+            // fraction of a frame REGARDLESS of backlog size; remaining
+            // dirty/uncompiled sections roll onto the next frames and the
+            // per-tick advanceCompilePipelines pump, so the view fills in
+            // SMOOTHLY instead of lurching. (Count is still tracked for logging.)
+            final long PORTAL_VIEW_COMPILE_BUDGET_NS = 3_000_000L; // 3ms
+            final long compileSweepStartNs = System.nanoTime();
             // FRUSTUM CULL — full RD, only sections actually visible
             // through portal opening are added to visibleSections.
             // Without this filter, all ~78K loaded sections in the
@@ -501,6 +696,14 @@ public class PortalContextSwitch {
             // Compile scheduling still uses the small radius (8) — only
             // schedule compiles for sections close to the virtual
             // camera, since those will be the ones actually rendered.
+            // 26.2: the section dirty flag + async compile moved off
+            // RenderSection onto the dimension's LevelExtractor
+            // SectionUpdateTracker (D2). Query/clear dirty via the tracker;
+            // {@code rebuildSectionAsync(cache)} → {@code compileAsync(region)}.
+            net.minecraft.client.SectionUpdateTracker sut =
+                destExtractor != null ? destExtractor.sectionUpdateTracker : null;
+            java.util.Set<Long> schedSet =
+                portalCompileScheduled.computeIfAbsent(destDim, k -> new java.util.HashSet<>());
             for (SectionRenderDispatcher.RenderSection section : viewArea.sections) {
                 if (section == null) continue;
                 long sectionNode = section.getSectionNode();
@@ -510,18 +713,43 @@ public class PortalContextSwitch {
                 // Frustum cull: skip sections whose bounding box is
                 // outside the portal-view cone.
                 if (!destFrustum.isVisible(section.getBoundingBox())) continue;
-                if (section.isDirty()) {
+                net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
+                    sut != null ? sut.getDirtyState(sectionNode) : null;
+                boolean uncompiled = section.sectionMesh.get()
+                    == net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED;
+                // A compiled section clears its one-shot uncompiled-schedule guard.
+                if (!uncompiled) schedSet.remove(sectionNode);
+                // Schedule a compile if the section is dirty OR is UNCOMPILED and
+                // not already scheduled. The old dirty-only path left
+                // UNCOMPILED-but-not-dirty sections permanently blank — the "blank
+                // curtain below eye level" bug: a demoted renderer's return-portal
+                // camera looks at sections it never compiled (or that were recycled
+                // when the player explored away), and the fresh demote tracker marks
+                // nothing dirty, so they were never scheduled and drew nothing
+                // forever. compileAsync's createCompileTask cancels any in-flight
+                // task (SectionRenderDispatcher.java:313), so uncompiled scheduling
+                // is guarded by schedSet to fire exactly ONCE per section (else each
+                // frame would cancel+restart the compile and it would never finish).
+                boolean wantCompile = (ds != null && ds.isDirty())
+                    || (uncompiled && !schedSet.contains(sectionNode));
+                if (wantCompile) {
                     int dx = sx - camSecX;
                     int dz = sz - camSecZ;
                     if (dx * dx + dz * dz > COMPILE_SCHEDULE_RADIUS_SQ) {
                         skippedFar++;
-                    } else if (scheduledAsync < PORTAL_VIEW_COMPILE_BUDGET) {
-                        section.rebuildSectionAsync(cache);
-                        section.setNotDirty();
+                    } else if (System.nanoTime() - compileSweepStartNs < PORTAL_VIEW_COMPILE_BUDGET_NS) {
+                        section.compileAsync(cache.createRegion(destLevel, sectionNode));
+                        if (ds != null) ds.setNotDirty();
+                        if (uncompiled) schedSet.add(sectionNode);
                         scheduledAsync++;
+                    } else {
+                        // Budget spent this frame — leave this section dirty/
+                        // uncompiled so it is picked up next frame + by the pump.
+                        deferredCompiles++;
                     }
                 }
                 visibleSections.add(section);
+                prebuiltVisibleSections.add(section);
                 compiled++;
             }
             if (phase2SuccessCount == 0 && compiled > 0) {
@@ -531,34 +759,55 @@ public class PortalContextSwitch {
                     compiled, cameraSectionPos.x(), cameraSectionPos.z(),
                     scheduledAsync, skippedFar);
             }
-        }
-
-        // ===== 4. Extract level state into secondary renderer's own LevelRenderState =====
-        destRenderer.extractLevel(deltaTracker, virtualCamera, partialTick);
-
-        ChunkSectionsToRender destChunks = destLRS.chunkSectionsToRender;
-        if (destChunks == null || destChunks.maxIndicesRequired() == 0) {
-            if (phase2FailCount <= 5) {
+            // Diagnostic (temporary): per-FBO-frame compile-sweep cost. Logs only
+            // while the backlog is actively draining (compiles scheduled or
+            // deferred), bounded, so it captures the post-crossing fill timeline
+            // (how long the sweep takes per frame + how many frames it lasts)
+            // without steady-state spam.
+            long compileSweepMs = (System.nanoTime() - compileSweepStartNs) / 1_000_000L;
+            if ((scheduledAsync > 0 || deferredCompiles > 0) && portalHitchLogCount < 150) {
+                portalHitchLogCount++;
                 SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS] No compiled chunks for {} (fail #{})", destDim.identifier(), phase2FailCount + 1);
+                    "[SEAMLESS HITCH] FBO compile sweep dim={} {}ms (scheduled={} deferred={} skippedFar={} visible={})",
+                    destDim.identifier(), compileSweepMs,
+                    scheduledAsync, deferredCompiles, skippedFar, compiled);
             }
-            phase2FailCount++;
-            return false;
         }
 
-        // Diagnostic: count draw groups per layer to verify terrain will actually render
-        if (phase2SuccessCount <= 5) {
-            int totalDraws = 0;
-            for (var layerEntry : destChunks.drawGroupsPerLayer().values()) {
-                for (var drawList : layerEntry.values()) {
-                    totalDraws += drawList.size();
-                }
-            }
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS DEBUG] destChunks: maxIndices={} totalDraws={} textureView={}",
-                destChunks.maxIndicesRequired(), totalDraws,
-                destChunks.textureView() != null ? "valid" : "NULL");
-        }
+        // ===== 4. Extract + terrain-cull MOVED into the switched-world block =====
+        // 26.2 + Sodium fidelity fix (replaces the removed 26.1.2
+        // {@code destRenderer.update(virtualCamera)}):
+        //
+        // In 26.1.2 the cull/Sodium-activation entry point was
+        // {@code LevelRenderer.update(Camera)} → {@code cullTerrain()}, and the
+        // pre-port code called it INSIDE {@code withSwitchedWorld} (i.e. while
+        // {@code mc.levelRenderer == destRenderer}) right before {@code renderLevel}.
+        //
+        // In 26.2 that entry point moved to {@code LevelExtractor.extract(...)}:
+        //   * Vanilla: {@code extract(...)} runs {@code applyFrustum(cullFrustum)}
+        //     which CLEARS + repopulates {@code visibleSections} from the
+        //     SectionOcclusionGraph (BFS graph that lags / never settles for a
+        //     sparse, just-fed secondary level). That clobbers the manual
+        //     frustum-cull list the section loop above built — leaving
+        //     {@code prepareChunkRenders} nothing to draw ("No compiled chunks").
+        //   * Sodium 0.9.0: its {@code LevelExtractorMixin.cullTerrain} @Inject
+        //     (which calls {@code SodiumWorldRenderer.setupTerrain(...)}) resolves
+        //     the SodiumWorldRenderer via {@code Minecraft.getInstance().levelRenderer}
+        //     (LevelExtractorMixin.checkRenderer — verified in the 26.2 jar). So
+        //     {@code extract(...)} only drives the CORRECT (dest) renderer's Sodium
+        //     chunk graph when {@code mc.levelRenderer == destRenderer}. Running it
+        //     outside the switch drove the MAIN renderer's SWR with dest data
+        //     (→ empty dest graph, and the CullTask-on-terminated-pool crash).
+        //
+        // Therefore {@code extract(...)} + the authoritative {@code visibleSections}
+        // re-population + the {@code prepareChunkRenders} bail now all run inside the
+        // switched-world block below, mirroring exactly where {@code update()} ran.
+        //
+        // destViewMatrix is the virtual camera's view-rotation matrix; computed here
+        // because the inner-clip setup + the render(...) call (both inside the
+        // switch lambda) capture it as an effectively-final local.
+        final Matrix4f destViewMatrix = new Matrix4f();
+        virtualCamera.getViewRotationMatrix(destViewMatrix);
 
         // ===== 5. Prepare secondary FBO (match IP's SecondaryFrameBuffer.prepare()) =====
         prepareSecondaryFbo();
@@ -645,11 +894,18 @@ public class PortalContextSwitch {
         // Pre-capture for the lambda's nested finally (Globals UBO restore
         // needs source-side game time + camera position; both come from
         // mc.level / mainCamera before the swap).
-        final Matrix4f destViewMatrix = new Matrix4f();
-        virtualCamera.getViewRotationMatrix(destViewMatrix);
+        // (destViewMatrix was computed earlier at the prepareChunkRenders step.)
         final Vec3 savedCameraPos = mainCamera.position();
         final long savedLevelGameTime = mc.level.getGameTime();
         final boolean obliqueAppliedFinal = obliqueApplied;
+
+        // Result channel from inside the switch lambda: set true once the
+        // dest world is actually drawn into the FBO. Stays false if the
+        // terrain cull produced no geometry yet (async meshes still
+        // compiling) → caller falls back to the colored-block/background
+        // render and retries next frame. A 1-element array because the
+        // lambda can't reassign a captured local.
+        final boolean[] fboRendered = { false };
 
         isRenderingPortal = true;
         try {
@@ -657,13 +913,91 @@ public class PortalContextSwitch {
                 destLevel, destRenderer, secondaryFbo, virtualCamera,
                 dimHelper.getLightmap(),
                 () -> {
+                    // ===== 4a. Extract + terrain cull (now INSIDE the switch) =====
+                    // This is the 26.2 replacement for 26.1.2's
+                    // {@code destRenderer.update(virtualCamera)}: it must run while
+                    // {@code mc.levelRenderer == destRenderer} (true here) so that:
+                    //   * Sodium's {@code LevelExtractorMixin.cullTerrain} @Inject
+                    //     (fired from inside {@code extract(...)}) resolves the
+                    //     SodiumWorldRenderer via {@code mc.levelRenderer} and drives
+                    //     {@code setupTerrain} on the DEST renderer's chunk graph —
+                    //     not the main renderer's (which caused the empty graph + the
+                    //     CullTask-on-terminated-pool crash).
+                    //   * vanilla {@code extract(...)}'s {@code applyFrustum} runs here,
+                    //     then we immediately re-populate {@code visibleSections} with
+                    //     the manual portal-view frustum cull so it is authoritative
+                    //     for the {@code render(...)} call below (extract's
+                    //     occlusion-graph result is sparse/lagging for a just-fed
+                    //     secondary level).
+                    if (destExtractor != null) {
+                        destExtractor.extract(deltaTracker, virtualCamera, partialTick);
+                    }
+                    // Diagnostic (gated, temporary): at render time mc.particleEngine
+                    // is the dest engine — confirm it holds particles to draw and
+                    // that the skip-gate is open.
+                    if (phase2SuccessCount <= 3) {
+                        SeamlessPortalsConstants.LOGGER.info(
+                            "[SEAMLESS PARTICLE] render dim={} destEngine=[{}] destParticlesActive={}",
+                            destDim.identifier(), mc.particleEngine.countParticles(),
+                            destParticlesActive);
+                    }
+                    // Re-assert the portal-view visible-section set that extract(...)
+                    // just cleared (vanilla applyFrustum) — direct frustum cull over
+                    // the dest ViewArea, same technique as the section loop above but
+                    // population-only (compiles were already scheduled there).
+                    populateVisibleSectionsByFrustum(
+                        destRenderer, viewArea, destFrustum, destLevel);
+
+                    // 26.2: ChunkSectionsToRender is produced by
+                    // prepareChunkRenders(Matrix4fc) (render(...) calls it internally).
+                    // Pre-compute it here — now that visibleSections is authoritative —
+                    // for the maxIndices==0 bail + diagnostics. Under Sodium this still
+                    // reflects vanilla's visibleSections (Sodium's draw goes through its
+                    // own render(...) wrap), so it remains a valid "is there geometry?"
+                    // probe.
+                    ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix);
+                    // 26.2 FIX — do NOT bail when destChunks is empty.
+                    // The section compile→upload pipeline lives INSIDE
+                    // LevelRenderer.render(): prepareChunkRenders (reads uploaded,
+                    // :211/:535) → compileSections (:255/:608) →
+                    // sectionRenderDispatcher.uploadTerrainBuffersToGpu() (:262).
+                    // Returning here skipped render() entirely, so the secondary
+                    // renderer's meshes were scheduled (compileAsync) but NEVER
+                    // uploaded → getRenderSectionSlice null → prepareChunkRenders
+                    // perpetually empty ("constant thin sliver that never fills").
+                    // Let render() run every frame (as vanilla does); it performs the
+                    // compile+upload and the FBO fills over the next frames. This
+                    // standalone destChunks probe is never null (prepareChunkRenders
+                    // always returns a fresh record, LevelRenderer.java:605); it stays
+                    // only for the diagnostics + Sodium re-point below.
+                    if (destChunks.maxIndicesRequired() == 0 && phase2FailCount <= 8) {
+                        SeamlessPortalsConstants.LOGGER.info(
+                            "[SEAMLESS] dest empty this frame for {} (#{}) — running render() to compile+upload",
+                            destDim.identifier(), phase2FailCount + 1);
+                        phase2FailCount++;
+                    }
+
+                    // Diagnostic: count draw groups per layer to verify terrain will render.
+                    if (phase2SuccessCount <= 5) {
+                        int totalDraws = 0;
+                        for (var layerEntry : destChunks.drawGroupsPerLayer().values()) {
+                            for (var drawList : layerEntry.values()) {
+                                totalDraws += drawList.size();
+                            }
+                        }
+                        SeamlessPortalsConstants.LOGGER.info(
+                            "[SEAMLESS DEBUG] destChunks: maxIndices={} totalDraws={} textureView={}",
+                            destChunks.maxIndicesRequired(), totalDraws,
+                            destChunks.textureView() != null ? "valid" : "NULL");
+                    }
+
                     if (phase2SuccessCount <= 3) {
                         int mainFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
                         SeamlessPortalsConstants.LOGGER.info(
                             "[SEAMLESS DEBUG] Context switch: level={} renderer={} mainRT={}x{} glFbo={}",
                             mc.level.dimension().identifier(),
                             mc.levelRenderer == destRenderer ? "dest" : "WRONG",
-                            mc.getMainRenderTarget().width, mc.getMainRenderTarget().height,
+                            mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height,
                             mainFbo);
                         SeamlessPortalsConstants.LOGGER.info(
                             "[SEAMLESS DEBUG] renderLevel fogColor=({},{},{},{}) destChunks.maxIndices={} skyRender=true cam=({},{},{})",
@@ -700,7 +1034,24 @@ public class PortalContextSwitch {
                     // still capture/restore so future work (entity cross-
                     // portal clip) doesn't surprise this code path.
                     FrontClipping.Snapshot outerSnap = FrontClipping.capture();
-                    FrontClipping.setupInnerClipping(destPortal, destCameraPos, destViewMatrix);
+                    // ===== CURTAIN FIX (2026-06-27): inner clip DISABLED =====
+                    // PROVEN from DIAG-STEADY: the inner clip plane sits at the dest
+                    // PORTAL (planeW = distance from virtual camera to dest portal).
+                    // This mod uses a 1:1 MIRROR camera (destCameraPos = player pos
+                    // transformed through the portal), NOT IP's at-the-portal camera.
+                    // So as the player moves away from the source portal, the virtual
+                    // camera moves away from the dest portal and planeW grows
+                    // (-0.7 close → -6.8 far in the logs) — the clip then removes the
+                    // ENTIRE near half of the dest view (the nether floor in the lower
+                    // screen), leaving only far terrain up top: the "below blank /
+                    // above terrain, follows eye-level" curtain, and "solid blue when
+                    // far" once planeW swallows everything. The clip's original job
+                    // (hide dest-side frame/floor in front of the portal) is already
+                    // done by the STENCIL MASK — it confines the composite to the
+                    // SOURCE opening, and the mirrored dest frame lands behind the
+                    // source frame. So disabling is correct for the mirror approach,
+                    // not just a workaround. DIAG-STEADY will now log clip=(0,0,0,1).
+                    FrontClipping.disable();
                     org.joml.Matrix4fStack mvStack = RenderSystem.getModelViewStack();
                     mvStack.pushMatrix();
                     mvStack.identity();
@@ -723,62 +1074,44 @@ public class PortalContextSwitch {
                                 String.format("%.4f", destCameraState.projectionMatrix.m32()));
                         }
                         try {
-                            mc.gameRenderer.getGlobalSettingsUniform().update(
-                                mc.getMainRenderTarget().width,
-                                mc.getMainRenderTarget().height,
-                                mc.gameRenderer.getGameRenderState().optionsRenderState.glintStrength,
+                            ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
+                                mc.gameRenderer.mainRenderTarget().width,
+                                mc.gameRenderer.mainRenderTarget().height,
+                                mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
                                 destLevel.getGameTime(),
                                 deltaTracker,
-                                mc.gameRenderer.getGameRenderState().optionsRenderState.menuBackgroundBlurriness,
+                                mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                                 destCameraPos,
                                 false
                             );
 
-                            // Critical: invoke {@code destRenderer.update(camera)}
-                            // for the portal-view camera. {@code update()}
-                            // calls {@code cullTerrain()} which is the entry
-                            // point Sodium @Overwrites to drive its chunk
-                            // graph + build pipeline.
-                            //
-                            // In MC 26.1.2, {@code renderLevel} no longer
-                            // calls {@code update()} or {@code cullTerrain()}
-                            // — those are called from {@code GameRenderer}
-                            // separately, only for {@code mc.levelRenderer}.
-                            // Our portal render path skips {@code update}
-                            // entirely, so Sodium's setupTerrain never fires
-                            // for the secondary renderer, leaving its
-                            // RenderSectionManager empty (0 visible chunks,
-                            // 0 geometry uploaded).
-                            //
-                            // Calling {@code destRenderer.update(virtualCamera)}
-                            // here is the IP-equivalent flow — it routes
-                            // through vanilla's natural code path which
-                            // Sodium has already patched to do all the right
-                            // things (no parameter mismatches, no managed-
-                            // code wrap to worry about, no destChunks
-                            // matrix re-pointing).
-                            destRenderer.update(virtualCamera);
+                            // 26.2 + Sodium: the 26.1.2 {@code destRenderer.update(virtualCamera)}
+                            // (which drove cullTerrain → Sodium's RenderSectionManager
+                            // setup) is replaced by {@code destExtractor.extract(...)}
+                            // run at the TOP of this lambda (step 4a). Because that
+                            // extract runs while {@code mc.levelRenderer == destRenderer},
+                            // Sodium's {@code LevelExtractorMixin.cullTerrain} drives
+                            // {@code setupTerrain} on the DEST renderer's SodiumWorldRenderer
+                            // — re-establishing exactly what update() did.
 
                             // SodiumFogOverride.activate: tell Sodium's
                             // GameRendererMixin to serve dest-dim fog
                             // instead of its captured main-render fog
                             // for the duration of this renderLevel call.
-                            // CRITICAL Sodium fix: re-point destChunks's
-                            // Sodium-mixin fields (renderer, matrices,
-                            // camera offset) to portal-view values.
-                            // destChunks was created during
-                            // destRenderer.extractLevel() with whatever
-                            // matrices were on the LevelRenderer mixin
-                            // field at that moment — typically stale main-
-                            // render matrices, because
-                            // {@code sodium$setMatrices} only fires when
-                            // renderLevel itself runs (which hasn't yet at
-                            // extract-time). Without this re-pointing,
-                            // {@code drawChunkLayer} on each chunk-section
-                            // layer would draw at main-render's view/camera,
-                            // not portal-view's — producing visible chunks
-                            // in the graph but invisible-to-FBO renders
-                            // (fog color only).
+                            //
+                            // SEAMLESS-26.2-TODO (Sodium draw matrices): the call below
+                            // re-points the Sodium mixin fields on the PRE-COMPUTED
+                            // destChunks. The actual draw issued by {@code render(...)}
+                            // uses a DIFFERENT ChunkSectionsToRender that render(...)
+                            // builds internally via prepareChunkRenders — and Sodium's
+                            // own {@code LevelRendererMixin.getRenderState} @WrapOperation
+                            // already points THAT one at the dest SWR with the portal-view
+                            // matrices (from the RenderSystem projection we set above) and
+                            // the dest camera pos (from destCameraState). So this explicit
+                            // re-point is now effectively redundant/harmless; kept only as
+                            // a belt-and-suspenders no-op for older Sodium builds whose
+                            // wrap path differs. Drop once the 0.9.0 draw path is
+                            // visually confirmed.
                             com.warwa.seamlessportals.compat.SodiumBridge
                                 .updateChunkSectionsRenderer(
                                     destChunks, destRenderer,
@@ -794,7 +1127,11 @@ public class PortalContextSwitch {
                                     .getVisibleChunkCount(destRenderer);
                             }
                             try {
-                                destRenderer.renderLevel(
+                                // 26.2: LevelRenderer.renderLevel(...) → render(...)
+                                // with the new 8-arg signature (no trailing
+                                // ChunkSectionsToRender — render(...) produces its own
+                                // internally via prepareChunkRenders(modelView)) (D5).
+                                destRenderer.render(
                                     GraphicsResourceAllocator.UNPOOLED,
                                     deltaTracker,
                                     false,
@@ -802,9 +1139,11 @@ public class PortalContextSwitch {
                                     destViewMatrix,
                                     destFogBuffer,
                                     destFogData.color,
-                                    true,
-                                    destChunks
+                                    true
                                 );
+                                // The dest world was drawn into the FBO — the
+                                // caller may composite it through the stencil.
+                                fboRendered[0] = true;
                             } finally {
                                 com.warwa.seamlessportals.render.SodiumFogOverride.clear();
                             }
@@ -821,13 +1160,13 @@ public class PortalContextSwitch {
                             // Restore Globals UBO with the source camera while mc.mainRT is
                             // still the secondary FBO (sizes match — secondaryFbo was sized
                             // to main FBO at prepare time).
-                            mc.gameRenderer.getGlobalSettingsUniform().update(
-                                mc.getMainRenderTarget().width,
-                                mc.getMainRenderTarget().height,
-                                mc.gameRenderer.getGameRenderState().optionsRenderState.glintStrength,
+                            ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
+                                mc.gameRenderer.mainRenderTarget().width,
+                                mc.gameRenderer.mainRenderTarget().height,
+                                mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
                                 savedLevelGameTime,
                                 deltaTracker,
-                                mc.gameRenderer.getGameRenderState().optionsRenderState.menuBackgroundBlurriness,
+                                mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                                 savedCameraPos,
                                 false
                             );
@@ -884,7 +1223,7 @@ public class PortalContextSwitch {
                     FogRenderer fr = ((GameRendererAccessorMixin) mc.gameRenderer)
                         .seamlessportals$getFogRenderer();
                     fr.setupFog(
-                        mc.gameRenderer.getMainCamera(),
+                        mc.gameRenderer.mainCamera(),
                         mc.options.getEffectiveRenderDistance(),
                         deltaTracker,
                         0f,
@@ -897,21 +1236,37 @@ public class PortalContextSwitch {
             }
         }
 
+        // If the terrain cull produced no drawable geometry this frame (async
+        // meshes still compiling), the FBO holds only the cleared fog color —
+        // do NOT composite it (that would flash fog-only through the portal).
+        // Return false so the caller falls back to the colored-block/background
+        // render and we retry the FBO path next frame.
+        if (!fboRendered[0]) {
+            return false;
+        }
+
         // Debug: verify state after restore
         if (phase2SuccessCount <= 3) {
             int postFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
             boolean stencilEnabled = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
-            RenderTarget postRT = mc.getMainRenderTarget();
+            RenderTarget postRT = mc.gameRenderer.mainRenderTarget();
             SeamlessPortalsConstants.LOGGER.info(
                 "[SEAMLESS DEBUG] Post-restore: glFbo={} mainRT={}x{} level={} stencil={}",
                 postFbo, postRT.width, postRT.height,
                 mc.level.dimension().identifier(), stencilEnabled);
         }
 
-        // ===== 12. Composite secondary FBO onto main =====
-        // Draw portal geometry textured with the FBO content.
-        // The portal shape clips to the portal area. Stencil EQUAL(1) also active.
-        compositePortalFbo();
+        // ===== 12. (composite deferred to phase 2) =====
+        // The secondary FBO now holds the destination world. The composite onto
+        // the screen happens in PHASE 2 (compositeDestinationWorld →
+        // compositePortalFbo), from AFTER_TRANSLUCENT_TERRAIN, AFTER the stencil
+        // mask is written. It is NOT done here because:
+        //   * this method runs at renderLevel HEAD (phase 1), before the main
+        //     framegraph and before the portal stencil mask exists; and
+        //   * the composite must clip to the portal shape via the stencil, which
+        //     is only set up in phase 2.
+        // Returning true marks the FBO ready; prepareDestinationWorld records that
+        // in fboReadyThisFrame so phase 2 composites it.
 
         // No fog restore needed — we never touched the global fogRenderer buffer.
 
@@ -927,15 +1282,60 @@ public class PortalContextSwitch {
     }
 
     /**
+     * Re-populate a renderer's {@code visibleSections} list with the portal-view
+     * frustum cull, replacing whatever {@code LevelExtractor.extract(...)} just
+     * left there.
+     *
+     * <p>Background (26.2): {@code extract(...)} ends its frame work by calling
+     * {@code applyFrustum(camera.getCullFrustum())}, which {@code clearVisibleSections()}
+     * then refills {@code visibleSections} from the {@link net.minecraft.client.renderer.SectionOcclusionGraph}.
+     * That occlusion graph is a BFS visibility graph seeded from the camera
+     * section and updated asynchronously; for a freshly-fed, sparse secondary
+     * portal-view level it is routinely empty or several frames stale, so the
+     * refilled {@code visibleSections} has little/nothing in it and
+     * {@code prepareChunkRenders} returns {@code maxIndicesRequired()==0}
+     * ("No compiled chunks").
+     *
+     * <p>This is the same direct frustum cull the doFboRender section loop uses
+     * (the reliable population mechanism for sparse levels), but population-only:
+     * the dirty-section async compile scheduling already happened in that loop.
+     * It mirrors what vanilla {@code cullTerrain}/26.1.2 {@code update()} did —
+     * clear + populate {@code visibleSections} from the frustum, every frame,
+     * immediately before the draw consumes it.
+     *
+     * <p>Must be called AFTER {@code extract(...)} (so it isn't clobbered) and
+     * BEFORE {@code render(...)} (whose internal {@code prepareChunkRenders}
+     * reads this list).
+     */
+    private static void populateVisibleSectionsByFrustum(
+            LevelRenderer renderer,
+            net.minecraft.client.renderer.ViewArea viewArea,
+            Frustum frustum,
+            ClientLevel level) {
+        if (viewArea == null) return;
+        it.unimi.dsi.fastutil.objects.ObjectArrayList<SectionRenderDispatcher.RenderSection> visibleSections =
+            ((LevelRendererAccessorMixin) renderer).seamlessportals$getVisibleSections();
+        visibleSections.clear();
+        // Reuse the frustum-cull result the doFboRender section sweep already
+        // computed THIS frame ({@link #prebuiltVisibleSections}) instead of a
+        // second O(all viewArea.sections) scan. The sweep used the identical
+        // predicate (hasChunk + destFrustum.isVisible) and destFrustum is fixed
+        // for the whole FBO render, so the result is identical — it just halves
+        // the per-frame portal-view iteration cost. (viewArea/frustum/level are
+        // retained in the signature for callers and the gate above.)
+        visibleSections.addAll(prebuiltVisibleSections);
+    }
+
+    /**
      * Prepare secondary FBO matching main FBO size.
      * Matches IP's SecondaryFrameBuffer.prepare().
      */
     private static void prepareSecondaryFbo() {
-        RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         int w = main.width;
         int h = main.height;
         if (secondaryFbo == null) {
-            secondaryFbo = new TextureTarget("seamless_portal", w, h, true);
+            secondaryFbo = new TextureTarget("seamless_portal", w, h, true, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM);
             SeamlessPortalsConstants.LOGGER.info("[SEAMLESS] Created secondary FBO {}x{}", w, h);
         } else if (secondaryFbo.width != w || secondaryFbo.height != h) {
             secondaryFbo.resize(w, h);
@@ -1074,8 +1474,8 @@ public class PortalContextSwitch {
         if (mainState == null || mainState.entityRenderState == null) return;
 
         Minecraft mc = Minecraft.getInstance();
-        boolean bobViewEnabled = mc.gameRenderer.getGameRenderState().optionsRenderState.bobView;
-        double damageTiltStrength = mc.gameRenderer.getGameRenderState().optionsRenderState.damageTiltStrength;
+        boolean bobViewEnabled = mc.gameRenderer.gameRenderState().optionsRenderState.bobView;
+        double damageTiltStrength = mc.gameRenderer.gameRenderState().optionsRenderState.damageTiltStrength;
 
         Matrix4f bob = new Matrix4f();
 
@@ -1157,14 +1557,15 @@ public class PortalContextSwitch {
      * Draws a full-screen triangle (ENTITY_OUTLINE_BLIT pipeline).
      * Stencil EQUAL(1) from StencilPortalRenderer clips to portal area.
      *
-     * GlTextureViewMixin ensures the render pass FBO has DEPTH_STENCIL_ATTACHMENT
-     * so stencil values from earlier writes are accessible.
+     * RenderTargetMixin (on {@code FrameBufferCache.createFbo}) ensures the
+     * render pass FBO has DEPTH_STENCIL_ATTACHMENT so stencil values from
+     * earlier writes are accessible.
      */
     private static void compositePortalFbo() {
         if (secondaryFbo == null || secondaryFbo.getColorTextureView() == null) return;
 
         Minecraft mc = Minecraft.getInstance();
-        com.mojang.blaze3d.pipeline.RenderTarget mainRT = mc.getMainRenderTarget();
+        com.mojang.blaze3d.pipeline.RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();
 
         // Re-enable stencil test (renderLevel may have changed GL state)
         GL11.glEnable(GL11.GL_STENCIL_TEST);
@@ -1174,6 +1575,13 @@ public class PortalContextSwitch {
         // The FBO's clear color has alpha=0 (hardcoded in MC). Without disabling blend,
         // the main world's content (clouds, sky) shows through.
         GL11.glDisable(GL11.GL_BLEND);
+        // CURTAIN FIX: raw-GL backstop — disable depth test for the composite so it is
+        // never GEQUAL-gated by the leftover portal-plane depth in the opening (DIAG-PRE
+        // proved that gate produced the blue curtain at the top of the opening). The
+        // pipeline's Optional.empty() depth state already calls _disableDepthTest in
+        // applyPipelineState, but this also covers the case where that apply is skipped
+        // (GlCommandEncoder caches lastPipeline and short-circuits when unchanged).
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
 
         if (phase2SuccessCount <= 3) {
             boolean stencilOn = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
@@ -1189,36 +1597,44 @@ public class PortalContextSwitch {
                 secondaryFbo.getDepthTextureView() != null ? "valid" : "NULL");
         }
 
-        // Create render pass on main RT with depth-stencil (5-arg version).
-        // GlTextureViewMixin ensures the FBO created by getFbo() has DEPTH_STENCIL_ATTACHMENT.
-        // Stencil values written by StencilPortalRenderer are on the same depth-stencil texture.
+        // Create render pass on main RT with depth-stencil — use the 6-arg overload
+        // with an EXPLICIT full renderArea = (0,0, mainRT.width, mainRT.height).
+        // CURTAIN FIX: the 5-arg overload auto-derives renderArea from
+        // colorView.getWidth/Height(0) (CommandEncoder:62), which the GL backend
+        // enforces as the SCISSOR for every draw (GlCommandEncoder:153,192). At
+        // ultrawide the composite was being clipped to the bottom half of the screen
+        // (the source overworld sky showing in the upper portal opening). Forcing the
+        // renderArea to the RT's real field dimensions makes the full-screen composite
+        // triangle cover the whole screen regardless of what the color view reports.
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "portal_composite",
                 mainRT.getColorTextureView(),
-                OptionalInt.empty(),
+                Optional.empty(),
                 mainRT.getDepthTextureView(),
-                OptionalDouble.empty()
+                OptionalDouble.empty(),
+                new com.mojang.blaze3d.systems.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
         )) {
-            if (phase2SuccessCount <= 3) {
-                int compositeFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS DEBUG] Composite RenderPass bound FBO={}", compositeFbo);
-            }
-            // CRITICAL: Use TRACY_BLIT (no blend), NOT ENTITY_OUTLINE_BLIT (alpha blend).
-            // renderLevel() clears the FBO with alpha=0.0 (hardcoded in MC 26.1.2 line 511).
-            // Sky and fog have alpha=0. ENTITY_OUTLINE_BLIT uses SRC_ALPHA blending which
-            // multiplies by alpha=0 → invisible. TRACY_BLIT has no blend → direct copy.
-            pass.setPipeline(RenderPipelines.TRACY_BLIT);
+            // CURTAIN FIX (2026-06-27): use our TRACY_BLIT clone with an EXPLICIT
+            // ALWAYS_PASS depth state instead of vanilla TRACY_BLIT. Vanilla
+            // TRACY_BLIT has depthStencilState=empty; driven through createRenderPass
+            // WITH a depth attachment (needed for the stencil) the GL backend applies
+            // the reversed-Z GEQUAL default, which depth-gates the composite — the
+            // upper portal opening (portal-plane depth ~0.85 near) FAILS GEQUAL vs the
+            // ~0.5 full-screen-triangle depth, so the source sky showed through (the
+            // blue curtain, proven by DIAG-PRE). ALWAYS_PASS writes the full opening.
+            // (Still no blend — pipeline has no blend state and we glDisable(BLEND).)
+            pass.setPipeline(PortalRenderTypes.portalCompositeBlit());
             RenderSystem.bindDefaultUniforms(pass);
             // Bind our FBO texture via the render pass — this is the correct way.
             // Raw GL glBindTexture does NOT affect render pass sampler bindings.
             pass.bindTexture("InSampler", secondaryFbo.getColorTextureView(),
                 RenderSystem.getSamplerCache().getClampToEdge(
                     com.mojang.blaze3d.textures.FilterMode.NEAREST));
-            pass.draw(0, 3); // Full-screen triangle
+            pass.draw(3, 1, 0, 0); // Full-screen triangle (vertexCount=3, instanceCount=1)
         }
-        // Restore blend state for main world rendering
+        // Restore blend + depth state for the rest of the main-frame rendering.
         GL11.glEnable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
     }
 
     /**
@@ -1278,7 +1694,7 @@ public class PortalContextSwitch {
         }
 
         ByteBufferBuilder byteBuf = new ByteBufferBuilder(262144);
-        BufferBuilder builder = new BufferBuilder(byteBuf, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        BufferBuilder builder = new BufferBuilder(byteBuf, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
         for (int d = -4; d <= 32; d++) {
             for (int w = -20; w < srcPortal.getWidth() + 20; w++) {
@@ -1316,7 +1732,7 @@ public class PortalContextSwitch {
 
         MeshData mesh = builder.build();
         if (mesh != null) {
-            PortalRenderTypes.portalNoDepthColor().draw(mesh);
+            PortalRenderTypes.drawMesh(PortalRenderTypes.portalNoDepthColor(), mesh);
         } else {
             byteBuf.close();
         }

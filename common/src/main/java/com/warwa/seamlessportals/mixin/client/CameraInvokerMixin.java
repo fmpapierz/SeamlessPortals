@@ -34,6 +34,18 @@ public interface CameraInvokerMixin {
     @Accessor("cullFrustum")
     void seamlessportals$setCullFrustum(Frustum frustum);
 
+    // Camera.capturedFrustum — private @Nullable Frustum, Camera.java:66.
+    // Setting it makes Camera.getCapturedFrustum() non-null, which (verified
+    // LevelExtractor.extract :125) SKIPS the per-frame applyFrustum() →
+    // SectionOcclusionGraph BFS (the freeze pinned by the thread dump), and
+    // (Camera :121 → SectionOcclusionGraph.update :148) skips the async graph
+    // full-update too. cullFrustum is derived from it (Camera :197). The portal
+    // view supplies its own frustum + its own visibleSections, so vanilla's
+    // occlusion-graph cull is both unnecessary and pathologically expensive on
+    // the sparse secondary level — this captures our frustum to bypass it.
+    @Accessor("capturedFrustum")
+    void seamlessportals$setCapturedFrustum(Frustum frustum);
+
     // Camera.initialized — private boolean, line 49
     @Accessor("initialized")
     void seamlessportals$setInitialized(boolean initialized);

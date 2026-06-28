@@ -88,6 +88,15 @@ public abstract class QuadParticleGroupMixin {
             Frustum frustum, double x, double y, double z) {
         // Vanilla cull first (cheap; frustum check is fast).
         if (!frustum.pointInFrustum(x, y, z)) return false;
+        // During the DEST portal render the camera + particles are the
+        // destination dimension's own (per-dest engine extract). The
+        // source-dim portal clip is meaningless there — these particles are
+        // INSIDE the portal view, already bounded by the stencil mask — and
+        // applying it (source-dim portals vs dest-dim positions/camera) would
+        // wrongly drop them. So render all in-frustum dest particles.
+        if (com.warwa.seamlessportals.render.PortalContextSwitch.isRenderingPortal) {
+            return true;
+        }
         // Additional cull: particle behind any active portal from camera.
         // No-op when no portals are present in the player's current dim.
         if (seamlessportals$currentCamera != null

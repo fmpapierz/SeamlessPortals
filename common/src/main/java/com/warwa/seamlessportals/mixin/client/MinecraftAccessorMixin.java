@@ -1,9 +1,8 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.client.renderer.RenderBuffers;
-import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.gen.Accessor;
@@ -38,10 +37,18 @@ public interface MinecraftAccessorMixin {
     @Accessor("levelRenderer")
     LevelRenderer seamlessportals$getLevelRenderer();
 
-    @Accessor("renderBuffers")
-    RenderBuffers seamlessportals$getRenderBuffers();
-
-    @Accessor("renderBuffers")
+    /**
+     * {@code private final ParticleEngine particleEngine} — swapped to the
+     * destination dimension's OWN {@link ParticleEngine} per portal-render
+     * frame (and per cached-particle tick) so the dest world's ambient
+     * particles spawn into / extract from a separate engine, with no risk of
+     * corrupting the source world's shared particle-group render state.
+     * {@code @Mutable} drops {@code final} so the setter can rebind it.
+     */
+    @Accessor("particleEngine")
     @Mutable
-    void seamlessportals$setRenderBuffers(RenderBuffers renderBuffers);
+    void seamlessportals$setParticleEngine(ParticleEngine particleEngine);
+
+    @Accessor("particleEngine")
+    ParticleEngine seamlessportals$getParticleEngine();
 }

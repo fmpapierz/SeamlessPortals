@@ -21,6 +21,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * own FBO but doesn't cover command encoder FBOs.
  *
  * This mixin makes the command encoder consistent with GlConstMixin's depth format.
+ *
+ * SEAMLESS-26.2-TODO: this mixin is RETAINED FOR HISTORY ONLY and is no longer
+ * registered in {@code seamlessportals-common.mixins.json}. Its target
+ * {@code GlTextureView.createFbo(DirectStateAccess, int)} was REMOVED in 26.2 —
+ * FBO creation was unified into {@code FrameBufferCache.createFbo(CacheKey,
+ * DirectStateAccess, List, FrameBufferAttachment)}. In 26.2 the command-encoder
+ * render-pass path that this mixin used to cover ALSO routes through that single
+ * method: {@code GlCommandEncoder.createRenderPass(...)} obtains its FBO via
+ * {@code frameBufferCache().getFbo(...)} → {@code FrameBufferCache.createFbo}
+ * (GlCommandEncoder:145-149), and {@code clearColorAndDepthTextures(...)} does
+ * the same (GlCommandEncoder:209-211). The only remaining non-cache depth
+ * attach is the transient {@code clearDepthTexture(...)} depth clear
+ * (GlCommandEncoder:242), which detaches immediately and needs no stencil.
+ * Therefore the depth→depth-stencil reattach is now fully provided for BOTH the
+ * game FBO and the command-encoder render-pass FBO by {@link
+ * com.warwa.seamlessportals.mixin.client.stencil.RenderTargetMixin} (re-pointed
+ * at {@code FrameBufferCache.createFbo}). No functionality is dropped.
  */
 @Mixin(targets = "com.mojang.blaze3d.opengl.GlTextureView")
 public class GlTextureViewMixin {

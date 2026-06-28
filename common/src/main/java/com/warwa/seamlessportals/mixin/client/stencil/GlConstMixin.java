@@ -1,7 +1,7 @@
 package com.warwa.seamlessportals.mixin.client.stencil;
 
 import com.mojang.blaze3d.opengl.GlConst;
-import com.mojang.blaze3d.textures.TextureFormat;
+import com.mojang.blaze3d.GpuFormat;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -31,8 +31,8 @@ public abstract class GlConstMixin {
      * Change DEPTH32 internal format from GL_DEPTH_COMPONENT32F to GL_DEPTH24_STENCIL8
      */
     @Inject(method = "toGlInternalId", at = @At("HEAD"), cancellable = true)
-    private static void seamlessportals$changeDepthFormat(TextureFormat format, CallbackInfoReturnable<Integer> cir) {
-        if (format == TextureFormat.DEPTH32) {
+    private static void seamlessportals$changeDepthFormat(GpuFormat format, CallbackInfoReturnable<Integer> cir) {
+        if (format == GpuFormat.D32_FLOAT) {
             cir.setReturnValue(35056); // GL_DEPTH24_STENCIL8
             if (!seamlessportals$logged) {
                 SeamlessPortalsConstants.LOGGER.info("[SEAMLESS STENCIL] Changed depth format: DEPTH32F -> DEPTH24_STENCIL8");
@@ -45,8 +45,8 @@ public abstract class GlConstMixin {
      * Change DEPTH32 external format from GL_DEPTH_COMPONENT to GL_DEPTH_STENCIL
      */
     @Inject(method = "toGlExternalId", at = @At("HEAD"), cancellable = true)
-    private static void seamlessportals$changeDepthExternalFormat(TextureFormat format, CallbackInfoReturnable<Integer> cir) {
-        if (format == TextureFormat.DEPTH32) {
+    private static void seamlessportals$changeDepthExternalFormat(GpuFormat format, CallbackInfoReturnable<Integer> cir) {
+        if (format == GpuFormat.D32_FLOAT) {
             cir.setReturnValue(34041); // GL_DEPTH_STENCIL
         }
     }
@@ -55,8 +55,8 @@ public abstract class GlConstMixin {
      * Change DEPTH32 type from GL_FLOAT to GL_UNSIGNED_INT_24_8
      */
     @Inject(method = "toGlType", at = @At("HEAD"), cancellable = true)
-    private static void seamlessportals$changeDepthType(TextureFormat format, CallbackInfoReturnable<Integer> cir) {
-        if (format == TextureFormat.DEPTH32) {
+    private static void seamlessportals$changeDepthType(GpuFormat format, CallbackInfoReturnable<Integer> cir) {
+        if (format == GpuFormat.D32_FLOAT) {
             cir.setReturnValue(34042); // GL_UNSIGNED_INT_24_8
         }
     }
