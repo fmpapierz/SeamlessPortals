@@ -32,6 +32,52 @@ public class SeamlessPortalsConfig {
         return INSTANCE;
     }
 
+    /**
+     * Load the configurable knob(s) from {@code <configDir>/seamlessportals.properties}
+     * (creating the file with current defaults if absent), then re-write it so it
+     * always reflects the live values. Called once at mod init. The headline knob is
+     * {@code portalRenderDistance} — the IP-style dest loading/mesh depth.
+     */
+    public static void loadFrom(java.nio.file.Path configDir) {
+        java.nio.file.Path file = configDir.resolve("seamlessportals.properties");
+        if (java.nio.file.Files.exists(file)) {
+            java.util.Properties props = new java.util.Properties();
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(file)) {
+                props.load(in);
+                String d = props.getProperty("portalRenderDistance");
+                if (d != null) INSTANCE.setPortalRenderDistance(Integer.parseInt(d.trim()));
+            } catch (Exception e) {
+                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS] Failed to read config, using defaults: {}", e.toString());
+            }
+        }
+        saveTo(configDir);
+    }
+
+    /** Persist the current knob values to {@code seamlessportals.properties}. */
+    public static void saveTo(java.nio.file.Path configDir) {
+        try {
+            java.nio.file.Files.createDirectories(configDir);
+            java.nio.file.Path file = configDir.resolve("seamlessportals.properties");
+            java.util.Properties props = new java.util.Properties();
+            props.setProperty("portalRenderDistance", String.valueOf(INSTANCE.portalRenderDistance));
+            try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
+                props.store(out,
+                    " Seamless Portals config\n"
+                    + "# portalRenderDistance: how many chunks deep the portal DESTINATION is kept\n"
+                    + "#   loaded + meshed (clamped 1..32; default 8 = Immersive Portals' default).\n"
+                    + "#   Higher = more seamless crossing (less far-chunk reload) but MORE memory\n"
+                    + "#   (~depth^2 chunks held + meshed per portal) and longer prep. At very high\n"
+                    + "#   render distances large values can run you out of memory.\n"
+                    + "#   Tip: look at the portal until the view fills in, then cross. Edit this\n"
+                    + "#   value and restart to change it.");
+            }
+        } catch (Exception e) {
+            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS] Failed to write config: {}", e.toString());
+        }
+    }
+
     public static boolean isImmersive(PortalType type) {
         PortalTypeConfig config = INSTANCE.portalConfigs.get(type);
         return config != null && config.isImmersive();

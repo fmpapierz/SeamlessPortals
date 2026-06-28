@@ -19,6 +19,10 @@ public class SeamlessPortalsModFabric implements ModInitializer {
     public void onInitialize() {
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals initializing (Fabric)");
 
+        // Load the configurable knob(s) (portalRenderDistance = dest loading/mesh depth).
+        com.warwa.seamlessportals.config.SeamlessPortalsConfig.loadFrom(
+            net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir());
+
         ModPayloads.registerCommon();
 
         FabricPlatformHelper helper = new FabricPlatformHelper();
