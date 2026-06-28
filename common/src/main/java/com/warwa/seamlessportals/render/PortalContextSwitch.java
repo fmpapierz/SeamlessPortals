@@ -898,7 +898,11 @@ public class PortalContextSwitch {
             // dirty/uncompiled sections roll onto the next frames and the
             // per-tick advanceCompilePipelines pump, so the view fills in
             // SMOOTHLY instead of lurching. (Count is still tracked for logging.)
-            final long PORTAL_VIEW_COMPILE_BUDGET_NS = 3_000_000L; // 3ms
+            // Throttle the portal-view's own mesh compiling during the post-teleport
+            // reload so the shared worker pool serves the MAIN render (smooth reload).
+            // The portal view fills a touch slower for those ~seconds; far better than
+            // starving the main render's far-chunk reload into a stutter.
+            final long PORTAL_VIEW_COMPILE_BUDGET_NS = isPromoteBridgeActive() ? 400_000L : 3_000_000L;
             final long compileSweepStartNs = System.nanoTime();
             // FRUSTUM CULL — full RD, only sections actually visible
             // through portal opening are added to visibleSections.

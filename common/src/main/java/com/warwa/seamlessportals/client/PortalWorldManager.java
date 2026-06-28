@@ -1363,6 +1363,15 @@ public class PortalWorldManager {
     private static final int COMPILE_PUMP_BUDGET_PER_TICK = 128;
 
     public static void advanceCompilePipelines() {
+        // Yield to the main render during the post-teleport reload. While the entered
+        // dimension is streaming + meshing its far chunks (the promote bridge window),
+        // pause the secondary mesh pump so the shared chunk-builder worker pool serves
+        // the MAIN render — otherwise the secondaries' compiles starve it and the
+        // reload stutters. The pump resumes (resumes pre-warming dests) once the
+        // entered dim has settled.
+        if (com.warwa.seamlessportals.render.PortalContextSwitch.isPromoteBridgeActive()) {
+            return;
+        }
         // Sodium gate: under Sodium, our vanilla-pipeline compile pump
         // ({@code RenderSection.rebuildSectionAsync}) is a no-op
         // because Sodium replaces {@code SectionRenderDispatcher} with
