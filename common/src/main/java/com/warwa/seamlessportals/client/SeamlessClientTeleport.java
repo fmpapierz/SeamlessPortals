@@ -273,6 +273,51 @@ public final class SeamlessClientTeleport {
                 (System.nanoTime() - xtRepos0) / 1_000_000L, xtMoved);
         }
 
+        // 2b. OPTION 1 — eliminate the first-main-extract createRegion storm.
+        // The single mc.levelExtractor (now driving the promoted dim) runs extract() next
+        // frame, which UNCONDITIONALLY repositions its SectionUpdateTracker to the camera
+        // section (LevelExtractor.extract:101). That tracker's center is the through-portal
+        // VIRTUAL camera (≠ this landing section), so the reposition relocates every grid
+        // slot and SectionDirtyState.setSectionNode re-dirties them → cache.createRegion()
+        // fires for EVERY visible section (~1ms each = the 150-250ms stall) even though the
+        // ViewArea PRESERVED their compiled meshes (the seed above is moved=false). Fix:
+        //   (1) re-center the tracker onto the landing section NOW, so the first extract's
+        //       repositionCamera is a true no-op (RotatingSectionStorage.repositionCenter
+        //       early-returns when the center is unchanged); then
+        //   (2) clear the dirty bit ONLY on sections whose mesh is ALREADY compiled (the
+        //       redundant re-mesh), leaving genuinely-UNCOMPILED sections dirty so they still
+        //       mesh — so no terrain is blanked. The compiled sections render from the meshes
+        //       the ViewArea kept (moved=false), so clearing their dirty is safe.
+        if (rViewArea != null) {
+            net.minecraft.client.SectionUpdateTracker tracker =
+                ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) mc.levelExtractor)
+                    .seamlessportals$getSectionUpdateTracker();
+            if (tracker != null) {
+                tracker.repositionCamera(net.minecraft.core.SectionPos.of(destPos));
+                int cleared = 0, remainingDirty = 0;
+                for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection sec
+                        : rViewArea.sections) {
+                    if (sec == null) continue;
+                    net.minecraft.client.SectionUpdateTracker.SectionDirtyState ds =
+                        tracker.getDirtyState(sec.getSectionNode());
+                    if (ds == null || !ds.isDirty()) continue;
+                    if (sec.sectionMesh.get()
+                            != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
+                        ds.setNotDirty();   // already compiled → re-mesh would be redundant
+                        cleared++;
+                    } else {
+                        remainingDirty++;   // genuinely uncompiled → leave dirty so it meshes
+                    }
+                }
+                // VERIFICATION GATE (temp): remainingDirty ≈ the createRegion count the first
+                // post-crossing extract will do. Must stay SMALL for BOTH a same-portal round
+                // trip AND a crossing via a different/distant portal for the fix to hold.
+                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS XTIME] tracker pre-clear: cleared(compiled)={} remainingDirty(uncompiled)={}",
+                    cleared, remainingDirty);
+            }
+        }
+
         // 3. Demote outgoing primary.
         if (oldRenderer != null && oldRenderer != promotion.renderer()) {
             PortalWorldManager.demoteFromMain(oldDim, oldRenderer, oldLevel);
