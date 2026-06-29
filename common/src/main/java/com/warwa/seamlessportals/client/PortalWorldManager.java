@@ -1434,12 +1434,16 @@ public class PortalWorldManager {
      * teleport" reported). 24/tick was too low — cached renderer
      * stayed near-empty.
      *
-     * <p>128/tick = ~128ms worst case per tick (acceptable). At 20 tps
-     * that's 2560 sections/sec. A typical cached level (~5000 sections)
-     * compiles in ~2 seconds — fast enough to be done while the player
-     * walks up to the portal.
+     * <p>Option-2 trim (toward IP, which has NO background compile pump and relies on
+     * retention + lazy render-path compile): each scheduled section costs a ~1ms
+     * synchronous createRegion snapshot ON the render/tick thread, so 128/tick was
+     * ~128ms worst-case render-thread stall. Lowered to 48 (~48ms worst case) AND now
+     * caps PASS 1 too, so the pump can no longer out-stall a frame. Still well above the
+     * "24/tick was too low — cached renderer stayed near-empty" floor: 48/tick = 960
+     * sections/sec, so a typical cached level (~5000 sections) still warms in ~5s of
+     * background ticks while the player is in the other dimension.
      */
-    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 128;
+    private static final int COMPILE_PUMP_BUDGET_PER_TICK = 48;
 
     public static void advanceCompilePipelines() {
         // Yield to the main render during the post-teleport reload. While the entered
@@ -1508,12 +1512,15 @@ public class PortalWorldManager {
 
         int scheduled = 0;
 
-        // PASS 1: priority — inner radius (≤3 chunks). Always schedule
-        // these regardless of overall budget, so vanilla's nearby sync-
-        // rebuild has nothing to do post-teleport.
+        // PASS 1: priority — inner radius (≤3 chunks). Prefer these (run first) so the
+        // landing area is meshed before the outer ring, but CAP by the shared budget:
+        // each scheduleCompileIfDirty does a synchronous ~1ms createRegion snapshot ON the
+        // render/tick thread, so an uncapped pass over an all-dirty inner ring (post-load)
+        // was itself a render-thread stall (Option-2 trim toward IP, which has no such pump).
         for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section
                 : viewArea.sections) {
             if (section == null) continue;
+            if (scheduled >= budget) break;
             long sectionNode = section.getSectionNode();
             int sx = net.minecraft.core.SectionPos.x(sectionNode);
             int sz = net.minecraft.core.SectionPos.z(sectionNode);
