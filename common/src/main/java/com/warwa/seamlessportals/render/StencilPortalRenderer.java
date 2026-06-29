@@ -158,8 +158,21 @@ public class StencilPortalRenderer {
         GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_REPLACE);
         GL11.glStencilMask(0xFF);
 
-        // Draw one merged quad with depth test - obsidian occludes stencil write
-        PortalShapeRenderer.drawMergedPortalShapeWithDepthTest(portals, camera);
+        // Source-sliver fix: clamp depth around the depth-tested stencil write. Without it,
+        // at an OCCLUDING block's silhouette the reversed-Z GEQUAL comparison between the
+        // block's terrain-pass depth and this flat portal quad is unstable — a 1px ring of
+        // opening pixels just outside the block fails GEQUAL, gets stencil=0, and the composite
+        // (stencil EQUAL 1) skips them, leaving the SOURCE world showing (the sliver). Depth-
+        // clamping stabilises the comparison at the silhouette. Mirrors IP ViewAreaRenderer's
+        // enableDepthClamp/disableDepthClamp around its stencil write. try/finally so a thrown
+        // draw can't leave clamp enabled for the rest of the frame.
+        org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL32.GL_DEPTH_CLAMP);
+        try {
+            // Draw one merged quad with depth test - obsidian occludes stencil write
+            PortalShapeRenderer.drawMergedPortalShapeWithDepthTest(portals, camera);
+        } finally {
+            org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL32.GL_DEPTH_CLAMP);
+        }
         if (framesRendered <= 5) {
             int stencilWriteFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
             SeamlessPortalsConstants.rlog(
