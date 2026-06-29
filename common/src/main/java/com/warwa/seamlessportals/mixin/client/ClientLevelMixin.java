@@ -101,6 +101,14 @@ public abstract class ClientLevelMixin {
             LevelChunkSection section = chunk.getSection(sectionIdx);
             if (section == null || section.hasOnlyAir()) continue;
 
+            // Palette pre-check: skip the full 16x16x16 scan unless this section's
+            // palette actually contains nether portal. maybeHas is O(palette) and never
+            // false-negatives, so detection is identical — but it skips the 4096-block
+            // sweep for the ~99% of sections that have no portal block. This per-chunk
+            // scan (on the render thread, every chunk load at RD 32) was a top stall
+            // source; IP scans zero blocks. (T1)
+            if (!section.maybeHas(s -> s.is(Blocks.NETHER_PORTAL))) continue;
+
             int sectionY = chunk.getSectionYFromSectionIndex(sectionIdx);
             for (int x = 0; x < 16; x++) {
                 for (int y = 0; y < 16; y++) {
