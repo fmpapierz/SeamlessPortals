@@ -457,6 +457,10 @@ public class PortalWorldManager {
             if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().isUnboundedClientChunkStore()) {
                 ((com.warwa.seamlessportals.mixin.client.ClientLevelChunkSourceAccessor) (Object) destLevel)
                     .seamlessportals$setChunkSource(new SeamlessClientChunkMap(destLevel, destViewRadius));
+                // One-time per dim (NOT per frame) — confirms T3 engaged for this run.
+                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS T3] Unbounded client chunk store installed for {}",
+                    dimension.identifier());
             }
 
             // Connect extractor to level (creates chunk infrastructure via
