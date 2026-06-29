@@ -264,13 +264,7 @@ public final class SeamlessClientTeleport {
         LevelRendererAccessorMixin rAcc = (LevelRendererAccessorMixin) (Object) promotion.renderer();
         net.minecraft.client.renderer.ViewArea rViewArea = rAcc.seamlessportals$getViewArea();
         if (rViewArea != null) {
-            // XTIME (temp): time the swap reposition + whether it actually MOVED (moved=true
-            // ⇒ it relocated+reset rotated-out meshes — the hypothesized per-crossing cost).
-            long xtRepos0 = System.nanoTime();
-            boolean xtMoved = rViewArea.repositionCamera(SectionPos.of(destPos));
-            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS XTIME] doVisualSwap repositionCamera={}ms moved={}",
-                (System.nanoTime() - xtRepos0) / 1_000_000L, xtMoved);
+            rViewArea.repositionCamera(SectionPos.of(destPos));
         }
 
         // 2b. OPTION 1 — eliminate the first-main-extract createRegion storm.
@@ -294,7 +288,6 @@ public final class SeamlessClientTeleport {
                     .seamlessportals$getSectionUpdateTracker();
             if (tracker != null) {
                 tracker.repositionCamera(net.minecraft.core.SectionPos.of(destPos));
-                int cleared = 0, remainingDirty = 0;
                 for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection sec
                         : rViewArea.sections) {
                     if (sec == null) continue;
@@ -304,17 +297,9 @@ public final class SeamlessClientTeleport {
                     if (sec.sectionMesh.get()
                             != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
                         ds.setNotDirty();   // already compiled → re-mesh would be redundant
-                        cleared++;
-                    } else {
-                        remainingDirty++;   // genuinely uncompiled → leave dirty so it meshes
                     }
+                    // else: genuinely uncompiled → leave dirty so it meshes (no blank terrain)
                 }
-                // VERIFICATION GATE (temp): remainingDirty ≈ the createRegion count the first
-                // post-crossing extract will do. Must stay SMALL for BOTH a same-portal round
-                // trip AND a crossing via a different/distant portal for the fix to hold.
-                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS XTIME] tracker pre-clear: cleared(compiled)={} remainingDirty(uncompiled)={}",
-                    cleared, remainingDirty);
             }
         }
 

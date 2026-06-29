@@ -11,7 +11,7 @@ public class SeamlessPortalsConstants {
      * Master switch for VERBOSE render/crossing-path diagnostic logging (the
      * per-FBO-render [SEAMLESS DEBUG]/PHASE2/DIAG/PARTICLE/etc. trace). Default
      * OFF: these fire on the render thread, where a log4j per-event timestamp
-     * formatter compile can stall the frame ~130ms (see RenderSpikeMonitor), and
+     * formatter compile can stall the frame ~130ms, and
      * they burst dozens-deep per crossing. Flip to true only when debugging the
      * portal pipeline.
      */

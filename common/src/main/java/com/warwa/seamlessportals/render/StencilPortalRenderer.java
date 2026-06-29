@@ -103,10 +103,8 @@ public class StencilPortalRenderer {
         // Render the destination world into the secondary FBO (no composite — that
         // is phase 2). prepareDestinationWorld resets + sets the per-frame
         // fboReadyThisFrame flag that phase 2 reads.
-        long fboT0 = System.nanoTime();
         PortalContextSwitch.prepareDestinationWorld(
             targets.portals().get(0), targets.link(), targets.camera());
-        RenderSpikeMonitor.recordFbo((System.nanoTime() - fboT0) / 1_000_000L);
     }
 
     /**
@@ -116,10 +114,6 @@ public class StencilPortalRenderer {
         // Recursion guard: renderLevel() on secondary renderer triggers AFTER_TRANSLUCENT_TERRAIN
         // which calls this method again. Match IP's PortalRendering.isRendering() check.
         if (PortalContextSwitch.isRenderingPortal) return;
-
-        // Off-thread frame-gap telemetry (logs a summary from a daemon, never inline —
-        // inline render-thread logging is what stalled the frame loop via log4j).
-        RenderSpikeMonitor.onFrame();
 
         RenderTargets targets = resolveRenderTargets();
 
