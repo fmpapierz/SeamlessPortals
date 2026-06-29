@@ -65,9 +65,6 @@ public abstract class RenderTargetMixin {
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL30.GL_TEXTURE_2D, depthId, 0);
         } else {
             com.warwa.seamlessportals.render.StencilState.gameFboId = fbo;
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS STENCIL] FrameBufferCache FBO {} reattached as DEPTH_STENCIL (depthTex={})", fbo, depthId
-            );
         }
 
         GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, oldFbo);

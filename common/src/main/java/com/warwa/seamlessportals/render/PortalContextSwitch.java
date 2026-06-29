@@ -178,9 +178,6 @@ public class PortalContextSwitch {
      */
     public static boolean useContinuousExtract = false;
 
-    /** Temporary diagnostic throttle for the post-crossing compile-sweep timing. */
-    private static int portalHitchLogCount = 0;
-
     /** Per-dim last-logged native(sog.update)-render on/off state (warm-path diagnostic). */
     private static final java.util.Map<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, Boolean>
         lastNativeState = new java.util.concurrent.ConcurrentHashMap<>();
@@ -903,7 +900,6 @@ public class PortalContextSwitch {
             // The portal view fills a touch slower for those ~seconds; far better than
             // starving the main render's far-chunk reload into a stutter.
             final long PORTAL_VIEW_COMPILE_BUDGET_NS = isPromoteBridgeActive() ? 400_000L : 3_000_000L;
-            final long compileSweepStartNs = System.nanoTime();
             // FRUSTUM CULL — full RD, only sections actually visible
             // through portal opening are added to visibleSections.
             // Without this filter, all ~78K loaded sections in the
@@ -962,19 +958,6 @@ public class PortalContextSwitch {
                         + "(scheduledAsync={}, skippedFarDirty={})",
                     compiled, cameraSectionPos.x(), cameraSectionPos.z(),
                     scheduledAsync, skippedFar);
-            }
-            // Diagnostic (temporary): per-FBO-frame compile-sweep cost. Logs only
-            // while the backlog is actively draining (compiles scheduled or
-            // deferred), bounded, so it captures the post-crossing fill timeline
-            // (how long the sweep takes per frame + how many frames it lasts)
-            // without steady-state spam.
-            long compileSweepMs = (System.nanoTime() - compileSweepStartNs) / 1_000_000L;
-            if ((scheduledAsync > 0 || deferredCompiles > 0) && portalHitchLogCount < 150) {
-                portalHitchLogCount++;
-                SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS HITCH] FBO compile sweep dim={} {}ms (scheduled={} deferred={} skippedFar={} visible={})",
-                    destDim.identifier(), compileSweepMs,
-                    scheduledAsync, deferredCompiles, skippedFar, compiled);
             }
         }
 

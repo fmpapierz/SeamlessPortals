@@ -39,8 +39,6 @@ public abstract class GlCommandEncoderClipMixin {
         seamlessportals$uploadForProgram(programId);
     }
 
-    private static int nonDefaultUploadCount = 0;
-
     private static void seamlessportals$uploadForProgram(int programId) {
         if (programId <= 0) return;
 
@@ -49,11 +47,6 @@ public abstract class GlCommandEncoderClipMixin {
         if (cached == null) {
             loc = GlStateManager._glGetUniformLocation(programId, ShaderCodeTransformation.UNIFORM_NAME);
             seamlessportals$locationCache.put(programId, loc);
-            // Log EVERY first-encounter so we can see how many programs
-            // we scan and how many actually link the uniform.
-            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS SLICE] programId={} seamlessportals_ClipPlane loc={}",
-                programId, loc);
         } else {
             loc = cached;
         }
@@ -71,14 +64,5 @@ public abstract class GlCommandEncoderClipMixin {
         // if the GL capability is enabled, nothing is clipped — the
         // uniform upload is a no-op semantically. No per-draw enable
         // needed (matches IP's shader-bind-time hook behavior).
-        boolean isDefault = px == 0f && py == 0f && pz == 0f && pw == 1f;
-        if (!isDefault && nonDefaultUploadCount < 5) {
-            nonDefaultUploadCount++;
-            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS SLICE] upload #{} programId={} loc={} plane=({},{},{},{})",
-                nonDefaultUploadCount, programId, loc,
-                String.format("%.2f", px), String.format("%.2f", py),
-                String.format("%.2f", pz), String.format("%.2f", pw));
-        }
     }
 }

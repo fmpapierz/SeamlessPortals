@@ -26,55 +26,6 @@ public class StencilPortalRenderer {
 
     private static int framesRendered = 0;
 
-    // TEMP DIAGNOSTIC (remove once the periodic stutter is root-caused): wall-clock
-    // of the previous outer portal-render frame, to detect render-thread frame-gap
-    // spikes, plus GC accounting to attribute each spike to GC-vs-CPU.
-    private static long seamlessLastFrameNanos = 0L;
-    private static long seamlessLastGcCount = 0L;
-    private static long seamlessLastGcMs = 0L;
-    private static java.util.List<java.lang.management.GarbageCollectorMXBean> seamlessGcBeans;
-    // Render-thread stall watchdog: a daemon thread auto-dumps the render thread's
-    // stack when a frame stalls >120ms, capturing the EXACT slow method (the spike
-    // detector only sees the gap AFTER the slow frame). TEMP — remove once fixed.
-    private static volatile long seamlessRenderHeartbeat = 0L;
-    private static volatile Thread seamlessRenderThread;
-    private static boolean seamlessWatchdogStarted = false;
-
-    private static void seamlessStartStallWatchdog() {
-        Thread t = new Thread(() -> {
-            long lastDumpedHeartbeat = 0L;
-            while (true) {
-                try {
-                    Thread.sleep(40L);
-                } catch (InterruptedException e) {
-                    return;
-                }
-                long hb = seamlessRenderHeartbeat;
-                Thread rt = seamlessRenderThread;
-                if (rt == null || hb == 0L) {
-                    continue;
-                }
-                long stuckMs = (System.nanoTime() - hb) / 1_000_000L;
-                if (stuckMs >= 120L && hb != lastDumpedHeartbeat) {
-                    lastDumpedHeartbeat = hb;
-                    StackTraceElement[] stack = rt.getStackTrace();
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("[SEAMLESS STUCK] render thread stalled ~").append(stuckMs).append("ms in:");
-                    int n = 0;
-                    for (StackTraceElement el : stack) {
-                        sb.append("\n  at ").append(el);
-                        if (++n >= 16) {
-                            break;
-                        }
-                    }
-                    com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(sb.toString());
-                }
-            }
-        }, "seamless-stall-watchdog");
-        t.setDaemon(true);
-        t.start();
-    }
-
     /**
      * Resolved set of portal planes to render this frame, plus the link used for
      * the destination lookup. Discovered identically by both render phases so
@@ -164,44 +115,9 @@ public class StencilPortalRenderer {
         // which calls this method again. Match IP's PortalRendering.isRendering() check.
         if (PortalContextSwitch.isRenderingPortal) return;
 
-        // TEMP DIAGNOSTIC: render-thread frame-gap spike detector. Logs when the gap
-        // since the previous outer frame exceeds ~30ms (FPS < ~33). Correlate the
-        // timestamps with debug.log (remote_block_update bursts, compile sweeps,
-        // chunk applies) to attribute the periodic stutter.
-        long seamlessNow = System.nanoTime();
-        if (seamlessGcBeans == null) {
-            seamlessGcBeans = java.lang.management.ManagementFactory.getGarbageCollectorMXBeans();
-        }
-        long seamlessGcCount = 0L, seamlessGcMs = 0L;
-        for (java.lang.management.GarbageCollectorMXBean gc : seamlessGcBeans) {
-            long c = gc.getCollectionCount();
-            if (c > 0) seamlessGcCount += c;
-            long t = gc.getCollectionTime();
-            if (t > 0) seamlessGcMs += t;
-        }
-        if (seamlessLastFrameNanos != 0L) {
-            long seamlessGapMs = (seamlessNow - seamlessLastFrameNanos) / 1_000_000L;
-            if (seamlessGapMs >= 30L) {
-                // GC delta since the previous frame attributes the spike: nonzero
-                // collections/ms ⇒ this freeze was a GC pause (reduce reload-window
-                // allocation); zero ⇒ CPU work (chunk-apply / mesh upload).
-                long dGcCount = seamlessGcCount - seamlessLastGcCount;
-                long dGcMs = seamlessGcMs - seamlessLastGcMs;
-                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS SPIKE] render frame gap {}ms (frame #{}) | GC since last frame: {} collections {}ms",
-                    seamlessGapMs, framesRendered, dGcCount, dGcMs);
-            }
-        }
-        seamlessLastFrameNanos = seamlessNow;
-        seamlessLastGcCount = seamlessGcCount;
-        seamlessLastGcMs = seamlessGcMs;
-        // Heartbeat for the stall watchdog (started once).
-        seamlessRenderHeartbeat = seamlessNow;
-        if (!seamlessWatchdogStarted) {
-            seamlessWatchdogStarted = true;
-            seamlessRenderThread = Thread.currentThread();
-            seamlessStartStallWatchdog();
-        }
+        // Off-thread frame-gap telemetry (logs a summary from a daemon, never inline —
+        // inline render-thread logging is what stalled the frame loop via log4j).
+        RenderSpikeMonitor.onFrame();
 
         RenderTargets targets = resolveRenderTargets();
 
@@ -213,14 +129,6 @@ public class StencilPortalRenderer {
         Camera camera = targets.camera();
 
         renderBatchedPortals(linkedPortals, firstLink, camera);
-
-        if (framesRendered % 200 == 1) {
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS STENCIL] Frame {}: {} portal planes, dim={}",
-                framesRendered, linkedPortals.size(),
-                Minecraft.getInstance().level.dimension().identifier()
-            );
-        }
     }
 
     /**

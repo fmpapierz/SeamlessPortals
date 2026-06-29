@@ -90,26 +90,4 @@ public abstract class LevelExtractorFlashBridgeMixin {
             viewArea, cameraPos, frustum, viewDistance, this.levelRenderer.visibleSections());
         ci.cancel();
     }
-
-    // TEMP DIAGNOSTIC: allChanged() is the ONLY setter of shouldInvalidateCompiledGeometry,
-    // whose consumption in extract() rebuilds the whole ViewArea (the watchdog-confirmed
-    // 126-766ms stall, ~64x/run). Log every caller chain so we can see which path fires
-    // it ~2/sec. Remove once root-caused.
-    @Inject(method = "allChanged", at = @At("HEAD"), require = 0)
-    private void seamlessportals$diagAllChanged(CallbackInfo ci) {
-        StackTraceElement[] st = Thread.currentThread().getStackTrace();
-        StringBuilder sb = new StringBuilder("[SEAMLESS ALLCHANGED]");
-        int n = 0;
-        for (StackTraceElement e : st) {
-            String s = e.toString();
-            if (s.contains("getStackTrace") || s.contains("diagAllChanged")) {
-                continue;
-            }
-            sb.append("\n  <- ").append(s);
-            if (++n >= 7) {
-                break;
-            }
-        }
-        com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(sb.toString());
-    }
 }
