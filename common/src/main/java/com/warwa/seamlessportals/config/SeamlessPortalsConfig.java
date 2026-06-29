@@ -16,6 +16,10 @@ public class SeamlessPortalsConfig {
 
     private int portalFramebufferScale = 100;
     private boolean enableChunkCaching = true;
+    // T3 (experimental, off by default): give portal SECONDARY levels an unbounded chunk
+    // store so destination chunks are never dropped at the radius cap → no far-ring reload
+    // (re-decode + re-mesh) on crossing. Memory cost; see SeamlessClientChunkMap.
+    private boolean unboundedClientChunkStore = false;
     private int maxRemoteChunksPerPortal = 64;
 
     private boolean seamlessTeleportation = true;
@@ -50,6 +54,8 @@ public class SeamlessPortalsConfig {
                 if (depth != null) INSTANCE.setMaxPortalRenderDepth(Integer.parseInt(depth.trim()));
                 String en = props.getProperty("enablePortalRendering");
                 if (en != null) INSTANCE.setEnablePortalRendering(Boolean.parseBoolean(en.trim()));
+                String unb = props.getProperty("unboundedClientChunkStore");
+                if (unb != null) INSTANCE.unboundedClientChunkStore = Boolean.parseBoolean(unb.trim());
             } catch (Exception e) {
                 com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
                     "[SEAMLESS] Failed to read config, using defaults: {}", e.toString());
@@ -67,6 +73,7 @@ public class SeamlessPortalsConfig {
             props.setProperty("portalRenderDistance", String.valueOf(INSTANCE.portalRenderDistance));
             props.setProperty("maxPortalRenderDepth", String.valueOf(INSTANCE.maxPortalRenderDepth));
             props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
+            props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"
@@ -127,6 +134,10 @@ public class SeamlessPortalsConfig {
 
     public boolean isEnablePortalRendering() { return enablePortalRendering; }
     public void setEnablePortalRendering(boolean enable) { this.enablePortalRendering = enable; }
+
+    /** T3 experimental knob: unbounded secondary chunk store (no far-ring reload on crossing). */
+    public boolean isUnboundedClientChunkStore() { return unboundedClientChunkStore; }
+    public void setUnboundedClientChunkStore(boolean enable) { this.unboundedClientChunkStore = enable; }
 
     public int getPortalFramebufferScale() { return portalFramebufferScale; }
     public void setPortalFramebufferScale(int scale) { this.portalFramebufferScale = Math.max(25, Math.min(100, scale)); }

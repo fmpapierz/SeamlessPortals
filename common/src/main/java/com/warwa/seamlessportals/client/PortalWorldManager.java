@@ -212,6 +212,27 @@ public class PortalWorldManager {
     }
 
     /**
+     * T3 bounded eviction (per client tick): for every INACTIVE secondary level using the
+     * unbounded {@link SeamlessClientChunkMap}, drop chunks beyond a generous radius from its
+     * tracked view center, so the store can't grow without bound as the player roams between
+     * portals (vanilla's forget-chunk eviction only fires on the ACTIVE level). The radius is
+     * the player render distance + margin, so the resident dest region is never dropped — only
+     * far stragglers. No-op when the flag is off or no unbounded store exists.
+     */
+    public static void evictUnboundedStores() {
+        if (levels.isEmpty()
+            || !com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().isUnboundedClientChunkStore()) {
+            return;
+        }
+        int radius = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() + 16;
+        for (ClientLevel level : levels.values()) {
+            if (level.getChunkSource() instanceof SeamlessClientChunkMap store) {
+                store.seamlessportals$evictBeyond(radius);
+            }
+        }
+    }
+
+    /**
      * Phase 2/5 safety gate: is the dest level DENSE enough (every chunk in a
      * small radius around the view center is loaded) to safely drive the native
      * occlusion-graph render? The SectionOcclusionGraph BFS / sog.update spins /
@@ -428,6 +449,15 @@ public class PortalWorldManager {
                 0L,
                 mc.level.getSeaLevel()
             );
+
+            // T3 (experimental, flag-gated): give this secondary level an UNBOUNDED chunk
+            // store so dest chunks are never dropped at the radius cap → no far-ring reload
+            // (re-decode + re-mesh) on crossing. Swapped BEFORE setLevel (which only reads
+            // this.level, not chunkSource). Off by default; stock bounded store when off.
+            if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().isUnboundedClientChunkStore()) {
+                ((com.warwa.seamlessportals.mixin.client.ClientLevelChunkSourceAccessor) (Object) destLevel)
+                    .seamlessportals$setChunkSource(new SeamlessClientChunkMap(destLevel, destViewRadius));
+            }
 
             // Connect extractor to level (creates chunk infrastructure via
             // allChanged() -> levelRenderer.invalidateCompiledGeometry()).

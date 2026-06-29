@@ -56,6 +56,9 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // (flame, lava, nether portal, fog) in its OWN per-dest ParticleEngine
             // so they render inside the portal view.
             com.warwa.seamlessportals.client.PortalWorldManager.tickCachedParticles();
+            // T3: keep the unbounded secondary chunk stores bounded (no-op unless the flag
+            // is on). Inactive secondaries never get vanilla's forget-chunk eviction.
+            com.warwa.seamlessportals.client.PortalWorldManager.evictUnboundedStores();
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");
