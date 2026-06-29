@@ -66,6 +66,17 @@ public class PortalEntityTracker {
     /** Per-player, per-dim set of entity IDs currently mirrored to that player. */
     private final Map<UUID, Map<ResourceKey<Level>, Set<Integer>>> tracked = new HashMap<>();
 
+    /**
+     * Per-player, per-dim, per-entity last-SENT movement snapshot
+     * {@code {x,y,z,yRot,xRot,yHeadRot,onGround?1:0, lastSentTick}} — so a move
+     * packet is broadcast only when the transform actually CHANGED (vanilla
+     * {@code ServerEntity} parity), not every tick for every visible entity.
+     * Without this, ~N entities × 20 t/s flooded the client with thousands of
+     * move packets/sec, each decoded + handled (and DEBUG-logged) on the render
+     * thread → the post-crossing stutter.
+     */
+    private final Map<UUID, Map<ResourceKey<Level>, Map<Integer, double[]>>> lastSentMove = new HashMap<>();
+
     private static int tickCount = 0;
 
     /**
@@ -120,11 +131,13 @@ public class PortalEntityTracker {
         // Release any dim we previously tracked but no longer have a link to.
         Set<ResourceKey<Level>> staleDims = new HashSet<>(playerTracked.keySet());
         staleDims.removeAll(destCentersByDim.keySet());
+        Map<ResourceKey<Level>, Map<Integer, double[]>> playerMoveSnaps = lastSentMove.get(playerId);
         for (ResourceKey<Level> staleDim : staleDims) {
             Set<Integer> ids = playerTracked.remove(staleDim);
             if (ids != null && !ids.isEmpty()) {
                 sendRemove(player, staleDim, new ArrayList<>(ids));
             }
+            if (playerMoveSnaps != null) playerMoveSnaps.remove(staleDim);
         }
 
         for (Map.Entry<ResourceKey<Level>, List<Vec3>> entry : destCentersByDim.entrySet()) {
@@ -295,10 +308,21 @@ public class PortalEntityTracker {
         if (!toRemove.isEmpty()) {
             sendRemove(player, destDim, toRemove);
         }
-        // Movement update for still-visible (including the just-added, which is
-        // redundant but cheap — their next tick will get one normally)
+        // Movement update for still-visible — but ONLY for entities whose
+        // transform actually changed since the last sent move (vanilla
+        // ServerEntity parity). Sending every entity every tick flooded the
+        // client with ~visible×20 packets/s and stuttered the render thread.
+        Map<Integer, double[]> moveSnap = lastSentMove
+            .computeIfAbsent(player.getUUID(), k -> new HashMap<>())
+            .computeIfAbsent(destDim, k -> new HashMap<>());
         for (Entity e : visible) {
-            sendMove(player, destDim, e);
+            if (movementChanged(moveSnap, e)) {
+                sendMove(player, destDim, e);
+            }
+        }
+        // Drop snapshots for entities that left visibility this tick.
+        for (Integer id : toRemove) {
+            moveSnap.remove(id);
         }
 
         playerTracked.put(destDim, currIds);
@@ -382,6 +406,35 @@ public class PortalEntityTracker {
         }
     }
 
+    // Vanilla ServerEntity parity thresholds for the movement-dedup above.
+    private static final double MOVE_EPS = 0.01;        // blocks
+    private static final float ROT_EPS = 1.0f;          // degrees
+    private static final int FORCE_RESYNC_TICKS = 60;   // periodic drift correction
+
+    /**
+     * True iff this entity's transform changed enough since the last SENT move
+     * (or a periodic resync is due). Records the new snapshot when it returns true.
+     */
+    private boolean movementChanged(Map<Integer, double[]> moveSnap, Entity e) {
+        double x = e.getX(), y = e.getY(), z = e.getZ();
+        float yRot = e.getYRot(), xRot = e.getXRot(), yHead = e.getYHeadRot();
+        double onGround = e.onGround() ? 1.0 : 0.0;
+        double[] last = moveSnap.get(e.getId());
+        boolean send = last == null
+            || Math.abs(x - last[0]) > MOVE_EPS
+            || Math.abs(y - last[1]) > MOVE_EPS
+            || Math.abs(z - last[2]) > MOVE_EPS
+            || Math.abs(yRot - last[3]) > ROT_EPS
+            || Math.abs(xRot - last[4]) > ROT_EPS
+            || Math.abs(yHead - last[5]) > ROT_EPS
+            || onGround != last[6]
+            || (tickCount - (int) last[7]) >= FORCE_RESYNC_TICKS;
+        if (send) {
+            moveSnap.put(e.getId(), new double[]{x, y, z, yRot, xRot, yHead, onGround, tickCount});
+        }
+        return send;
+    }
+
     private void sendMove(ServerPlayer player, ResourceKey<Level> dim, Entity e) {
         PlatformHelper.getInstance().sendToClient(player,
             new ModPayloads.RemoteEntityMovePayload(
@@ -403,6 +456,7 @@ public class PortalEntityTracker {
     /** Drop everything we've been tracking for this player across all dims. */
     private void releaseAll(ServerPlayer player) {
         UUID playerId = player.getUUID();
+        lastSentMove.remove(playerId);
         Map<ResourceKey<Level>, Set<Integer>> playerTracked = tracked.remove(playerId);
         if (playerTracked == null) return;
         for (Map.Entry<ResourceKey<Level>, Set<Integer>> e : playerTracked.entrySet()) {
@@ -414,9 +468,11 @@ public class PortalEntityTracker {
 
     public void onPlayerDisconnect(UUID playerId) {
         tracked.remove(playerId);
+        lastSentMove.remove(playerId);
     }
 
     public void clear() {
         tracked.clear();
+        lastSentMove.clear();
     }
 }
