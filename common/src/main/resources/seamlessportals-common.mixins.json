@@ -8,6 +8,7 @@
     "client.GameRendererMixin",
     "client.MinecraftAccessorMixin",
     "client.ClientLevelChunkSourceAccessor",
+    "client.LevelExtractorCreateRegionBudgetMixin",
     "client.ClientLevelMixin",
     "client.MinecraftMixin",
     "client.SectionCompilerMixin",
