@@ -264,7 +264,13 @@ public final class SeamlessClientTeleport {
         LevelRendererAccessorMixin rAcc = (LevelRendererAccessorMixin) (Object) promotion.renderer();
         net.minecraft.client.renderer.ViewArea rViewArea = rAcc.seamlessportals$getViewArea();
         if (rViewArea != null) {
-            rViewArea.repositionCamera(SectionPos.of(destPos));
+            // XTIME (temp): time the swap reposition + whether it actually MOVED (moved=true
+            // ⇒ it relocated+reset rotated-out meshes — the hypothesized per-crossing cost).
+            long xtRepos0 = System.nanoTime();
+            boolean xtMoved = rViewArea.repositionCamera(SectionPos.of(destPos));
+            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS XTIME] doVisualSwap repositionCamera={}ms moved={}",
+                (System.nanoTime() - xtRepos0) / 1_000_000L, xtMoved);
         }
 
         // 3. Demote outgoing primary.

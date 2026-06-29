@@ -103,8 +103,10 @@ public class StencilPortalRenderer {
         // Render the destination world into the secondary FBO (no composite — that
         // is phase 2). prepareDestinationWorld resets + sets the per-frame
         // fboReadyThisFrame flag that phase 2 reads.
+        long fboT0 = System.nanoTime();
         PortalContextSwitch.prepareDestinationWorld(
             targets.portals().get(0), targets.link(), targets.camera());
+        RenderSpikeMonitor.recordFbo((System.nanoTime() - fboT0) / 1_000_000L);
     }
 
     /**

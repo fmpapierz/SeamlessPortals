@@ -813,6 +813,8 @@ public class PortalWorldManager {
     public static Promotion promoteToMain(
             ResourceKey<Level> dim,
             LevelRenderState sharedState) {
+        long pxtStart = System.nanoTime();           // XTIME: per-crossing op breakdown (temp)
+        long pxtSogInval = 0L, pxtWipe = 0L;
         initializeIfNeeded();
         LevelRenderer renderer = renderers.remove(dim);
         ClientLevel level = levels.remove(dim);
@@ -866,6 +868,7 @@ public class PortalWorldManager {
         // warmth and reintroduce the rebuild stall. When continuous-extract is
         // off, keep the legacy invalidate (cold renderer needs the rebuild).
         if (!com.warwa.seamlessportals.render.PortalContextSwitch.useContinuousExtract) {
+            long pxtSog0 = System.nanoTime();
             try {
                 var sog = renderer.sectionOcclusionGraph();
                 if (sog != null) {
@@ -875,6 +878,7 @@ public class PortalWorldManager {
                 SeamlessPortalsConstants.LOGGER.warn(
                     "[SEAMLESS PHASE2] SOG invalidate on promote failed: {}", e.toString());
             }
+            pxtSogInval = System.nanoTime() - pxtSog0;
         }
 
         // INSTANT REPAINT (fixes the "blank for a second" on entering the heavier
@@ -920,6 +924,7 @@ public class PortalWorldManager {
         Minecraft mc0 = Minecraft.getInstance();
         net.minecraft.client.player.LocalPlayer lp0 = mc0.player;
         int promoteWiped = 0;
+        long pxtWipe0 = System.nanoTime();
         java.util.List<Integer> promoteToRemove = new java.util.ArrayList<>();
         for (net.minecraft.world.entity.Entity ent : level.entitiesForRendering()) {
             if (ent == lp0) continue;
@@ -932,6 +937,7 @@ public class PortalWorldManager {
                 promoteWiped++;
             } catch (Exception ignored) {}
         }
+        pxtWipe = System.nanoTime() - pxtWipe0;
 
         // 26.2 CRITICAL: re-point mc.levelExtractor onto the PROMOTED renderer.
         // mc.levelExtractor is the SINGLE main extractor (public final, bound once
@@ -982,6 +988,12 @@ public class PortalWorldManager {
             pendingSyncPrime.add(renderer);
         }
 
+        // XTIME (temp): per-op timing for the promote half of the crossing.
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS XTIME] promote {} total={}ms | sogInvalidate={}ms entityWipe={}ms",
+            dim.identifier(),
+            (System.nanoTime() - pxtStart) / 1_000_000L,
+            pxtSogInval / 1_000_000L, pxtWipe / 1_000_000L);
         SeamlessPortalsConstants.rlog(
             "[SEAMLESS PHASE2] Promoted renderer → mc.levelRenderer for {} (marked for SOG sync prime; wiped {} mirrored entities)",
             dim.identifier(), promoteWiped);
@@ -1277,14 +1289,17 @@ public class PortalWorldManager {
             ResourceKey<Level> dim,
             LevelRenderer renderer,
             ClientLevel level) {
+        long xtStart = System.nanoTime();            // XTIME: per-crossing op breakdown (temp)
         LevelRenderState demotedState = new LevelRenderState();
         ((LevelRendererAccessorMixin) renderer)
             .seamlessportals$setLevelRenderState(demotedState);
+        long xtClear0 = System.nanoTime();
         // Clear this dim's portal-view compile-schedule guard so it re-evaluates
         // sections fresh as a dest — stale scheduled-but-cancelled entries (from
         // its prior dest stint before promotion) otherwise leave comp=0 and the
         // portal view shows the source sky instead of this dim's terrain.
         com.warwa.seamlessportals.render.PortalContextSwitch.clearCompileSchedule(dim);
+        long xtClear = System.nanoTime() - xtClear0;
 
         // Wipe cached entity state from the demoted level. While the level
         // is dormant the server isn't sending entity-tracking updates for
@@ -1300,6 +1315,7 @@ public class PortalWorldManager {
         // this list. Still guard defensively.
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         net.minecraft.client.player.LocalPlayer player = mc.player;
+        long xtWipe0 = System.nanoTime();
         java.util.List<Integer> toRemove = new java.util.ArrayList<>();
         int kept = 0;
         for (net.minecraft.world.entity.Entity e : level.entitiesForRendering()) {
@@ -1311,6 +1327,7 @@ public class PortalWorldManager {
                 level.removeEntity(id, net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
             } catch (Exception ignored) {}
         }
+        long xtWipe = System.nanoTime() - xtWipe0;
 
         // The demoted renderer was the vanilla main (driven by the shared
         // mc.levelExtractor); as a secondary it needs its OWN per-dimension
@@ -1324,6 +1341,8 @@ public class PortalWorldManager {
         // was missing it. Bind to the same demotedState the renderer now uses, and
         // set level + tracker DIRECTLY (NOT setLevel(), which calls allChanged() ->
         // invalidateCompiledGeometry -> wipes the meshes this demote preserves).
+        long xtExt0 = System.nanoTime();
+        long xtResReload = 0L;
         try {
             LevelExtractor demotedExtractor = new LevelExtractor(mc, demotedState, renderer);
             LevelExtractorAccessor dea = (LevelExtractorAccessor) (Object) demotedExtractor;
@@ -1331,15 +1350,33 @@ public class PortalWorldManager {
             dea.seamlessportals$setSectionUpdateTracker(
                 new net.minecraft.client.SectionUpdateTracker(
                     level, mc.options.getEffectiveRenderDistance()));
+            // Sync lastViewDistance so this demoted dim's FIRST FBO-render extract does NOT trip
+            // extract()'s `getEffectiveRenderDistance() != lastViewDistance` (-1) guard ->
+            // allChanged() -> invalidateCompiledGeometry() -> SectionOcclusionGraph.waitAndReset(),
+            // a ~190ms render-thread block on the async SOG rebuild that ALSO wipes the meshes this
+            // demote exists to preserve (confirmed by the [SEAMLESS STUCK] watchdog: doFboRender ->
+            // extract -> invalidateCompiledGeometry -> waitAndReset). Mirrors promoteToMain's sync.
+            dea.seamlessportals$setLastViewDistance(mc.options.getEffectiveRenderDistance());
+            long xtRR0 = System.nanoTime();
             demotedExtractor.onResourceManagerReload(mc.getResourceManager());
+            xtResReload = System.nanoTime() - xtRR0;
             extractors.put(dim, demotedExtractor);
         } catch (Exception e) {
             SeamlessPortalsConstants.LOGGER.error(
                 "[SEAMLESS PHASE2] Failed to create demoted extractor for {}", dim.identifier(), e);
         }
+        long xtExt = System.nanoTime() - xtExt0;
 
         renderers.put(dim, renderer);
         levels.put(dim, level);
+        // XTIME (temp): per-op timing so we know which demote op dominates the crossing
+        // spike. Op nanos captured BEFORE this log, so they're accurate regardless of
+        // the log's own cost. extractor includes resReload (onResourceManagerReload).
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS XTIME] demote {} total={}ms | clearSched={}us entityWipe={}ms extractor={}ms (resReload={}ms)",
+            dim.identifier(),
+            (System.nanoTime() - xtStart) / 1_000_000L,
+            xtClear / 1_000L, xtWipe / 1_000_000L, xtExt / 1_000_000L, xtResReload / 1_000_000L);
         SeamlessPortalsConstants.rlog(
             "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, created extractor, cleared {} stale entities (kept {})",
             dim.identifier(), toRemove.size(), kept);
