@@ -40,6 +40,12 @@ public final class VisibleSectionDiscovery {
     private static final ArrayDeque<SectionRenderDispatcher.RenderSection> SCRATCH_QUEUE = new ArrayDeque<>();
     private static final LongOpenHashSet SCRATCH_VISITED = new LongOpenHashSet();
 
+    // Per-run portal inner-frustum cull + world camera pos (set at the start of
+    // discoverAndScheduleForPortalView, read in acceptPortalView). Render-thread-only +
+    // synchronous, like the scratch collections above, so plain statics are safe.
+    private static PortalInnerCull.Cone scratchInnerCull;
+    private static double scratchCamWX, scratchCamWY, scratchCamWZ;
+
     /**
      * Flood-fill from the camera section, frustum-culled and bounded by
      * {@code viewDistanceSections} (a Chebyshev cube), into {@code out}.
@@ -138,7 +144,7 @@ public final class VisibleSectionDiscovery {
      *         call (for diagnostics); all other behaviour is via the out-lists.
      */
     public static int discoverAndScheduleForPortalView(
-            ViewArea viewArea, Vec3 cameraPos, Frustum frustum, int radiusSq,
+            ViewArea viewArea, Vec3 cameraPos, Frustum frustum, PortalInnerCull.Cone innerCull, int radiusSq,
             ClientLevel destLevel, SectionUpdateTracker sut, RenderRegionCache cache,
             Set<Long> schedSet, long compileBudgetNs,
             List<SectionRenderDispatcher.RenderSection> visibleOut,
@@ -147,6 +153,10 @@ public final class VisibleSectionDiscovery {
         prebuiltOut.clear();
         SCRATCH_QUEUE.clear();
         SCRATCH_VISITED.clear();
+        scratchInnerCull = innerCull;
+        scratchCamWX = cameraPos.x;
+        scratchCamWY = cameraPos.y;
+        scratchCamWZ = cameraPos.z;
 
         int camX = SectionPos.blockToSectionCoord((int) Math.floor(cameraPos.x));
         int camY = SectionPos.blockToSectionCoord((int) Math.floor(cameraPos.y));
@@ -199,9 +209,21 @@ public final class VisibleSectionDiscovery {
             ((ViewAreaInvokerMixin) (Object) viewArea).seamlessportals$invokeGetRenderSection(node);
         if (section == null) return; // outside the grid (incl. above/below world) → bounds the fill
 
-        // Frustum-culled sections are neither drawn NOR expanded through (the flood
-        // only propagates through what's actually on-screen for the portal view).
-        if (!skipFrustum && !frustum.isVisible(section.getBoundingBox())) return;
+        // Visibility cull — sections that fail are neither drawn NOR expanded through
+        // (the flood only propagates through what's actually on-screen for the portal
+        // view). The seed (camera section) is exempt so it's never wrongly culled.
+        if (!skipFrustum) {
+            net.minecraft.world.phys.AABB bb = section.getBoundingBox();
+            // IP's inner-frustum portal cull (the dominant draw-cost reduction): drop
+            // sections fully outside the cone through the portal opening. Box is made
+            // camera-relative to match the cone's planes (which pass through the camera).
+            if (scratchInnerCull != null && scratchInnerCull.isFullyOutside(
+                    (float) (bb.minX - scratchCamWX), (float) (bb.minY - scratchCamWY), (float) (bb.minZ - scratchCamWZ),
+                    (float) (bb.maxX - scratchCamWX), (float) (bb.maxY - scratchCamWY), (float) (bb.maxZ - scratchCamWZ))) {
+                return;
+            }
+            if (!frustum.isVisible(bb)) return;
+        }
 
         // In-bound + on-screen: keep flooding THROUGH it even if its chunk isn't
         // loaded yet, so a momentary gap (still-loading dest) doesn't stall the fill.

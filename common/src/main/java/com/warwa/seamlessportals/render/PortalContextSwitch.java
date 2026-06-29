@@ -941,8 +941,17 @@ public class PortalContextSwitch {
             // cannot return. Bound = the same 2D horizontal cylinder (destDepthRadiusSq,
             // full Y column) the old scan admitted on.
             if (!nativeRender) {
+                // IP's inner-frustum portal cull: narrow visibility to the cone through
+                // the portal OPENING (not the full camera frustum), so the FBO draw
+                // submits only the sections actually visible through the hole — IP's one
+                // real render-cost lever (FrustumCuller.getFlatPortalInnerFrustumCullingFunc).
+                // This directly shrinks the FeatureRenderDispatcher terrain draw that was
+                // stalling the GPU 120-223ms per lit-portal frame. Built from the DEST
+                // portal opening + the virtual (mirror) camera.
+                PortalInnerCull.Cone innerCull =
+                    PortalInnerCull.buildFromDestPortal(destPortal, destCameraPos);
                 scheduledAsync = VisibleSectionDiscovery.discoverAndScheduleForPortalView(
-                    viewArea, destCameraPos, destFrustum, destDepthRadiusSq(),
+                    viewArea, destCameraPos, destFrustum, innerCull, destDepthRadiusSq(),
                     destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS,
                     visibleSections, prebuiltVisibleSections);
                 compiled = visibleSections.size();
