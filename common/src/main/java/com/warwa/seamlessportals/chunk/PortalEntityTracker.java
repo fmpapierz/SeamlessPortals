@@ -328,7 +328,7 @@ public class PortalEntityTracker {
         playerTracked.put(destDim, currIds);
 
         if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS LIVE ENT] {} -> {}: +{} -{} visible={} tracked={} centers={} tick={}",
                 player.getName().getString(), destDim.identifier(),
                 toAdd.size(), toRemove.size(), visible.size(), currIds.size(),
@@ -337,7 +337,7 @@ public class PortalEntityTracker {
             // types + positions being tracked vs missing.
             if (toAdd.size() > 0 && toAdd.size() <= 5) {
                 for (Entity e : toAdd) {
-                    SeamlessPortalsConstants.LOGGER.info(
+                    SeamlessPortalsConstants.rlog(
                         "[SEAMLESS LIVE ENT]   +add {} id={} at ({},{},{})",
                         BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()),
                         e.getId(),
@@ -393,12 +393,12 @@ public class PortalEntityTracker {
                         dim.identifier().toString(),
                         new net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket(
                             e.getId(), slots)));
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS LIVE ENT] equip {} id={} slots={} in {}",
                     BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()),
                     e.getId(), slots.size(), dim.identifier());
             } else {
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS LIVE ENT] equip {} id={} SKIPPED (no non-empty slots) in {}",
                     BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()),
                     e.getId(), dim.identifier());

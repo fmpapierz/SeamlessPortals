@@ -353,7 +353,7 @@ public class PortalWorldManager {
             return null;
         }
 
-        SeamlessPortalsConstants.LOGGER.info("[SEAMLESS PHASE2] Creating secondary renderer for {}", dimension.identifier());
+        SeamlessPortalsConstants.rlog("[SEAMLESS PHASE2] Creating secondary renderer for {}", dimension.identifier());
 
         try {
             GameRenderState gameRenderState = mc.gameRenderer.gameRenderState();
@@ -476,7 +476,7 @@ public class PortalWorldManager {
             levels.put(dimension, destLevel);
             extractors.put(dimension, destExtractor);
 
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS PHASE2] Secondary renderer created for {} (sections={})",
                 dimension.identifier(), destLevel.getSectionsCount()
             );
@@ -571,7 +571,7 @@ public class PortalWorldManager {
         }
 
         if (portalOrigins.isEmpty()) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS PHASE2] feedExistingChunks: no portal origins found for {}, skipping",
                 dimension.identifier());
             return;
@@ -622,7 +622,7 @@ public class PortalWorldManager {
         }
 
         if (enqueued > 0 || skippedLive > 0) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS PHASE2] feedExistingChunks for {} — enqueued={} skippedLive={} (chunks-in-RCM={})",
                 dimension.identifier(), enqueued, skippedLive, chunks.size());
         }
@@ -755,7 +755,7 @@ public class PortalWorldManager {
             }
             if (!anyStillPending) {
                 feedingDims.remove(d);
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS PHASE2] Finished async-feeding chunks for level {}",
                     d.identifier());
             }
@@ -982,7 +982,7 @@ public class PortalWorldManager {
             pendingSyncPrime.add(renderer);
         }
 
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS PHASE2] Promoted renderer → mc.levelRenderer for {} (marked for SOG sync prime; wiped {} mirrored entities)",
             dim.identifier(), promoteWiped);
         return new Promotion(renderer, level);
@@ -1265,7 +1265,7 @@ public class PortalWorldManager {
             // accumulates ambient particles after animateTick + tick.
             if (center != null && particleDiagCount < 12) {
                 particleDiagCount++;
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS PARTICLE] tick dim={} center=({},{},{}) engine=[{}]",
                     dim.identifier(),
                     center.getX(), center.getY(), center.getZ(), engine.countParticles());
@@ -1340,7 +1340,7 @@ public class PortalWorldManager {
 
         renderers.put(dim, renderer);
         levels.put(dim, level);
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, created extractor, cleared {} stale entities (kept {})",
             dim.identifier(), toRemove.size(), kept);
     }

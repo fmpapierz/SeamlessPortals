@@ -544,7 +544,7 @@ public abstract class HandleRespawnMixin {
         ((ClientPacketListener)(Object) this).send(new ServerboundPlayerLoadedPacket());
         this.clientLoaded = true;
 
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS] Skipped loading screen for {} — sent player-loaded immediately",
             level.dimension().identifier());
 
@@ -604,14 +604,14 @@ public abstract class HandleRespawnMixin {
         if (mc.player != null) {
             var pm = com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
             var links = pm.getLinksInRange(destDim, mc.player.blockPosition(), 64);
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] TELEPORT LANDED: playerPos=({},{},{}) in {} nearbyLinks={}",
                 String.format("%.1f", mc.player.getX()),
                 String.format("%.1f", mc.player.getY()),
                 String.format("%.1f", mc.player.getZ()),
                 destDim.identifier(), links.size());
             for (var link : links) {
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS DEBUG]   portal link: src={}({}) dest={}({})",
                     link.getSource().getOrigin(), link.getSource().getDimension().identifier(),
                     link.getDestination().getOrigin(), link.getDestination().getDimension().identifier());
@@ -699,7 +699,7 @@ public abstract class HandleRespawnMixin {
                     }
                 }
                 if (fed > 0) {
-                    SeamlessPortalsConstants.LOGGER.info(
+                    SeamlessPortalsConstants.rlog(
                         "[SEAMLESS] Pre-fed {} chunks around portal ({}, {}) into new {} level",
                         fed, centerChunkX, centerChunkZ, destDim.identifier());
                 }

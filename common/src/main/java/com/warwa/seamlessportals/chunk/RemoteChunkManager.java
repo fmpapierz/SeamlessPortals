@@ -78,7 +78,7 @@ public class RemoteChunkManager {
                     pc.dim, pc.chunkX, pc.chunkZ, pc.data);
                 totalChunksReceived++;
                 if (totalChunksReceived % 50 == 0) {
-                    SeamlessPortalsConstants.LOGGER.info(
+                    SeamlessPortalsConstants.rlog(
                         "[SEAMLESS] Remote chunks received: {} for {} (pending: {})",
                         getChunkCount(pc.dim), pc.dim.identifier(), pendingChunks.size()
                     );
@@ -176,7 +176,7 @@ public class RemoteChunkManager {
                         }
                     }
                 }
-                SeamlessPortalsConstants.LOGGER.info("[SEAMLESS DEBUG] {}", sb.toString());
+                SeamlessPortalsConstants.rlog("[SEAMLESS DEBUG] {}", sb.toString());
                 return; // Only log first non-empty section
             }
         }

@@ -51,7 +51,7 @@ public abstract class LevelRendererDiagMixin {
         int before = self.seamlessportals$getVisibleSections().size();
         // Tag is the remaining-count, counting down from 12 (so first post-swap
         // frame is #12, then 11, etc.)
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS DIAG update#{}] HEAD: visibleSections={}",
             SeamlessClientTeleport.diagLogUpdatesRemaining,
             before);
@@ -63,7 +63,7 @@ public abstract class LevelRendererDiagMixin {
         if (SeamlessClientTeleport.diagLogUpdatesRemaining <= 0) return;
         LevelRendererAccessorMixin self = (LevelRendererAccessorMixin) (Object) this;
         int after = self.seamlessportals$getVisibleSections().size();
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS DIAG update#{}] RETURN: visibleSections={}",
             SeamlessClientTeleport.diagLogUpdatesRemaining,
             after);

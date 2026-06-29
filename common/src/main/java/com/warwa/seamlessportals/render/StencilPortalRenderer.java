@@ -166,7 +166,7 @@ public class StencilPortalRenderer {
         PortalShapeRenderer.drawMergedPortalShapeWithDepthTest(portals, camera);
         if (framesRendered <= 5) {
             int stencilWriteFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] Stencil write on FBO={}", stencilWriteFbo);
         }
 
@@ -222,7 +222,7 @@ public class StencilPortalRenderer {
         GL11.glDisable(GL11.GL_STENCIL_TEST);
 
         if (framesRendered <= 2) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS STENCIL] Rendered {} portal planes batched on FBO {}",
                 portals.size(), renderFbo
             );

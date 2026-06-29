@@ -90,12 +90,12 @@ public abstract class LevelRendererCullTerrainMixin {
         try {
             task.get(16, java.util.concurrent.TimeUnit.MILLISECONDS);
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS PHASE2] SOG sync prime: blocked {}ms on full-update task (within budget)",
                 elapsedMs);
         } catch (java.util.concurrent.TimeoutException te) {
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS PHASE2] SOG sync prime: bailed at {}ms (16ms budget exceeded; rendering with last-frame visibleSections, will catch up next frame)",
                 elapsedMs);
         } catch (InterruptedException ie) {

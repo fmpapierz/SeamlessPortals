@@ -61,7 +61,7 @@ public abstract class LivingEntityRendererDiagMixin {
         // item's model id lookup failed for the cached-level context).
         boolean handStateEmpty = state.rightHandItemState == null || state.rightHandItemState.isEmpty();
         seamlessportals$diagCount++;
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS LIVE ENT] renderDiag #{} id={} type={} entity.mainHand={} state.rightHand={} state.rightHandItemState.isEmpty={} in {}",
             seamlessportals$diagCount, entity.getId(),
             net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()),

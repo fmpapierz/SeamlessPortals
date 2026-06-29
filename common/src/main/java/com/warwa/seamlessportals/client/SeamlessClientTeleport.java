@@ -97,7 +97,7 @@ public final class SeamlessClientTeleport {
         justTeleportedClient = true;
         lastClientSwapDim = link.getDestination().getDimension();
 
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS CLIENT-CROSSING] client-first swap → {} at ({},{},{})",
             link.getDestination().getDimension().identifier(),
             String.format("%.2f", destPos.x),
@@ -234,7 +234,7 @@ public final class SeamlessClientTeleport {
             ? ((LevelRendererAccessorMixin)(Object) oldRenderer).seamlessportals$getVisibleSections().size() : -1;
         int newVSBefore = ((LevelRendererAccessorMixin)(Object) promotion.renderer())
             .seamlessportals$getVisibleSections().size();
-        SeamlessPortalsConstants.LOGGER.info(
+        SeamlessPortalsConstants.rlog(
             "[SEAMLESS DIAG #{}] PRE-swap: oldRenderer({}).visibleSections={}, promoted({}).visibleSections={}",
             swapId, oldDim.identifier(), oldVSBefore, destDim.identifier(), newVSBefore);
 

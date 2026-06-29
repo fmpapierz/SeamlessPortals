@@ -632,7 +632,7 @@ public class PortalContextSwitch {
         // Require minimum chunks before attempting FBO render.
         if (currentCount < 9) {
             if (phase2FailCount <= 5) {
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS DEBUG] tryFboRender bailed: currentCount={} (need >=9) destDim={}",
                     currentCount, destDim.identifier());
                 phase2FailCount++;
@@ -667,7 +667,7 @@ public class PortalContextSwitch {
         float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
 
         if (phase2SuccessCount <= 3) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS] FBO render: src={} ({}) size={}x{} axis={}, dest={} ({}) size={}x{} axis={}",
                 srcPortal.getOrigin(), srcPortal.getDimension().identifier(),
                 srcPortal.getWidth(), srcPortal.getHeight(), srcPortal.getAxis(),
@@ -704,7 +704,7 @@ public class PortalContextSwitch {
         virtualCamera.tick();
 
         if (phase2SuccessCount <= 3) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] Camera: playerPos=({},{},{}) → destCam=({},{},{}) destYaw={} srcAxis={} destAxis={}",
                 String.format("%.1f", mainCamera.position().x),
                 String.format("%.1f", mainCamera.position().y),
@@ -953,7 +953,7 @@ public class PortalContextSwitch {
                 compiled = visibleSections.size();
             }
             if (phase2SuccessCount == 0 && compiled > 0) {
-                SeamlessPortalsConstants.LOGGER.info(
+                SeamlessPortalsConstants.rlog(
                     "[SEAMLESS] Direct compilation: {} sections at [{},{}] "
                         + "(scheduledAsync={}, skippedFarDirty={})",
                     compiled, cameraSectionPos.x(), cameraSectionPos.z(),
@@ -1136,7 +1136,7 @@ public class PortalContextSwitch {
                     // is the dest engine — confirm it holds particles to draw and
                     // that the skip-gate is open.
                     if (phase2SuccessCount <= 3) {
-                        SeamlessPortalsConstants.LOGGER.info(
+                        SeamlessPortalsConstants.rlog(
                             "[SEAMLESS PARTICLE] render dim={} destEngine=[{}] destParticlesActive={}",
                             destDim.identifier(), mc.particleEngine.countParticles(),
                             destParticlesActive);
@@ -1174,7 +1174,7 @@ public class PortalContextSwitch {
                     // always returns a fresh record, LevelRenderer.java:605); it stays
                     // only for the diagnostics + Sodium re-point below.
                     if (destChunks.maxIndicesRequired() == 0 && phase2FailCount <= 8) {
-                        SeamlessPortalsConstants.LOGGER.info(
+                        SeamlessPortalsConstants.rlog(
                             "[SEAMLESS] dest empty this frame for {} (#{}) — running render() to compile+upload",
                             destDim.identifier(), phase2FailCount + 1);
                         phase2FailCount++;
@@ -1188,7 +1188,7 @@ public class PortalContextSwitch {
                                 totalDraws += drawList.size();
                             }
                         }
-                        SeamlessPortalsConstants.LOGGER.info(
+                        SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] destChunks: maxIndices={} totalDraws={} textureView={}",
                             destChunks.maxIndicesRequired(), totalDraws,
                             destChunks.textureView() != null ? "valid" : "NULL");
@@ -1196,18 +1196,18 @@ public class PortalContextSwitch {
 
                     if (phase2SuccessCount <= 3) {
                         int mainFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
-                        SeamlessPortalsConstants.LOGGER.info(
+                        SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] Context switch: level={} renderer={} mainRT={}x{} glFbo={}",
                             mc.level.dimension().identifier(),
                             mc.levelRenderer == destRenderer ? "dest" : "WRONG",
                             mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height,
                             mainFbo);
-                        SeamlessPortalsConstants.LOGGER.info(
+                        SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] renderLevel fogColor=({},{},{},{}) destChunks.maxIndices={} skyRender=true cam=({},{},{})",
                             destFogData.color.x, destFogData.color.y, destFogData.color.z, destFogData.color.w,
                             destChunks.maxIndicesRequired(),
                             (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z);
-                        SeamlessPortalsConstants.LOGGER.info(
+                        SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] fogDistances: envStart={} envEnd={} renderStart={} renderEnd={} skyEnd={} cloudEnd={}",
                             destFogData.environmentalStart, destFogData.environmentalEnd,
                             destFogData.renderDistanceStart, destFogData.renderDistanceEnd,
@@ -1270,7 +1270,7 @@ public class PortalContextSwitch {
                             writeProjectionBuffer(destCameraState.projectionMatrix, false),
                             com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
                         if (phase2SuccessCount <= 3) {
-                            SeamlessPortalsConstants.LOGGER.info(
+                            SeamlessPortalsConstants.rlog(
                                 "[SEAMLESS DEBUG] Projection: backed up + set {}. m22={} m32={}",
                                 obliqueAppliedFinal ? "oblique" : "clean",
                                 String.format("%.4f", destCameraState.projectionMatrix.m22()),
@@ -1355,7 +1355,7 @@ public class PortalContextSwitch {
                                     .getVisibleChunkCount(destRenderer);
                                 String debugInfo = com.warwa.seamlessportals.compat.SodiumBridge
                                     .getDebugInfo(destRenderer);
-                                SeamlessPortalsConstants.LOGGER.info(
+                                SeamlessPortalsConstants.rlog(
                                     "[SEAMLESS SODIUM] visibleChunkCount: before={}, after={} | {}",
                                     sodiumVisBefore, sodiumVisAfter, debugInfo);
                             }
@@ -1375,7 +1375,7 @@ public class PortalContextSwitch {
                             );
                             RenderSystem.restoreProjectionMatrix();
                             if (phase2SuccessCount <= 3) {
-                                SeamlessPortalsConstants.LOGGER.info(
+                                SeamlessPortalsConstants.rlog(
                                     "[SEAMLESS DEBUG] Projection: restored from backup");
                             }
                         }
@@ -1453,7 +1453,7 @@ public class PortalContextSwitch {
             int postFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
             boolean stencilEnabled = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
             RenderTarget postRT = mc.gameRenderer.mainRenderTarget();
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] Post-restore: glFbo={} mainRT={}x{} level={} stencil={}",
                 postFbo, postRT.width, postRT.height,
                 mc.level.dimension().identifier(), stencilEnabled);
@@ -1475,7 +1475,7 @@ public class PortalContextSwitch {
 
         phase2SuccessCount++;
         if (phase2SuccessCount <= 5) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS] FBO renderLevel SUCCESS #{} for {} at ({}, {}, {})",
                 phase2SuccessCount, destDim.identifier(),
                 (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z);
@@ -1573,7 +1573,7 @@ public class PortalContextSwitch {
                          + nz * (cameraPos.z - portalCenter.z);
 
         if (phase2SuccessCount <= 3) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] ObliqueClip: cameraDot={} normalFlipped={} nx={} ny={} nz={}",
                 String.format("%.3f", cameraDot),
                 cameraDot > 0, nx, ny, nz);
@@ -1605,7 +1605,7 @@ public class PortalContextSwitch {
         float dotCQ = vnx * qx + vny * qy + vnz * qz + vd * qw;
 
         if (phase2SuccessCount <= 3) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] ObliqueClip: viewNormal=({},{},{}) vd={} dotCQ={} degenerate={}",
                 String.format("%.3f", vnx), String.format("%.3f", vny), String.format("%.3f", vnz),
                 String.format("%.3f", vd), String.format("%.3f", dotCQ),
@@ -1645,7 +1645,7 @@ public class PortalContextSwitch {
         projMatrix.m32(newM32);
 
         if (phase2SuccessCount <= 3) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] ObliqueClip: row2 BEFORE=({},{},{},{}) AFTER=({},{},{},{})",
                 String.format("%.4f", origM02), String.format("%.4f", origM12),
                 String.format("%.4f", origM22), String.format("%.4f", origM32),
@@ -1792,7 +1792,7 @@ public class PortalContextSwitch {
             // Check what FBO the composite render pass will use
             int stencilRef = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_STENCIL_REF);
             int stencilFunc = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_STENCIL_FUNC);
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS DEBUG] Composite: stencil={} stencilRef={} stencilFunc={} glFbo={} mainRT={}x{} fboColorTex={} fboDepthTex={}",
                 stencilOn, stencilRef, stencilFunc, glFboBefore,
                 mainRT.width, mainRT.height,

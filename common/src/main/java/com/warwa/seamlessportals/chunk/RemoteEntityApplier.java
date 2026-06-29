@@ -91,7 +91,7 @@ public final class RemoteEntityApplier {
 
         addCount++;
         if (addCount <= 3 || addCount % 100 == 0) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS LIVE ENT] add #{}: {} id={} uuid={} at ({},{},{}) in {}",
                 addCount,
                 BuiltInRegistries.ENTITY_TYPE.getKey(type),
@@ -136,7 +136,7 @@ public final class RemoteEntityApplier {
 
         moveCount++;
         if (moveCount <= 5) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS LIVE ENT] move #{}: id={} to ({},{},{}) yRot={} in {}",
                 moveCount, p.entityId(),
                 String.format("%.2f", p.x()), String.format("%.2f", p.y()), String.format("%.2f", p.z()),
@@ -193,7 +193,7 @@ public final class RemoteEntityApplier {
                     .append(" readback=")
                     .append(readback.isEmpty() ? "EMPTY" : readback.getItem().toString());
             }
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS LIVE ENT] applyEquipment id={} type={} [{}] in {}",
                 pkt.getEntity(),
                 net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()),
@@ -216,7 +216,7 @@ public final class RemoteEntityApplier {
             level.removeEntity(id, Entity.RemovalReason.DISCARDED);
         }
         if (addCount <= 5 || ids.size() > 1) {
-            SeamlessPortalsConstants.LOGGER.info(
+            SeamlessPortalsConstants.rlog(
                 "[SEAMLESS LIVE ENT] remove {}: ids={} in {}",
                 ids.size(), ids, p.dimensionId());
         }

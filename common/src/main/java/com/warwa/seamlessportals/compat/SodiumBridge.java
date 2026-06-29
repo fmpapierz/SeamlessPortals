@@ -511,11 +511,11 @@ public final class SodiumBridge {
                     // The field is on the mixin class — likely package-private
                     rendererField.setAccessible(true);
                     Object beforeRenderer = rendererField.get(chunkSectionsToRender);
-                    SeamlessPortalsConstants.LOGGER.info(
+                    SeamlessPortalsConstants.rlog(
                         "[SEAMLESS SODIUM] updateChunkSectionsRenderer ENTRY: destChunks.renderer before our call = {}",
                         beforeRenderer == null ? "NULL" : beforeRenderer.getClass().getSimpleName());
                 } catch (Throwable probeFail) {
-                    SeamlessPortalsConstants.LOGGER.info(
+                    SeamlessPortalsConstants.rlog(
                         "[SEAMLESS SODIUM] (probe of destChunks.renderer failed — best-effort skip: {})",
                         probeFail.toString());
                 }
