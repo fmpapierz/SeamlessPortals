@@ -922,6 +922,14 @@ public class PortalWorldManager {
             (LevelExtractorAccessor) (Object) mc0.levelExtractor;
         mainExt.seamlessportals$setLevelRenderer(renderer);
         mainExt.seamlessportals$setLevel(level);
+        // Sync lastViewDistance so the FIRST post-promote extract() doesn't trip its
+        // `getEffectiveRenderDistance() != lastViewDistance` guard and call allChanged()
+        // -> invalidateCompiledGeometry, which would WIPE every compiled mesh this
+        // promotion exists to preserve (then re-mesh the whole world — the confirmed
+        // per-teleport stutter cascade: allChanged fired 1:1 with promotes, each
+        // triggering ~15+ re-mesh stall frames). The direct setLevel above already
+        // skips the setLevel->allChanged path; this closes the indirect extract() path.
+        mainExt.seamlessportals$setLastViewDistance(mc0.options.getEffectiveRenderDistance());
         if (destExtractor != null) {
             mainExt.seamlessportals$setSectionUpdateTracker(
                 ((LevelExtractorAccessor) (Object) destExtractor)

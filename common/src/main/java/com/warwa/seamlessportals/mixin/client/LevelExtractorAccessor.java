@@ -51,6 +51,14 @@ public interface LevelExtractorAccessor {
     @Accessor("sectionUpdateTracker")
     void seamlessportals$setSectionUpdateTracker(SectionUpdateTracker tracker);
 
+    /** The render distance the extractor last reconfigured for. extract() compares
+     *  it against {@code options.getEffectiveRenderDistance()} every frame and, on a
+     *  mismatch, calls {@code allChanged()} → {@code invalidateCompiledGeometry} (wipes
+     *  ALL meshes). A seamless promote must sync this to the current effective RD or
+     *  the next extract wipes the very meshes the promotion preserves. */
+    @Accessor("lastViewDistance")
+    void seamlessportals$setLastViewDistance(int lastViewDistance);
+
     /** The LevelRenderState this extractor's {@code extract()} populates (final,
      *  bound at construction). Must equal the renderer's current levelRenderState
      *  for render() to see the extracted entities/clouds/particles. */
