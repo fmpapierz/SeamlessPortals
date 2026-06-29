@@ -32,12 +32,12 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         // of ~289 incoming chunks AND the secondary-renderer's initial feed
         // of pre-loaded chunks) would freeze the render thread for seconds.
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            // Phase 4c: the redirected vanilla chunk packets apply inline on the
-            // client thread (RedirectedPacketApplier), so the old snapshot-store
-            // drain (RemoteChunkManager.drainPending) and per-tick feed drain
-            // (PortalWorldManager.drainPendingFeeds) are gone — the engine's own
-            // chunk-load path replaces them. The deferred chunk-light lambdas land
-            // on each dest level's pollLightUpdates inside tickRemoteWorlds below.
+            // T2: drain queued redirected dest chunks within a per-tick time budget
+            // (was: apply each inline the moment it arrived → a burst froze the render
+            // thread ~155ms). Runs FIRST so freshly-applied chunks are available to the
+            // compile pump below. The deferred chunk-light lambdas land on each dest
+            // level's pollLightUpdates inside tickRemoteWorlds below.
+            com.warwa.seamlessportals.chunk.RedirectedPacketApplier.drainPending();
             // Phase C: advance compile work on every non-active secondary
             // renderer so their portal-view sections stay compiled in the
             // background — not just during the brief window an FBO render

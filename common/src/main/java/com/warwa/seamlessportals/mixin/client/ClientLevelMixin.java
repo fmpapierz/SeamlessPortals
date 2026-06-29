@@ -130,6 +130,7 @@ public abstract class ClientLevelMixin {
 
     @Inject(method = "disconnect", at = @At("HEAD"))
     private void seamlessportals$onDisconnect(CallbackInfo ci) {
+        com.warwa.seamlessportals.chunk.RedirectedPacketApplier.clearPending();
         RemoteChunkManager.clearAll();
         PortalManager.resetClient();
         seamlessportals$loggedChunkScan = false;

@@ -41,6 +41,42 @@ public final class RedirectedPacketApplier {
 
     private static int appliedLogCount = 0;
 
+    // T2: time-boxed apply queue. The network receiver enqueues redirected chunks
+    // instead of applying each one immediately, and {@link #drainPending()} applies a
+    // budgeted slice per client tick on the main thread. Without this, a burst of
+    // pre-warm chunks ran the full synchronous handleLevelChunkWithLight back-to-back
+    // in a single tick — the ~155ms render-thread freeze. The queue is FIFO so chunks
+    // still apply in arrival order. Thread-safe: the netty receiver adds, the client
+    // tick drains.
+    private static final java.util.Queue<ModPayloads.RedirectedChunkPayload> PENDING =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** Per-tick apply budget. Caps the render-thread cost of the redirected feed to a
+     *  small slice (so a big incoming batch spreads over ticks instead of freezing),
+     *  while still converging the dest to fully-present — IP's graduated pre-warm. */
+    private static final long DRAIN_BUDGET_NS = 3_000_000L; // 3ms/tick
+
+    /** Network-thread entry: queue a redirected chunk for budgeted application. */
+    public static void enqueue(ModPayloads.RedirectedChunkPayload payload) {
+        PENDING.add(payload);
+    }
+
+    /** Main-thread (client tick): apply queued redirected chunks within the time budget. */
+    public static void drainPending() {
+        if (PENDING.isEmpty()) return;
+        long start = System.nanoTime();
+        do {
+            ModPayloads.RedirectedChunkPayload p = PENDING.poll();
+            if (p == null) break;
+            applyChunk(p);
+        } while (System.nanoTime() - start < DRAIN_BUDGET_NS);
+    }
+
+    /** Drop any queued chunks (e.g. on disconnect) so a stale dim's chunks never apply. */
+    public static void clearPending() {
+        PENDING.clear();
+    }
+
     public static void applyChunk(ModPayloads.RedirectedChunkPayload p) {
         ResourceKey<Level> dim = parseDimensionKey(p.dimensionId());
         if (dim == null) return;

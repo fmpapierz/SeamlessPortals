@@ -155,8 +155,12 @@ public class FabricPlatformHelper implements PlatformHelper {
         ClientPlayNetworking.registerGlobalReceiver(
             ModPayloads.RedirectedChunkPayload.TYPE,
             (payload, context) -> {
-                context.client().execute(() ->
-                    com.warwa.seamlessportals.chunk.RedirectedPacketApplier.applyChunk(payload));
+                // T2: enqueue (thread-safe) instead of applying inline. The full
+                // synchronous handleLevelChunkWithLight runs in a budgeted per-tick
+                // drain (RedirectedPacketApplier.drainPending, from the client tick),
+                // so a burst of pre-warm chunks spreads over ticks instead of freezing
+                // the render thread for ~155ms.
+                com.warwa.seamlessportals.chunk.RedirectedPacketApplier.enqueue(payload);
             }
         );
 
