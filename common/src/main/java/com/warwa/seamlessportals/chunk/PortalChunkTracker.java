@@ -265,28 +265,26 @@ public class PortalChunkTracker {
     }
 
     /**
-     * Trim each player's sent-chunk record to the chunks still needed this tick
-     * (dropping records for dims with no nearby portal entirely), then ship the
-     * not-yet-sent needed chunks for each dim. Pruning is what bounds {@link #sentChunks}
-     * across a session and lets the server re-send a dest the client released when the
-     * player roams back into range.
+     * Drop a player's sent-chunk record for any dim they are no longer near (left ALL
+     * its portals), then ship the not-yet-sent needed chunks for each still-near dim.
+     *
+     * <p>We DROP the whole record for a departed dim (bounds {@link #sentChunks} across a
+     * session and lets the dest re-send when the player roams back after the client
+     * released it) — but we DO NOT prune a still-near dim's record down to the current
+     * tick's graduated {@code needed} ring. The needed radius graduates with the player's
+     * distance to the portal (full &lt;5 blocks, 2/3 &lt;15, else 1/3), so retaining only the
+     * current ring would forget + RE-SEND the outer ring every time the player moves
+     * across a band — a redirected-chunk re-send storm (~20k packets) and the persistent
+     * post-teleport stutter. Letting the record accumulate the union of what was sent
+     * while near keeps each chunk sent exactly once per visit.
      */
     private void pruneAndSend(ServerPlayer player,
                               Map<ResourceKey<Level>, Set<ChunkPos>> neededByDim,
                               MinecraftServer server) {
         Map<ResourceKey<Level>, Set<ChunkPos>> playerSent = sentChunks.get(player.getUUID());
         if (playerSent != null) {
-            Iterator<Map.Entry<ResourceKey<Level>, Set<ChunkPos>>> it =
-                playerSent.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<ResourceKey<Level>, Set<ChunkPos>> e = it.next();
-                Set<ChunkPos> needed = neededByDim.get(e.getKey());
-                if (needed == null) {
-                    it.remove();                  // dim no longer needed → drop its record
-                } else {
-                    e.getValue().retainAll(needed); // keep only chunks still in the working set
-                }
-            }
+            // Drop records only for dims the player is no longer near (not in neededByDim).
+            playerSent.keySet().retainAll(neededByDim.keySet());
         }
 
         for (Map.Entry<ResourceKey<Level>, Set<ChunkPos>> e : neededByDim.entrySet()) {

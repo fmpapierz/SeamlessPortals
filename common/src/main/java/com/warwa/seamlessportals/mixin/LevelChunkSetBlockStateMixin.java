@@ -129,9 +129,11 @@ public abstract class LevelChunkSetBlockStateMixin {
                 double dz = pos.getZ() + 0.5 - destCenter.z;
                 if (dx * dx + dz * dz > rangeSq) continue;
 
-                PlatformHelper.getInstance().sendToClient(player,
-                    new ModPayloads.RemoteBlockUpdatePayload(
-                        thisDimId, packedPos, stateId));
+                // Coalesce per-tick instead of sending one packet per block: buffer the
+                // update (deduped by position) and flush ONE batch per player per dim at
+                // server tick end (vanilla-style). Kills the lava/fluid packet + rebuild flood.
+                com.warwa.seamlessportals.chunk.BlockUpdateMirrorBuffer.add(
+                    player, thisDim, packedPos, stateId);
                 break; // one matching link is enough — don't double-send
             }
         }

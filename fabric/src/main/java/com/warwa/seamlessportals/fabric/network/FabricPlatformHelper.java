@@ -58,6 +58,10 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.RemoteBlockUpdatePayload.STREAM_CODEC
         );
         PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.RemoteBlockUpdateBatchPayload.TYPE,
+            ModPayloads.RemoteBlockUpdateBatchPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
             ModPayloads.RemoteEntityAddPayload.TYPE,
             ModPayloads.RemoteEntityAddPayload.STREAM_CODEC
         );
@@ -233,6 +237,14 @@ public class FabricPlatformHelper implements PlatformHelper {
                     com.warwa.seamlessportals.chunk.RemoteBlockUpdater.apply(
                         payload.dimensionId(), payload.packedPos(), payload.blockStateId());
                 });
+            }
+        );
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RemoteBlockUpdateBatchPayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() ->
+                    com.warwa.seamlessportals.chunk.RemoteBlockUpdater.applyBatch(
+                        payload.dimensionId(), payload.positions(), payload.blockStateIds()));
             }
         );
 

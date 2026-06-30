@@ -40,6 +40,31 @@ public class StencilPortalRenderer {
     private static final int MAX_PORTALS_RENDERED = 4;
 
     /**
+     * Build the MAIN camera's cull frustum at the current projection (the player's view),
+     * for the portal-visibility cull. Returns null if the projection isn't available yet,
+     * in which case the caller skips the cull (renders all in-range portals — the prior
+     * behaviour) rather than risk culling a visible portal to nothing.
+     */
+    private static net.minecraft.client.renderer.culling.Frustum buildMainFrustum(Camera camera) {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            var mainCameraState =
+                mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+            if (mainCameraState == null || mainCameraState.projectionMatrix == null) return null;
+            org.joml.Matrix4f proj = new org.joml.Matrix4f(mainCameraState.projectionMatrix);
+            org.joml.Matrix4f view = new org.joml.Matrix4f();
+            camera.getViewRotationMatrix(view);
+            net.minecraft.client.renderer.culling.Frustum f =
+                new net.minecraft.client.renderer.culling.Frustum(view, proj);
+            net.minecraft.world.phys.Vec3 cp = camera.position();
+            f.prepare(cp.x, cp.y, cp.z);
+            return f;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
      * Discover the linked portals near the player. Returns {@code null} if there is nothing to
      * render. Each portal becomes its OWN render group with its OWN link — previously all nearby
      * portals were collapsed into one list + firstLink, so two separate portals showed ONE
@@ -61,9 +86,20 @@ public class StencilPortalRenderer {
         List<PortalInfo> nearbyPortals = tracker.getPortalsInRange(playerPos, range);
         if (nearbyPortals.isEmpty()) return null;
 
+        // IP-style portal VISIBILITY cull (RendererUsingFrameBuffer.testShouldRenderPortal):
+        // render a portal's destination ONLY when the portal is actually ON SCREEN. Without
+        // this we did up to MAX_PORTALS_RENDERED FULL dest-world renders per frame for the
+        // nearest portals within range — INCLUDING ones behind the player / off to the side
+        // (the per-frame GPU cost that regressed vs the single-portal stutter-free runs).
+        // Frustum-cull against the main camera, with an inflated margin so a portal at the
+        // screen edge is decided the SAME way in BOTH render phases (no FBO/composite mismatch).
+        net.minecraft.client.renderer.culling.Frustum mainFrustum = buildMainFrustum(camera);
+
         List<RenderGroup> groups = new ArrayList<>();
         for (PortalInfo portal : nearbyPortals) {
             if (!SeamlessPortalsConfig.shouldRenderThrough(portal.getType())) continue;
+            if (mainFrustum != null
+                    && !mainFrustum.isVisible(portal.getBoundingBox().inflate(8.0))) continue;
             Optional<PortalLink> linkOpt = pm.getLinkForPortal(portal.getPortalId());
             if (linkOpt.isEmpty()) continue;
             groups.add(new RenderGroup(portal, linkOpt.get()));
@@ -120,10 +156,16 @@ public class StencilPortalRenderer {
         // phase 2). prepareDestinationWorld repoints the active FBO to this portal and records
         // its per-portal ready flag, which phase 2 reads when compositing that portal.
         java.util.Set<java.util.UUID> rendered = new java.util.HashSet<>();
+        long fboT0 = System.nanoTime();
         for (RenderGroup g : targets.groups()) {
             PortalContextSwitch.prepareDestinationWorld(g.portal(), g.link(), targets.camera());
             rendered.add(g.portal().getPortalId());
         }
+        // DIAG: attribute the per-frame dest FBO render cost (≈0 when no portal is in
+        // view — confirms whether the "stutters when not looking" cost is here or elsewhere).
+        long fboMs = (System.nanoTime() - fboT0) / 1_000_000L;
+        PerfTimers.add("fboRender(" + targets.groups().size() + "p)", System.nanoTime() - fboT0);
+        RenderSpikeMonitor.recordFbo(fboMs);
         // Free pooled FBOs for portals no longer rendered, so the pool stays bounded.
         PortalContextSwitch.evictUnusedPortalFbos(rendered);
     }
@@ -135,6 +177,12 @@ public class StencilPortalRenderer {
         // Recursion guard: renderLevel() on secondary renderer triggers AFTER_TRANSLUCENT_TERRAIN
         // which calls this method again. Match IP's PortalRendering.isRendering() check.
         if (PortalContextSwitch.isRenderingPortal) return;
+
+        // DIAG: off-thread frame-gap + stall-watchdog telemetry. Render-thread stamp only
+        // (cheap, no logging); daemon threads emit [SEAMLESS PERF] summaries every 5s and
+        // dump the render-thread stack on any >150ms stall ([SEAMLESS STUCK]) — capturing
+        // the exact stalling method. Counts MAIN frames only (after the recursion guard).
+        RenderSpikeMonitor.onFrame();
 
         RenderTargets targets = resolveRenderTargets();
 

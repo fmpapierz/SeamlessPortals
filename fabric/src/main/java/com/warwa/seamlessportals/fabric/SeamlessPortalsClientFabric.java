@@ -37,28 +37,21 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // thread ~155ms). Runs FIRST so freshly-applied chunks are available to the
             // compile pump below. The deferred chunk-light lambdas land on each dest
             // level's pollLightUpdates inside tickRemoteWorlds below.
-            com.warwa.seamlessportals.chunk.RedirectedPacketApplier.drainPending();
-            // Phase C: advance compile work on every non-active secondary
-            // renderer so their portal-view sections stay compiled in the
-            // background — not just during the brief window an FBO render
-            // occupies the render thread.
-            com.warwa.seamlessportals.client.PortalWorldManager.advanceCompilePipelines();
-            // Keep cached (dormant) levels' gameTime in sync with the active
-            // mc.level so portal-view rendering doesn't show stale time-of-day.
-            com.warwa.seamlessportals.client.PortalWorldManager.syncTimeToCachedLevels();
-            // IP "live window" Phase 1: tick every resident remote world fully
-            // (entities, fluids, fire, block entities, light) so the destination
-            // is ALIVE through the portal, not a frozen snapshot. Falls back to
-            // the legacy per-entity mirror tick when isClientRemoteTickingEnabled
-            // is off.
-            com.warwa.seamlessportals.client.PortalWorldManager.tickRemoteWorlds();
-            // Spawn + tick each cached destination dimension's ambient particles
-            // (flame, lava, nether portal, fog) in its OWN per-dest ParticleEngine
-            // so they render inside the portal view.
-            com.warwa.seamlessportals.client.PortalWorldManager.tickCachedParticles();
-            // T3: keep the unbounded secondary chunk stores bounded (no-op unless the flag
-            // is on). Inactive secondaries never get vanilla's forget-chunk eviction.
-            com.warwa.seamlessportals.client.PortalWorldManager.evictUnboundedStores();
+            // DIAG: each client-tick subsystem timed + attributed off-thread
+            // ([SEAMLESS TIMERS], reported per 5s) so the "stutters even when not looking
+            // at the portal" cost is read from data, not guessed.
+            com.warwa.seamlessportals.render.PerfTimers.time("drainChunks",
+                com.warwa.seamlessportals.chunk.RedirectedPacketApplier::drainPending);
+            com.warwa.seamlessportals.render.PerfTimers.time("advanceCompilePipelines",
+                com.warwa.seamlessportals.client.PortalWorldManager::advanceCompilePipelines);
+            com.warwa.seamlessportals.render.PerfTimers.time("syncTime",
+                com.warwa.seamlessportals.client.PortalWorldManager::syncTimeToCachedLevels);
+            com.warwa.seamlessportals.render.PerfTimers.time("tickRemoteWorlds",
+                com.warwa.seamlessportals.client.PortalWorldManager::tickRemoteWorlds);
+            com.warwa.seamlessportals.render.PerfTimers.time("tickCachedParticles",
+                com.warwa.seamlessportals.client.PortalWorldManager::tickCachedParticles);
+            com.warwa.seamlessportals.render.PerfTimers.time("evictUnboundedStores",
+                com.warwa.seamlessportals.client.PortalWorldManager::evictUnboundedStores);
         });
 
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");

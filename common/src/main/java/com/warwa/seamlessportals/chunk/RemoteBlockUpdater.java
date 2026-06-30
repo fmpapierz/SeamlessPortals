@@ -143,6 +143,84 @@ public final class RemoteBlockUpdater {
     }
 
     /**
+     * Batched apply: set every block, then dirty + rebuild each AFFECTED SECTION exactly
+     * once — not once per block. The per-block forced rebuild ({@code scheduleCompileIfDirty}
+     * → ~1ms {@code createRegion}) was the render-thread cost of the lava/fluid flood; a
+     * settling fluid field touches many blocks but only a few sections, so coalescing the
+     * rebuild per section is the dominant win (on top of the single batched packet).
+     */
+    public static void applyBatch(String dimensionId, java.util.List<Long> positions,
+                                  java.util.List<Integer> blockStateIds) {
+        long batchT0 = System.nanoTime();
+        try {
+            applyBatchImpl(dimensionId, positions, blockStateIds);
+        } finally {
+            // DIAG: attribute the live block-mirror apply cost (setBlock + section rebuild);
+            // a key suspect for "stutters even when not looking" (lava/fluid churn).
+            com.warwa.seamlessportals.render.PerfTimers.add(
+                "applyBatch(" + (positions == null ? 0 : positions.size()) + "b)",
+                System.nanoTime() - batchT0);
+        }
+    }
+
+    private static void applyBatchImpl(String dimensionId, java.util.List<Long> positions,
+                                       java.util.List<Integer> blockStateIds) {
+        ResourceKey<Level> dim = parseDimensionKey(dimensionId);
+        if (dim == null) return;
+        ClientLevel cachedLevel = PortalWorldManager.getLevel(dim);
+        if (cachedLevel == null) return;
+
+        int n = Math.min(positions.size(), blockStateIds.size());
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet affectedSections =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+        for (int i = 0; i < n; i++) {
+            BlockState newState = Block.stateById(blockStateIds.get(i));
+            if (newState == null) continue;
+            BlockPos pos = BlockPos.of(positions.get(i));
+            if (!cachedLevel.getChunkSource().hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) continue;
+            cachedLevel.setBlock(pos, newState, 0);
+            updateRemoteSection(dim, pos, newState);
+            affectedSections.add(SectionPos.asLong(
+                SectionPos.blockToSectionCoord(pos.getX()),
+                SectionPos.blockToSectionCoord(pos.getY()),
+                SectionPos.blockToSectionCoord(pos.getZ())));
+        }
+        applyCount += n;
+
+        if (affectedSections.isEmpty() || !PortalWorldManager.hasRenderer(dim)) return;
+        LevelRenderer renderer = PortalWorldManager.getOrCreateRenderer(dim);
+        net.minecraft.client.renderer.extract.LevelExtractor extractor =
+            PortalWorldManager.getExtractor(dim);
+        if (renderer == null || extractor == null) return;
+        net.minecraft.client.renderer.ViewArea va =
+            ((com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) renderer)
+                .seamlessportals$getViewArea();
+        net.minecraft.client.renderer.chunk.RenderRegionCache cache =
+            new net.minecraft.client.renderer.chunk.RenderRegionCache();
+
+        it.unimi.dsi.fastutil.longs.LongIterator sit = affectedSections.iterator();
+        while (sit.hasNext()) {
+            long sec = sit.nextLong();
+            int sx = SectionPos.x(sec);
+            int sy = SectionPos.y(sec);
+            int sz = SectionPos.z(sec);
+            extractor.setSectionDirtyWithNeighbors(sx, sy, sz);
+            if (va == null) continue;
+            try {
+                net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection rs =
+                    ((com.warwa.seamlessportals.mixin.client.ViewAreaInvokerMixin) (Object) va)
+                        .seamlessportals$invokeGetRenderSection(sec);
+                if (rs != null) {
+                    PortalWorldManager.scheduleCompileIfDirty(extractor, cachedLevel, cache, rs);
+                }
+            } catch (Throwable t) {
+                // One section's rebuild-scheduling failure must not drop the rest.
+            }
+        }
+    }
+
+    /**
      * Patch the {@link RemoteChunkManager} section snapshot at {@code pos}
      * to {@code newState}. Keeps the snapshot consistent with the cached
      * {@link ClientLevel} so callers of

@@ -50,6 +50,10 @@ public class SeamlessPortalsModFabric implements ModInitializer {
             // never has to wait for synchronous worldgen.
             com.warwa.seamlessportals.portal.PortalManager
                 .getServerInstance().tickPortalPreWarm(server);
+            // Flush the per-tick coalesced live-block-mirror updates as one batch per
+            // player per dim (vanilla-style), instead of a packet per block change.
+            com.warwa.seamlessportals.render.PerfTimers.time("srv.blockMirrorFlush",
+                () -> com.warwa.seamlessportals.chunk.BlockUpdateMirrorBuffer.flush(server));
         });
     }
 }

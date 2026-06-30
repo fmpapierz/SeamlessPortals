@@ -508,6 +508,52 @@ public class ModPayloads {
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /**
+     * Batched variant of {@link RemoteBlockUpdatePayload}: many block-state changes for
+     * ONE destination dim, coalesced per server tick into a SINGLE packet (mirrors
+     * vanilla's per-section {@code ClientboundSectionBlocksUpdatePacket}). {@code
+     * positions[i]} pairs with {@code blockStateIds[i]}. The server buffers updates per
+     * player per tick ({@code BlockUpdateMirrorBuffer}), deduped by position, and flushes
+     * one batch at tick end — replacing the per-block packet + per-block section-rebuild
+     * flood (flowing lava/fluid was ~1000 single-block packets/sec).
+     */
+    public record RemoteBlockUpdateBatchPayload(
+        String dimensionId,
+        java.util.List<Long> positions,
+        java.util.List<Integer> blockStateIds
+    ) implements CustomPacketPayload {
+        public static final Type<RemoteBlockUpdateBatchPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "remote_block_update_batch")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, RemoteBlockUpdateBatchPayload> STREAM_CODEC =
+            StreamCodec.of(
+                (buf, p) -> {
+                    buf.writeUtf(p.dimensionId());
+                    int n = Math.min(p.positions().size(), p.blockStateIds().size());
+                    buf.writeVarInt(n);
+                    for (int i = 0; i < n; i++) {
+                        buf.writeVarLong(p.positions().get(i));
+                        buf.writeVarInt(p.blockStateIds().get(i));
+                    }
+                },
+                (buf) -> {
+                    String dim = buf.readUtf();
+                    int n = buf.readVarInt();
+                    java.util.List<Long> pos = new java.util.ArrayList<>(n);
+                    java.util.List<Integer> ids = new java.util.ArrayList<>(n);
+                    for (int i = 0; i < n; i++) {
+                        pos.add(buf.readVarLong());
+                        ids.add(buf.readVarInt());
+                    }
+                    return new RemoteBlockUpdateBatchPayload(dim, pos, ids);
+                }
+            );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record ClientboundSeamlessMovePayload(
         String portalId,
         String destDimension,

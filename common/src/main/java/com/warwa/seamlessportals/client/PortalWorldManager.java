@@ -227,6 +227,8 @@ public class PortalWorldManager {
         new ConcurrentHashMap<>();
     /** Per-dim: {@link System#nanoTime()} a portal was last near enough to keep this dest alive. */
     private static final Map<ResourceKey<Level>, Long> lastActiveNanosByDim = new ConcurrentHashMap<>();
+    /** Per-dim: IP-graduated, config-capped scope radius (chunks) — how far this dest stays resident. */
+    private static final Map<ResourceKey<Level>, Integer> liveRadiusByDim = new ConcurrentHashMap<>();
     /** Game-tick stamp of the last {@link #refreshDestScopes()} (recompute at most once/tick). */
     private static long destScopeStampTick = Long.MIN_VALUE;
     /**
@@ -289,6 +291,19 @@ public class PortalWorldManager {
                 }
                 liveCentersByDim.put(destDim, dest.getOrigin());
                 lastActiveNanosByDim.put(destDim, now);
+                // IP-graduated, config-capped scope radius (mirrors the SERVER's
+                // PortalChunkTracker renderDist + IP ChunkVisibility.getDirectLoadingDistance
+                // / getCappedLoadingDistance): full render distance only within 5 blocks of
+                // the portal, 2/3 within 15, else 1/3 — capped by portalRenderDistance. This
+                // is what makes the just-left dimension SHRINK as the player walks away
+                // (it was pinned at renderDistance+16, so its full RD-deep chunk set was
+                // ticked/lit forever — the 207ms post-teleport pollLight).
+                double distBlocks = Math.sqrt(src.getCenter().distanceToSqr(pv));
+                int rd = mc.options.getEffectiveRenderDistance();
+                int cap = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
+                    .getPortalRenderDistance();
+                int target = distBlocks < 5.0 ? rd : (distBlocks < 15.0 ? (rd * 2) / 3 : rd / 3);
+                liveRadiusByDim.put(destDim, Math.max(1, Math.min(target, cap)));
             }
         } catch (Throwable t) {
             // Best-effort: on any hiccup leave the scope state untouched (keeps dims
@@ -305,6 +320,18 @@ public class PortalWorldManager {
     /** Nearest in-range portal's dest-region center for {@code dim}, or null if none recorded. */
     public static net.minecraft.core.BlockPos getDestScopeCenter(ResourceKey<Level> dim) {
         return liveCentersByDim.get(dim);
+    }
+
+    /**
+     * IP-graduated, config-capped resident radius (chunks) for {@code dim}. Defaults to the
+     * config cap (NOT renderDistance+16) for the brief window right after a crossing before
+     * {@link #refreshDestScopes()} recomputes — so the just-left dimension is never pinned
+     * at the full render-distance set.
+     */
+    public static int getDestScopeRadius(ResourceKey<Level> dim) {
+        Integer r = liveRadiusByDim.get(dim);
+        if (r != null) return r;
+        return com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().getPortalRenderDistance();
     }
 
     /**
@@ -329,13 +356,19 @@ public class PortalWorldManager {
         refreshDestScopes();
         Minecraft mc = Minecraft.getInstance();
         ClientLevel active = mc.level;
-        int radius = mc.options.getEffectiveRenderDistance() + 16;
         for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
             ClientLevel level = e.getValue();
             if (level == null || level == active) continue; // never evict the active world here
             if (!(level.getChunkSource() instanceof SeamlessClientChunkMap store)) continue;
             ResourceKey<Level> dim = e.getKey();
             if (isDestScopeLive(dim)) {
+                // Reverted to a fixed render-distance+16 bound: the IP-graduated radius
+                // (getDestScopeRadius) jumps at the 5/15-block bands as the player moves,
+                // which evicted-then-re-streamed a ring each band crossing (drainChunks
+                // spiked ~195ms — the "stutter right after lighting"). A churn-free shrink
+                // needs IP's delay-unload hysteresis (a few generations before dropping),
+                // not an instantaneous graduated radius. Until then, keep the stable bound.
+                int radius = mc.options.getEffectiveRenderDistance() + 16;
                 net.minecraft.core.BlockPos center = getDestScopeCenter(dim);
                 if (center != null) {
                     store.seamlessportals$evictAround(center.getX() >> 4, center.getZ() >> 4, radius);
@@ -1225,9 +1258,16 @@ public class PortalWorldManager {
                 mc.level = cached;
                 if (engine != null) mcAccess.seamlessportals$setParticleEngine(engine);
                 try {
+                    long e0 = System.nanoTime();
                     cached.tickEntities();
+                    long e1 = System.nanoTime();
                     cached.tick(() -> true);
+                    long e2 = System.nanoTime();
                     cached.pollLightUpdates();
+                    long e3 = System.nanoTime();
+                    com.warwa.seamlessportals.render.PerfTimers.add("  remote.tickEntities", e1 - e0);
+                    com.warwa.seamlessportals.render.PerfTimers.add("  remote.tick", e2 - e1);
+                    com.warwa.seamlessportals.render.PerfTimers.add("  remote.pollLight", e3 - e2);
                 } catch (Throwable t) {
                     // Remote tick is best-effort — never crash the client tick.
                 } finally {
