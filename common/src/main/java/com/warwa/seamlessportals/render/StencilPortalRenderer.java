@@ -309,6 +309,18 @@ public class StencilPortalRenderer {
             GL11.glDepthRange(0, 1); // Restore normal depth range
         }
 
+        // ===== STEP 3.6 (stencil-direct): fill the opening with the DEST sky/fog colour =====
+        // Paint the opening the destination dimension's sky/fog colour BEFORE the dest OPAQUE
+        // terrain draws (no depth test/write, so the depth-tested terrain still draws over it).
+        // GAPS in the opaque-only terrain then read as dest sky instead of the OTHER dimension's
+        // terrain that renderGroup's LOAD leaves in the colour buffer — fixes "nether terrain
+        // bleeds into the OW view" / "overworld in the gaps". (Full dest sky + clouds + a
+        // post-terrain depth shield against the main world's clouds are Step 2.)
+        if (STENCIL_DIRECT) {
+            PortalShapeRenderer.drawPortalBackground(
+                portals, camera, link.getDestination().getDimension());
+        }
+
         // ===== STEP 4: Composite the destination view through the stencil =====
         // The heavy dest-world render into the secondary FBO already happened in
         // PHASE 1 (PortalContextSwitch.prepareDestinationWorld, from renderLevel
@@ -340,6 +352,17 @@ public class StencilPortalRenderer {
             // should be far cheaper than fboRender was (fragment cost bounded to the opening,
             // not a full-screen second-world render that scaled with portalRenderDistance²).
             PerfTimers.add("stencilDirectRender", System.nanoTime() - destT0);
+            // ===== STEP 3.7 (stencil-direct): depth shield AFTER the dest content =====
+            // The opening's depth was cleared to FAR so the dest terrain could draw; now write
+            // NEAR (1.0) across the whole opening so later main-frame passes (clouds, weather,
+            // translucent terrain) FAIL the reversed-Z GEQUAL test there and cannot draw over the
+            // dest view — fixes the main world's clouds showing through the opening's gaps. The
+            // dest colour (terrain + the dest-sky fill) is already in the buffer; this only
+            // rewrites depth. Mirrors IP restoreDepthOfThePortalViewArea, and must run AFTER the
+            // terrain (writing NEAR before it would z-reject the terrain).
+            GL11.glDepthRange(1, 1);
+            PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
+            GL11.glDepthRange(0, 1);
         }
 
         // ===== STEP 5: Reset stencil and disable =====
