@@ -89,9 +89,12 @@ public final class SeamlessClientTeleport {
         if (player == null || mc.level == null) return false;
 
         Vec3 srcPos = player.position();
-        Vec3 destPos = link.transformTeleportPosition(srcPos);
-        Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
         float destYaw = link.transformYaw(player.getYRot());
+        // Exit clearance (same as the server's authoritative landing) on the side the player
+        // FACES, so the provisional swap also places them in front of the dest portal facing
+        // away — no instant re-cross.
+        Vec3 destPos = link.transformTeleportPosition(srcPos, destYaw);
+        Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
         float destPitch = player.getXRot();
 
         boolean swapped = doVisualSwap(link.getDestination().getDimension(),
@@ -106,6 +109,13 @@ public final class SeamlessClientTeleport {
 
         justTeleportedClient = true;
         lastClientSwapDim = link.getDestination().getDimension();
+
+        // DIAG: count client-initiated crossings via the PerfTimers count column (off-thread).
+        // In a "stand still after teleport" test, a rising clientCrossing count = residual auto-
+        // oscillation (the exit clearance wasn't enough); a flat count = the few-seconds-blank is
+        // a passive render/streaming bug, not the teleport re-firing.
+        com.warwa.seamlessportals.render.PerfTimers.add(
+            "clientCrossing/" + link.getDestination().getDimension().identifier().getPath(), 0L);
 
         SeamlessPortalsConstants.rlog(
             "[SEAMLESS CLIENT-CROSSING] client-first swap → {} at ({},{},{})",

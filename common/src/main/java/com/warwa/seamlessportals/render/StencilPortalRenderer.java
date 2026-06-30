@@ -26,6 +26,20 @@ public class StencilPortalRenderer {
 
     private static int framesRendered = 0;
 
+    /**
+     * Phase 5 master switch. When true, the dest world is drawn DIRECTLY into the main
+     * framebuffer masked by the stencil — IP's {@code RendererUsingStencil} model, no
+     * mirror-FBO, no composite, fragment cost bounded to the portal opening. When false,
+     * the legacy two-phase mirror-FBO path runs unchanged (for A/B against the known-good
+     * path). See {@code PHASE5_STENCIL_DIRECT_SPEC.md}.
+     *
+     * <p>Default true so {@code :fabric:runClient} exercises the rework directly. If the
+     * stencil-direct path regresses (e.g. the opening shows the overworld, or the dest
+     * doesn't appear), flip this to false to confirm it's the new path and restore the
+     * working FBO render while it's debugged.
+     */
+    public static boolean STENCIL_DIRECT = true;
+
     /** One portal to render this frame, paired with ITS OWN link/destination. */
     private record RenderGroup(PortalInfo portal, PortalLink link) {}
 
@@ -133,6 +147,12 @@ public class StencilPortalRenderer {
      * (so the obsidian frame occludes the mask) and run on the screen target.
      */
     public static void prepareDestinationRender() {
+        // Phase 5 (stencil-direct): there is NO phase-1 FBO render. The dest world is drawn
+        // directly into the main target during phase 2 (renderOnePortal → renderDestWorldDirect),
+        // so this renderLevel-HEAD hook does nothing. (Once stencil-direct is the only path,
+        // GameRendererPortalPrepareMixin and this method are deleted per the spec.)
+        if (STENCIL_DIRECT) return;
+
         // Reset the phase-1→phase-2 hand-off flag once per main frame,
         // unconditionally (before any guard), so a stale "FBO ready" from a
         // previous frame can never trigger a composite this frame.
@@ -269,9 +289,25 @@ public class StencilPortalRenderer {
         // The PORTAL_DEPTH_CLEAR pipeline's ALWAYS_PASS test makes the write
         // always succeed; the FBO composite (TRACY_BLIT) has no depth test/write
         // so it ignores this depth and writes color through the stencil mask.
-        GL11.glDepthRange(1, 1);
-        PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
-        GL11.glDepthRange(0, 1); // Restore normal depth range
+        if (STENCIL_DIRECT) {
+            // Phase 5: CLEAR the opening's depth to FAR *before* the dest terrain draws, so
+            // every dest fragment passes the reversed-Z GEQUAL test inside the opening (IP
+            // clearDepthOfThePortalViewArea). 26.2 reversed-Z: FAR = 0.0, written via
+            // glDepthRange(0,0). This is the OPPOSITE direction to the FBO path's NEAR write
+            // below — there the composite needs protecting from later passes; here the dest
+            // terrain must not be z-rejected by the overworld depth already in the opening.
+            // (Re-protecting the directly-drawn terrain from clouds/weather is Step 2.)
+            GL11.glDepthRange(0, 0);
+            PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
+            GL11.glDepthRange(0, 1);
+        } else {
+            // FBO mode: write NEAR (1.0) so later main-frame passes (clouds, weather,
+            // translucent terrain) FAIL GEQUAL inside the opening and can't overdraw the
+            // composited portal content.
+            GL11.glDepthRange(1, 1);
+            PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
+            GL11.glDepthRange(0, 1); // Restore normal depth range
+        }
 
         // ===== STEP 4: Composite the destination view through the stencil =====
         // The heavy dest-world render into the secondary FBO already happened in
@@ -290,7 +326,21 @@ public class StencilPortalRenderer {
         //
         // No background fill needed when the FBO is ready (sky fills the FBO). No
         // depth shield needed (FBO composite writes depth, blocking clouds/weather).
-        PortalContextSwitch.compositeDestinationWorld(portals.get(0), link, camera);
+        //
+        // Phase-5 seam: the dest-world draw goes through renderDestWorldDirect(). Today it
+        // delegates to the FBO composite (unchanged behaviour); Step 1 of the stencil-direct
+        // rework swaps it for a direct LevelRenderer.prepareChunkRenders + renderGroup draw
+        // into the main target under the stencil (no FBO, no nested framegraph). See
+        // PHASE5_STENCIL_DIRECT_SPEC.md.
+        long destT0 = System.nanoTime();
+        renderDestWorldDirect(portals.get(0), link, camera, 1);
+        if (STENCIL_DIRECT) {
+            // Replaces the phase-1 "fboRender" bucket (now skipped). If the rework works,
+            // [SEAMLESS TIMERS] shows stencilDirectRender HERE and fboRender GONE — and this
+            // should be far cheaper than fboRender was (fragment cost bounded to the opening,
+            // not a full-screen second-world render that scaled with portalRenderDistance²).
+            PerfTimers.add("stencilDirectRender", System.nanoTime() - destT0);
+        }
 
         // ===== STEP 5: Reset stencil and disable =====
         GL11.glStencilFunc(GL11.GL_ALWAYS, 0, 0xFF);
@@ -307,6 +357,55 @@ public class StencilPortalRenderer {
                 portals.size(), renderFbo
             );
         }
+    }
+
+    /**
+     * IP {@code RendererUsingStencil.setStencilLimitation(layer)}: constrain every subsequent
+     * draw to the pixels whose stencil value equals {@code layer} — the portal opening at this
+     * recursion depth — without modifying the stencil (mask 0). This is the test that masks the
+     * dest-world draw to the opening, bounding fragment cost to the portal (the IP cheapness).
+     *
+     * <p>Raw GL by necessity: blaze3d models no stencil ({@code DepthStencilState} is depth-only),
+     * and the GL backend's {@code GlCommandEncoder.applyPipelineState} touches depth/cull/blend/
+     * colour-mask but NEVER stencil (verified in {@code mc262-ref}). So stencil state set here
+     * PERSISTS through the vanilla {@code ChunkSectionsToRender.renderGroup} draws that follow —
+     * which is exactly why drawing the dest terrain directly into the main target ends up masked.
+     */
+    static void setStencilLimitation(int layer) {
+        GL11.glStencilFunc(GL11.GL_EQUAL, layer, 0xFF);
+        GL11.glStencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP);
+        GL11.glStencilMask(0x00);
+    }
+
+    /**
+     * Phase-5 seam for the dest-world draw, called from {@code renderOnePortal} with the stencil
+     * already set up (mask written, depth cleared, {@link #setStencilLimitation} pending) so the
+     * draw lands only inside the portal opening.
+     *
+     * <p>TODAY this delegates to the FBO composite — identical behaviour to before the seam
+     * existed. STEP 1 of {@code PHASE5_STENCIL_DIRECT_SPEC.md} replaces the body with:
+     * {@code setStencilLimitation(layer)} → {@code withSwitchedWorld(dest)} → build dest camera +
+     * inner frustum → {@code VisibleSectionDiscovery.discoverAndScheduleForPortalView} → dest
+     * {@code LevelRenderer.prepareChunkRenders(destModelView)} → {@code renderGroup(OPAQUE,…)} /
+     * {@code renderGroup(TRANSLUCENT,…)} straight into {@code mainRenderTarget()} — no FBO, no
+     * nested {@code destRenderer.render(...)} framegraph (the cause of the overworld blanking).
+     */
+    private static void renderDestWorldDirect(PortalInfo portal, PortalLink link, Camera camera, int layer) {
+        if (STENCIL_DIRECT) {
+            // Phase 5: draw the dest terrain straight into the main target, masked by the
+            // stencil. If the dest isn't drawable yet (chunks still streaming → returns
+            // false), paint a solid dimension-coloured background through the stencil so the
+            // opening reads as a portal instead of momentarily showing the overworld.
+            boolean drawn = PortalContextSwitch.renderDestinationDirect(portal, link, camera, layer);
+            if (!drawn) {
+                PortalShapeRenderer.drawPortalBackground(
+                    java.util.List.of(portal), camera, link.getDestination().getDimension());
+            }
+            return;
+        }
+        // Legacy two-phase mirror-FBO path (phase 1 rendered the dest into the secondary FBO
+        // at renderLevel HEAD; this composites it onto the screen through the stencil).
+        PortalContextSwitch.compositeDestinationWorld(portal, link, camera);
     }
 
     public static void cleanup() {

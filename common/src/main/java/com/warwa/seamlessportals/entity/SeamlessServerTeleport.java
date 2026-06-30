@@ -130,9 +130,14 @@ public final class SeamlessServerTeleport {
         }
 
         Vec3 srcPos = player.position();
-        Vec3 destPos = link.transformTeleportPosition(srcPos);
-        Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
         float destYaw = link.transformYaw(player.getYRot());
+        // Landing is placed `clearance` PAST the dest portal on the side the player FACES
+        // (destYaw), so they emerge cleanly in front of it and pressing forward walks AWAY —
+        // no immediate re-cross (the OW↔nether oscillation / "land embedded, walk forward,
+        // teleport again"). Yaw, not velocity: the transform negates velocity depth but keeps
+        // yaw, so the velocity side would face the portal.
+        Vec3 destPos = link.transformTeleportPosition(srcPos, destYaw);
+        Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
         float destPitch = player.getXRot();
 
         SeamlessPortalsConstants.LOGGER.info(

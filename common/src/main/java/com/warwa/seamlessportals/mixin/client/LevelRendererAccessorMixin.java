@@ -99,4 +99,20 @@ public interface LevelRendererAccessorMixin {
     @Mutable
     void seamlessportals$setFeatureRenderDispatcher(
         net.minecraft.client.renderer.feature.FeatureRenderDispatcher dispatcher);
+
+    /**
+     * The block-atlas {@link com.mojang.blaze3d.textures.GpuSampler} that
+     * {@code LevelRenderer.addMainPass} hands to
+     * {@code ChunkSectionsToRender.renderGroup(...)} (LevelRenderer.java:127/402/409).
+     *
+     * <p>Phase 5 (stencil-direct): the dest-world terrain is drawn into the main
+     * target via a direct {@code renderGroup(OPAQUE, sampler)} call instead of a
+     * nested {@code render(...)} framegraph. {@code renderGroup} needs this sampler.
+     * The dest renderer's own sampler is {@code null} (its main pass never runs), so
+     * we read the MAIN renderer's — it is a plain CLAMP_TO_EDGE/LINEAR atlas sampler,
+     * not renderer-specific, and is live by {@code AFTER_TRANSLUCENT_TERRAIN} (the
+     * main pass created it at LevelRenderer.java:402 before drawing opaque terrain).
+     */
+    @Accessor("chunkLayerSampler")
+    com.mojang.blaze3d.textures.GpuSampler seamlessportals$getChunkLayerSampler();
 }

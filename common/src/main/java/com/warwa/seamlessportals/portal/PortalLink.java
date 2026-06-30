@@ -21,6 +21,18 @@ public class PortalLink {
         return PortalTransform.transformTeleportPoint(source, destination, source.getType(), sourcePos);
     }
 
+    /**
+     * Teleport landing pushed OUT past the destination portal plane so the entity emerges
+     * clear of the portal instead of embedded on it (which caused the OW↔nether teleport
+     * oscillation). Exit direction derives from the transformed source velocity. Both client
+     * (provisional swap) and server (authoritative) call this with the same inputs so they
+     * land at the same place. See {@link PortalTransform#applyExitClearance}.
+     */
+    public Vec3 transformTeleportPosition(Vec3 sourcePos, float destYaw) {
+        Vec3 destPos = PortalTransform.transformTeleportPoint(source, destination, source.getType(), sourcePos);
+        return PortalTransform.applyExitClearance(destination, destPos, destYaw);
+    }
+
     public Vec3 transformVelocity(Vec3 velocity) {
         return PortalTransform.transformVector(source, destination, source.getType(), velocity);
     }

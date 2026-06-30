@@ -63,6 +63,58 @@ public final class PortalTransform {
         );
     }
 
+    /**
+     * Distance (blocks) a teleported entity is pushed OUT past the destination portal
+     * plane along the exit/travel direction, so it emerges clear of the portal instead of
+     * embedded ON it. Set to 0 to disable the push (restores the old on-plane landing).
+     *
+     * <p>Root bug this fixes: crossing is detected by PLANE-crossing, so at the crossing
+     * instant the source-relative depth is ≈0; {@link #transformTeleportPoint} negates that
+     * (~0) and the entity lands exactly on the destination portal plane. Sitting on the
+     * plane, the entity's very next movement re-straddles it → instant re-cross (the OW↔nether
+     * teleport oscillation). IP avoids this by transforming the entity's already-overshot
+     * current position; we push by a small explicit clearance instead.
+     */
+    public static final double TELEPORT_EXIT_CLEARANCE = 0.5;
+
+    /**
+     * Push a teleport landing OUT of the destination portal along its depth axis, in the
+     * direction the ALREADY-TRANSFORMED velocity points (the exit/travel direction), so the
+     * entity emerges clear of the portal plane rather than embedded on it.
+     *
+     * <p>The exit SIGN is taken from {@code destVel}, NOT from a static portal normal:
+     * {@link PortalInfo#computeNormal()} is direction-agnostic (always +Z/+X regardless of
+     * which face the entity entered), so using it would push the entity to the WRONG side for
+     * one of the two travel directions. The transformed velocity always points the way the
+     * entity is actually moving through the portal, so it is correct both ways.
+     *
+     * <p>Depth-axis mapping mirrors {@link #fromLocalCoords}: dest axis X → depth is world Z;
+     * dest axis Z → depth is world X.
+     */
+    public static Vec3 applyExitClearance(PortalInfo destination, Vec3 destPos, float destYaw) {
+        double clearance = TELEPORT_EXIT_CLEARANCE;
+        if (clearance == 0.0) return destPos;
+        // OVERRIDE the depth coordinate (don't just nudge it): place the entity exactly
+        // `clearance` past the portal plane on the side it is FACING, so pressing "forward"
+        // walks it AWAY from the portal — no immediate re-cross. The exit side must come from
+        // the yaw, NOT the velocity: the transform preserves yaw but NEGATES velocity depth, so
+        // they point opposite ways; placing on the velocity side leaves the entity FACING the
+        // portal → "move forward → teleport again" (observed). And NOT from computeNormal (it is
+        // direction-agnostic). Width (lateral) + height are kept from the base transform, so the
+        // entity emerges at the same spot along/up the portal, just cleanly in front of it.
+        // MC yaw: 0=+Z, 90=-X, 180=-Z, 270=+X → forward = (-sin(yaw), 0, cos(yaw)).
+        Vec3 center = destination.getCenter();
+        double yawRad = Math.toRadians(destYaw);
+        if (destination.getAxis() == Direction.Axis.X) {
+            // axis X → portal spans X, depth (perpendicular) is world Z; facing Z = cos(yaw)
+            double sign = Math.cos(yawRad) >= 0 ? 1.0 : -1.0;
+            return new Vec3(destPos.x, destPos.y, center.z + sign * clearance);
+        }
+        // axis Z → depth is world X; facing X = -sin(yaw)
+        double sign = -Math.sin(yawRad) >= 0 ? 1.0 : -1.0;
+        return new Vec3(center.x + sign * clearance, destPos.y, destPos.z);
+    }
+
     public static Vec3 transformVector(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector) {
         // Same logic as transformPoint but without the center offset.
         // Depth negated: walking INTO source = walking OUT OF destination.

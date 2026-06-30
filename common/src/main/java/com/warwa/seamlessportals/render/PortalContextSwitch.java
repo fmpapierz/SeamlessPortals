@@ -24,6 +24,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
@@ -71,6 +72,18 @@ public class PortalContextSwitch {
      * Matches IP's PortalRendering.isRendering() check.
      */
     public static boolean isRenderingPortal = false;
+
+    /**
+     * Phase 5 (stencil-direct): while true, {@link #doFboRender} draws the dest world's
+     * terrain layers DIRECTLY into the main render target via
+     * {@code ChunkSectionsToRender.renderGroup(...)}, masked by the live stencil, instead
+     * of into a secondary FBO + composite. Set by {@link #renderDestinationDirect} for the
+     * duration of one direct render and reset in its finally. The layer is the stencil
+     * recursion depth the dest draw is masked to (1 for a single non-recursive portal).
+     * See {@code PHASE5_STENCIL_DIRECT_SPEC.md}.
+     */
+    private static boolean stencilDirectMode = false;
+    private static int stencilDirectLayer = 1;
 
     /**
      * True while {@link #withSwitchedWorld} has swapped {@code mc.particleEngine}
@@ -698,6 +711,74 @@ public class PortalContextSwitch {
     }
 
     /**
+     * Phase 5 (stencil-direct) entry — the FBO-free counterpart to
+     * {@link #prepareDestinationWorld}/{@link #tryFboRender}. Called from
+     * {@code StencilPortalRenderer.renderOnePortal} at {@code AFTER_TRANSLUCENT_TERRAIN},
+     * AFTER the portal opening has been written to the stencil and its depth cleared to
+     * FAR. Renders the dest world's terrain DIRECTLY into the main target masked by the
+     * stencil (no secondary FBO, no nested {@code render(...)} framegraph — the cause of
+     * the historical overworld blanking).
+     *
+     * <p>Reuses the entire proven {@link #doFboRender} setup (dest camera, inner-frustum
+     * cull, {@code VisibleSectionDiscovery}, extract, lightmap, fog); {@code doFboRender}
+     * forks on {@link #stencilDirectMode} at exactly three points: the render-target it
+     * hands to {@code withSwitchedWorld} (the real main target, not a secondary FBO), the
+     * stencil setup before the draw ({@code setStencilLimitation} instead of disabling the
+     * test), and the draw itself ({@code renderGroup(OPAQUE,…)} instead of {@code render(…)}).
+     *
+     * @return true if the dest terrain was drawn this frame; false if it bailed (no
+     *         renderer/level/chunks yet, or no geometry compiled) so the caller can fall
+     *         back to a background fill through the stencil.
+     */
+    public static boolean renderDestinationDirect(
+            PortalInfo srcPortal, PortalLink link, Camera camera, int stencilLayer) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) return false;
+
+        ResourceKey<Level> destDim = link.getDestination().getDimension();
+        // DIAG: bail-reason histogram via PerfTimers' count column (off-thread, no render-thread
+        // logging). The 5s [SEAMLESS TIMERS] line shows e.g. `destBail:lowChunks/the_nether=0.0ms/47`
+        // → 47 bails because the dest dim had <9 chunks. Pins WHY the portal view goes blank/fog
+        // (the dest render produced nothing → drawPortalBackground / main-world fog shows through).
+        String dimTag = destDim.identifier().getPath();
+        LevelRenderer destRenderer = PortalWorldManager.getOrCreateRenderer(destDim);
+        ClientLevel destLevel = PortalWorldManager.getLevel(destDim);
+        if (destRenderer == null || destLevel == null) {
+            PerfTimers.add("destBail:noRenderer/" + dimTag, 0L);
+            return false;
+        }
+
+        BlockPos destOrigin = link.getDestination().getOrigin();
+        destLevel.getChunkSource().updateViewCenter(
+            destOrigin.getX() >> 4, destOrigin.getZ() >> 4);
+
+        // Same minimum-chunks gate as tryFboRender — without geometry there is nothing
+        // to draw and the opening should take the background fallback instead.
+        int chunkCount = RemoteChunkManager.getChunkCount(destDim);
+        if (chunkCount < 9) {
+            PerfTimers.add("destBail:lowChunks(" + chunkCount + ")/" + dimTag, 0L);
+            return false;
+        }
+
+        stencilDirectMode = true;
+        stencilDirectLayer = stencilLayer;
+        try {
+            boolean drawn = doFboRender(srcPortal, link, camera, destDim, destRenderer, destLevel, mc);
+            if (!drawn) PerfTimers.add("destBail:noGeometry/" + dimTag, 0L);
+            return drawn;
+        } catch (Exception e) {
+            PerfTimers.add("destBail:exception/" + dimTag, 0L);
+            if (phase2FailCount <= 3) {
+                SeamlessPortalsConstants.LOGGER.error("[SEAMLESS] stencil-direct render failed", e);
+            }
+            phase2FailCount++;
+            return false;
+        } finally {
+            stencilDirectMode = false;
+        }
+    }
+
+    /**
      * Render destination world to secondary FBO, then composite through stencil.
      * Matches IP's RendererUsingFrameBuffer.doRenderPortal() + MyGameRenderer.switchAndRenderTheWorld().
      */
@@ -1051,8 +1132,25 @@ public class PortalContextSwitch {
         final Matrix4f destViewMatrix = new Matrix4f();
         virtualCamera.getViewRotationMatrix(destViewMatrix);
 
-        // ===== 5. Prepare secondary FBO (match IP's SecondaryFrameBuffer.prepare()) =====
-        prepareSecondaryFbo();
+        // ===== 5. Choose the render target for the dest draw =====
+        // FBO mode: a secondary FBO, composited through the stencil in phase 2.
+        // Stencil-direct mode (Phase 5): the REAL main target. renderGroup(OPAQUE)'s
+        // outputTarget() is mc.gameRenderer.mainRenderTarget(), so handing withSwitchedWorld
+        // the real main target makes the dest terrain land in it, masked by the live stencil
+        // — no FBO, no composite. Both the target and the block-atlas sampler renderGroup
+        // needs are captured HERE, while mc.levelRenderer is still the MAIN renderer (the
+        // world switch is below): the dest renderer's own chunkLayerSampler is null (its main
+        // pass never runs), and the main renderer's is live by AFTER_TRANSLUCENT_TERRAIN.
+        final com.mojang.blaze3d.textures.GpuSampler directChunkSampler = stencilDirectMode
+            ? ((LevelRendererAccessorMixin) mc.levelRenderer).seamlessportals$getChunkLayerSampler()
+            : null;
+        final RenderTarget directMainTarget = stencilDirectMode
+            ? mc.gameRenderer.mainRenderTarget()
+            : null;
+        if (!stencilDirectMode) {
+            prepareSecondaryFbo();
+        }
+        final RenderTarget switchTarget = stencilDirectMode ? directMainTarget : secondaryFbo;
 
         // ===== 6. Build CameraRenderState for destination =====
         CameraRenderState destCameraState = destLRS.cameraRenderState;
@@ -1165,7 +1263,7 @@ public class PortalContextSwitch {
         isRenderingPortal = true;
         try {
             withSwitchedWorld(
-                destLevel, destRenderer, secondaryFbo, virtualCamera,
+                destLevel, destRenderer, switchTarget, virtualCamera,
                 dimHelper.getLightmap(),
                 () -> {
                     // ===== 4a. Extract + terrain cull (now INSIDE the switch) =====
@@ -1269,7 +1367,18 @@ public class PortalContextSwitch {
                             destFogData.skyEnd, destFogData.cloudEnd);
                     }
 
-                    GL11.glDisable(GL11.GL_STENCIL_TEST);
+                    if (stencilDirectMode) {
+                        // Phase 5: keep the stencil test ON, limited to the portal opening
+                        // at this recursion layer, so the dest-terrain renderGroup draw
+                        // below is masked to the opening (IP setStencilLimitation). The GL
+                        // backend's applyPipelineState never touches stencil (verified in
+                        // mc262-ref GlCommandEncoder), so this raw-GL state persists through
+                        // renderGroup's RenderPass and the vanilla chunk pipeline draws.
+                        StencilPortalRenderer.setStencilLimitation(stencilDirectLayer);
+                    } else {
+                        // FBO mode: dest renders into the secondary FBO; no masking needed.
+                        GL11.glDisable(GL11.GL_STENCIL_TEST);
+                    }
                     // Inner clip plane — IP's actual technique. Active ONLY
                     // during the nested dest-dim render inside the switched
                     // world. Keeps dest geometry on the far side of the dest
@@ -1385,23 +1494,44 @@ public class PortalContextSwitch {
                                     .getVisibleChunkCount(destRenderer);
                             }
                             try {
-                                // 26.2: LevelRenderer.renderLevel(...) → render(...)
-                                // with the new 8-arg signature (no trailing
-                                // ChunkSectionsToRender — render(...) produces its own
-                                // internally via prepareChunkRenders(modelView)) (D5).
-                                destRenderer.render(
-                                    GraphicsResourceAllocator.UNPOOLED,
-                                    deltaTracker,
-                                    false,
-                                    destCameraState,
-                                    destViewMatrix,
-                                    destFogBuffer,
-                                    destFogData.color,
-                                    true
-                                );
-                                // The dest world was drawn into the FBO — the
-                                // caller may composite it through the stencil.
-                                fboRendered[0] = true;
+                                if (stencilDirectMode) {
+                                    // Phase 5 STEP 1: draw the dest terrain DIRECTLY into the
+                                    // main target via renderGroup. OPAQUE.outputTarget() is
+                                    // mc.gameRenderer.mainRenderTarget() (the real main target,
+                                    // handed in as switchTarget), and the live stencil
+                                    // (setStencilLimitation above) masks the draw to the portal
+                                    // opening — so fragment cost is bounded to the opening, the
+                                    // thing that makes IP cheap. destChunks was built from the
+                                    // authoritative portal-view visibleSections at the top of
+                                    // this lambda. OPAQUE = solid + cutout terrain only; sky /
+                                    // translucent / entities are later steps of the rework.
+                                    // renderGroup uses LOAD (no clear), so the overworld already
+                                    // in the main target is preserved outside the opening.
+                                    if (directChunkSampler != null
+                                            && destChunks.maxIndicesRequired() > 0) {
+                                        destChunks.renderGroup(
+                                            ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
+                                        fboRendered[0] = true;
+                                    }
+                                } else {
+                                    // 26.2: LevelRenderer.renderLevel(...) → render(...)
+                                    // with the new 8-arg signature (no trailing
+                                    // ChunkSectionsToRender — render(...) produces its own
+                                    // internally via prepareChunkRenders(modelView)) (D5).
+                                    destRenderer.render(
+                                        GraphicsResourceAllocator.UNPOOLED,
+                                        deltaTracker,
+                                        false,
+                                        destCameraState,
+                                        destViewMatrix,
+                                        destFogBuffer,
+                                        destFogData.color,
+                                        true
+                                    );
+                                    // The dest world was drawn into the FBO — the
+                                    // caller may composite it through the stencil.
+                                    fboRendered[0] = true;
+                                }
                             } finally {
                                 com.warwa.seamlessportals.render.SodiumFogOverride.clear();
                             }

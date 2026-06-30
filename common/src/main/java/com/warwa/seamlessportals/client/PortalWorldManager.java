@@ -1416,7 +1416,12 @@ public class PortalWorldManager {
             mcAccess.seamlessportals$setParticleEngine(engine);
             spawningDestParticles = true;
             try {
-                if (center != null) {
+                // animateTick (ambient particle spawn) runs EVERY OTHER tick, matching IP
+                // (ClientWorldLoader: `if (newWorld.getGameTime() % 2 == 0) newWorld.animateTick(...)`).
+                // It is the dominant tickCachedParticles cost (667 random block samples/dim);
+                // halving its rate is a free, IP-faithful cut. engine.tick() still runs every
+                // tick so existing ambient particles keep aging/animating smoothly.
+                if (center != null && (cached.getGameTime() % 2L == 0L)) {
                     cached.animateTick(center.getX(), center.getY(), center.getZ());
                 }
                 engine.tick();

@@ -90,4 +90,33 @@ public abstract class LevelExtractorFlashBridgeMixin {
             viewArea, cameraPos, frustum, viewDistance, this.levelRenderer.visibleSections());
         ci.cancel();
     }
+
+    /**
+     * Self-healing handback guard — fixes "nether terrain is there, then it disappears a few
+     * seconds after teleporting in." The HEAD bridge hands back to the engine occlusion graph
+     * the instant its full-rebuild task {@code isDone()}, but for a just-promoted, still-
+     * streaming dimension that rebuilt graph routinely yields EMPTY {@code visibleSections}
+     * (the BFS seeds from the player section and stops at the not-yet-loaded boundary), so the
+     * main view BLANKS. Here, on every {@code applyFrustum} RETURN within the post-promote
+     * window, if the engine cull produced NOTHING, flood-fill instead — so the view never
+     * blanks mid-bridge regardless of why the graph came back empty. Runs only when empty +
+     * within the (≤8s) bridge window; normal gameplay is untouched. Safe re: the historical
+     * applyFrustum freeze — that is the SOG WALK (skipped at HEAD); this fires after it.
+     */
+    @Inject(method = "applyFrustum", at = @At("RETURN"), require = 0)
+    private void seamlessportals$flashBridgeHandbackGuard(Frustum frustum, CallbackInfo ci) {
+        if (PortalContextSwitch.isRenderingPortal) return;          // portal render: HEAD handled it
+        if (!PortalContextSwitch.isPromoteBridgeActive()) return;   // window expired → trust the engine
+        if (!this.levelRenderer.visibleSections().isEmpty()) return; // engine painted terrain → fine
+        ViewArea viewArea = ((LevelRendererAccessorMixin) this.levelRenderer)
+            .seamlessportals$getViewArea();
+        if (viewArea == null) return;
+        Vec3 cameraPos = this.levelRenderState.cameraRenderState.pos;
+        if (cameraPos == null) return;
+        int viewDistance = this.minecraft.options.getEffectiveRenderDistance();
+        VisibleSectionDiscovery.discoverVisibleSections(
+            viewArea, cameraPos, frustum, viewDistance, this.levelRenderer.visibleSections());
+        // DIAG: how often the engine handed back an EMPTY graph and we rescued it (count column).
+        com.warwa.seamlessportals.render.PerfTimers.add("promoteEmptyRescue", 0L);
+    }
 }
