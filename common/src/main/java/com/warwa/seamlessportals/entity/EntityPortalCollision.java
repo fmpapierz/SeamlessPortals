@@ -45,6 +45,39 @@ public class EntityPortalCollision {
     }
 
     /**
+     * IP-style PLANE-CROSSING detection: return the link for a portal whose plane
+     * the entity's movement segment {@code from -> to} passes THROUGH this tick.
+     *
+     * <p>Unlike {@link #findPortalLinkAtEntity} (bounding-box containment), this
+     * does NOT match an entity merely standing or embedded inside a portal. After
+     * a crossing the player lands inside the destination portal volume; with
+     * containment detection that player satisfies "in portal" every tick and
+     * re-teleports forever (the overworld&lt;-&gt;nether oscillation freeze). A
+     * plane-crossing test only fires when the segment STRADDLES the thin plane
+     * (see {@link PortalInfo#intersectsMovement}), so an embedded-but-not-moving-
+     * through player does not re-fire — yet the player can still immediately walk
+     * back through (crossing the plane again) to return. Works on both sides.
+     */
+    public static Optional<PortalLink> findPortalCrossing(Entity entity, Vec3 from, Vec3 to) {
+        ResourceKey<Level> dimension = entity.level().dimension();
+        PortalManager manager = entity.level().isClientSide()
+            ? PortalManager.getClientInstance()
+            : PortalManager.getServerInstance();
+
+        PortalTracker tracker = manager.getTracker(dimension);
+        if (tracker == null) return Optional.empty();
+
+        Optional<PortalInfo> portalOpt = tracker.findPortalIntersecting(from, to);
+        if (portalOpt.isEmpty()) return Optional.empty();
+
+        PortalInfo portal = portalOpt.get();
+        if (!SeamlessPortalsConfig.shouldSeamlessTeleport(portal.getType())) {
+            return Optional.empty();
+        }
+        return manager.getLinkForPortal(portal.getPortalId());
+    }
+
+    /**
      * Find the portal link for a portal the entity is currently inside.
      * Used for instant teleportation when the entity enters the portal bounding box.
      */

@@ -76,8 +76,17 @@ public abstract class ClientLevelMixin {
         // ONLY process events from the PRIMARY level.
         // Secondary levels (PortalWorldManager) fire onChunkLoaded too, but they
         // are NOT dimension changes — they're portal rendering data.
+        //
+        // Compare against the PLAYER'S level, not mc.level: internal mc.level swaps
+        // (tickRemoteWorlds, the FBO render, and the redirected-chunk applier all
+        // temporarily point mc.level at a SECONDARY) never re-level the player, so
+        // mc.player.level() is the stable true-primary reference. Using mc.level
+        // here falsely treated a secondary chunk-load during such a swap as a
+        // primary dimension change — firing StencilPortalRenderer.cleanup() dozens
+        // of times/sec (portal-view churn + redundant link re-sends / packet flood).
+        // The player's level only changes on a REAL crossing/respawn.
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-        if (mc.level != level) return;
+        if (mc.player == null || level != mc.player.level()) return;
 
         ResourceKey<Level> currentDim = level.dimension();
 

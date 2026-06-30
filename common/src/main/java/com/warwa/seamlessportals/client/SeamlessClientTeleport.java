@@ -61,6 +61,16 @@ public final class SeamlessClientTeleport {
     public static volatile boolean justTeleportedClient = false;
 
     /**
+     * The local player's position at the END of the previous client tick, used
+     * by {@link com.warwa.seamlessportals.mixin.client.LocalPlayerMixin} to build
+     * the per-tick movement segment for IP-style PLANE-CROSSING crossing detection
+     * (cross only when the segment passes THROUGH a portal plane, not when the
+     * player merely overlaps the portal box). Reset to the post-swap position by
+     * {@link #doVisualSwap} so the teleport jump itself is never seen as a crossing.
+     */
+    public static volatile Vec3 lastClientPos = null;
+
+    /**
      * Record of the last client-first crossing's destination, used by
      * {@link #handleServerReconcile} to detect whether the arriving packet
      * matches what we already did.
@@ -426,6 +436,14 @@ public final class SeamlessClientTeleport {
         // "Network Protocol Error". Gating re-entry of the detector for
         // ~500ms lets the in-flight queue drain.
         lastSwapMonotonicNanos = System.nanoTime();
+
+        // Reset the plane-crossing segment origin to the post-swap position so the
+        // teleport jump (old-dim pos -> new-dim pos) is never evaluated as a
+        // movement that crosses a portal plane (which would spuriously re-fire).
+        Minecraft mcNow = Minecraft.getInstance();
+        if (mcNow.player != null) {
+            lastClientPos = mcNow.player.position();
+        }
 
         return true;
     }

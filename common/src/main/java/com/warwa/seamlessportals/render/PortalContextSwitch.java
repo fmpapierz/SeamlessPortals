@@ -238,8 +238,25 @@ public class PortalContextSwitch {
      */
     public static com.mojang.blaze3d.textures.GpuTextureView portalLightmapOverride = null;
 
-    /** Secondary FBO for portal world rendering. Matches IP's SecondaryFrameBuffer. */
+    /**
+     * Active secondary FBO for portal world rendering. Repointed per portal (see
+     * {@link #portalFbos}) before each dest render / composite, so the heavy render
+     * (doFboRender) and composite (compositePortalFbo) operate on the current portal's FBO
+     * without per-call plumbing. Matches IP's SecondaryFrameBuffer (reused sequentially).
+     */
     private static TextureTarget secondaryFbo = null;
+
+    /**
+     * Per-portal FBO pool (two-portals fix): each portal renders its OWN destination into its
+     * OWN TextureTarget so two portals show two distinct windows. Keyed by source-portal id.
+     * Bounded by the per-frame render cap; entries for portals not rendered this frame are
+     * evicted (and their GPU targets freed) in {@link #evictUnusedPortalFbos}.
+     */
+    private static final java.util.Map<java.util.UUID, TextureTarget> portalFbos = new java.util.HashMap<>();
+    /** Per-portal phase-1 ready flag (replaces the single fboReadyThisFrame across portals). */
+    private static final java.util.Map<java.util.UUID, Boolean> fboReadyByPortal = new java.util.HashMap<>();
+    /** The portal currently being rendered/composited — selects which pool FBO is active. */
+    private static java.util.UUID activePortalId = null;
 
     /**
      * Two-phase render hand-off flag.
@@ -270,6 +287,23 @@ public class PortalContextSwitch {
      */
     public static void beginPortalFrame() {
         fboReadyThisFrame = false;
+        fboReadyByPortal.clear();
+    }
+
+    /**
+     * Free pooled FBOs for portals NOT rendered this frame. Called at the end of phase 1 with
+     * the set of source-portal ids that WERE rendered, so the pool stays bounded as the player
+     * moves between portals (each TextureTarget is a full-screen GPU target).
+     */
+    public static void evictUnusedPortalFbos(java.util.Set<java.util.UUID> keepIds) {
+        java.util.Iterator<java.util.Map.Entry<java.util.UUID, TextureTarget>> it = portalFbos.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<java.util.UUID, TextureTarget> e = it.next();
+            if (!keepIds.contains(e.getKey())) {
+                try { e.getValue().destroyBuffers(); } catch (Exception ignored) {}
+                it.remove();
+            }
+        }
     }
 
     /**
@@ -544,12 +578,17 @@ public class PortalContextSwitch {
         PortalInfo destPortal = link.getDestination();
         ResourceKey<Level> destDim = destPortal.getDimension();
 
-        // tryFboRender renders the dest world into secondaryFbo (no composite).
+        // Two-portals: select THIS portal's pooled FBO (prepareSecondaryFbo reads activePortalId)
+        // so each portal renders its OWN destination into its OWN target.
+        activePortalId = srcPortal.getPortalId();
+
+        // tryFboRender renders the dest world into this portal's FBO (no composite).
         // On success the FBO holds drawable geometry → mark it ready so phase 2
         // composites it through the stencil. On failure (chunks not ready / no
         // geometry yet) leave it false → phase 2 takes the fallback path.
         try {
             fboReadyThisFrame = tryFboRender(srcPortal, link, camera, destDim);
+            fboReadyByPortal.put(activePortalId, fboReadyThisFrame);
         } finally {
             // CRITICAL (phase-split fix): leave the GL stencil in a benign state
             // before returning to vanilla GameRenderer.renderLevel, which is about
@@ -592,7 +631,12 @@ public class PortalContextSwitch {
      * </ul>
      */
     public static void compositeDestinationWorld(PortalInfo srcPortal, PortalLink link, Camera camera) {
-        if (fboReadyThisFrame) {
+        // Two-portals: repoint the active FBO to THIS portal's pooled target + read ITS ready
+        // flag, so each portal composites its own destination through its own stencil mask.
+        java.util.UUID pid = srcPortal.getPortalId();
+        activePortalId = pid;
+        secondaryFbo = portalFbos.get(pid);
+        if (Boolean.TRUE.equals(fboReadyByPortal.get(pid))) {
             compositePortalFbo();
             return;
         }
@@ -676,13 +720,24 @@ public class PortalContextSwitch {
         }
 
         // ===== 1. Compute destination camera position =====
-        // 1:1 mapping through portal transform. Camera mirrors the player's
-        // position relative to the destination portal. Oblique near-plane
-        // clipping prevents seeing terrain between camera and portal surface.
+        // VIEW camera = transformPoint (1:1 TRANSLATION of the player through the
+        // portal). This is the CORRECT parallax for the window: as you move, the
+        // dest view tracks your movement 1:1 ("locked"), like a real window.
+        //
+        // DO NOT switch this to transformTeleportPoint — that NEGATES the depth axis
+        // (it is the teleport-LANDING transform, where you emerge on the far side).
+        // Using it for the view inverts depth parallax: walking toward the portal
+        // moves the dest view backward → the view "moves all around"/swims. Verified
+        // worse by user testing (2026-06-29). View ≠ teleport here: this mod's
+        // axis-based transform models the view as a translation and the teleport as
+        // a depth reflection (an approximation of IP's single rotation transform).
+        //
+        // The SEPARATE, still-open issue is that this translated camera can land
+        // INSIDE the dest portal's embedding terrain → you see "inside" nearby
+        // blocks. That is fixed by an oblique near-plane CLIP at the dest portal
+        // plane (FrontClipping), NOT by changing this transform.
         Direction.Axis srcAxis = srcPortal.getAxis();
         Direction.Axis destAxis = destPortal.getAxis();
-        // 1:1 camera position for screen-space alignment. Separate RenderBuffers
-        // on the secondary renderer prevent "Buffer source must not be empty" errors.
         Vec3 destCameraPos = PortalTransform.transformPoint(
             srcPortal, destPortal, srcPortal.getType(), mainCamera.position());
 
@@ -1537,12 +1592,17 @@ public class PortalContextSwitch {
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         int w = main.width;
         int h = main.height;
-        if (secondaryFbo == null) {
-            secondaryFbo = new TextureTarget("seamless_portal", w, h, true, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM);
-            SeamlessPortalsConstants.LOGGER.info("[SEAMLESS] Created secondary FBO {}x{}", w, h);
-        } else if (secondaryFbo.width != w || secondaryFbo.height != h) {
-            secondaryFbo.resize(w, h);
+        // Two-portals: the active FBO is THIS portal's pooled target (one full-screen FBO per
+        // portal), selected by activePortalId. The big render/composite methods use secondaryFbo.
+        TextureTarget fbo = portalFbos.get(activePortalId);
+        if (fbo == null) {
+            fbo = new TextureTarget("seamless_portal", w, h, true, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM);
+            portalFbos.put(activePortalId, fbo);
+            SeamlessPortalsConstants.rlog("[SEAMLESS] Created secondary FBO {}x{} for portal {}", w, h, activePortalId);
+        } else if (fbo.width != w || fbo.height != h) {
+            fbo.resize(w, h);
         }
+        secondaryFbo = fbo;
     }
 
     /**

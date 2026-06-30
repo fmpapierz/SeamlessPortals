@@ -169,6 +169,30 @@ public class PortalManager {
     }
 
     /**
+     * True if some EXISTING link already claims {@code candidateOrigin} in
+     * {@code destDim} as its destination frame. Because {@link #createLink} stores
+     * BOTH the forward (source→dest) and reverse (dest→source) link, any frame that
+     * is already half of a linked pair is detectable here as a link destination.
+     *
+     * <p>This is what keeps two nearby source portals from collapsing onto ONE
+     * destination: each source owns exactly one destination frame (IP's 1:1 model).
+     * When a candidate is already owned, the caller falls through to BUILD a fresh
+     * destination instead of sharing — without it, two nearby overworld portals map
+     * (origin/8) to nearly the same nether point and reuse the same frame, which
+     * also produces the reverse-link mismatch behind the teleport oscillation.
+     */
+    private boolean isDestinationClaimed(ResourceKey<Level> destDim, BlockPos candidateOrigin) {
+        String key = posKey(destDim, candidateOrigin);
+        for (PortalLink link : linksByPosition.values()) {
+            PortalInfo d = link.getDestination();
+            if (posKey(d.getDimension(), d.getOrigin()).equals(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * IP-style server authority:
      * 1. use a real destination portal if vanilla already has one
      * 2. otherwise publish a temporary mathematical link immediately
@@ -189,7 +213,7 @@ public class PortalManager {
             expectedPos, destDim.identifier());
 
         Optional<PortalInfo> tracked = destTracker.findNearestPortal(expectedPos, 128, source.getType());
-        if (tracked.isPresent()) {
+        if (tracked.isPresent() && !isDestinationClaimed(destDim, tracked.get().getOrigin())) {
             SeamlessPortalsConstants.LOGGER.info(
                 "[SEAMLESS DEBUG] findOrCreateDest: FOUND in tracker at {}",
                 tracked.get().getOrigin());
@@ -216,14 +240,18 @@ public class PortalManager {
 
         if (actualPortalPos.isPresent()) {
             PortalInfo actualDest = detectActualPortal(source.getType(), destDim, destLevel, actualPortalPos.get(), source.getAxis());
-            registerPortal(actualDest);
-            createLink(source, actualDest);
-            sendLinkToClients(source, actualDest, server);
-            preWarmDestinationChunks(actualDest.getOrigin(), destLevel);
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS] Initial pre-warm at {} in {}",
-                actualDest.getOrigin(), destLevel.dimension().identifier());
-            return;
+            if (!isDestinationClaimed(destDim, actualDest.getOrigin())) {
+                registerPortal(actualDest);
+                createLink(source, actualDest);
+                sendLinkToClients(source, actualDest, server);
+                preWarmDestinationChunks(actualDest.getOrigin(), destLevel);
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS] Initial pre-warm at {} in {}",
+                    actualDest.getOrigin(), destLevel.dimension().identifier());
+                return;
+            }
+            // Frame already owned by another source's link — fall through to build a
+            // fresh destination so this source gets its OWN portal (IP 1:1 model).
         }
 
         SeamlessPortalsConstants.LOGGER.info(

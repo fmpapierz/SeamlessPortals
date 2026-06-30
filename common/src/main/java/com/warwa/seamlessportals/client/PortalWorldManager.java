@@ -211,23 +211,140 @@ public class PortalWorldManager {
         return renderers.containsKey(dimension);
     }
 
+    // ---- IP-faithful secondary-world scoping (qouteall ChunkVisibility.getNearbyPortals) ----
+    //
+    // A secondary dimension is only maintained — ticked ({@link #tickRemoteWorlds}),
+    // compile-pumped ({@link #advanceCompilePipelines}), and kept resident
+    // ({@link #evictUnboundedStores}) — while a portal that links into it is NEAR the
+    // player in the active dim. Walk away from every portal and the dest stops being
+    // maintained and its store is released, instead of a ~render-distance-deep second
+    // world being fully ticked + swept every client tick forever (the "laggy even
+    // 5000 blocks away" leak). A grace window keeps a just-left dim alive briefly so a
+    // quick glance away / return doesn't thrash evict→re-stream.
+
+    /** Per-dim: dest-region center (chunk-origin) of the nearest in-range portal that links here. */
+    private static final Map<ResourceKey<Level>, net.minecraft.core.BlockPos> liveCentersByDim =
+        new ConcurrentHashMap<>();
+    /** Per-dim: {@link System#nanoTime()} a portal was last near enough to keep this dest alive. */
+    private static final Map<ResourceKey<Level>, Long> lastActiveNanosByDim = new ConcurrentHashMap<>();
+    /** Game-tick stamp of the last {@link #refreshDestScopes()} (recompute at most once/tick). */
+    private static long destScopeStampTick = Long.MIN_VALUE;
     /**
-     * T3 bounded eviction (per client tick): for every INACTIVE secondary level using the
-     * unbounded {@link SeamlessClientChunkMap}, drop chunks beyond a generous radius from its
-     * tracked view center, so the store can't grow without bound as the player roams between
-     * portals (vanilla's forget-chunk eviction only fires on the ACTIVE level). The radius is
-     * the player render distance + margin, so the resident dest region is never dropped — only
-     * far stragglers. No-op when the flag is off or no unbounded store exists.
+     * Grace after a dest leaves portal range before it is paused + released. Long
+     * enough that a quick look-away / walk-back doesn't thrash, short enough that the
+     * far world stops costing once you genuinely leave. Mirrors the spirit of the
+     * server residency ticket timeout (200t).
+     */
+    private static final long DEST_SCOPE_GRACE_NANOS = 5_000_000_000L; // 5 s
+
+    /**
+     * Recompute (at most once per game tick) which secondary dims have a portal near
+     * the player, recording each dim's nearest dest-region center + the time it was
+     * last seen near. Uses the SAME range + filters the render path uses to pick
+     * portals ({@code StencilPortalRenderer.resolveRenderTargets}), so a dim that is
+     * about to be rendered is never paused/evicted out from under the renderer.
+     */
+    private static void refreshDestScopes() {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        if (active == null || mc.player == null) return;
+        long stamp = active.getGameTime();
+        if (stamp == destScopeStampTick) return; // already computed this tick
+        destScopeStampTick = stamp;
+
+        long now = System.nanoTime();
+        // Keep the ACTIVE dim continuously live so the dim you JUST LEFT stays warm
+        // for the full grace window after a crossing demotes it to a secondary —
+        // preserves the seamless return (no blank look-back while the return portal's
+        // link resolves client-side). The active dim is never evicted/paused (those
+        // paths skip it), so the recorded center only matters once it is demoted.
+        lastActiveNanosByDim.put(active.dimension(), now);
+        liveCentersByDim.put(active.dimension(), mc.player.blockPosition());
+
+        try {
+            com.warwa.seamlessportals.portal.PortalManager pm =
+                com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
+            com.warwa.seamlessportals.portal.PortalTracker tracker = pm.getTracker(active.dimension());
+            if (tracker == null) return;
+            net.minecraft.core.BlockPos playerPos = mc.player.blockPosition();
+            double range = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
+                .getPortalRenderDistance() * 16.0;
+            java.util.List<com.warwa.seamlessportals.portal.PortalInfo> near =
+                new java.util.ArrayList<>(tracker.getPortalsInRange(playerPos, range));
+            // Nearest-first so the closest portal's dest wins as the load/evict center.
+            net.minecraft.world.phys.Vec3 pv = mc.player.position();
+            near.sort(java.util.Comparator.comparingDouble(p -> p.getCenter().distanceToSqr(pv)));
+            for (com.warwa.seamlessportals.portal.PortalInfo src : near) {
+                if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig
+                        .shouldRenderThrough(src.getType())) continue;
+                java.util.Optional<com.warwa.seamlessportals.portal.PortalLink> linkOpt =
+                    pm.getLinkForPortal(src.getPortalId());
+                if (linkOpt.isEmpty()) continue;
+                com.warwa.seamlessportals.portal.PortalInfo dest = linkOpt.get().getDestination();
+                ResourceKey<Level> destDim = dest.getDimension();
+                if (destDim.equals(active.dimension())) continue; // same-dim: no secondary world
+                if (liveCentersByDim.containsKey(destDim)
+                        && lastActiveNanosByDim.getOrDefault(destDim, 0L) == now) {
+                    continue; // already recorded a nearer portal for this dim this tick
+                }
+                liveCentersByDim.put(destDim, dest.getOrigin());
+                lastActiveNanosByDim.put(destDim, now);
+            }
+        } catch (Throwable t) {
+            // Best-effort: on any hiccup leave the scope state untouched (keeps dims
+            // alive — the safe default that never evicts a dim that might be needed).
+        }
+    }
+
+    /** Has a portal linked into {@code dim} within the grace window? (kept ticked + resident) */
+    public static boolean isDestScopeLive(ResourceKey<Level> dim) {
+        Long t = lastActiveNanosByDim.get(dim);
+        return t != null && (System.nanoTime() - t) < DEST_SCOPE_GRACE_NANOS;
+    }
+
+    /** Nearest in-range portal's dest-region center for {@code dim}, or null if none recorded. */
+    public static net.minecraft.core.BlockPos getDestScopeCenter(ResourceKey<Level> dim) {
+        return liveCentersByDim.get(dim);
+    }
+
+    /**
+     * IP-faithful per-tick store bounding. For every INACTIVE secondary level using the
+     * unbounded {@link SeamlessClientChunkMap}:
+     * <ul>
+     *   <li>if a portal is near the player linking into this dim (within the grace
+     *       window) → keep its live region resident, recentered on the nearest such
+     *       portal's dest origin (NOT the frozen FBO view-center);</li>
+     *   <li>otherwise → release the whole store (the dest is no longer near any portal;
+     *       a return crossing re-streams it, since the server prunes its sent-chunk
+     *       record to the live working set).</li>
+     * </ul>
+     * The radius is the player render distance + margin, so a live dest region is never
+     * dropped — only far stragglers. No-op when the flag is off or no unbounded store exists.
      */
     public static void evictUnboundedStores() {
         if (levels.isEmpty()
             || !com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().isUnboundedClientChunkStore()) {
             return;
         }
-        int radius = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance() + 16;
-        for (ClientLevel level : levels.values()) {
-            if (level.getChunkSource() instanceof SeamlessClientChunkMap store) {
-                store.seamlessportals$evictBeyond(radius);
+        refreshDestScopes();
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        int radius = mc.options.getEffectiveRenderDistance() + 16;
+        for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+            ClientLevel level = e.getValue();
+            if (level == null || level == active) continue; // never evict the active world here
+            if (!(level.getChunkSource() instanceof SeamlessClientChunkMap store)) continue;
+            ResourceKey<Level> dim = e.getKey();
+            if (isDestScopeLive(dim)) {
+                net.minecraft.core.BlockPos center = getDestScopeCenter(dim);
+                if (center != null) {
+                    store.seamlessportals$evictAround(center.getX() >> 4, center.getZ() >> 4, radius);
+                } else {
+                    store.seamlessportals$evictBeyond(radius); // fall back to tracked view-center
+                }
+            } else {
+                // No portal near this dim past the grace window → release it entirely.
+                store.seamlessportals$evictAll();
             }
         }
     }
@@ -1092,11 +1209,17 @@ public class PortalWorldManager {
         com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin mcAccess =
             (com.warwa.seamlessportals.mixin.client.MinecraftAccessorMixin) mc;
 
+        // IP scope: only tick a secondary while a portal looking into it is near the
+        // player. A dim past the grace window is paused (no tick/fluids/light) — it
+        // resumes when the player walks back into portal range.
+        refreshDestScopes();
+
         isClientRemoteTicking = true;
         try {
             for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
                 ClientLevel cached = e.getValue();
                 if (cached == null || cached == active) continue;
+                if (!isDestScopeLive(e.getKey())) continue; // paused: no nearby portal
                 ParticleEngine engine = getOrCreateParticleEngine(cached);
 
                 mc.level = cached;
@@ -1126,9 +1249,11 @@ public class PortalWorldManager {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel active = mc.level;
         net.minecraft.client.player.LocalPlayer localPlayer = mc.player;
+        refreshDestScopes();
         for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
             ClientLevel cached = e.getValue();
             if (cached == null || cached == active) continue;
+            if (!isDestScopeLive(e.getKey())) continue; // paused: no nearby portal
             for (net.minecraft.world.entity.Entity ent : cached.entitiesForRendering()) {
                 if (ent == localPlayer) continue;
                 if (ent.isPassenger()) continue;
@@ -1437,10 +1562,15 @@ public class PortalWorldManager {
         ResourceKey<Level> activeDim = mc.level.dimension();
         int remaining = COMPILE_PUMP_BUDGET_PER_TICK;
 
+        // IP scope: only pump compiles on a secondary while a portal looking into it
+        // is near the player. A paused (far-away) dim wastes no chunk-builder budget.
+        refreshDestScopes();
+
         for (Map.Entry<ResourceKey<Level>, LevelRenderer> entry : renderers.entrySet()) {
             if (remaining <= 0) break;
             ResourceKey<Level> dim = entry.getKey();
             if (dim == activeDim) continue;
+            if (!isDestScopeLive(dim)) continue; // paused: no nearby portal
             ClientLevel level = levels.get(dim);
             remaining -= advanceOneRenderer(dim, entry.getValue(), level, remaining);
         }

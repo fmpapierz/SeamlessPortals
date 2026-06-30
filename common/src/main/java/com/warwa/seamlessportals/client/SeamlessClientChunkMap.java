@@ -288,8 +288,48 @@ public class SeamlessClientChunkMap extends ClientChunkCache {
         if (Thread.currentThread() != this.mainThread || this.mainMap.isEmpty() || !this.viewCenterSet) {
             return;
         }
-        int cx = this.viewCenterX;
-        int cz = this.viewCenterZ;
+        evictBeyondCenter(this.viewCenterX, this.viewCenterZ, radius);
+    }
+
+    /**
+     * Bounded eviction around an EXPLICIT center (chunk coords) rather than the
+     * tracked {@link #viewCenterX}/{@link #viewCenterZ}. The tracked view-center is
+     * only updated while a portal looking into this dim is actively FBO-rendered
+     * ({@code PortalContextSwitch.updateViewCenter}); it FREEZES the moment the
+     * player stops looking. The IP-faithful secondary-world scoping
+     * ({@code PortalWorldManager.evictUnboundedStores}) instead recenters on the
+     * nearest in-range portal's dest origin every tick, so a dim that is still
+     * "near" keeps its live region resident even when not currently being viewed.
+     * Main-thread only.
+     */
+    public void seamlessportals$evictAround(int centerChunkX, int centerChunkZ, int radius) {
+        if (Thread.currentThread() != this.mainThread || this.mainMap.isEmpty()) {
+            return;
+        }
+        evictBeyondCenter(centerChunkX, centerChunkZ, radius);
+    }
+
+    /**
+     * Drop EVERY resident chunk. Called by the secondary-world scoping when no
+     * portal has linked into this dim for longer than the grace window: the dest
+     * is no longer near the player, so (IP-faithfully) it stops being maintained
+     * and its store is released. A return crossing re-streams it from the server
+     * (the server re-sends because {@code PortalChunkTracker} prunes its
+     * sent-chunk record to the live working set). Main-thread only.
+     */
+    public void seamlessportals$evictAll() {
+        if (Thread.currentThread() != this.mainThread || this.mainMap.isEmpty()) {
+            return;
+        }
+        // Snapshot keys first — drop() mutates mainMap.
+        LongArrayList toDrop = new LongArrayList(this.mainMap.keySet());
+        for (int i = 0; i < toDrop.size(); i++) {
+            long key = toDrop.getLong(i);
+            drop(new ChunkPos(ChunkPos.getX(key), ChunkPos.getZ(key)));
+        }
+    }
+
+    private void evictBeyondCenter(int cx, int cz, int radius) {
         LongArrayList toDrop = null;
         LongIterator it = this.mainMap.keySet().iterator();
         while (it.hasNext()) {

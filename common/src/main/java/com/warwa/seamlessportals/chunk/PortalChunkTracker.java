@@ -70,6 +70,16 @@ public class PortalChunkTracker {
      */
     private static final int MAX_CHUNK_SENDS_PER_TICK = 12;
 
+    /**
+     * Cap on how many nearby portals a single player feeds per tick — the N nearest.
+     * Matches the render path's {@code StencilPortalRenderer.MAX_PORTALS_RENDERED}: a
+     * player can only see through so many at once, so feeding (and re-adding a
+     * residency ticket for) EVERY lit portal within range every tick is wasted
+     * per-tick work that grows with how many portals you have lit nearby — a
+     * progressive server-tick cost behind the "laggy after lighting multiple portals".
+     */
+    private static final int MAX_ACTIVE_LINKS = 4;
+
     public void tick(MinecraftServer server) {
         // Periodically scan for portals near players on the server
         scanCooldown--;
@@ -173,6 +183,18 @@ public class PortalChunkTracker {
 
         List<PortalLink> nearbyLinks = manager.getLinksInRange(playerDim, player.blockPosition(), range);
 
+        // Cap to the N nearest portals (the only ones the player can actually look
+        // through — matches MAX_PORTALS_RENDERED). Without this, standing among many
+        // lit portals re-adds a residency ticket + collects chunks for EVERY one,
+        // every tick — per-tick work that grows with your portal count.
+        if (nearbyLinks.size() > MAX_ACTIVE_LINKS) {
+            Vec3 pPos = player.position();
+            List<PortalLink> sorted = new ArrayList<>(nearbyLinks);
+            sorted.sort(java.util.Comparator.comparingDouble(
+                l -> l.getSource().getCenter().distanceToSqr(pPos)));
+            nearbyLinks = sorted.subList(0, MAX_ACTIVE_LINKS);
+        }
+
         if (!loggedChunkUpdate) {
             SeamlessPortalsConstants.LOGGER.info(
                 "[SEAMLESS DEBUG] updatePlayerPortalChunks: playerDim={}, nearbyLinks={}, loadDistance={}, cap={}, range={}",
@@ -181,9 +203,9 @@ public class PortalChunkTracker {
             loggedChunkUpdate = true;
         }
 
-        if (nearbyLinks.isEmpty()) return;
-
-        Set<ChunkPos> neededChunks = new HashSet<>();
+        // Per-dim needed-chunk sets (was: ONE shared set sent once PER link, which
+        // cross-contaminated dims and re-scanned prior links' chunks O(N^2)).
+        Map<ResourceKey<Level>, Set<ChunkPos>> neededByDim = new HashMap<>();
 
         for (PortalLink link : nearbyLinks) {
             PortalInfo destPortal = link.getDestination();
@@ -226,14 +248,49 @@ public class PortalChunkTracker {
                 }
             }
 
-            // Collect chunks around the destination portal
+            // Collect chunks around the destination portal (per dim).
+            Set<ChunkPos> needed = neededByDim.computeIfAbsent(destDim, k -> new HashSet<>());
             for (int dx = -renderDist; dx <= renderDist; dx++) {
                 for (int dz = -renderDist; dz <= renderDist; dz++) {
-                    neededChunks.add(new ChunkPos(centerChunkX + dx, centerChunkZ + dz));
+                    needed.add(new ChunkPos(centerChunkX + dx, centerChunkZ + dz));
                 }
             }
+        }
 
-            sendChunksToPlayer(player, destDim, neededChunks, server);
+        // Prune the player's sent-chunk record to the live working set, then send.
+        // Runs even when neededByDim is EMPTY (player walked away from every portal),
+        // so the record can't grow unbounded across the session and chunks re-send
+        // when the player returns (after the client evicted them — IP roam model).
+        pruneAndSend(player, neededByDim, server);
+    }
+
+    /**
+     * Trim each player's sent-chunk record to the chunks still needed this tick
+     * (dropping records for dims with no nearby portal entirely), then ship the
+     * not-yet-sent needed chunks for each dim. Pruning is what bounds {@link #sentChunks}
+     * across a session and lets the server re-send a dest the client released when the
+     * player roams back into range.
+     */
+    private void pruneAndSend(ServerPlayer player,
+                              Map<ResourceKey<Level>, Set<ChunkPos>> neededByDim,
+                              MinecraftServer server) {
+        Map<ResourceKey<Level>, Set<ChunkPos>> playerSent = sentChunks.get(player.getUUID());
+        if (playerSent != null) {
+            Iterator<Map.Entry<ResourceKey<Level>, Set<ChunkPos>>> it =
+                playerSent.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<ResourceKey<Level>, Set<ChunkPos>> e = it.next();
+                Set<ChunkPos> needed = neededByDim.get(e.getKey());
+                if (needed == null) {
+                    it.remove();                  // dim no longer needed → drop its record
+                } else {
+                    e.getValue().retainAll(needed); // keep only chunks still in the working set
+                }
+            }
+        }
+
+        for (Map.Entry<ResourceKey<Level>, Set<ChunkPos>> e : neededByDim.entrySet()) {
+            sendChunksToPlayer(player, e.getKey(), e.getValue(), server);
         }
     }
 

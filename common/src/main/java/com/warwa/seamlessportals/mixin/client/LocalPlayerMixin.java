@@ -39,30 +39,38 @@ public abstract class LocalPlayerMixin {
 
         if (!SeamlessPortalsConfig.get().isSeamlessTeleportation()) return;
 
-        // After a client-first crossing, block re-entry of the detector while
-        // the player is still inside any portal bounding box. Mirrors the
-        // server-side {@code justTeleported} guard in
-        // {@code EntityMixin.seamlessportals$checkPortalCrossing}.
-        if (SeamlessClientTeleport.justTeleportedClient) {
-            if (!EntityPortalCollision.isInPortalBounds(self)) {
-                SeamlessClientTeleport.justTeleportedClient = false;
-            }
-            return;
-        }
+        // Build this tick's movement segment (prev end -> current) for PLANE-
+        // CROSSING detection, then advance the stored origin for next tick.
+        net.minecraft.world.phys.Vec3 currentPos = self.position();
+        net.minecraft.world.phys.Vec3 lastPos = SeamlessClientTeleport.lastClientPos;
+        SeamlessClientTeleport.lastClientPos = currentPos;
 
-        // Post-swap cooldown: prevent detecting a new crossing for ~500ms
-        // after the last swap. This avoids the rapid-back-and-forth
-        // "Network Protocol Error" where stale chunk packets from the old
-        // dim overrun the reader of the freshly swapped new-dim level. See
-        // SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS for rationale.
+        // Post-swap cooldown: suppress detection for ~500ms after the last swap.
+        // This avoids the rapid-back-and-forth "Network Protocol Error" where
+        // stale chunk packets from the old dim overrun the reader of the freshly
+        // swapped new-dim level. See SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS.
+        // It also covers the first post-swap tick, whose stale old-dim->new-dim
+        // segment must not be evaluated.
         long sinceSwap = System.nanoTime() - SeamlessClientTeleport.lastSwapMonotonicNanos;
         if (sinceSwap < SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS) {
             return;
         }
 
-        Optional<PortalLink> linkOpt = EntityPortalCollision.findPortalLinkAtEntity(self);
+        if (lastPos == null) return; // first tick — no movement segment yet
+
+        // IP-style PLANE-CROSSING detection (replaces bounding-box containment).
+        // A player who lands embedded in the destination portal after a crossing
+        // is NOT straddling a portal plane between ticks, so this does not re-fire
+        // — which is what kills the infinite overworld<->nether teleport
+        // oscillation (the freeze). The player can still immediately walk back
+        // through (crossing the plane again) to return.
+        Optional<PortalLink> linkOpt =
+            EntityPortalCollision.findPortalCrossing(self, lastPos, currentPos);
         if (linkOpt.isEmpty()) return;
 
         SeamlessClientTeleport.performCrossing(linkOpt.get());
+        // Start next tick's segment from the post-swap position (defensive — also
+        // done in doVisualSwap) so the teleport jump is not a "movement" crossing.
+        SeamlessClientTeleport.lastClientPos = self.position();
     }
 }

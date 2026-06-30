@@ -26,20 +26,26 @@ public class StencilPortalRenderer {
 
     private static int framesRendered = 0;
 
-    /**
-     * Resolved set of portal planes to render this frame, plus the link used for
-     * the destination lookup. Discovered identically by both render phases so
-     * phase 1 (heavy dest render) and phase 2 (stencil + composite) operate on
-     * the same portals.
-     */
-    private record RenderTargets(List<PortalInfo> portals, PortalLink link, Camera camera) {}
+    /** One portal to render this frame, paired with ITS OWN link/destination. */
+    private record RenderGroup(PortalInfo portal, PortalLink link) {}
 
     /**
-     * Discover the linked portal planes near the player. Returns {@code null} if
-     * there is nothing to render (no level/player, no nearby linked portals).
+     * Resolved per-portal render groups (each its OWN destination), near-to-far, plus the
+     * camera. Discovered identically by both render phases so phase 1 (heavy dest render) and
+     * phase 2 (stencil + composite) operate on the same portals.
+     */
+    private record RenderTargets(List<RenderGroup> groups, Camera camera) {}
+
+    /** Cap on portals rendered per frame — each is a full destination render (bound the cost). */
+    private static final int MAX_PORTALS_RENDERED = 4;
+
+    /**
+     * Discover the linked portals near the player. Returns {@code null} if there is nothing to
+     * render. Each portal becomes its OWN render group with its OWN link — previously all nearby
+     * portals were collapsed into one list + firstLink, so two separate portals showed ONE
+     * stretched destination (the two-portals bug). IP renders per-portal the same way.
      *
-     * <p>Side-effect free apart from being a pure read of the client portal state;
-     * safe to call once per phase per frame.
+     * <p>Side-effect free apart from being a pure read of the client portal state.
      */
     private static RenderTargets resolveRenderTargets() {
         Minecraft mc = Minecraft.getInstance();
@@ -55,20 +61,24 @@ public class StencilPortalRenderer {
         List<PortalInfo> nearbyPortals = tracker.getPortalsInRange(playerPos, range);
         if (nearbyPortals.isEmpty()) return null;
 
-        // Collect ALL linked portals (don't deduplicate - we want all planes)
-        List<PortalInfo> linkedPortals = new ArrayList<>();
-        PortalLink firstLink = null;
-
+        List<RenderGroup> groups = new ArrayList<>();
         for (PortalInfo portal : nearbyPortals) {
             if (!SeamlessPortalsConfig.shouldRenderThrough(portal.getType())) continue;
             Optional<PortalLink> linkOpt = pm.getLinkForPortal(portal.getPortalId());
             if (linkOpt.isEmpty()) continue;
-            linkedPortals.add(portal);
-            if (firstLink == null) firstLink = linkOpt.get();
+            groups.add(new RenderGroup(portal, linkOpt.get()));
         }
+        if (groups.isEmpty()) return null;
 
-        if (linkedPortals.isEmpty() || firstLink == null) return null;
-        return new RenderTargets(linkedPortals, firstLink, camera);
+        // Sort near-to-far (mirror IP's PortalRenderer sort) so overlapping openings composite
+        // correctly, and cap the count — each portal is a full destination render.
+        net.minecraft.world.phys.Vec3 camPos = camera.position();
+        groups.sort(java.util.Comparator.comparingDouble(
+            g -> g.portal().getCenter().distanceToSqr(camPos)));
+        if (groups.size() > MAX_PORTALS_RENDERED) {
+            groups = new ArrayList<>(groups.subList(0, MAX_PORTALS_RENDERED));
+        }
+        return new RenderTargets(groups, camera);
     }
 
     /**
@@ -98,13 +108,24 @@ public class StencilPortalRenderer {
         if (PortalContextSwitch.isRenderingPortal) return;
 
         RenderTargets targets = resolveRenderTargets();
-        if (targets == null) return;
+        if (targets == null) {
+            // No portals nearby — free ALL pooled FBOs. The per-portal loop + eviction below
+            // never runs in this case, so without this the FBOs of portals you lit earlier
+            // would never be freed as you walk away (a per-portal GPU-memory leak).
+            PortalContextSwitch.evictUnusedPortalFbos(java.util.Collections.emptySet());
+            return;
+        }
 
-        // Render the destination world into the secondary FBO (no composite — that
-        // is phase 2). prepareDestinationWorld resets + sets the per-frame
-        // fboReadyThisFrame flag that phase 2 reads.
-        PortalContextSwitch.prepareDestinationWorld(
-            targets.portals().get(0), targets.link(), targets.camera());
+        // Render EACH portal's destination into ITS OWN pooled FBO (no composite — that is
+        // phase 2). prepareDestinationWorld repoints the active FBO to this portal and records
+        // its per-portal ready flag, which phase 2 reads when compositing that portal.
+        java.util.Set<java.util.UUID> rendered = new java.util.HashSet<>();
+        for (RenderGroup g : targets.groups()) {
+            PortalContextSwitch.prepareDestinationWorld(g.portal(), g.link(), targets.camera());
+            rendered.add(g.portal().getPortalId());
+        }
+        // Free pooled FBOs for portals no longer rendered, so the pool stays bounded.
+        PortalContextSwitch.evictUnusedPortalFbos(rendered);
     }
 
     /**
@@ -120,11 +141,12 @@ public class StencilPortalRenderer {
         framesRendered++;
         if (targets == null) return;
 
-        List<PortalInfo> linkedPortals = targets.portals();
-        PortalLink firstLink = targets.link();
         Camera camera = targets.camera();
-
-        renderBatchedPortals(linkedPortals, firstLink, camera);
+        // Render each portal independently (near-to-far): its OWN stencil mask + its OWN
+        // destination FBO. The stencil is cleared per portal so masks never bleed between them.
+        for (RenderGroup g : targets.groups()) {
+            renderOnePortal(g.portal(), g.link(), camera);
+        }
     }
 
     /**
@@ -135,7 +157,8 @@ public class StencilPortalRenderer {
      * 4. Draw destination blocks → clipped to combined portal shape
      * 5. Reset stencil, disable
      */
-    private static void renderBatchedPortals(List<PortalInfo> portals, PortalLink link, Camera camera) {
+    private static void renderOnePortal(PortalInfo portal, PortalLink link, Camera camera) {
+        java.util.List<PortalInfo> portals = java.util.List.of(portal);
         GL11.glEnable(GL11.GL_STENCIL_TEST);
 
         // ===== STEP 1: Discover FBO via dummy draw, then clear stencil =====
