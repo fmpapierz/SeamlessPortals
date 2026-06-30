@@ -124,4 +124,26 @@ public interface LevelRendererAccessorMixin {
      */
     @Accessor("atlasManager")
     net.minecraft.client.resources.model.sprite.AtlasManager seamlessportals$getAtlasManager();
+
+    /**
+     * The renderer's {@link net.minecraft.client.renderer.SubmitNodeStorage} — the submit buffer
+     * that {@code submitFeatures} fills and {@code featureRenderDispatcher.prepareFrame} consumes.
+     * Phase 5 Step 2c: needed to render the dest dimension's entities/block-entities/particles in
+     * the portal view (the FBO path did this inside {@code render()}; the direct path must drive
+     * submit→prepare→execute itself).
+     */
+    @Accessor("submitNodeStorage")
+    net.minecraft.client.renderer.SubmitNodeStorage seamlessportals$getSubmitNodeStorage();
+
+    /**
+     * Invoke the renderer's private {@code submitFeatures(...)} — gathers the entity / block-entity
+     * / particle render states (already extracted into {@code levelRenderState}) into the submit
+     * storage so {@code FeatureRenderDispatcher.renderAllFeatures} can draw them. {@code renderOutline}
+     * = false in the portal view (no glow outlines).
+     */
+    @org.spongepowered.asm.mixin.gen.Invoker("submitFeatures")
+    void seamlessportals$invokeSubmitFeatures(
+        LevelRenderState levelRenderState,
+        net.minecraft.client.renderer.SubmitNodeCollector submitNodeCollector,
+        boolean renderOutline);
 }

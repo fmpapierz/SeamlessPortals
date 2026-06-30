@@ -876,6 +876,39 @@ public class PortalContextSwitch {
     }
 
     /**
+     * Phase 5 Step 2c: render the destination dimension's ENTITIES, block-entities and particles
+     * into the opening (masked by the stencil), via 26.2's submit model. The dest extract already
+     * gathered their render states into {@code destLRS}; we invoke the private {@code submitFeatures}
+     * to fill the dest submit storage, then {@code FeatureRenderDispatcher.renderAllFeatures} does
+     * prepare + executeSolid/Translucent/AfterTerrain/AlwaysOnTop + close. The features draw into
+     * the currently-bound (stencil-masked main) target — {@code FeatureFrameContext} captures no
+     * target, just the dest lightmap (swapped in by withSwitchedWorld). Like the sky, entities are
+     * camera-relative, so the dest view rotation drives the global modelview. Best-effort.
+     */
+    private static void renderPortalEntities(LevelRenderer destRenderer, LevelRenderState destLRS,
+            Matrix4f destViewMatrix) {
+        try {
+            LevelRendererAccessorMixin acc = (LevelRendererAccessorMixin) destRenderer;
+            net.minecraft.client.renderer.SubmitNodeStorage storage =
+                acc.seamlessportals$getSubmitNodeStorage();
+            if (storage == null) return;
+            // Gather dest entity/block-entity/particle render states into the submit storage
+            // (renderOutline=false → no glow outlines in the portal view).
+            acc.seamlessportals$invokeSubmitFeatures(destLRS, storage, false);
+            org.joml.Matrix4fStack mv = RenderSystem.getModelViewStack();
+            mv.pushMatrix();
+            mv.mul(destViewMatrix);
+            try {
+                acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
+            } finally {
+                mv.popMatrix();
+            }
+        } catch (Throwable t) {
+            // Entities are non-critical; terrain + sky already drew.
+        }
+    }
+
+    /**
      * Render destination world to secondary FBO, then composite through stencil.
      * Matches IP's RendererUsingFrameBuffer.doRenderPortal() + MyGameRenderer.switchAndRenderTheWorld().
      */
@@ -1611,6 +1644,10 @@ public class PortalContextSwitch {
                                         // OPAQUE = solid + cutout terrain.
                                         destChunks.renderGroup(
                                             ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
+                                        // Step 2c: dest entities / block-entities / particles
+                                        // (submit model), drawn over the opaque terrain — matches
+                                        // addMainPass's executeSolid placement (after OPAQUE).
+                                        renderPortalEntities(destRenderer, destLRS, destViewMatrix);
                                         // Step 2a: TRANSLUCENT terrain (water, ice, stained glass).
                                         // The dest renderer never ran render(), so its
                                         // targets.translucent is null → TRANSLUCENT.outputTarget()
