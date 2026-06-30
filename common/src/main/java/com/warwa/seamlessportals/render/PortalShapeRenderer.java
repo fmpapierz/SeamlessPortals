@@ -186,14 +186,20 @@ public class PortalShapeRenderer {
             }
         }
 
-        // Background color based on destination dimension
+        // Background color: prefer the REAL dest fog/atmosphere colour recorded by the last dest
+        // render (so the horizon fill matches the actual sky/fog instead of a hardcoded sky-blue,
+        // which read as a cyan horizon band where terrain stops). Fall back to a per-dim default
+        // only before the dest has rendered once (cold start).
+        Integer realFog = com.warwa.seamlessportals.render.PortalContextSwitch.getDestSkyFogArgb(destDim);
         int bgColor;
-        if (destDim == net.minecraft.world.level.Level.NETHER) {
-            bgColor = 0xFF1A0808; // Dark nether red
+        if (realFog != null) {
+            bgColor = realFog;
+        } else if (destDim == net.minecraft.world.level.Level.NETHER) {
+            bgColor = 0xFF1A0808; // Dark nether red (cold-start fallback)
         } else if (destDim == net.minecraft.world.level.Level.END) {
-            bgColor = 0xFF0A0A18; // Dark end purple
+            bgColor = 0xFF0A0A18; // Dark end purple (cold-start fallback)
         } else {
-            bgColor = 0xFF87CEEB; // Light blue overworld sky
+            bgColor = 0xFF87CEEB; // Light blue overworld sky (cold-start fallback)
         }
 
         com.mojang.blaze3d.vertex.ByteBufferBuilder byteBuf =

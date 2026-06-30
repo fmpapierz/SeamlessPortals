@@ -91,7 +91,13 @@ public class PortalEntityTracker {
 
     public void tick(MinecraftServer server) {
         PortalManager manager = PortalManager.getServerInstance();
-        double rangeBlocks = ENTITY_RADIUS_CHUNKS * 16.0;
+        // Config-driven entity streaming radius (entityLoadDistance; default "max" = the render
+        // distance) instead of the old hardcoded 4 chunks — so entities far from the portal in the
+        // dest dimension still load + move in the portal view. Larger = more entities + packets.
+        int entityChunks = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
+            .getEntityLoadDistanceChunks();
+        if (entityChunks <= 0) entityChunks = ENTITY_RADIUS_CHUNKS; // safety fallback
+        double rangeBlocks = entityChunks * 16.0;
 
         tickCount++;
 

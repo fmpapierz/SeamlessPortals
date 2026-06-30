@@ -300,9 +300,13 @@ public class PortalWorldManager {
                 // ticked/lit forever — the 207ms post-teleport pollLight).
                 double distBlocks = Math.sqrt(src.getCenter().distanceToSqr(pv));
                 int rd = mc.options.getEffectiveRenderDistance();
-                int cap = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
-                    .getPortalRenderDistance();
-                int target = distBlocks < 5.0 ? rd : (distBlocks < 15.0 ? (rd * 2) / 3 : rd / 3);
+                com.warwa.seamlessportals.config.SeamlessPortalsConfig cfg =
+                    com.warwa.seamlessportals.config.SeamlessPortalsConfig.get();
+                int cap = cfg.getPortalRenderDistance();
+                // auto → IP-graduated by portal distance; fixed → full configured depth always.
+                int target = cfg.isAutoRenderDistance()
+                    ? (distBlocks < 5.0 ? rd : (distBlocks < 15.0 ? (rd * 2) / 3 : rd / 3))
+                    : cap;
                 liveRadiusByDim.put(destDim, Math.max(1, Math.min(target, cap)));
             }
         } catch (Throwable t) {

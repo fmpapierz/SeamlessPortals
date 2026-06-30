@@ -212,10 +212,14 @@ public class PortalChunkTracker {
             ResourceKey<Level> destDim = destPortal.getDimension();
             Vec3 destCenter = destPortal.getCenter();
 
-            // IP getDirectLoadingDistance(loadDistance, distanceToPortalBlocks):
+            // IP getDirectLoadingDistance(loadDistance, distanceToPortalBlocks) — only when "auto".
+            // Fixed mode (a numeric portalRenderDistance) overrides the graduation: load the full
+            // configured depth regardless of distance, so the portal window shows full render dist.
             double distBlocks = player.position().distanceTo(link.getSource().getCenter());
             int target;
-            if (distBlocks < 5.0) {
+            if (!SeamlessPortalsConfig.get().isAutoRenderDistance()) {
+                target = cap;
+            } else if (distBlocks < 5.0) {
                 target = loadDistance;
             } else if (distBlocks < 15.0) {
                 target = (loadDistance * 2) / 3;

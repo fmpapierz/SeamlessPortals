@@ -100,6 +100,27 @@ public class PortalContextSwitch {
     private static int portalSkyH = -1;
 
     /**
+     * Last-known dest fog/atmosphere colour per dim (packed ARGB), recorded each dest render so the
+     * flat opening-fill ({@link com.warwa.seamlessportals.render.PortalShapeRenderer#drawPortalBackground})
+     * paints the REAL horizon colour instead of a hardcoded sky-blue (the old 0xFF87CEEB read as a
+     * cyan horizon band where the terrain stops). ~1 frame stale (fog changes slowly).
+     */
+    private static final java.util.Map<ResourceKey<Level>, Integer> destSkyFogArgbByDim =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The real dest fog colour (ARGB) for {@code dim}, or null if not yet rendered. */
+    public static Integer getDestSkyFogArgb(ResourceKey<Level> dim) {
+        return destSkyFogArgbByDim.get(dim);
+    }
+
+    private static int argbFromFogColor(org.joml.Vector4f c) {
+        int r = Math.max(0, Math.min(255, Math.round(c.x() * 255f)));
+        int g = Math.max(0, Math.min(255, Math.round(c.y() * 255f)));
+        int b = Math.max(0, Math.min(255, Math.round(c.z() * 255f)));
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
+    }
+
+    /**
      * True while {@link #withSwitchedWorld} has swapped {@code mc.particleEngine}
      * to the destination dimension's OWN {@link net.minecraft.client.particle.ParticleEngine}
      * (per-dest engine, holding only that dim's particles).
@@ -1395,6 +1416,8 @@ public class PortalContextSwitch {
         // fog buffer (MappableRingBuffer shared memory), causing dark clipping artifacts
         // across the entire world. Instead, write directly to our own buffer.
         com.mojang.blaze3d.buffers.GpuBufferSlice destFogBuffer = writePortalFogBuffer(destFogData);
+        // Record the REAL dest fog colour so the flat opening-fill uses it (no more cyan horizon).
+        destSkyFogArgbByDim.put(destDim, argbFromFogColor(destFogData.color));
 
         // ===== 8. Update per-dimension lightmap (match IP's DimensionRenderHelper) =====
         // Uses virtual camera's attributeProbe() to get destination dimension values.

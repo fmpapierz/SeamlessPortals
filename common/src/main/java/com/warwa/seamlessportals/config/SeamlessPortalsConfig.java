@@ -12,6 +12,10 @@ public class SeamlessPortalsConfig {
 
     private int maxPortalRenderDepth = 1;
     private int portalRenderDistance = 8;
+    /** "auto" = IP-style graduated dest depth by portal distance; false = fixed full {@link #portalRenderDistance}. */
+    private boolean autoRenderDistance = true;
+    /** Dest ENTITY streaming radius (chunks). -1 = max (== {@link #getPortalRenderDistance()}). */
+    private int entityLoadDistanceChunks = -1;
     private boolean enablePortalRendering = true;
 
     private int portalFramebufferScale = 100;
@@ -49,7 +53,33 @@ public class SeamlessPortalsConfig {
             try (java.io.InputStream in = java.nio.file.Files.newInputStream(file)) {
                 props.load(in);
                 String d = props.getProperty("portalRenderDistance");
-                if (d != null) INSTANCE.setPortalRenderDistance(Integer.parseInt(d.trim()));
+                if (d != null) {
+                    String dt = d.trim();
+                    if (dt.equalsIgnoreCase("auto")) {
+                        // "auto" → IP-style GRADUATED depth (full within 5 blocks of the portal,
+                        // ⅔ within 15, ⅓ beyond), capped at the max so it reaches your render
+                        // distance up close. A NUMBER overrides the graduation: fixed full depth.
+                        INSTANCE.autoRenderDistance = true;
+                        INSTANCE.setPortalRenderDistance(32);
+                    } else {
+                        try {
+                            INSTANCE.setPortalRenderDistance(Integer.parseInt(dt));
+                            INSTANCE.autoRenderDistance = false; // explicit value = fixed, no graduation
+                        } catch (NumberFormatException nfe) {
+                            INSTANCE.autoRenderDistance = true; // unparseable → auto
+                        }
+                    }
+                }
+                String eld = props.getProperty("entityLoadDistance");
+                if (eld != null) {
+                    String et = eld.trim();
+                    if (et.equalsIgnoreCase("max")) {
+                        INSTANCE.entityLoadDistanceChunks = -1; // -1 = max (== render distance)
+                    } else {
+                        try { INSTANCE.entityLoadDistanceChunks = Integer.parseInt(et); }
+                        catch (NumberFormatException nfe) { /* keep default */ }
+                    }
+                }
                 String depth = props.getProperty("maxPortalRenderDepth");
                 if (depth != null) INSTANCE.setMaxPortalRenderDepth(Integer.parseInt(depth.trim()));
                 String en = props.getProperty("enablePortalRendering");
@@ -70,7 +100,10 @@ public class SeamlessPortalsConfig {
             java.nio.file.Files.createDirectories(configDir);
             java.nio.file.Path file = configDir.resolve("seamlessportals.properties");
             java.util.Properties props = new java.util.Properties();
-            props.setProperty("portalRenderDistance", String.valueOf(INSTANCE.portalRenderDistance));
+            props.setProperty("portalRenderDistance",
+                INSTANCE.autoRenderDistance ? "auto" : String.valueOf(INSTANCE.portalRenderDistance));
+            props.setProperty("entityLoadDistance",
+                INSTANCE.entityLoadDistanceChunks < 0 ? "max" : String.valueOf(INSTANCE.entityLoadDistanceChunks));
             props.setProperty("maxPortalRenderDepth", String.valueOf(INSTANCE.maxPortalRenderDepth));
             props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
             props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
@@ -78,12 +111,14 @@ public class SeamlessPortalsConfig {
                 props.store(out,
                     " Seamless Portals config\n"
                     + "# portalRenderDistance: how many chunks deep the portal DESTINATION is kept\n"
-                    + "#   loaded + meshed (clamped 1..32; default 8 = Immersive Portals' default).\n"
-                    + "#   Higher = more seamless crossing (less far-chunk reload) but MORE memory\n"
-                    + "#   (~depth^2 chunks held + meshed per portal) and longer prep. At very high\n"
-                    + "#   render distances large values can run you out of memory.\n"
-                    + "#   Tip: look at the portal until the view fills in, then cross. Edit this\n"
-                    + "#   value and restart to change it.");
+                    + "#   loaded + meshed. Set to \"auto\" for IP-style GRADUATED depth (full near the\n"
+                    + "#   portal, less as you back away — cheaper, the default), OR a number 1..32 to\n"
+                    + "#   FIX the depth (the full value is shown in the portal window regardless of\n"
+                    + "#   distance — heavier, ~depth^2 chunks held + meshed per portal). 8 = IP default.\n"
+                    + "# entityLoadDistance: chunks around the dest portal within which destination\n"
+                    + "#   entities are streamed so they show + move in the portal view. \"max\" (default)\n"
+                    + "#   = the render distance; a smaller number limits it (fewer entities/packets).\n"
+                    + "#   Edit and restart to change.");
             }
         } catch (Exception e) {
             com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
@@ -131,6 +166,26 @@ public class SeamlessPortalsConfig {
      */
     public int getPortalRenderDistance() { return portalRenderDistance; }
     public void setPortalRenderDistance(int distance) { this.portalRenderDistance = Math.max(1, Math.min(32, distance)); }
+
+    /**
+     * When true ("auto"), the dest loading/mesh depth is GRADUATED by the player's distance to the
+     * portal (full RD within 5 blocks, ⅔ within 15, ⅓ beyond — IP-faithful, cheaper). When false (a
+     * numeric portalRenderDistance), the depth is FIXED at {@link #getPortalRenderDistance()} always
+     * — the full configured render distance is shown in the portal window regardless of distance
+     * (heavier).
+     */
+    public boolean isAutoRenderDistance() { return autoRenderDistance; }
+    public void setAutoRenderDistance(boolean auto) { this.autoRenderDistance = auto; }
+
+    /**
+     * Dest ENTITY streaming radius in chunks. Entities in the destination dimension within this
+     * many chunks of the dest portal are mirrored to the client so they show (and move) in the
+     * portal view. Defaults to {@code max} (== the render distance) so entities load as far as the
+     * terrain does; set a smaller number to limit it.
+     */
+    public int getEntityLoadDistanceChunks() {
+        return entityLoadDistanceChunks < 0 ? getPortalRenderDistance() : entityLoadDistanceChunks;
+    }
 
     public boolean isEnablePortalRendering() { return enablePortalRendering; }
     public void setEnablePortalRendering(boolean enable) { this.enablePortalRendering = enable; }
