@@ -226,7 +226,14 @@ public class PortalContextSwitch {
     public static void armPromoteBridge() {
         long now = System.nanoTime();
         promoteBridgeMinUntilNanos = now + 1_000_000_000L; // always-bridge floor (~1s)
-        promoteBridgeMaxUntilNanos = now + 8_000_000_000L; // bridge-until-rebuilt cap (~8s)
+        // Bridge-until-rebuilt cap. Raised 8s→30s: the just-promoted dim's occlusion graph can
+        // stay EMPTY well past 8s (the empty-rescue fires 50-86×/5s in the logs — the rebuilt
+        // graph keeps yielding nothing for a still-streaming dim), so an 8s cap let the MAIN view
+        // blank after handback to the cold graph. The RETURN empty-rescue (flashBridgeHandbackGuard)
+        // only flood-fills on frames the engine produced NOTHING, so a longer window is a cheap
+        // safety net (no cost while the engine paints terrain) and the HEAD path still hands back
+        // the instant the SOG rebuild completes — this only extends how long the blank is caught.
+        promoteBridgeMaxUntilNanos = now + 30_000_000_000L; // ~30s
     }
 
     /** Within the floor window — always bridge (covers the first frames + small dests). */
@@ -1097,7 +1104,21 @@ public class PortalContextSwitch {
 
         if (viewArea != null) {
             net.minecraft.core.SectionPos cameraSectionPos = net.minecraft.core.SectionPos.of(destCameraPos);
-            viewArea.repositionCamera(cameraSectionPos);
+            // DISAPPEAR FIX: center the dest ViewArea GRID on a STABLE point (the dest scope
+            // center / portal origin), NOT the moving mirror camera. Repositioning the grid to the
+            // mirror camera (which tracks the player 1:1) every frame made vanilla
+            // RotatingSectionStorage relocate a band of RenderSections on each section-boundary
+            // crossing → setSectionNode → reset() → meshes UNCOMPILED + cancelled compiles →
+            // prepareChunkRenders maxIndices==0 → noGeometry bail → flat-colour fill ("nether
+            // terrain disappears", 556 bails/5s in the logs). A stable grid center keeps the
+            // resident dest meshes compiled across player movement (IP's camera sits AT the portal,
+            // so its grid barely moves). Visibility (flood-fill + frustum) and the dispatcher
+            // camera position still use the real mirror destCameraPos, so the view is unaffected.
+            net.minecraft.core.BlockPos gridCenter =
+                com.warwa.seamlessportals.client.PortalWorldManager.getDestScopeCenter(destDim);
+            net.minecraft.core.SectionPos gridSectionPos =
+                gridCenter != null ? net.minecraft.core.SectionPos.of(gridCenter) : cameraSectionPos;
+            viewArea.repositionCamera(gridSectionPos);
             destLevel.getChunkSource().updateViewCenter(cameraSectionPos.x(), cameraSectionPos.z());
 
             SectionRenderDispatcher dispatcher = destRenderer.sectionRenderDispatcher();
@@ -1339,9 +1360,18 @@ public class PortalContextSwitch {
         // ===== 7. Compute destination fog =====
         FogRenderer fogRenderer =
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
+        // Fog at the dest's ACTUAL loaded/rendered radius, NOT the player's full render distance.
+        // The dest terrain is only loaded+meshed out to the graduated dest-scope radius (full RD
+        // only within 5 blocks of the portal, ⅔ within 15, else ⅓ — PortalWorldManager scope), so
+        // computing render-distance fog for the FULL RD left the terrain edge un-fogged → you saw
+        // SKY where the terrain stopped (user: "no distant fog, sky color where terrain stops").
+        // Matching the fog to the loaded radius fades the terrain edge into distance fog (the
+        // vanilla look) with no sky gap, and composes correctly if the load radius is later raised.
+        int destFogRadius = Math.max(2,
+            com.warwa.seamlessportals.client.PortalWorldManager.getDestScopeRadius(destDim));
         FogData destFogData = fogRenderer.setupFog(
             virtualCamera,
-            mc.options.getEffectiveRenderDistance(),
+            destFogRadius,
             deltaTracker,
             0f, // no boss darkening for portal view
             destLevel
