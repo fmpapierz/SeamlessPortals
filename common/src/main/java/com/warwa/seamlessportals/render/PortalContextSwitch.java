@@ -21,10 +21,15 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.CloudStatus;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.SkyRenderer;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
+import net.minecraft.client.renderer.state.level.SkyRenderState;
+import net.minecraft.client.resources.model.sprite.AtlasManager;
+import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
@@ -84,6 +89,15 @@ public class PortalContextSwitch {
      */
     private static boolean stencilDirectMode = false;
     private static int stencilDirectLayer = 1;
+
+    /**
+     * Phase 5 Step 2b: a cached {@link SkyRenderer} for the portal-view dest sky. The dest
+     * renderer's own {@code skyRenderer} is null (its addSkyPass never runs), so we build one and
+     * drive it with the dest sky state. Recreated when the main target's size changes.
+     */
+    private static SkyRenderer portalSkyRenderer;
+    private static int portalSkyW = -1;
+    private static int portalSkyH = -1;
 
     /**
      * True while {@link #withSwitchedWorld} has swapped {@code mc.particleEngine}
@@ -775,6 +789,89 @@ public class PortalContextSwitch {
             return false;
         } finally {
             stencilDirectMode = false;
+        }
+    }
+
+    /**
+     * Phase 5 Step 2b: render the destination dimension's SKY into the opening (masked by the
+     * stencil), driven by the dest sky state. Dimensions with no sky (nether → skybox NONE) are
+     * skipped — the flat dest-fog fill (renderOnePortal STEP 3.6) already covers them. The dest
+     * camera's view rotation is pushed onto the global modelview so the sky dome + sun/moon/stars
+     * orient correctly ({@code SkyRenderer} reads {@code RenderSystem.getModelViewStack()});
+     * terrain is unaffected (its transform is baked into the chunk draw data). Best-effort: any
+     * failure leaves the flat fill in place.
+     */
+    private static void renderPortalSky(LevelRenderer destRenderer, LevelRenderState destLRS,
+            com.mojang.blaze3d.buffers.GpuBufferSlice destFogBuffer, Matrix4f destViewMatrix) {
+        try {
+            SkyRenderState sky = destLRS.skyRenderState;
+            if (sky == null || sky.skybox == DimensionType.Skybox.NONE) return;
+            SkyRenderer sr = getOrCreatePortalSkyRenderer(destRenderer);
+            if (sr == null) return;
+            org.joml.Matrix4fStack mv = RenderSystem.getModelViewStack();
+            mv.pushMatrix();
+            mv.mul(destViewMatrix);
+            try {
+                RenderSystem.setShaderFog(destFogBuffer);
+                if (sky.skybox == DimensionType.Skybox.END) {
+                    sr.renderEndSky();
+                } else {
+                    PoseStack poseStack = new PoseStack();
+                    sr.renderSkyDisc(sky.skyColor);
+                    sr.renderSunriseAndSunset(poseStack, sky.sunAngle, sky.sunriseAndSunsetColor);
+                    sr.renderSunMoonAndStars(poseStack, sky.sunAngle, sky.moonAngle, sky.starAngle,
+                        sky.moonPhase, sky.rainBrightness, sky.starBrightness);
+                    if (sky.shouldRenderDarkDisc) sr.renderDarkDisc();
+                }
+            } finally {
+                mv.popMatrix();
+            }
+        } catch (Throwable t) {
+            // Sky is non-critical; the flat dest-fog fill remains.
+        }
+    }
+
+    private static SkyRenderer getOrCreatePortalSkyRenderer(LevelRenderer destRenderer) {
+        Minecraft mc = Minecraft.getInstance();
+        RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();
+        if (mainRT == null) return null;
+        if (portalSkyRenderer == null || portalSkyW != mainRT.width || portalSkyH != mainRT.height) {
+            if (portalSkyRenderer != null) {
+                try { portalSkyRenderer.close(); } catch (Throwable ignored) {}
+            }
+            AtlasManager atlas =
+                ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getAtlasManager();
+            portalSkyRenderer = new SkyRenderer(mc.getTextureManager(), atlas, mainRT);
+            portalSkyW = mainRT.width;
+            portalSkyH = mainRT.height;
+        }
+        return portalSkyRenderer;
+    }
+
+    /**
+     * Phase 5 Step 2b: render the destination dimension's CLOUDS into the opening (masked by the
+     * stencil). Like the sky, the dest camera's view rotation drives the global modelview;
+     * positioned via the dest camera position. Skipped when clouds are off or fully transparent.
+     */
+    private static void renderPortalClouds(LevelRenderer destRenderer, LevelRenderState destLRS,
+            CameraRenderState destCameraState, Matrix4f destViewMatrix, float partialTick) {
+        Minecraft mc = Minecraft.getInstance();
+        var ors = mc.gameRenderer.gameRenderState().optionsRenderState;
+        CloudStatus cloudStatus = ors.cloudStatus;
+        if (cloudStatus == CloudStatus.OFF) return;
+        if (net.minecraft.util.ARGB.alpha(destLRS.cloudColor) <= 0) return;
+        if (destCameraState.pos == null) return;
+        org.joml.Matrix4fStack mv = RenderSystem.getModelViewStack();
+        mv.pushMatrix();
+        mv.mul(destViewMatrix);
+        try {
+            destRenderer.cloudRenderer().render(
+                destLRS.cloudColor, cloudStatus, destLRS.cloudHeight, ors.cloudRange,
+                destCameraState.pos, destLRS.gameTime, partialTick);
+        } catch (Throwable t) {
+            // Clouds are non-critical.
+        } finally {
+            mv.popMatrix();
         }
     }
 
@@ -1503,14 +1600,29 @@ public class PortalContextSwitch {
                                     // opening — so fragment cost is bounded to the opening, the
                                     // thing that makes IP cheap. destChunks was built from the
                                     // authoritative portal-view visibleSections at the top of
-                                    // this lambda. OPAQUE = solid + cutout terrain only; sky /
-                                    // translucent / entities are later steps of the rework.
-                                    // renderGroup uses LOAD (no clear), so the overworld already
-                                    // in the main target is preserved outside the opening.
+                                    // this lambda. renderGroup uses LOAD (no clear), so the
+                                    // overworld already in the main target is preserved outside
+                                    // the opening.
                                     if (directChunkSampler != null
                                             && destChunks.maxIndicesRequired() > 0) {
+                                        // Step 2b: dest SKY first (behind everything). Skipped for
+                                        // no-sky dims (nether) — the flat fog fill covers those.
+                                        renderPortalSky(destRenderer, destLRS, destFogBuffer, destViewMatrix);
+                                        // OPAQUE = solid + cutout terrain.
                                         destChunks.renderGroup(
                                             ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
+                                        // Step 2a: TRANSLUCENT terrain (water, ice, stained glass).
+                                        // The dest renderer never ran render(), so its
+                                        // targets.translucent is null → TRANSLUCENT.outputTarget()
+                                        // falls back to the main target (masked by the stencil),
+                                        // blended over the opaque dest terrain. Drawn here (before
+                                        // the renderOnePortal STEP 3.7 NEAR depth shield) so it
+                                        // depth-sorts GEQUAL against the opaque dest terrain.
+                                        destChunks.renderGroup(
+                                            ChunkSectionLayerGroup.TRANSLUCENT, directChunkSampler);
+                                        // Step 2b: dest CLOUDS last (in front of terrain, depth-sorted).
+                                        renderPortalClouds(destRenderer, destLRS, destCameraState,
+                                            destViewMatrix, partialTick);
                                         fboRendered[0] = true;
                                     }
                                 } else {

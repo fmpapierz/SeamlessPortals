@@ -115,4 +115,13 @@ public interface LevelRendererAccessorMixin {
      */
     @Accessor("chunkLayerSampler")
     com.mojang.blaze3d.textures.GpuSampler seamlessportals$getChunkLayerSampler();
+
+    /**
+     * The renderer's {@link net.minecraft.client.resources.model.sprite.AtlasManager} — needed
+     * to construct a {@code SkyRenderer} for the portal-view dest sky (Phase 5 Step 2b). The dest
+     * renderer's own {@code skyRenderer} is null (its {@code addSkyPass} never runs), so we build
+     * one from this + the texture manager + the main target and drive it with the dest sky state.
+     */
+    @Accessor("atlasManager")
+    net.minecraft.client.resources.model.sprite.AtlasManager seamlessportals$getAtlasManager();
 }
