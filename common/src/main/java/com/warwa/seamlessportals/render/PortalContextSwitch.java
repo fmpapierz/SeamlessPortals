@@ -1691,28 +1691,52 @@ public class PortalContextSwitch {
                                     // the opening.
                                     if (directChunkSampler != null
                                             && destChunks.maxIndicesRequired() > 0) {
-                                        // Step 2b: dest SKY first (behind everything). Skipped for
-                                        // no-sky dims (nether) — the flat fog fill covers those.
-                                        renderPortalSky(destRenderer, destLRS, destFogBuffer, destViewMatrix);
-                                        // OPAQUE = solid + cutout terrain.
-                                        destChunks.renderGroup(
-                                            ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
-                                        // Step 2c: dest entities / block-entities / particles
-                                        // (submit model), drawn over the opaque terrain — matches
-                                        // addMainPass's executeSolid placement (after OPAQUE).
-                                        renderPortalEntities(destRenderer, destLRS, destViewMatrix);
-                                        // Step 2a: TRANSLUCENT terrain (water, ice, stained glass).
-                                        // The dest renderer never ran render(), so its
-                                        // targets.translucent is null → TRANSLUCENT.outputTarget()
-                                        // falls back to the main target (masked by the stencil),
-                                        // blended over the opaque dest terrain. Drawn here (before
-                                        // the renderOnePortal STEP 3.7 NEAR depth shield) so it
-                                        // depth-sorts GEQUAL against the opaque dest terrain.
-                                        destChunks.renderGroup(
-                                            ChunkSectionLayerGroup.TRANSLUCENT, directChunkSampler);
-                                        // Step 2b: dest CLOUDS last (in front of terrain, depth-sorted).
-                                        renderPortalClouds(destRenderer, destLRS, destCameraState,
-                                            destViewMatrix, partialTick);
+                                        // DEST FOG: bind the destination dim's fog for ALL the dest
+                                        // draws, and RESTORE the main pass's fog after. The chunk
+                                        // shader applies fog from the BOUND Fog uniform
+                                        // (renderGroup → bindDefaultUniforms → setUniform("Fog",
+                                        // getShaderFog()), RenderSystem.java:282-285). Previously
+                                        // only renderPortalSky bound destFogBuffer — and it
+                                        // early-returns for no-sky dims (skybox NONE) — so NETHER
+                                        // dest terrain rendered with the OVERWORLD's fog still
+                                        // bound → no red nether fog until you teleported in. The
+                                        // restore matters too: the main pass's remaining work
+                                        // (executeTranslucentAfterTerrain, the clouds pass — which
+                                        // never re-sets fog, LevelRenderer.java:455-463) must keep
+                                        // the SOURCE dim's fog, or nether fog leaks onto overworld
+                                        // clouds. (The weather pass re-sets fog itself, :476.)
+                                        com.mojang.blaze3d.buffers.GpuBufferSlice savedShaderFog =
+                                            RenderSystem.getShaderFog();
+                                        RenderSystem.setShaderFog(destFogBuffer);
+                                        try {
+                                            // Step 2b: dest SKY first (behind everything). Skipped
+                                            // for no-sky dims (nether) — the flat fog fill covers
+                                            // those.
+                                            renderPortalSky(destRenderer, destLRS, destFogBuffer, destViewMatrix);
+                                            // OPAQUE = solid + cutout terrain.
+                                            destChunks.renderGroup(
+                                                ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
+                                            // Step 2c: dest entities / block-entities / particles
+                                            // (submit model), drawn over the opaque terrain — matches
+                                            // addMainPass's executeSolid placement (after OPAQUE).
+                                            renderPortalEntities(destRenderer, destLRS, destViewMatrix);
+                                            // Step 2a: TRANSLUCENT terrain (water, ice, stained glass).
+                                            // The dest renderer never ran render(), so its
+                                            // targets.translucent is null → TRANSLUCENT.outputTarget()
+                                            // falls back to the main target (masked by the stencil),
+                                            // blended over the opaque dest terrain. Drawn here (before
+                                            // the renderOnePortal STEP 3.7 NEAR depth shield) so it
+                                            // depth-sorts GEQUAL against the opaque dest terrain.
+                                            destChunks.renderGroup(
+                                                ChunkSectionLayerGroup.TRANSLUCENT, directChunkSampler);
+                                            // Step 2b: dest CLOUDS last (in front of terrain, depth-sorted).
+                                            renderPortalClouds(destRenderer, destLRS, destCameraState,
+                                                destViewMatrix, partialTick);
+                                        } finally {
+                                            if (savedShaderFog != null) {
+                                                RenderSystem.setShaderFog(savedShaderFog);
+                                            }
+                                        }
                                         fboRendered[0] = true;
                                     }
                                 } else {
