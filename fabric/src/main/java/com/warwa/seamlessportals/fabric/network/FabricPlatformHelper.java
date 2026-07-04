@@ -146,7 +146,7 @@ public class FabricPlatformHelper implements PlatformHelper {
                 ServerPlayer player = context.player();
                 context.server().execute(() -> {
                     com.warwa.seamlessportals.entity.SeamlessServerTeleport
-                        .handleClientInitiatedCrossing(player, payload.portalId());
+                        .handleClientInitiatedCrossing(player, payload.portalId(), payload.swapSeq());
                 });
             }
         );

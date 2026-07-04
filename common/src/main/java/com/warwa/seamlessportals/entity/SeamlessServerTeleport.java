@@ -57,7 +57,8 @@ public final class SeamlessServerTeleport {
      * Validates that the player is actually near the source portal and that
      * the portal link exists, then performs the server-side teleport.
      */
-    public static void handleClientInitiatedCrossing(ServerPlayer player, String portalIdString) {
+    public static void handleClientInitiatedCrossing(ServerPlayer player, String portalIdString,
+                                                     int swapSeq) {
         if (player.isRemoved()) return;
 
         UUID portalId;
@@ -105,7 +106,12 @@ public final class SeamlessServerTeleport {
             return;
         }
 
-        performCrossing(player, link);
+        performCrossing(player, link, swapSeq);
+    }
+
+    /** Server-initiated crossings (no client seq to echo): swapSeq = -1, always honored. */
+    public static void performCrossing(ServerPlayer player, PortalLink link) {
+        performCrossing(player, link, -1);
     }
 
     /**
@@ -115,8 +121,11 @@ public final class SeamlessServerTeleport {
      * (entity-list transfer, chunk tracker update, other-players' entity
      * tracking, advancement triggers, etc.) but suppresses the single packet
      * we don't want: {@link net.minecraft.network.protocol.game.ClientboundRespawnPacket}.
+     *
+     * @param swapSeq the client's crossing sequence number to echo in the reconcile
+     *                ({@code -1} = server-initiated; the client always honors it)
      */
-    public static void performCrossing(ServerPlayer player, PortalLink link) {
+    public static void performCrossing(ServerPlayer player, PortalLink link, int swapSeq) {
         ResourceKey<Level> destDim = link.getDestination().getDimension();
         MinecraftServer server = player.level().getServer();
         if (server == null) return;
@@ -178,7 +187,8 @@ public final class SeamlessServerTeleport {
                 destDim.identifier().toString(),
                 destPos.x, destPos.y, destPos.z,
                 destYaw, destPitch,
-                destVel.x, destVel.y, destVel.z);
+                destVel.x, destVel.y, destVel.z,
+                swapSeq);
         PlatformHelper.getInstance().sendToClient(player, reconcile);
 
         // Re-send portal data for the new dimension (mirrors legacy flow).

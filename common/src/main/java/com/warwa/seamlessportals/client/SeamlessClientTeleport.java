@@ -90,6 +90,17 @@ public final class SeamlessClientTeleport {
     private static Vec3 lastCameraPos = null;
 
     /**
+     * Monotonic sequence number of client-first swaps. Sent with each
+     * {@code ClientPortalCrossingPayload}; the server echoes it in the reconcile.
+     * {@link #handleServerReconcile} IGNORES reconciles whose echoed seq is older than the
+     * latest swap — so a rapid re-cross can never be yanked back by a late reconcile from the
+     * previous crossing. This sequence-hardening is what made removing the post-swap crossing
+     * cooldown safe (full IP parity: IP has no cooldown; its per-frame continuous tracking +
+     * combo limit are the only guards).
+     */
+    private static int swapSeqCounter = 0;
+
+    /**
      * PER-FRAME camera-crossing detection — the fix for the momentary source-dim flash
      * on teleport, proven by the [SEAMLESS XTRACE] traces: the camera interpolates
      * per-frame and crossed the portal plane up to ~45ms BEFORE the 20Hz
@@ -108,8 +119,8 @@ public final class SeamlessClientTeleport {
      * past the plane, no flash.
      *
      * <p>The 20Hz {@code LocalPlayerMixin} tick detector stays as a fallback (e.g. first
-     * frame after priming); the shared {@link #POST_SWAP_COOLDOWN_NANOS} keeps the two
-     * from double-firing.
+     * frame after priming); double-firing is prevented by both detectors resetting their
+     * movement segments on swap (a crossing consumes the segment that produced it).
      */
     public static void checkCameraCrossingPerFrame() {
         Minecraft mc = Minecraft.getInstance();
@@ -136,13 +147,10 @@ public final class SeamlessClientTeleport {
         Vec3 last = lastCameraPos;
         lastCameraPos = current;
 
-        long sinceSwap = System.nanoTime() - lastSwapMonotonicNanos;
-        if (sinceSwap < POST_SWAP_COOLDOWN_NANOS) {
-            // Track but never fire (mod-specific packet-race guard; IP has NO such cooldown —
-            // documented deviation). Crossings inside this window are the remaining flash hole.
-            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 1;
-            return;
-        }
+        // NO post-swap cooldown (full IP parity, 2026-07-04): the stale-chunk decode race is
+        // handled non-fatally by ChunkPacketGuardMixin (1342 drops / 0 disconnects in the rapid-
+        // teleport test), and late reconciles from superseded crossings are ignored via swapSeq
+        // (see handleServerReconcile). detState 1 ("cool") is retired.
         if (last == null) {
             com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 2; // priming
             return;
@@ -192,11 +200,15 @@ public final class SeamlessClientTeleport {
             destPos, destVel, destYaw, destPitch);
         if (!swapped) return false;
 
+        // New client-first swap — bump the sequence so any still-in-flight reconcile from a
+        // PREVIOUS crossing is recognized as stale and ignored (see handleServerReconcile).
+        int seq = ++swapSeqCounter;
+
         // Tell the server to perform its authoritative teleport. Using the
         // source portal id so the server can validate + look up the same
-        // PortalLink on its side.
+        // PortalLink on its side; the seq comes back in the reconcile.
         PlatformHelper.getInstance().sendToServer(new ModPayloads.ClientPortalCrossingPayload(
-            link.getSource().getPortalId().toString()));
+            link.getSource().getPortalId().toString(), seq));
 
         justTeleportedClient = true;
         lastClientSwapDim = link.getDestination().getDimension();
@@ -233,10 +245,23 @@ public final class SeamlessClientTeleport {
      */
     public static void handleServerReconcile(ModPayloads.ClientboundSeamlessMovePayload payload) {
         com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
-            "RECONCILE dim=%s pos=(%.2f,%.2f,%.2f)", payload.destDimension(), payload.x(), payload.y(), payload.z()));
+            "RECONCILE seq=%d dim=%s pos=(%.2f,%.2f,%.2f)",
+            payload.swapSeq(), payload.destDimension(), payload.x(), payload.y(), payload.z()));
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null) return;
+
+        // Sequence-hardening (replaces the post-swap cooldown): a reconcile echoing a seq older
+        // than our latest client-first swap belongs to a SUPERSEDED crossing — the player has
+        // already crossed again. Acting on it (position snap or the forced-swap fallback below)
+        // would yank the player back across the portal. Ignore it; the reconcile for the latest
+        // crossing is right behind it (server processes our crossing packets in order).
+        // swapSeq == -1 marks a genuine server-initiated teleport — always honored.
+        if (payload.swapSeq() >= 0 && payload.swapSeq() < swapSeqCounter) {
+            com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+                "RECONCILE STALE ignored (seq=%d < current=%d)", payload.swapSeq(), swapSeqCounter));
+            return;
+        }
 
         ResourceKey<Level> payloadDim = parseDim(payload.destDimension());
         if (payloadDim == null) {
@@ -537,13 +562,8 @@ public final class SeamlessClientTeleport {
         String dimId = destDim.identifier().toString();
         PlatformHelper.getInstance().sendToServer(new ModPayloads.RequestPortalDataPayload(dimId));
 
-        // Stamp the swap time so LocalPlayerMixin can throttle re-detection.
-        // Rapid back-and-forth teleports race against in-flight chunk packets
-        // from the old dim: if nether chunks (16 sections) arrive after we've
-        // promoted overworld (24 sections) but before handleRespawn writes
-        // this.level, the decoder overruns the buffer and disconnects with
-        // "Network Protocol Error". Gating re-entry of the detector for
-        // ~500ms lets the in-flight queue drain.
+        // Swap timestamp — diagnostics only since the cooldown removal (the decode race is
+        // handled by ChunkPacketGuardMixin; superseded reconciles by the swapSeq guard).
         lastSwapMonotonicNanos = System.nanoTime();
 
         // Reset the plane-crossing segment origin to the post-swap position so the
@@ -569,21 +589,12 @@ public final class SeamlessClientTeleport {
      */
     public static volatile long lastSwapMonotonicNanos = 0L;
 
-    /**
-     * Cooldown window after a client-first swap during which new crossings are suppressed.
-     *
-     * <p>Reduced 500ms → 150ms (2026-07-04): [SEAMLESS XTRACE] proved the LAST remaining
-     * crossing flash was re-crossings suppressed by this window (all residual flash frames
-     * were det=cool — camera past the plane, firing suppressed). What this window still
-     * protects: (a) serializing client swaps against the server RECONCILE packet (observed
-     * at +40-70ms in traces — 150ms keeps 2-3× headroom), so a rapid re-cross can't fight a
-     * late reconcile's forced-swap fallback; (b) throttling swap-storm packet churn. The old
-     * stale-chunk-decode crash is separately handled by ChunkPacketGuardMixin (drops the
-     * mismatched packet instead of disconnecting), so 500ms was over-provisioned. IP has NO
-     * such cooldown (its per-frame combo model + continuous tracking make it unnecessary) —
-     * going to zero here requires reconcile sequence-hardening (swap-id tagging) first.
-     */
-    public static final long POST_SWAP_COOLDOWN_NANOS = 150_000_000L;
+    // POST_SWAP_COOLDOWN_NANOS: REMOVED 2026-07-04 (full IP parity — IP has no cooldown).
+    // History: 500ms → 150ms → gone. Each of its jobs has a dedicated replacement:
+    //   * stale cross-dim chunk packets → ChunkPacketGuardMixin (drop, not disconnect;
+    //     1342 drops / 0 disconnects in the rapid-teleport stress test);
+    //   * late reconciles of superseded crossings → swapSeq stale-guard in handleServerReconcile;
+    //   * post-swap teleport-jump segments → lastClientPos/lastCameraPos reset in doVisualSwap.
 
     /**
      * Diagnostic counter decremented by the LevelRenderer.update injection

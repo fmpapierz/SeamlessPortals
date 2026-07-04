@@ -45,16 +45,11 @@ public abstract class LocalPlayerMixin {
         net.minecraft.world.phys.Vec3 lastPos = SeamlessClientTeleport.lastClientPos;
         SeamlessClientTeleport.lastClientPos = currentPos;
 
-        // Post-swap cooldown: suppress detection for ~500ms after the last swap.
-        // This avoids the rapid-back-and-forth "Network Protocol Error" where
-        // stale chunk packets from the old dim overrun the reader of the freshly
-        // swapped new-dim level. See SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS.
-        // It also covers the first post-swap tick, whose stale old-dim->new-dim
-        // segment must not be evaluated.
-        long sinceSwap = System.nanoTime() - SeamlessClientTeleport.lastSwapMonotonicNanos;
-        if (sinceSwap < SeamlessClientTeleport.POST_SWAP_COOLDOWN_NANOS) {
-            return;
-        }
+        // NO post-swap cooldown (full IP parity, 2026-07-04). Its old jobs are covered:
+        // the stale-chunk decode crash by ChunkPacketGuardMixin (drop, not disconnect); late
+        // reconciles from superseded crossings by the swapSeq stale-guard in
+        // handleServerReconcile; and the first post-swap tick's teleport-jump segment by
+        // doVisualSwap resetting lastClientPos to the landing position.
 
         if (lastPos == null) return; // first tick — no movement segment yet
 

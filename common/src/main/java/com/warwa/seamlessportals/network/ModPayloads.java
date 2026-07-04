@@ -217,7 +217,8 @@ public class ModPayloads {
      * crossing).
      */
     public record ClientPortalCrossingPayload(
-        String portalId
+        String portalId,
+        int swapSeq
     ) implements CustomPacketPayload {
         public static final Type<ClientPortalCrossingPayload> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "client_portal_crossing")
@@ -225,6 +226,7 @@ public class ModPayloads {
 
         public static final StreamCodec<FriendlyByteBuf, ClientPortalCrossingPayload> STREAM_CODEC = StreamCodec.composite(
             ByteBufCodecs.STRING_UTF8, ClientPortalCrossingPayload::portalId,
+            ByteBufCodecs.VAR_INT, ClientPortalCrossingPayload::swapSeq,
             ClientPortalCrossingPayload::new
         );
 
@@ -559,24 +561,39 @@ public class ModPayloads {
         String destDimension,
         double x, double y, double z,
         float yaw, float pitch,
-        double vx, double vy, double vz
+        double vx, double vy, double vz,
+        int swapSeq
     ) implements CustomPacketPayload {
         public static final Type<ClientboundSeamlessMovePayload> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "seamless_move")
         );
 
-        public static final StreamCodec<FriendlyByteBuf, ClientboundSeamlessMovePayload> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.STRING_UTF8, ClientboundSeamlessMovePayload::portalId,
-            ByteBufCodecs.STRING_UTF8, ClientboundSeamlessMovePayload::destDimension,
-            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::x,
-            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::y,
-            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::z,
-            ByteBufCodecs.FLOAT, ClientboundSeamlessMovePayload::yaw,
-            ByteBufCodecs.FLOAT, ClientboundSeamlessMovePayload::pitch,
-            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::vx,
-            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::vy,
-            ByteBufCodecs.DOUBLE, ClientboundSeamlessMovePayload::vz,
-            ClientboundSeamlessMovePayload::new
+        // 11 fields — beyond StreamCodec.composite's arity; manual codec.
+        // swapSeq: echo of the client's crossing sequence number (-1 = server-initiated
+        // teleport). The client ignores reconciles whose swapSeq is older than its latest
+        // client-first swap — the sequence-hardening that replaced the post-swap cooldown.
+        public static final StreamCodec<FriendlyByteBuf, ClientboundSeamlessMovePayload> STREAM_CODEC = StreamCodec.of(
+            (buf, p) -> {
+                buf.writeUtf(p.portalId());
+                buf.writeUtf(p.destDimension());
+                buf.writeDouble(p.x());
+                buf.writeDouble(p.y());
+                buf.writeDouble(p.z());
+                buf.writeFloat(p.yaw());
+                buf.writeFloat(p.pitch());
+                buf.writeDouble(p.vx());
+                buf.writeDouble(p.vy());
+                buf.writeDouble(p.vz());
+                buf.writeVarInt(p.swapSeq());
+            },
+            buf -> new ClientboundSeamlessMovePayload(
+                buf.readUtf(),
+                buf.readUtf(),
+                buf.readDouble(), buf.readDouble(), buf.readDouble(),
+                buf.readFloat(), buf.readFloat(),
+                buf.readDouble(), buf.readDouble(), buf.readDouble(),
+                buf.readVarInt()
+            )
         );
 
         @Override
