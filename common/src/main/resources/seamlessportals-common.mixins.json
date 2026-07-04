@@ -21,6 +21,7 @@
     "client.GameRendererAccessorMixin",
     "client.GameRendererLightmapMixin",
     "client.GameRendererPortalPrepareMixin",
+    "client.GameRendererExtractCrossingMixin",
     "client.LevelRendererAccessorMixin",
     "client.HandleRespawnMixin",
     "client.MainProjectionBobMixin",

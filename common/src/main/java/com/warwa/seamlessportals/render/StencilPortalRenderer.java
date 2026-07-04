@@ -147,12 +147,11 @@ public class StencilPortalRenderer {
      * (so the obsidian frame occludes the mask) and run on the screen target.
      */
     public static void prepareDestinationRender() {
-        // PER-FRAME crossing check (the source-dim flash fix): must run at renderLevel HEAD —
-        // BEFORE this frame's camera is set up and anything renders — so a camera that crosses
-        // the portal plane this frame swaps the world NOW and the frame draws the DEST dim.
-        // (The 20Hz tick detector lagged the interpolating camera by up to ~45ms → 1-3 frames
-        // rendered the source world from past the plane = the flash, proven by [SEAMLESS XTRACE].)
-        com.warwa.seamlessportals.client.SeamlessClientTeleport.checkCameraCrossingPerFrame();
+        // NB the per-frame crossing check used to live here (renderLevel HEAD) — WRONG: in 26.2
+        // the frame's camera is extracted in GameRenderer.extract BEFORE renderLevel, so a swap
+        // here rendered the dest level with the stale source-position camera for one frame (the
+        // fog-colored flash, proven by [SEAMLESS XTRACE] pd=-39.9). It now runs at
+        // GameRenderer.extract HEAD via GameRendererExtractCrossingMixin (IP's placement).
 
         // Phase 5 (stencil-direct): there is NO phase-1 FBO render. The dest world is drawn
         // directly into the main target during phase 2 (renderOnePortal → renderDestWorldDirect),
