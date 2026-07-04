@@ -44,6 +44,7 @@
     "client.LevelExtractorAccessor",
     "client.QuadParticleGroupMixin",
     "client.ParticleEnginePortalSkipMixin",
+    "client.DebugRendererPortalSkipMixin",
     "client.SkyRendererTargetMixin",
     "client.compat.SodiumFogOverrideMixin"
   ],
