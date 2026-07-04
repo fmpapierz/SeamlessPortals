@@ -570,12 +570,20 @@ public final class SeamlessClientTeleport {
     public static volatile long lastSwapMonotonicNanos = 0L;
 
     /**
-     * Cooldown window after a client-first swap during which new crossings
-     * are suppressed. ~500ms is enough for the respawn round-trip + stale
-     * chunk-packet drain under typical local-server latency; generous
-     * enough to survive slower networks.
+     * Cooldown window after a client-first swap during which new crossings are suppressed.
+     *
+     * <p>Reduced 500ms → 150ms (2026-07-04): [SEAMLESS XTRACE] proved the LAST remaining
+     * crossing flash was re-crossings suppressed by this window (all residual flash frames
+     * were det=cool — camera past the plane, firing suppressed). What this window still
+     * protects: (a) serializing client swaps against the server RECONCILE packet (observed
+     * at +40-70ms in traces — 150ms keeps 2-3× headroom), so a rapid re-cross can't fight a
+     * late reconcile's forced-swap fallback; (b) throttling swap-storm packet churn. The old
+     * stale-chunk-decode crash is separately handled by ChunkPacketGuardMixin (drops the
+     * mismatched packet instead of disconnecting), so 500ms was over-provisioned. IP has NO
+     * such cooldown (its per-frame combo model + continuous tracking make it unnecessary) —
+     * going to zero here requires reconcile sequence-hardening (swap-id tagging) first.
      */
-    public static final long POST_SWAP_COOLDOWN_NANOS = 500_000_000L;
+    public static final long POST_SWAP_COOLDOWN_NANOS = 150_000_000L;
 
     /**
      * Diagnostic counter decremented by the LevelRenderer.update injection
