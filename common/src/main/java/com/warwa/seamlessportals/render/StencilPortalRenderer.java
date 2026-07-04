@@ -312,8 +312,13 @@ public class StencilPortalRenderer {
             // below — there the composite needs protecting from later passes; here the dest
             // terrain must not be z-rejected by the overworld depth already in the opening.
             // (Re-protecting the directly-drawn terrain from clouds/weather is Step 2.)
+            //
+            // FULL-SCREEN, stencil-gated — exactly IP's clearDepthOfThePortalViewArea
+            // (a stencil-gated renderScreenTriangle), NOT a re-draw of the portal quad.
+            // A full-screen triangle covers every stencil=1 pixel by construction; a
+            // re-rasterized quad can miss boundary pixels the stencil write covered.
             GL11.glDepthRange(0, 0);
-            PortalShapeRenderer.drawMergedPortalShapeWithDepthClear(portals, camera);
+            drawScreenDepthClearStencilGated();
             GL11.glDepthRange(0, 1);
         } else {
             // FBO mode: write NEAR (1.0) so later main-frame passes (clouds, weather,
@@ -329,11 +334,19 @@ public class StencilPortalRenderer {
         // terrain draws (no depth test/write, so the depth-tested terrain still draws over it).
         // GAPS in the opaque-only terrain then read as dest sky instead of the OTHER dimension's
         // terrain that renderGroup's LOAD leaves in the colour buffer — fixes "nether terrain
-        // bleeds into the OW view" / "overworld in the gaps". (Full dest sky + clouds + a
-        // post-terrain depth shield against the main world's clouds are Step 2.)
+        // bleeds into the OW view" / "overworld in the gaps".
+        //
+        // FULL-SCREEN, stencil-gated — exactly IP's replaceFrameBufferClearing (a
+        // stencil-gated renderScreenTriangle in the fog colour), NOT a re-drawn portal
+        // quad. The old quad fill (drawPortalBackground) rasterized DIFFERENT geometry
+        // than the STEP 2 stencil write (no edge outset) — pixels the stencil covered
+        // but the fill missed kept STALE SOURCE colour, and wherever the (inner-clipped)
+        // dest draws didn't cover them either, the user saw a very thin see-through
+        // sliver between the portal render's edge and the obsidian frame. A full-screen
+        // triangle gated purely by the stencil is pixel-exact with the mask by
+        // construction, so no fill/stencil mismatch ring can exist.
         if (STENCIL_DIRECT) {
-            PortalShapeRenderer.drawPortalBackground(
-                portals, camera, link.getDestination().getDimension());
+            drawScreenFillStencilGated(resolveDestFillArgb(link.getDestination().getDimension()));
         }
 
         // ===== STEP 4: Composite the destination view through the stencil =====
@@ -436,14 +449,148 @@ public class StencilPortalRenderer {
             // opening reads as a portal instead of momentarily showing the overworld.
             boolean drawn = PortalContextSwitch.renderDestinationDirect(portal, link, camera, layer);
             if (!drawn) {
-                PortalShapeRenderer.drawPortalBackground(
-                    java.util.List.of(portal), camera, link.getDestination().getDimension());
+                // Same stencil-gated full-screen fill as STEP 3.6 (not a quad re-draw),
+                // so cold frames can't show the fill/stencil mismatch sliver either.
+                drawScreenFillStencilGated(resolveDestFillArgb(link.getDestination().getDimension()));
             }
             return;
         }
         // Legacy two-phase mirror-FBO path (phase 1 rendered the dest into the secondary FBO
         // at renderLevel HEAD; this composites it onto the screen through the stencil).
         PortalContextSwitch.compositeDestinationWorld(portal, link, camera);
+    }
+
+    // ===== Stencil-gated full-screen draws (IP MyRenderHelper.renderScreenTriangle analogs) =====
+    //
+    // IP never re-rasterizes the portal-quad geometry for the depth clear or the
+    // background fill: clearDepthOfThePortalViewArea and replaceFrameBufferClearing are
+    // both FULL-SCREEN triangles gated purely by the stencil test, so their pixel
+    // coverage is exact w.r.t. the stencil mask by construction. Re-drawing the quad
+    // (with any epsilon) can rasterize differently from the STEP 2 stencil write —
+    // the mismatch ring showed as a very thin see-through sliver at the frame edge.
+    //
+    // 26.2 has no matrix-stack identity path for immediate NDC draws, so the
+    // full-screen triangle comes from vanilla's core/screenquad vertex shader
+    // (positions generated from gl_VertexID — no vertex buffer, no matrices), the
+    // same mechanism as the proven FBO composite blit. The solid fill colour is fed
+    // through core/blit_screen from a cached 1×1 texture. Raw-GL stencil EQUAL(1)
+    // (set in STEP 3) persists into these passes — blaze3d never touches stencil.
+
+    private static com.mojang.blaze3d.textures.GpuTexture screenFillTexture;
+    private static com.mojang.blaze3d.textures.GpuTextureView screenFillTextureView;
+    private static int screenFillTextureArgb;
+
+    /** Fog/sky ARGB used for the opening fill: the REAL captured dest fog colour when
+     *  available, else the per-dimension cold-start fallback (same policy as the old
+     *  drawPortalBackground). */
+    private static int resolveDestFillArgb(ResourceKey<Level> destDim) {
+        Integer realFog = PortalContextSwitch.getDestSkyFogArgb(destDim);
+        if (realFog != null) return realFog;
+        if (destDim == Level.NETHER) return 0xFF1A0808; // dark nether red
+        if (destDim == Level.END) return 0xFF0A0A18;    // dark end purple
+        return 0xFF87CEEB;                              // overworld sky blue
+    }
+
+    /** Lazily create the 1×1 RGBA8 fill texture and (re)upload when the colour changes. */
+    private static com.mojang.blaze3d.textures.GpuTextureView ensureScreenFillTexture(int argb) {
+        com.mojang.blaze3d.systems.GpuDevice device =
+            com.mojang.blaze3d.systems.RenderSystem.getDevice();
+        if (screenFillTexture == null) {
+            screenFillTexture = device.createTexture(
+                "seamlessportals screen fill",
+                com.mojang.blaze3d.textures.GpuTexture.USAGE_TEXTURE_BINDING
+                    | com.mojang.blaze3d.textures.GpuTexture.USAGE_COPY_DST,
+                com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+            screenFillTextureView = device.createTextureView(screenFillTexture);
+            screenFillTextureArgb = ~argb; // force the first upload
+        }
+        if (screenFillTextureArgb != argb) {
+            // RGBA8_UNORM uploads as GL_RGBA + GL_UNSIGNED_BYTE → byte order R,G,B,A.
+            java.nio.ByteBuffer px = java.nio.ByteBuffer.allocateDirect(4);
+            px.put((byte) ((argb >> 16) & 0xFF));
+            px.put((byte) ((argb >> 8) & 0xFF));
+            px.put((byte) (argb & 0xFF));
+            px.put((byte) ((argb >> 24) & 0xFF));
+            px.flip();
+            device.createCommandEncoder().writeToTexture(screenFillTexture, px, 0, 0, 0, 0, 1, 1);
+            screenFillTextureArgb = argb;
+        }
+        return screenFillTextureView;
+    }
+
+    /**
+     * Fill every stencil=1 pixel with a solid colour — IP's replaceFrameBufferClearing
+     * (stencil-gated renderScreenTriangle(fogColor)). Caller must have the stencil test
+     * enabled with EQUAL(1) (STEP 3 state). No depth test, no depth write.
+     */
+    private static void drawScreenFillStencilGated(int argb) {
+        com.mojang.blaze3d.textures.GpuTextureView texView = ensureScreenFillTexture(argb);
+        com.mojang.blaze3d.pipeline.RenderTarget mainRT =
+            Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (mainRT == null || texView == null) return;
+
+        // Raw-GL backstops (mirrors compositePortalFbo): the pipeline declares no blend
+        // and no depth state, but applyPipelineState short-circuits when lastPipeline is
+        // unchanged, so force the GL state we depend on.
+        GL11.glDisable(GL11.GL_BLEND);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        try (com.mojang.blaze3d.systems.RenderPass pass =
+                 com.mojang.blaze3d.systems.RenderSystem.getDevice()
+                     .createCommandEncoder().createRenderPass(
+                () -> "portal_screen_fill",
+                mainRT.getColorTextureView(),
+                java.util.Optional.empty(),
+                mainRT.getDepthTextureView(),
+                java.util.OptionalDouble.empty(),
+                new com.mojang.blaze3d.systems.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
+        )) {
+            pass.setPipeline(PortalRenderTypes.portalCompositeBlit());
+            com.mojang.blaze3d.systems.RenderSystem.bindDefaultUniforms(pass);
+            pass.bindTexture("InSampler", texView,
+                com.mojang.blaze3d.systems.RenderSystem.getSamplerCache().getClampToEdge(
+                    com.mojang.blaze3d.textures.FilterMode.NEAREST));
+            pass.draw(3, 1, 0, 0);
+        }
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+    }
+
+    /**
+     * Write depth across every stencil=1 pixel — IP's clearDepthOfThePortalViewArea
+     * (stencil-gated renderScreenTriangle with depth ALWAYS + glDepthRange clamp).
+     * The written VALUE comes from the caller's glDepthRange: (0,0) = reversed-Z FAR
+     * (STEP 3.5 clear before the dest draws). Colour is masked off by the pipeline.
+     */
+    private static void drawScreenDepthClearStencilGated() {
+        com.mojang.blaze3d.textures.GpuTextureView texView =
+            ensureScreenFillTexture(screenFillTexture == null ? 0xFF000000 : screenFillTextureArgb);
+        com.mojang.blaze3d.pipeline.RenderTarget mainRT =
+            Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (mainRT == null || texView == null) return;
+
+        // Depth WRITES require GL_DEPTH_TEST enabled; the pipeline's ALWAYS_PASS+write
+        // state sets it via applyPipelineState, but force it as a backstop against the
+        // lastPipeline short-circuit.
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_BLEND);
+        try (com.mojang.blaze3d.systems.RenderPass pass =
+                 com.mojang.blaze3d.systems.RenderSystem.getDevice()
+                     .createCommandEncoder().createRenderPass(
+                () -> "portal_screen_depth_clear",
+                mainRT.getColorTextureView(),
+                java.util.Optional.empty(),
+                mainRT.getDepthTextureView(),
+                java.util.OptionalDouble.empty(),
+                new com.mojang.blaze3d.systems.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
+        )) {
+            pass.setPipeline(PortalRenderTypes.portalScreenDepthClear());
+            com.mojang.blaze3d.systems.RenderSystem.bindDefaultUniforms(pass);
+            pass.bindTexture("InSampler", texView,
+                com.mojang.blaze3d.systems.RenderSystem.getSamplerCache().getClampToEdge(
+                    com.mojang.blaze3d.textures.FilterMode.NEAREST));
+            pass.draw(3, 1, 0, 0);
+        }
+        GL11.glEnable(GL11.GL_BLEND);
     }
 
     public static void cleanup() {

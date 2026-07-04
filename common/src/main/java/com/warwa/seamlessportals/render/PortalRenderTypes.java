@@ -59,6 +59,12 @@ public class PortalRenderTypes {
      * "blue curtain", DIAG-PRE: depthTest=true, top bands depth≈0.85). An explicit
      * ALWAYS_PASS test makes the composite write the full stencil opening. */
     private static RenderPipeline PORTAL_COMPOSITE_BLIT;
+    /**
+     * Screenquad pipeline that writes ONLY depth (ALWAYS_PASS + depth write, color
+     * masked). Used with glDepthRange + raw-GL stencil EQUAL for the stencil-direct
+     * full-screen depth clear (STEP 3.5) — IP's clearDepthOfThePortalViewArea.
+     */
+    private static RenderPipeline PORTAL_SCREEN_DEPTH_CLEAR;
 
     static {
         try {
@@ -195,7 +201,28 @@ public class PortalRenderTypes {
                 .build();
             PORTAL_COMPOSITE_BLIT = (RenderPipeline) registerMethod.invoke(null, compositeBlitPipeline);
 
-            SeamlessPortalsConstants.LOGGER.info("[SEAMLESS] Portal render types created (stencil-only + stencil-depth + no-depth-color + depth-clear + fbo-composite + composite-blit[ALWAYS])");
+            // Pipeline for the STENCIL-GATED FULL-SCREEN DEPTH WRITE (stencil-direct
+            // STEP 3.5). Same screenquad full-screen triangle as the composite blit,
+            // but color-masked off and with ALWAYS_PASS depth + depth WRITE. Driven
+            // with glDepthRange(0,0) (reversed-Z FAR) under raw-GL stencil EQUAL(1),
+            // it clears depth across EXACTLY the stencil-mask pixels — IP's
+            // clearDepthOfThePortalViewArea (a stencil-gated renderScreenTriangle).
+            // A full-screen draw cannot mismatch the stencil-write quad's
+            // rasterization, unlike re-drawing the portal quad geometry.
+            RenderPipeline screenDepthClearPipeline = RenderPipeline.builder()
+                .withLocation("seamlessportals/pipeline/portal_screen_depth_clear")
+                .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+                .withVertexShader("core/screenquad")
+                .withFragmentShader("core/blit_screen")
+                .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withColorTargetState(new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
+                .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, true))
+                .withCull(false)
+                .build();
+            PORTAL_SCREEN_DEPTH_CLEAR = (RenderPipeline) registerMethod.invoke(null, screenDepthClearPipeline);
+
+            SeamlessPortalsConstants.LOGGER.info("[SEAMLESS] Portal render types created (stencil-only + stencil-depth + no-depth-color + depth-clear + fbo-composite + composite-blit[ALWAYS] + screen-depth-clear)");
         } catch (Exception e) {
             SeamlessPortalsConstants.LOGGER.error("[SEAMLESS] Failed to create portal render types", e);
             PORTAL_STENCIL_ONLY = net.minecraft.client.renderer.rendertype.RenderTypes.debugQuads();
@@ -204,6 +231,7 @@ public class PortalRenderTypes {
             PORTAL_DEPTH_CLEAR = net.minecraft.client.renderer.rendertype.RenderTypes.debugQuads();
             // Fallback so compositePortalFbo never sets a null pipeline.
             if (PORTAL_COMPOSITE_BLIT == null) PORTAL_COMPOSITE_BLIT = RenderPipelines.TRACY_BLIT;
+            if (PORTAL_SCREEN_DEPTH_CLEAR == null) PORTAL_SCREEN_DEPTH_CLEAR = RenderPipelines.TRACY_BLIT;
         }
     }
 
@@ -236,6 +264,12 @@ public class PortalRenderTypes {
     /** TRACY_BLIT-clone pipeline with ALWAYS_PASS depth for the FBO→screen composite. */
     public static RenderPipeline portalCompositeBlit() {
         return PORTAL_COMPOSITE_BLIT;
+    }
+
+    /** Screenquad pipeline: depth write only (ALWAYS), color masked. For the
+     *  stencil-gated full-screen depth clear (stencil-direct STEP 3.5). */
+    public static RenderPipeline portalScreenDepthClear() {
+        return PORTAL_SCREEN_DEPTH_CLEAR;
     }
 
     /**
