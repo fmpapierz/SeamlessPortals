@@ -246,6 +246,44 @@ public class PortalWorldManager {
      * portals ({@code StencilPortalRenderer.resolveRenderTargets}), so a dim that is
      * about to be rendered is never paused/evicted out from under the renderer.
      */
+    /**
+     * Speculative pre-warm scopes (dim → {BlockPos center, Long untilNanos}), fed by
+     * {@code SpeculativePrewarmScopePayload} (server: an unlit valid frame near the player).
+     * Merged into the live dest scopes by {@link #refreshDestScopes} so the region stays
+     * resident, ticks, and gets its meshes pre-compiled — without any portal link existing.
+     * Expires ~6s after the last payload (server sends every ~2s while the player is near).
+     */
+    private static final Map<ResourceKey<Level>, Object[]> speculativeScopes = new ConcurrentHashMap<>();
+
+    /** Client receive: mark {@code dim} scope-live around {@code center} + seed its renderer. */
+    public static void addSpeculativeScope(String dimId, net.minecraft.core.BlockPos center) {
+        try {
+            ResourceKey<Level> dim = ResourceKey.create(
+                net.minecraft.core.registries.Registries.DIMENSION,
+                net.minecraft.resources.Identifier.parse(dimId));
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level != null && mc.level.dimension().equals(dim)) return; // active dim: no-op
+            speculativeScopes.put(dim, new Object[]{ center, System.nanoTime() + 6_000_000_000L });
+
+            // Ensure the cached level + renderer exist and are CENTERED on the expected dest so
+            // arriving chunks land in-grid and the compile pump pre-builds meshes there. (The
+            // same seeding the redirected-chunk/portal-render paths do.)
+            LevelRenderer renderer = getOrCreateRenderer(dim);
+            ClientLevel level = getLevel(dim);
+            if (renderer != null && level != null) {
+                net.minecraft.client.renderer.ViewArea va =
+                    ((com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) renderer)
+                        .seamlessportals$getViewArea();
+                net.minecraft.core.SectionPos sp = net.minecraft.core.SectionPos.of(center);
+                if (va != null) va.repositionCamera(sp);
+                level.getChunkSource().updateViewCenter(sp.x(), sp.z());
+            }
+        } catch (Exception e) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PREWARM] addSpeculativeScope failed for {}: {}", dimId, e.toString());
+        }
+    }
+
     private static void refreshDestScopes() {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel active = mc.level;
@@ -312,6 +350,26 @@ public class PortalWorldManager {
         } catch (Throwable t) {
             // Best-effort: on any hiccup leave the scope state untouched (keeps dims
             // alive — the safe default that never evicts a dim that might be needed).
+        }
+
+        // Merge SPECULATIVE pre-warm scopes (unlit valid frames near the player): treated like a
+        // portal-linked dim — eviction spares the region, tickRemoteWorlds ticks it, and the
+        // compile pump pre-builds meshes around the expected dest. Portal-derived scopes (set
+        // above this tick) take precedence; expired entries drop out.
+        if (!speculativeScopes.isEmpty()) {
+            for (Map.Entry<ResourceKey<Level>, Object[]> e : speculativeScopes.entrySet()) {
+                ResourceKey<Level> dim = e.getKey();
+                if ((Long) e.getValue()[1] < System.nanoTime()) {
+                    speculativeScopes.remove(dim);
+                    continue;
+                }
+                if (dim.equals(active.dimension())) continue;
+                if (lastActiveNanosByDim.getOrDefault(dim, 0L) == now) continue; // portal scope wins
+                liveCentersByDim.put(dim, (net.minecraft.core.BlockPos) e.getValue()[0]);
+                lastActiveNanosByDim.put(dim, now);
+                liveRadiusByDim.put(dim, Math.min(8,
+                    com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().getPortalRenderDistance()));
+            }
         }
     }
 

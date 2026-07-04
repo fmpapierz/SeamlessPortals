@@ -556,6 +556,33 @@ public class ModPayloads {
         public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /**
+     * Server → Client: hold {@code dimensionId}'s region around {@code (x,y,z)} scope-live for
+     * SPECULATIVE PRE-WARMING (an unlit valid frame near the player) — the client keeps the
+     * cached level resident, ticks it, and pre-compiles meshes around the expected destination
+     * so ignition reveals an already-prepared portal view. Sent throttled (~every 2s) while the
+     * player stays near the unlit frame; the client scope expires on its own if it stops coming.
+     */
+    public record SpeculativePrewarmScopePayload(
+        String dimensionId,
+        int x, int y, int z
+    ) implements CustomPacketPayload {
+        public static final Type<SpeculativePrewarmScopePayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "speculative_prewarm_scope")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, SpeculativePrewarmScopePayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, SpeculativePrewarmScopePayload::dimensionId,
+            ByteBufCodecs.VAR_INT, SpeculativePrewarmScopePayload::x,
+            ByteBufCodecs.VAR_INT, SpeculativePrewarmScopePayload::y,
+            ByteBufCodecs.VAR_INT, SpeculativePrewarmScopePayload::z,
+            SpeculativePrewarmScopePayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record ClientboundSeamlessMovePayload(
         String portalId,
         String destDimension,

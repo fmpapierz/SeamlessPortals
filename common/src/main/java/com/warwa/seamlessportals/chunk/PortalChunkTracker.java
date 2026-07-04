@@ -93,6 +93,10 @@ public class PortalChunkTracker {
         // (fire → portal blocks) ships without delay (no visible flame in the frame).
         com.warwa.seamlessportals.portal.PortalDetector.drainPendingFormations(server);
 
+        // Speculative pre-warm upkeep: revalidate/expire unlit-frame entries + keep their
+        // expected dest regions loading (prewarm tickets). Config-gated internally.
+        com.warwa.seamlessportals.chunk.SpeculativePrewarm.tick(server);
+
         // Periodically scan for portals near players on the server
         scanCooldown--;
         if (scanCooldown <= 0) {
@@ -282,6 +286,12 @@ public class PortalChunkTracker {
                 }
             }
         }
+
+        // Speculative pre-warm: merge unlit-frame expected-dest chunks into the same streaming
+        // set (ring-ordered, small radius) + push the scope-live marker to the client so it
+        // pre-builds meshes. Config-gated internally.
+        com.warwa.seamlessportals.chunk.SpeculativePrewarm.contribute(
+            player, neededByDim, server.getTickCount());
 
         // Prune the player's sent-chunk record to the live working set, then send.
         // Runs even when neededByDim is EMPTY (player walked away from every portal),

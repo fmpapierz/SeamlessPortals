@@ -17,6 +17,12 @@ public class SeamlessPortalsConfig {
     /** Dest ENTITY streaming radius (chunks). -1 = max (== {@link #getPortalRenderDistance()}). */
     private int entityLoadDistanceChunks = -1;
     private boolean enablePortalRendering = true;
+    /**
+     * Speculative pre-warming: when a valid UNLIT obsidian frame exists near a player, pre-load +
+     * pre-stream + pre-mesh its expected destination region BEFORE ignition — lighting the portal
+     * reveals an already-prepared view. Costs speculative server work for frames never lit.
+     */
+    private boolean speculativePrewarm = true;
 
     private int portalFramebufferScale = 100;
     private boolean enableChunkCaching = true;
@@ -86,6 +92,8 @@ public class SeamlessPortalsConfig {
                 if (en != null) INSTANCE.setEnablePortalRendering(Boolean.parseBoolean(en.trim()));
                 String unb = props.getProperty("unboundedClientChunkStore");
                 if (unb != null) INSTANCE.unboundedClientChunkStore = Boolean.parseBoolean(unb.trim());
+                String spec = props.getProperty("speculativePrewarm");
+                if (spec != null) INSTANCE.speculativePrewarm = Boolean.parseBoolean(spec.trim());
             } catch (Exception e) {
                 com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
                     "[SEAMLESS] Failed to read config, using defaults: {}", e.toString());
@@ -107,6 +115,7 @@ public class SeamlessPortalsConfig {
             props.setProperty("maxPortalRenderDepth", String.valueOf(INSTANCE.maxPortalRenderDepth));
             props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
             props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
+            props.setProperty("speculativePrewarm", String.valueOf(INSTANCE.speculativePrewarm));
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"
@@ -189,6 +198,10 @@ public class SeamlessPortalsConfig {
 
     public boolean isEnablePortalRendering() { return enablePortalRendering; }
     public void setEnablePortalRendering(boolean enable) { this.enablePortalRendering = enable; }
+
+    /** Speculative pre-warming of unlit valid frames' expected destinations (see field doc). */
+    public boolean isSpeculativePrewarm() { return speculativePrewarm; }
+    public void setSpeculativePrewarm(boolean enable) { this.speculativePrewarm = enable; }
 
     /** T3 experimental knob: unbounded secondary chunk store (no far-ring reload on crossing). */
     public boolean isUnboundedClientChunkStore() { return unboundedClientChunkStore; }

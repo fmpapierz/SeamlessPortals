@@ -54,6 +54,10 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.ClientboundSeamlessMovePayload.STREAM_CODEC
         );
         PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.SpeculativePrewarmScopePayload.TYPE,
+            ModPayloads.SpeculativePrewarmScopePayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
             ModPayloads.RemoteBlockUpdatePayload.TYPE,
             ModPayloads.RemoteBlockUpdatePayload.STREAM_CODEC
         );
@@ -223,6 +227,18 @@ public class FabricPlatformHelper implements PlatformHelper {
                 context.client().execute(() -> {
                     com.warwa.seamlessportals.client.SeamlessClientTeleport
                         .handleServerReconcile(payload);
+                });
+            }
+        );
+
+        // Speculative pre-warm: hold the expected dest region scope-live + pre-mesh it.
+        ClientPlayNetworking.registerGlobalReceiver(
+            ModPayloads.SpeculativePrewarmScopePayload.TYPE,
+            (payload, context) -> {
+                context.client().execute(() -> {
+                    com.warwa.seamlessportals.client.PortalWorldManager
+                        .addSpeculativeScope(payload.dimensionId(),
+                            new net.minecraft.core.BlockPos(payload.x(), payload.y(), payload.z()));
                 });
             }
         );

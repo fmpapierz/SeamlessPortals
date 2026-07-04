@@ -48,6 +48,10 @@ public class PortalDetector {
         BlockState state = level.getBlockState(portalBlock);
         if (!state.is(Blocks.NETHER_PORTAL)) return;
 
+        // A real portal now exists here — retire any speculative pre-warm entry for this frame
+        // (the real link's residency/streaming takes over seamlessly; the region is already warm).
+        com.warwa.seamlessportals.chunk.SpeculativePrewarm.onPortalLit(level, portalBlock);
+
         // Skip if this portal is already registered
         PortalTracker tracker = PortalManager.getServerInstance().getTracker(level.dimension());
         if (tracker.getPortalAt(portalBlock).isPresent()) return;

@@ -58,6 +58,14 @@ public class SeamlessConfigScreen extends Screen {
             cfg.setEnablePortalRendering(!cfg.isEnablePortalRendering());
             b.setMessage(renderingLabel(cfg));
         }).bounds(x, y, w, 20).build());
+        y += rowH;
+
+        // Speculative pre-warm toggle: pre-load an unlit frame's expected destination so
+        // lighting the portal reveals an already-prepared view.
+        this.addRenderableWidget(new Button.Builder(prewarmLabel(cfg), b -> {
+            cfg.setSpeculativePrewarm(!cfg.isSpeculativePrewarm());
+            b.setMessage(prewarmLabel(cfg));
+        }).bounds(x, y, w, 20).build());
         y += rowH + 10;
 
         this.addRenderableWidget(new Button.Builder(Component.literal("Done"), b -> this.onClose())
@@ -66,6 +74,10 @@ public class SeamlessConfigScreen extends Screen {
 
     private static Component renderingLabel(SeamlessPortalsConfig cfg) {
         return Component.literal("Portal rendering: " + (cfg.isEnablePortalRendering() ? "ON" : "OFF"));
+    }
+
+    private static Component prewarmLabel(SeamlessPortalsConfig cfg) {
+        return Component.literal("Pre-warm unlit frames: " + (cfg.isSpeculativePrewarm() ? "ON" : "OFF"));
     }
 
     @Override

@@ -98,6 +98,13 @@ public abstract class LevelChunkSetBlockStateMixin {
         MinecraftServer server = sl.getServer();
         if (server == null || !server.isSameThread()) return;
 
+        // Speculative pre-warm: an OBSIDIAN block landing (placement or lava+water) may have
+        // just completed a valid UNLIT portal frame — probe for one and pre-warm its expected
+        // destination. Rare event (obsidian placements), cheap probe, config-gated inside.
+        if (newState.is(net.minecraft.world.level.block.Blocks.OBSIDIAN)) {
+            com.warwa.seamlessportals.chunk.SpeculativePrewarm.onObsidianPlaced(sl, pos.immutable());
+        }
+
         // Mirror to all players in OTHER dims whose portal links into THIS dim
         // and whose distance to the portal-destination center covers `pos`.
         ResourceKey<Level> thisDim = sl.dimension();
