@@ -68,6 +68,13 @@ public abstract class LocalPlayerMixin {
             EntityPortalCollision.findPortalCrossing(self, lastPos, currentPos);
         if (linkOpt.isEmpty()) return;
 
+        // Crossing-flash tracer: mark detection + arm the post-crossing trace dump.
+        com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+            "DETECT plane-crossing portal=%s from=(%.2f,%.2f,%.2f) to=(%.2f,%.2f,%.2f)",
+            linkOpt.get().getSource().getOrigin().toShortString(),
+            lastPos.x, lastPos.y, lastPos.z, currentPos.x, currentPos.y, currentPos.z));
+        com.warwa.seamlessportals.render.CrossingTracer.armDump();
+
         SeamlessClientTeleport.performCrossing(linkOpt.get());
         // Start next tick's segment from the post-swap position (defensive — also
         // done in doVisualSwap) so the teleport jump is not a "movement" crossing.

@@ -967,6 +967,8 @@ public class PortalWorldManager {
     public static Promotion promoteToMain(
             ResourceKey<Level> dim,
             LevelRenderState sharedState) {
+        com.warwa.seamlessportals.render.CrossingTracer.event(
+            "PROMOTE " + dim.identifier().getPath());
         initializeIfNeeded();
         LevelRenderer renderer = renderers.remove(dim);
         ClientLevel level = levels.remove(dim);

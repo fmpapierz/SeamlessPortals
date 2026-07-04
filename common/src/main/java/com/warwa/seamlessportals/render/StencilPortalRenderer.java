@@ -203,6 +203,9 @@ public class StencilPortalRenderer {
         // dump the render-thread stack on any >150ms stall ([SEAMLESS STUCK]) — capturing
         // the exact stalling method. Counts MAIN frames only (after the recursion guard).
         RenderSpikeMonitor.onFrame();
+        // Crossing-flash tracer: per-frame ring-buffer record (dim, camera, plane distance) —
+        // zero logging on the render thread; dumped off-thread after each crossing.
+        CrossingTracer.recordFrame();
 
         RenderTargets targets = resolveRenderTargets();
 
@@ -226,6 +229,7 @@ public class StencilPortalRenderer {
      * 5. Reset stencil, disable
      */
     private static void renderOnePortal(PortalInfo portal, PortalLink link, Camera camera) {
+        CrossingTracer.notePortalRendered();
         java.util.List<PortalInfo> portals = java.util.List.of(portal);
         GL11.glEnable(GL11.GL_STENCIL_TEST);
 

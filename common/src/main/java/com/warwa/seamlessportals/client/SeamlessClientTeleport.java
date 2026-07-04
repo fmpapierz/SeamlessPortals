@@ -97,6 +97,10 @@ public final class SeamlessClientTeleport {
         Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
         float destPitch = player.getXRot();
 
+        com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+            "PERFORM src=(%.2f,%.2f,%.2f) dest=(%.2f,%.2f,%.2f) yaw=%.1f",
+            srcPos.x, srcPos.y, srcPos.z, destPos.x, destPos.y, destPos.z, destYaw));
+
         boolean swapped = doVisualSwap(link.getDestination().getDimension(),
             destPos, destVel, destYaw, destPitch);
         if (!swapped) return false;
@@ -141,6 +145,8 @@ public final class SeamlessClientTeleport {
      * one crossing but is still correct.
      */
     public static void handleServerReconcile(ModPayloads.ClientboundSeamlessMovePayload payload) {
+        com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+            "RECONCILE dim=%s pos=(%.2f,%.2f,%.2f)", payload.destDimension(), payload.x(), payload.y(), payload.z()));
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null) return;
@@ -235,6 +241,9 @@ public final class SeamlessClientTeleport {
             return true;
         }
 
+        com.warwa.seamlessportals.render.CrossingTracer.event(
+            "SWAP begin " + mc.level.dimension().identifier().getPath()
+            + " -> " + destDim.identifier().getPath());
         LevelRenderState sharedState = mc.gameRenderer.gameRenderState().levelRenderState;
         PortalWorldManager.Promotion promotion = PortalWorldManager.promoteToMain(destDim, sharedState);
         if (promotion == null) {
@@ -261,6 +270,7 @@ public final class SeamlessClientTeleport {
         // 1. Install promoted renderer + level as new primary.
         ((MinecraftAccessorMixin) mc).seamlessportals$setLevelRenderer(promotion.renderer());
         mc.level = promotion.level();
+        com.warwa.seamlessportals.render.CrossingTracer.event("SWAP level+renderer installed");
 
         // 2. Seed the promoted renderer's ViewArea center to the destination
         // section so the first vanilla repositionCamera is a no-op and doesn't
@@ -378,6 +388,8 @@ public final class SeamlessClientTeleport {
         player.setXRot(destPitch);
         player.yRotO = destYaw;
         player.xRotO = destPitch;
+        com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+            "SWAP setPos done pos=(%.2f,%.2f,%.2f) prevs synced", destPos.x, destPos.y, destPos.z));
 
         // Warm-up REMOVED after diagnostic run (2026-04-17 22:32): it forces
         // LevelRenderer.update → applyFrustum → clearVisibleSections BEFORE
@@ -455,6 +467,7 @@ public final class SeamlessClientTeleport {
             lastClientPos = mcNow.player.position();
         }
 
+        com.warwa.seamlessportals.render.CrossingTracer.event("SWAP done");
         return true;
     }
 
