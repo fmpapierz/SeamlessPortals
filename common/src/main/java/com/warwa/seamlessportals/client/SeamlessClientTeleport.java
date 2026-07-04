@@ -83,6 +83,69 @@ public final class SeamlessClientTeleport {
      * the server receives {@link ModPayloads.ClientPortalCrossingPayload}; its
      * reconciliation packet will confirm position.
      */
+    /**
+     * Last frame's interpolated CAMERA position, for the per-frame crossing check.
+     * Null = re-prime next frame (after a swap, or when the check is suspended).
+     */
+    private static Vec3 lastCameraPos = null;
+
+    /**
+     * PER-FRAME camera-crossing detection — the fix for the momentary source-dim flash
+     * on teleport, proven by the [SEAMLESS XTRACE] traces: the camera interpolates
+     * per-frame and crossed the portal plane up to ~45ms BEFORE the 20Hz
+     * {@code LocalPlayer.tick} detector ran, so 1-3 frames rendered the SOURCE world
+     * from beyond the plane (trace: pd flipped sign at -6.4ms, dim still overworld,
+     * swap at +21.3ms). IP avoids this by checking teleportation every FRAME with the
+     * camera position; this is that check.
+     *
+     * <p>Called from {@code GameRenderer.renderLevel} HEAD (via
+     * {@code StencilPortalRenderer.prepareDestinationRender}), BEFORE the frame's camera
+     * is set up — so we compute THIS frame's camera x/z ourselves (first-person camera =
+     * player position lerped by the partial tick; only x/z matter for the vertical portal
+     * planes, so third-person/bob offsets are irrelevant to the plane test). If the
+     * segment last-frame-camera → this-frame-camera crosses a linked portal plane, the
+     * visual swap runs NOW — the crossing frame renders the DEST dim. No source frame
+     * past the plane, no flash.
+     *
+     * <p>The 20Hz {@code LocalPlayerMixin} tick detector stays as a fallback (e.g. first
+     * frame after priming); the shared {@link #POST_SWAP_COOLDOWN_NANOS} keeps the two
+     * from double-firing.
+     */
+    public static void checkCameraCrossingPerFrame() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null) return;
+        if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().isSeamlessTeleportation()) {
+            lastCameraPos = null;
+            return;
+        }
+        long sinceSwap = System.nanoTime() - lastSwapMonotonicNanos;
+        if (sinceSwap < POST_SWAP_COOLDOWN_NANOS) {
+            lastCameraPos = null; // don't let the post-swap jump form a segment
+            return;
+        }
+        double pt = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        double cx = net.minecraft.util.Mth.lerp(pt, player.xo, player.getX());
+        double cy = net.minecraft.util.Mth.lerp(pt, player.yo, player.getY()) + player.getEyeHeight();
+        double cz = net.minecraft.util.Mth.lerp(pt, player.zo, player.getZ());
+        Vec3 current = new Vec3(cx, cy, cz);
+        Vec3 last = lastCameraPos;
+        lastCameraPos = current;
+        if (last == null) return;
+
+        java.util.Optional<PortalLink> linkOpt =
+            com.warwa.seamlessportals.entity.EntityPortalCollision.findPortalCrossing(player, last, current);
+        if (linkOpt.isEmpty()) return;
+
+        com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+            "DETECT-FRAME camera crossed portal=%s cam=(%.2f,%.2f,%.2f)->(%.2f,%.2f,%.2f)",
+            linkOpt.get().getSource().getOrigin().toShortString(),
+            last.x, last.y, last.z, current.x, current.y, current.z));
+        com.warwa.seamlessportals.render.CrossingTracer.armDump();
+        performCrossing(linkOpt.get());
+        lastCameraPos = null;
+    }
+
     public static boolean performCrossing(PortalLink link) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
@@ -466,6 +529,9 @@ public final class SeamlessClientTeleport {
         if (mcNow.player != null) {
             lastClientPos = mcNow.player.position();
         }
+        // Same reset for the per-frame CAMERA detector: the swap teleports the camera
+        // across the world — that jump must never be evaluated as a crossing segment.
+        lastCameraPos = null;
 
         com.warwa.seamlessportals.render.CrossingTracer.event("SWAP done");
         return true;
