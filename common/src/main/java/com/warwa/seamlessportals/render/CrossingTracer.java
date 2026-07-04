@@ -39,8 +39,18 @@ public final class CrossingTracer {
     private static final Object[] portalRef = new Object[N];  // BlockPos origin of nearest portal
     private static final short[] portalsRendered = new short[N];
     private static final byte[] flags = new byte[N];          // bit0: promote bridge active
+    private static final byte[] detStates = new byte[N];      // frame-detector state (see below)
     private static int written = 0;                            // render-thread only
     private static short portalsThisFrame = 0;
+
+    /**
+     * Why the per-frame camera-crossing detector did/didn't fire THIS frame, set by
+     * {@code SeamlessClientTeleport.checkCameraCrossingPerFrame} (runs earlier in the same
+     * frame at renderLevel HEAD): 0=not-run, 1=COOLDOWN-suppressed (tracked, not fired),
+     * 2=priming (no previous segment / jump reset), 3=checked-no-cross, 4=FIRED.
+     */
+    public static volatile byte frameDetState = 0;
+    private static final String[] DET_NAMES = { "off ", "cool", "prim", "chk ", "FIRE" };
 
     // Event marks (rare; render/game thread writes, daemon reads).
     private static final java.util.List<Object[]> events =
@@ -87,6 +97,8 @@ public final class CrossingTracer {
             portalsRendered[i] = portalsThisFrame;
             portalsThisFrame = 0;
             flags[i] = (byte) (PortalContextSwitch.isPromoteBridgeActive() ? 1 : 0);
+            detStates[i] = frameDetState;
+            frameDetState = 0;
             written++;
         } catch (Throwable t) {
             // Tracing must never break the render.
@@ -154,12 +166,12 @@ public final class CrossingTracer {
             }
         }
 
-        sb.append("\n[SEAMLESS XTRACE] FRAMES: t | dim | planeDist@portal | cam | player | portalViews(prevFrame) | bridge");
+        sb.append("\n[SEAMLESS XTRACE] FRAMES: t | dim | det | planeDist@portal | cam | player | views | bridge");
+        sb.append("\n[SEAMLESS XTRACE]   det: off=check not run  cool=cooldown-suppressed  prim=priming  chk=no-cross  FIRE=fired");
         int end = written;                    // snapshot
         int start = Math.max(0, end - N);
         Object prevDim = null;
-        Double baselineSign = null;           // sign of planeDist before detection
-        Object baselineDim = null;
+        Double prevSign = null;               // previous frame's plane side (same dim)
         int pastPlaneFrames = 0;
         for (int k = start; k < end; k++) {
             int i = k % N;
@@ -167,23 +179,24 @@ public final class CrossingTracer {
             if (t < lo || t > hi) continue;
             Object d = dim[i];
             double pd = planeDist[i];
-            // Baseline: last frame at/before detection with a real plane distance.
-            if (t <= arm && !Double.isNaN(pd)) {
-                baselineSign = Math.signum(pd);
-                baselineDim = d;
-            }
             String note = "";
             if (prevDim != null && d != prevDim) {
                 note = "  <== LEVEL SWAPPED";
-            } else if (t > arm && baselineSign != null && baselineDim == d
-                       && !Double.isNaN(pd) && Math.signum(pd) != baselineSign && pd != 0.0) {
-                note = "  <-- PAST-PLANE, SOURCE STILL RENDERING";
+                prevSign = null; // new dim, new plane baseline
+            } else if (prevSign != null && !Double.isNaN(pd)
+                       && Math.signum(pd) != prevSign && pd != 0.0) {
+                // The camera changed sides of the portal plane WITHOUT a level swap —
+                // this frame renders the same dim from the far side = a flash frame.
+                note = "  <-- CAMERA CROSSED PLANE, NO SWAP (flash frame)";
                 pastPlaneFrames++;
             }
+            if (!Double.isNaN(pd) && pd != 0.0) prevSign = Math.signum(pd);
+            byte ds = detStates[i];
             sb.append(String.format(
-                "\n  %+9.1fms  %-20s pd=%+7.3f@%-16s cam=(%.2f,%.2f,%.2f) pl=(%.2f,%.2f,%.2f) views=%d %s%s",
+                "\n  %+9.1fms  %-12s %s pd=%+7.3f@%-14s cam=(%.2f,%.2f,%.2f) pl=(%.2f,%.2f,%.2f) views=%d %s%s",
                 (t - arm) / 1e6,
                 d == null ? "?" : ((net.minecraft.resources.ResourceKey<?>) d).identifier().getPath(),
+                DET_NAMES[Math.max(0, Math.min(4, ds))],
                 pd,
                 portalRef[i] == null ? "-" : ((net.minecraft.core.BlockPos) portalRef[i]).toShortString(),
                 camX[i], camY[i], camZ[i],
@@ -193,11 +206,9 @@ public final class CrossingTracer {
                 note));
             prevDim = d;
         }
-        sb.append("\n[SEAMLESS XTRACE] SUMMARY: past-plane-while-source-rendering frames = ")
+        sb.append("\n[SEAMLESS XTRACE] SUMMARY: flash frames (camera crossed plane, no swap that frame) = ")
           .append(pastPlaneFrames)
-          .append(pastPlaneFrames > 0
-              ? "  → the flash is the TICK-LATENCY gap (camera crossed, swap not yet run)"
-              : "  → no past-plane frames; flash must be post-swap (check frames after LEVEL SWAPPED)");
+          .append(". For each, the det column says WHY the frame detector didn't fire (cool/prim/chk).");
         SeamlessPortalsConstants.LOGGER.warn(sb.toString());
     }
 }

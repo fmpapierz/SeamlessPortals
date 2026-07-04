@@ -114,16 +114,20 @@ public final class SeamlessClientTeleport {
     public static void checkCameraCrossingPerFrame() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.level == null) return;
+        if (player == null || mc.level == null) {
+            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 0;
+            return;
+        }
         if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig.get().isSeamlessTeleportation()) {
             lastCameraPos = null;
+            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 0;
             return;
         }
-        long sinceSwap = System.nanoTime() - lastSwapMonotonicNanos;
-        if (sinceSwap < POST_SWAP_COOLDOWN_NANOS) {
-            lastCameraPos = null; // don't let the post-swap jump form a segment
-            return;
-        }
+        // Compute THIS frame's camera position (first-person camera = player pos lerped by the
+        // partial tick + eye height) and keep the segment TRACKING alive in every state below —
+        // IP tracks lastPlayerEyePos continuously (it even TRANSFORMS it through the portal on
+        // teleport, ClientTeleportationManager:306); an earlier version nulled it during the
+        // post-swap cooldown, leaving a priming gap right when rapid re-crossings happen.
         double pt = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
         double cx = net.minecraft.util.Mth.lerp(pt, player.xo, player.getX());
         double cy = net.minecraft.util.Mth.lerp(pt, player.yo, player.getY()) + player.getEyeHeight();
@@ -131,12 +135,32 @@ public final class SeamlessClientTeleport {
         Vec3 current = new Vec3(cx, cy, cz);
         Vec3 last = lastCameraPos;
         lastCameraPos = current;
-        if (last == null) return;
+
+        long sinceSwap = System.nanoTime() - lastSwapMonotonicNanos;
+        if (sinceSwap < POST_SWAP_COOLDOWN_NANOS) {
+            // Track but never fire (mod-specific packet-race guard; IP has NO such cooldown —
+            // documented deviation). Crossings inside this window are the remaining flash hole.
+            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 1;
+            return;
+        }
+        if (last == null) {
+            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 2; // priming
+            return;
+        }
+        // IP-style sanity: a >40-block frame jump is not a walk (dim change, /tp) — re-prime.
+        if (last.distanceToSqr(current) > 1600.0) {
+            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 2;
+            return;
+        }
 
         java.util.Optional<PortalLink> linkOpt =
             com.warwa.seamlessportals.entity.EntityPortalCollision.findPortalCrossing(player, last, current);
-        if (linkOpt.isEmpty()) return;
+        if (linkOpt.isEmpty()) {
+            com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 3; // checked, no cross
+            return;
+        }
 
+        com.warwa.seamlessportals.render.CrossingTracer.frameDetState = 4; // FIRED
         com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
             "DETECT-FRAME camera crossed portal=%s cam=(%.2f,%.2f,%.2f)->(%.2f,%.2f,%.2f)",
             linkOpt.get().getSource().getOrigin().toShortString(),
