@@ -31,6 +31,14 @@ public final class FrontClipping {
 
     private FrontClipping() {}
 
+    /**
+     * Master switch for the INNER clip during the stencil-direct dest draw (the fix for
+     * "backing away from the portal makes the mirror camera clip into dest terrain").
+     * Flag-gated because an earlier (FBO-era) enablement produced the "curtain" artifact;
+     * if any view-content loss reappears, flip this false instead of reverting.
+     */
+    public static boolean INNER_CLIP_ENABLED = true;
+
     private static float planeX;
     private static float planeY;
     private static float planeZ;

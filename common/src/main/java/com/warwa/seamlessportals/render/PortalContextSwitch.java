@@ -1601,6 +1601,16 @@ public class PortalContextSwitch {
                     // SOURCE opening, and the mirrored dest frame lands behind the
                     // source frame. So disabling is correct for the mirror approach,
                     // not just a workaround. DIAG-STEADY will now log clip=(0,0,0,1).
+                    //
+                    // 2026-07-04 UPDATE (stencil-direct): the inner clip is RE-ENABLED
+                    // for the dest draws — armed AFTER the sky, inside the draw block
+                    // below (see FrontClipping.INNER_CLIP_ENABLED) — to fix the mirror
+                    // camera clipping into dest terrain when the player backs away.
+                    // The stencil mask confines pixels to the opening but cannot remove
+                    // near-side OCCLUDERS along those sight-lines (a hill between the
+                    // mirror camera and the dest portal still overdraws the window);
+                    // the plane clip does. This disable() still runs first so the
+                    // OUTER plane never leaks into the dest view's space.
                     FrontClipping.disable();
                     org.joml.Matrix4fStack mvStack = RenderSystem.getModelViewStack();
                     mvStack.pushMatrix();
@@ -1711,8 +1721,27 @@ public class PortalContextSwitch {
                                         try {
                                             // Step 2b: dest SKY first (behind everything). Skipped
                                             // for no-sky dims (nether) — the flat fog fill covers
-                                            // those.
+                                            // those. Sky renders BEFORE the inner clip is armed:
+                                            // the sky dome is camera-centred and spans both sides
+                                            // of the portal plane — clipping it halves the sky
+                                            // (IP likewise excludes sky from clipping).
                                             renderPortalSky(destRenderer, destLRS, destFogBuffer, destViewMatrix);
+                                            // INNER CLIP (IP FrontClipping): clip dest geometry on
+                                            // the CAMERA side of the dest portal plane. The mirror
+                                            // camera tracks the player 1:1, so backing away from
+                                            // the source portal walks it into dest terrain — every
+                                            // sight-line through the opening only legitimately sees
+                                            // FAR-side geometry, so discarding the camera side
+                                            // removes those occluders (and the block the camera is
+                                            // inside) without touching window content. Raw GL clip
+                                            // state persists through renderGroup's RenderPasses
+                                            // (same verified property as the stencil). Terrain +
+                                            // entity + cloud draws below are clipped; disabled in
+                                            // the finally (outer restore(outerSnap) backs it up).
+                                            if (FrontClipping.INNER_CLIP_ENABLED) {
+                                                FrontClipping.setupInnerClipping(
+                                                    destPortal, destCameraPos, destViewMatrix);
+                                            }
                                             // OPAQUE = solid + cutout terrain.
                                             destChunks.renderGroup(
                                                 ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
@@ -1733,6 +1762,7 @@ public class PortalContextSwitch {
                                             renderPortalClouds(destRenderer, destLRS, destCameraState,
                                                 destViewMatrix, partialTick);
                                         } finally {
+                                            FrontClipping.disable();
                                             if (savedShaderFog != null) {
                                                 RenderSystem.setShaderFog(savedShaderFog);
                                             }
