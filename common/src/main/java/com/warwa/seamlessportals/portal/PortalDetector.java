@@ -11,6 +11,39 @@ import net.minecraft.world.level.block.state.BlockState;
 
 public class PortalDetector {
 
+    /**
+     * Formations queued at IGNITION time, processed at the NEXT server tick.
+     *
+     * <p>Why deferred: {@code PortalShapeFormMixin} fires inside the fire block's
+     * {@code onPlace} (mid-tick, mid-packet-handling). Running {@code onNetherPortalFormed}
+     * there stalls the server tick for the whole destination-portal search/creation
+     * (PortalForcer, possibly generation) — which delays the tick-end block broadcast that
+     * replaces the client's locally-PREDICTED fire block with the portal blocks. Result: the
+     * flint-and-steel flame stayed visible inside the frame for the stall duration. Queuing
+     * lets the ignition tick finish instantly (flame → portal within ~1 tick, like vanilla);
+     * the heavy dest work runs one tick later without holding anything user-visible hostage.
+     */
+    private static final java.util.concurrent.ConcurrentLinkedQueue<Object[]> PENDING_FORMATIONS =
+        new java.util.concurrent.ConcurrentLinkedQueue<>(); // {Level, BlockPos}
+
+    /** Queue a formation detected at ignition; processed by {@link #drainPendingFormations}. */
+    public static void queueFormation(Level level, BlockPos portalBlock) {
+        PENDING_FORMATIONS.add(new Object[]{ level, portalBlock.immutable() });
+    }
+
+    /** Called once per server tick (PortalChunkTracker.tick) — runs queued formations. */
+    public static void drainPendingFormations(MinecraftServer server) {
+        Object[] entry;
+        while ((entry = PENDING_FORMATIONS.poll()) != null) {
+            try {
+                onNetherPortalFormed((Level) entry[0], (BlockPos) entry[1], server);
+            } catch (Exception e) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS] Deferred portal formation failed at {}: {}", entry[1], e.toString());
+            }
+        }
+    }
+
     public static void onNetherPortalFormed(Level level, BlockPos portalBlock, MinecraftServer server) {
         BlockState state = level.getBlockState(portalBlock);
         if (!state.is(Blocks.NETHER_PORTAL)) return;

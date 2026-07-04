@@ -33,11 +33,11 @@ public abstract class PortalShapeFormMixin {
     @Inject(method = "createPortalBlocks", at = @At("TAIL"))
     private void seamlessportals$onPortalLit(LevelAccessor level, CallbackInfo ci) {
         if (level instanceof ServerLevel sl) {
-            MinecraftServer server = sl.getServer();
-            if (server != null) {
-                // bottomLeft is now a NETHER_PORTAL block (just placed by createPortalBlocks).
-                PortalDetector.onNetherPortalFormed(sl, this.bottomLeft, server);
-            }
+            // QUEUE, don't run inline: this fires inside the fire block's onPlace. Doing the
+            // dest-portal search/creation here stalled the tick and delayed the block broadcast
+            // that replaces the client's predicted flint-and-steel flame with portal blocks —
+            // the visible flame in the frame. Drained next tick by PortalChunkTracker.tick.
+            PortalDetector.queueFormation(sl, this.bottomLeft);
         }
     }
 }

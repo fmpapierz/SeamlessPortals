@@ -88,6 +88,11 @@ public class PortalChunkTracker {
     private static final int MAX_ACTIVE_LINKS = 4;
 
     public void tick(MinecraftServer server) {
+        // Formations queued at ignition (PortalShapeFormMixin) — run the heavy dest-portal
+        // creation HERE, one tick after the light, so the ignition tick's block broadcast
+        // (fire → portal blocks) ships without delay (no visible flame in the frame).
+        com.warwa.seamlessportals.portal.PortalDetector.drainPendingFormations(server);
+
         // Periodically scan for portals near players on the server
         scanCooldown--;
         if (scanCooldown <= 0) {
