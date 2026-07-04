@@ -57,6 +57,7 @@
     "ThrownEnderpearlMixin",
     "NetherPortalBlockMixin",
     "PortalForcerMixin",
+    "PortalShapeFormMixin",
     "ServerLevelBlockUpdateMixin",
     "ServerLevelFireSpreadMixin",
     "LevelChunkSetBlockStateMixin",

@@ -71,6 +71,13 @@ public class PortalChunkTracker {
     private static final int MAX_CHUNK_SENDS_PER_TICK = 12;
 
     /**
+     * Elevated per-tick send cap while a dim's sent set is still cold (<100 chunks) — a
+     * freshly-lit portal. With the ring-ordered needed set this fills the visible near-field
+     * in fractions of a second; steady-state streaming then drops back to the normal cap.
+     */
+    private static final int COLD_START_CHUNK_SENDS_PER_TICK = 32;
+
+    /**
      * Cap on how many nearby portals a single player feeds per tick — the N nearest.
      * Matches the render path's {@code StencilPortalRenderer.MAX_PORTALS_RENDERED}: a
      * player can only see through so many at once, so feeding (and re-adding a
@@ -252,11 +259,21 @@ public class PortalChunkTracker {
                 }
             }
 
-            // Collect chunks around the destination portal (per dim).
-            Set<ChunkPos> needed = neededByDim.computeIfAbsent(destDim, k -> new HashSet<>());
-            for (int dx = -renderDist; dx <= renderDist; dx++) {
-                for (int dz = -renderDist; dz <= renderDist; dz++) {
-                    needed.add(new ChunkPos(centerChunkX + dx, centerChunkZ + dz));
+            // Collect chunks around the destination portal (per dim) in RING order — nearest
+            // ring first, into a LinkedHashSet so sendChunksToPlayer's iteration streams the
+            // chunks the portal window actually shows FIRST. (Was a plain HashSet: iteration
+            // order effectively random, so the visible near-field could wait behind far chunks
+            // for minutes — the cold-start blank window.)
+            Set<ChunkPos> needed = neededByDim.computeIfAbsent(destDim, k -> new LinkedHashSet<>());
+            needed.add(new ChunkPos(centerChunkX, centerChunkZ));
+            for (int r = 1; r <= renderDist; r++) {
+                for (int d = -r; d <= r; d++) {
+                    needed.add(new ChunkPos(centerChunkX + d, centerChunkZ - r));
+                    needed.add(new ChunkPos(centerChunkX + d, centerChunkZ + r));
+                }
+                for (int d = -r + 1; d <= r - 1; d++) {
+                    needed.add(new ChunkPos(centerChunkX - r, centerChunkZ + d));
+                    needed.add(new ChunkPos(centerChunkX + r, centerChunkZ + d));
                 }
             }
         }
@@ -320,10 +337,20 @@ public class PortalChunkTracker {
         // mesh-compile it in one frame ("scheduled=100" → render-thread storm /
         // freeze). Sending a small batch/tick streams the dest in smoothly; the
         // rest are retried next tick (not marked sent).
+        //
+        // COLD-START BURST (instant portal view): while this dim's sent set is still
+        // small (a freshly-lit portal), ship 32/tick instead of 12 — combined with the
+        // ring-ordered needed set, the visible near-field (~radius 4 = 81 chunks) lands
+        // on the client within ~2-3 ticks. The client's mesh compiles are budget-gated
+        // per frame (VisibleSectionDiscovery), so the larger receive burst queues meshes
+        // instead of stalling the render thread. Back to 12/tick once warmed.
+        int cap = previouslySent.size() < 100
+            ? COLD_START_CHUNK_SENDS_PER_TICK
+            : MAX_CHUNK_SENDS_PER_TICK;
         int sentThisTick = 0;
         for (ChunkPos pos : chunks) {
             if (previouslySent.contains(pos)) continue;
-            if (sentThisTick >= MAX_CHUNK_SENDS_PER_TICK) break;
+            if (sentThisTick >= cap) break;
 
             // Phase 4a: send only chunks ALREADY loaded. The Phase-4a residency
             // ticket loads the dest region ASYNCHRONOUSLY over ticks; getChunkNow

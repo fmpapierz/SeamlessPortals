@@ -148,10 +148,16 @@ public class StencilPortalRenderer {
      */
     public static void prepareDestinationRender() {
         // NB the per-frame crossing check used to live here (renderLevel HEAD) — WRONG: in 26.2
-        // the frame's camera is extracted in GameRenderer.extract BEFORE renderLevel, so a swap
-        // here rendered the dest level with the stale source-position camera for one frame (the
-        // fog-colored flash, proven by [SEAMLESS XTRACE] pd=-39.9). It now runs at
-        // GameRenderer.extract HEAD via GameRendererExtractCrossingMixin (IP's placement).
+        // the frame's camera is positioned in GameRenderer.update BEFORE extract/renderLevel, so
+        // a swap here rendered the dest level with the stale source-position camera for one frame
+        // (the fog-colored flash, proven by [SEAMLESS XTRACE] pd=-39.9). It now runs at
+        // GameRenderer.update HEAD via GameRendererFrameCrossingMixin (IP's placement).
+
+        // Instant-portal-view: flush the dest renderers' staged mesh uploads once per frame at
+        // this pre-framegraph point (GPU-upload-safe timing — mid-pass flushing resizes bound
+        // buffers and flashes the screen). Freshly compiled dest meshes become drawable
+        // immediately → the portal window fills smoothly instead of in staging-overflow bursts.
+        com.warwa.seamlessportals.client.PortalWorldManager.flushDestStagedUploads();
 
         // Phase 5 (stencil-direct): there is NO phase-1 FBO render. The dest world is drawn
         // directly into the main target during phase 2 (renderOnePortal → renderDestWorldDirect),

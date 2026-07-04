@@ -1590,6 +1590,58 @@ public class PortalWorldManager {
      */
     private static final int COMPILE_PUMP_BUDGET_PER_TICK = 48;
 
+    /**
+     * Escape hatch for {@link #flushDestStagedUploads()}: an earlier build that flushed dest
+     * uploads was in the mix during a "rapid flashing after teleport" report (never isolated —
+     * the whole arc got rolled back before a clean test of the pre-frame placement). If that
+     * symptom reappears, flip this false to confirm/deny in one change.
+     */
+    public static boolean FLUSH_DEST_UPLOADS = true;
+
+    /**
+     * Flush every live dest renderer's STAGED section-mesh uploads to the GPU — the missing
+     * tail of vanilla {@code LevelRenderer.render()} (LevelRenderer.java:257-265) for the
+     * stencil-direct path, which draws via raw {@code renderGroup} and therefore never runs it.
+     *
+     * <p>26.2 stages compiled meshes ({@code addAllocation}) and only swaps them in when
+     * {@code uploadTerrainBuffersToGpu()} runs. Without this, dest meshes became drawable only
+     * when the staging buffer OVERFLOWED (the emergency flush in
+     * {@code SectionRenderDispatcher.addSectionBuffersToUberBuffer}) — bulk terrain appeared in
+     * chunky bursts and small incremental rebuilds (mirrored block updates) never appeared.
+     * Flushing every frame gives the smooth near-first fill the instant-portal-view work needs.
+     *
+     * <p>MUST run OUTSIDE the main framegraph (called from {@code GameRenderer.renderLevel}
+     * HEAD via {@code StencilPortalRenderer.prepareDestinationRender}); running it mid-pass
+     * resizes GPU buffers the in-flight pass has bound (proven screen-flashing). Cheap no-op
+     * when nothing is staged.
+     */
+    public static void flushDestStagedUploads() {
+        if (!FLUSH_DEST_UPLOADS) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return;
+        ResourceKey<Level> activeDim = mc.level.dimension();
+        for (Map.Entry<ResourceKey<Level>, LevelRenderer> e : renderers.entrySet()) {
+            ResourceKey<Level> dim = e.getKey();
+            if (dim.equals(activeDim)) continue; // main renderer flushes itself in render()
+            if (!isDestScopeLive(dim)) continue; // paused dim: nothing rendering from it
+            LevelRenderer renderer = e.getValue();
+            if (renderer == null) continue;
+            try {
+                net.minecraft.client.renderer.chunk.SectionRenderDispatcher dispatcher =
+                    renderer.sectionRenderDispatcher();
+                if (dispatcher == null) continue;
+                dispatcher.lock();
+                try {
+                    dispatcher.uploadTerrainBuffersToGpu();
+                } finally {
+                    dispatcher.unlock();
+                }
+            } catch (Throwable t) {
+                // Upload hiccups must never kill the frame; worst case meshes stay staged.
+            }
+        }
+    }
+
     public static void advanceCompilePipelines() {
         // Yield to the main render during the post-teleport reload. While the entered
         // dimension is streaming + meshing its far chunks (the promote bridge window),
