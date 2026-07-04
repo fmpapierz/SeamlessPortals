@@ -115,6 +115,7 @@ public final class RenderSpikeMonitor {
     private static void startWatchdog() {
         Thread t = new Thread(() -> {
             long lastDumped = 0L;
+            long lastFreezeDumped = 0L;
             while (true) {
                 try {
                     Thread.sleep(50L);
@@ -134,6 +135,31 @@ public final class RenderSpikeMonitor {
                     for (StackTraceElement el : stack) {
                         sb.append("\n  at ").append(el);
                         if (++n >= 24) break;
+                    }
+                    SeamlessPortalsConstants.LOGGER.warn(sb.toString());
+                }
+                // FREEZE dump: a stall past 3s is a hang (e.g. save-and-quit deadlock: the render
+                // thread joins IntegratedServer.halt's executeBlocking while the SERVER thread never
+                // drains its queue). The render-thread stack alone can't show WHY — dump EVERY live
+                // thread once per episode so the log captures the server thread + whatever it waits
+                // on. Off-thread + one-shot, so it can't cause the log4j render-thread stall.
+                if (stuckMs >= 3000L && hb != lastFreezeDumped) {
+                    lastFreezeDumped = hb;
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("[SEAMLESS FREEZE] render thread stuck ~").append(stuckMs)
+                      .append("ms — dumping ALL threads:");
+                    int threads = 0;
+                    for (java.util.Map.Entry<Thread, StackTraceElement[]> e
+                            : Thread.getAllStackTraces().entrySet()) {
+                        if (++threads > 48) { sb.append("\n  ... (more threads elided)"); break; }
+                        Thread th = e.getKey();
+                        sb.append("\n== \"").append(th.getName()).append("\" state=")
+                          .append(th.getState());
+                        int n = 0;
+                        for (StackTraceElement el : e.getValue()) {
+                            sb.append("\n    at ").append(el);
+                            if (++n >= 16) { sb.append("\n    ..."); break; }
+                        }
                     }
                     SeamlessPortalsConstants.LOGGER.warn(sb.toString());
                 }
