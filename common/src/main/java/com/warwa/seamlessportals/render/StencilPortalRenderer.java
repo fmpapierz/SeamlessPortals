@@ -86,6 +86,33 @@ public class StencilPortalRenderer {
      *
      * <p>Side-effect free apart from being a pure read of the client portal state.
      */
+    /**
+     * Cheap per-frame check: is any linked portal within portal-render range of the
+     * player (and portal rendering enabled)? Used by
+     * {@code LevelRendererBlockOutlineMixin} at SUBMIT time to decide whether the
+     * targeted-block outline must be re-bucketed to vanilla's after-terrain phase.
+     *
+     * <p>Why: the block outline normally draws in the features phase (LevelRenderer
+     * main pass :434, {@code shapeOutlines} bucket) with {@code RenderPipelines.LINES}
+     * — {@code DepthStencilState.DEFAULT} = GEQUAL + depth WRITE — at ~2px line width.
+     * That runs BEFORE our portal render (AFTER_TRANSLUCENT_TERRAIN wraps the
+     * translucent renderGroup at :438). When the player targets a frame block, the
+     * outline's wide lines overhang the opening and write NEARER depth there, so the
+     * depth-tested STEP 2 stencil write fails on those pixels → stencil=0 → the fill
+     * skips them → a tiny line-shaped sliver of stale SOURCE colour at the frame edge.
+     * Vanilla's own {@code afterTerrain} outline bucket (used for translucent targeted
+     * blocks) draws at :440 — immediately AFTER our portal render — where the STEP 3.7
+     * NEAR depth shield cleanly clips the overhang at the window edge instead.
+     */
+    public static boolean anyPortalNearCamera() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) return false;
+        if (!SeamlessPortalsConfig.get().isEnablePortalRendering()) return false;
+        PortalTracker tracker = PortalManager.getClientInstance().getTracker(mc.level.dimension());
+        double range = SeamlessPortalsConfig.get().getPortalRenderDistance() * 16.0;
+        return !tracker.getPortalsInRange(mc.player.blockPosition(), range).isEmpty();
+    }
+
     private static RenderTargets resolveRenderTargets() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return null;

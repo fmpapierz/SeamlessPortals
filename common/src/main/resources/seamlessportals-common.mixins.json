@@ -23,6 +23,7 @@
     "client.GameRendererPortalPrepareMixin",
     "client.GameRendererFrameCrossingMixin",
     "client.LevelRendererAccessorMixin",
+    "client.LevelRendererBlockOutlineMixin",
     "client.HandleRespawnMixin",
     "client.MainProjectionBobMixin",
     "client.ParticleEngineAccessorMixin",
