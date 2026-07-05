@@ -33,6 +33,16 @@ import java.util.Optional;
 @Mixin(LocalPlayer.class)
 public abstract class LocalPlayerMixin {
 
+    /**
+     * Sprint keeper: runs AFTER the vanilla tick (and thus after aiStep's sprint-stop
+     * checks), so a sprint cancelled by the first post-swap tick is re-asserted the
+     * same tick — the speed modifier is back before the next frame renders.
+     */
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void seamlessportals$sprintKeeperTick(CallbackInfo ci) {
+        SeamlessClientTeleport.tickSprintKeeper((LocalPlayer) (Object) this);
+    }
+
     @Inject(method = "tick", at = @At("HEAD"))
     private void seamlessportals$clientPortalCrossingCheck(CallbackInfo ci) {
         LocalPlayer self = (LocalPlayer) (Object) this;

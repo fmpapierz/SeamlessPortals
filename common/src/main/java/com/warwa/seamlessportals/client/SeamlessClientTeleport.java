@@ -626,6 +626,12 @@ public final class SeamlessClientTeleport {
         // across the world — that jump must never be evaluated as a crossing segment.
         lastCameraPos = null;
 
+        // Sprint continuity: something in the first post-swap aiStep cancels a held
+        // sprint (see tickSprintKeeper). Arm the keeper so it is re-asserted.
+        if (player.isSprinting()) {
+            armSprintKeeper();
+        }
+
         com.warwa.seamlessportals.render.CrossingTracer.event("SWAP done");
         return true;
     }
@@ -653,6 +659,47 @@ public final class SeamlessClientTeleport {
      */
     public static boolean isInPostSwapWindow() {
         return System.nanoTime() - lastSwapMonotonicNanos < 3_000_000_000L;
+    }
+
+    // ===== Sprint keeper: crossing must not cancel a held sprint =====
+    //
+    // XTRACE (2026-07-05 sprint test): sprint speed (vH 0.153) survives the swap
+    // frame, then decays to walk speed starting the FIRST tick after the swap —
+    // something in that tick's aiStep calls setSprinting(false) (the exact code
+    // path is logged by LivingEntitySprintCancelDiagMixin). Rather than guess the
+    // condition, re-assert: if the player was sprinting at the swap and is still
+    // holding forward (not sneaking, enough food), re-enable sprint at tick end
+    // for up to 10 ticks. Runs AFTER aiStep's cancel in the same tick, so the
+    // speed modifier is restored before the next frame — at most a one-tick
+    // ~0.01-block speed dip. A genuine cancel (released W, sneak, hunger) stops
+    // the re-assertion naturally via the conditions.
+
+    private static int sprintKeeperTicks = 0;
+
+    /** Called at the end of doVisualSwap when the player was sprinting going in. */
+    private static void armSprintKeeper() {
+        sprintKeeperTicks = 10;
+    }
+
+    /** Called from LocalPlayerMixin at tick TAIL (after aiStep's potential cancel). */
+    public static void tickSprintKeeper(LocalPlayer player) {
+        if (sprintKeeperTicks <= 0) return;
+        sprintKeeperTicks--;
+        if (player.isSprinting()) {
+            sprintKeeperTicks = 0; // sprint held or successfully restored — done
+            return;
+        }
+        boolean stillWantsSprint = player.input != null
+            && player.input.hasForwardImpulse()
+            && !player.isShiftKeyDown()
+            && player.getFoodData().getFoodLevel() > 6;
+        if (stillWantsSprint) {
+            player.setSprinting(true);
+            com.warwa.seamlessportals.render.CrossingTracer.event(
+                "SPRINT re-asserted post-swap (keeper, " + sprintKeeperTicks + " ticks left)");
+        } else {
+            sprintKeeperTicks = 0; // genuine stop condition — respect it
+        }
     }
 
     // POST_SWAP_COOLDOWN_NANOS: REMOVED 2026-07-04 (full IP parity — IP has no cooldown).

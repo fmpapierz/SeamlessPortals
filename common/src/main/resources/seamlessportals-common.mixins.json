@@ -35,6 +35,7 @@
     "client.LevelExtractorFlashBridgeMixin",
     "client.LevelRendererCullTerrainMixin",
     "client.LivingEntityRendererDiagMixin",
+    "client.LivingEntitySprintCancelDiagMixin",
     "client.ApplyLightDataGuardMixin",
     "client.ChunkLightLambdaGuardMixin",
     "client.ClientPacketListenerAccessorMixin",
