@@ -678,17 +678,23 @@ public final class SeamlessClientTeleport {
 
     /** Called at the end of doVisualSwap when the player was sprinting going in. */
     private static void armSprintKeeper() {
-        sprintKeeperTicks = 10;
+        // 40 ticks (2s): the observed cancels hit up to ~16 ticks post-swap (they
+        // fire 1-2 ticks after LANDING when the crossing includes a fall — the
+        // player sprint-jumps out of the portal and drops to the ground in front).
+        sprintKeeperTicks = 40;
     }
 
-    /** Called from LocalPlayerMixin at tick TAIL (after aiStep's potential cancel). */
+    /**
+     * Called from LocalPlayerMixin at tick TAIL (after aiStep's potential cancel).
+     *
+     * <p>Stays armed for the whole window — a v1 bug disarmed it the first tick
+     * sprint was still ON ("restored — done"), which also matched "not cancelled
+     * YET", so the real cancel at tick ~13 (post-landing) found no keeper.
+     */
     public static void tickSprintKeeper(LocalPlayer player) {
         if (sprintKeeperTicks <= 0) return;
         sprintKeeperTicks--;
-        if (player.isSprinting()) {
-            sprintKeeperTicks = 0; // sprint held or successfully restored — done
-            return;
-        }
+        if (player.isSprinting()) return; // still sprinting — stay armed, nothing to do
         boolean stillWantsSprint = player.input != null
             && player.input.hasForwardImpulse()
             && !player.isShiftKeyDown()

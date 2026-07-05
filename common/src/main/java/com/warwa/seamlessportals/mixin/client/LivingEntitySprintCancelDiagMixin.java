@@ -35,7 +35,17 @@ public abstract class LivingEntitySprintCancelDiagMixin {
             if (path.length() > 0) path.append(" <- ");
             path.append(stack[i].getMethodName()).append(':').append(stack[i].getLineNumber());
         }
-        com.warwa.seamlessportals.render.CrossingTracer.event(
-            "SPRINT CANCELLED post-swap via " + path);
+        // Condition snapshot: which shouldStopRunSprinting sub-condition fired?
+        // (hColl = horizontalCollision [&& !minor = the cancel trigger], fwd =
+        // input forward impulse, water/ground/food = isSprintingPossible inputs.)
+        com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+            "SPRINT CANCELLED post-swap via %s [hColl=%b minor=%b fwd=%b ground=%b water=%b food=%d]",
+            path,
+            player.horizontalCollision,
+            player.minorHorizontalCollision,
+            player.input != null && player.input.hasForwardImpulse(),
+            player.onGround(),
+            player.isInWater(),
+            player.getFoodData().getFoodLevel()));
     }
 }
