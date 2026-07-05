@@ -684,17 +684,40 @@ public final class SeamlessClientTeleport {
         sprintKeeperTicks = 40;
     }
 
+    /** Vanilla's sprint speed-boost modifier id (LivingEntity.SPRINTING_MODIFIER_ID). */
+    private static final net.minecraft.resources.Identifier SPRINT_MODIFIER_ID =
+        net.minecraft.resources.Identifier.withDefaultNamespace("sprinting");
+
     /**
      * Called from LocalPlayerMixin at tick TAIL (after aiStep's potential cancel).
      *
      * <p>Stays armed for the whole window — a v1 bug disarmed it the first tick
      * sprint was still ON ("restored — done"), which also matched "not cancelled
      * YET", so the real cancel at tick ~13 (post-landing) found no keeper.
+     *
+     * <p>v3 also guards the SPEED MODIFIER, not just the flag: the XTRACE speed
+     * channel proved the crossing's real theft is the {@code minecraft:sprinting}
+     * modifier vanishing from MOVEMENT_SPEED on the second post-swap tick (right
+     * as the vanilla teleport packet burst arrives) WHILE the flag stays on —
+     * the player keeps "sprinting" at walk speed with walk FOV, which reads as a
+     * sprint cancel. If the flag is on but the modifier is missing, re-establish
+     * both through vanilla {@code setSprinting} (off→on rebuilds the modifier).
      */
     public static void tickSprintKeeper(LocalPlayer player) {
         if (sprintKeeperTicks <= 0) return;
         sprintKeeperTicks--;
-        if (player.isSprinting()) return; // still sprinting — stay armed, nothing to do
+        if (player.isSprinting()) {
+            net.minecraft.world.entity.ai.attributes.AttributeInstance speed =
+                player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MOVEMENT_SPEED);
+            if (speed != null && speed.getModifier(SPRINT_MODIFIER_ID) == null) {
+                player.setSprinting(false);
+                player.setSprinting(true); // vanilla path re-adds the modifier
+                com.warwa.seamlessportals.render.CrossingTracer.event(
+                    "SPRINT modifier restored (flag on, modifier stolen; "
+                        + sprintKeeperTicks + " ticks left)");
+            }
+            return; // stay armed
+        }
         boolean stillWantsSprint = player.input != null
             && player.input.hasForwardImpulse()
             && !player.isShiftKeyDown()
