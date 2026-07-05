@@ -277,20 +277,35 @@ public final class SeamlessClientTeleport {
         if (currentDim.equals(payloadDim)) {
             // Hot path: we already swapped (either client-first via
             // performCrossing, or server-first via vanilla handleRespawn).
-            // Reconcile position if it drifted.
+            //
+            // ACK-ONLY unless genuinely desynced. The echo's position is the
+            // server's transform of ITS view of the player at crossing receipt —
+            // STALE by one round-trip. A walking player covers 0.1-0.5 blocks in
+            // that window (XTRACE 2026-07-05: every echo landed 28-84ms after
+            // SWAP carrying the original crossing pos), so the old 0.22-block
+            // threshold snapped the player BACKWARD on almost every crossing —
+            // an instant view pop the user perceives as the hand lurching
+            // off-center and re-settling. IP has no echo snap at all (client-
+            // authoritative crossing; the server adopts the client position via
+            // normal movement packets — ServerTeleportationManager validates
+            // rather than corrects). Keep only a large-desync safety net at 4
+            // blocks, far above RTT walking drift but small enough to repair a
+            // genuine divergence (vanilla-style rubber-band, rare by design).
             double dx = player.getX() - destPos.x;
             double dy = player.getY() - destPos.y;
             double dz = player.getZ() - destPos.z;
             double d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 > 0.05) {
+            if (d2 > 16.0) {
                 player.setPos(destPos.x, destPos.y, destPos.z);
                 player.xo = destPos.x; player.yo = destPos.y; player.zo = destPos.z;
                 player.xOld = destPos.x; player.yOld = destPos.y; player.zOld = destPos.z;
+                com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+                    "RECONCILE DESYNC snap applied d=%.2f blocks", Math.sqrt(d2)));
                 SeamlessPortalsConstants.LOGGER.info(
-                    "[SEAMLESS RECONCILE] Pos drift corrected: d={} blocks", Math.sqrt(d2));
+                    "[SEAMLESS RECONCILE] Desync corrected: d={} blocks", Math.sqrt(d2));
             } else {
-                SeamlessPortalsConstants.LOGGER.debug(
-                    "[SEAMLESS RECONCILE] Pos match (d²={})", d2);
+                com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
+                    "RECONCILE ACK-only (drift d=%.3f, no snap)", Math.sqrt(d2)));
             }
             // Block the client-first detector from re-firing while the
             // player is still inside the dest portal's bounding box. This

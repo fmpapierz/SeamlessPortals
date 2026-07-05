@@ -40,6 +40,16 @@ public final class CrossingTracer {
     private static final short[] portalsRendered = new short[N];
     private static final byte[] flags = new byte[N];          // bit0: promote bridge active
     private static final byte[] detStates = new byte[N];      // frame-detector state (see below)
+    // Hand-motion channels (the "hand glitches on teleport" investigation): every state that
+    // moves the first-person hand, sampled per frame so a dump pinpoints WHICH channel spikes
+    // at a glitch. bobAmp = walk-bob amplitude (velocity-driven, ClientAvatarState.bob; feeds
+    // bobView on the hand pose). walkD = walk distance (bob PHASE; sin/cos(walkDist*pi)).
+    // velH = deltaMovement.horizontalDistance (the bob amplitude INPUT; collapses if velocity
+    // is overwritten). swayY = yRot - yBob (hand sway offset; chases any un-carried rotation).
+    private static final float[] bobAmp = new float[N];
+    private static final float[] walkD = new float[N];
+    private static final float[] velH = new float[N];
+    private static final float[] swayY = new float[N];
     private static int written = 0;                            // render-thread only
     private static short portalsThisFrame = 0;
 
@@ -99,6 +109,10 @@ public final class CrossingTracer {
             flags[i] = (byte) (PortalContextSwitch.isPromoteBridgeActive() ? 1 : 0);
             detStates[i] = frameDetState;
             frameDetState = 0;
+            bobAmp[i] = mc.player.avatarState().getInterpolatedBob(1.0f);
+            walkD[i] = mc.player.avatarState().getInterpolatedWalkDistance(1.0f);
+            velH[i] = (float) mc.player.getDeltaMovement().horizontalDistance();
+            swayY[i] = mc.player.getYRot() - mc.player.yBob;
             written++;
         } catch (Throwable t) {
             // Tracing must never break the render.
@@ -166,13 +180,16 @@ public final class CrossingTracer {
             }
         }
 
-        sb.append("\n[SEAMLESS XTRACE] FRAMES: t | dim | det | planeDist@portal | cam | player | views | bridge");
+        sb.append("\n[SEAMLESS XTRACE] FRAMES: t | dim | det | planeDist@portal | cam | player | hand[bob wd vH swayY] | views | bridge");
         sb.append("\n[SEAMLESS XTRACE]   det: off=check not run  cool=cooldown-suppressed  prim=priming  chk=no-cross  FIRE=fired");
+        sb.append("\n[SEAMLESS XTRACE]   hand: bob=walk-bob amplitude  wd=walkDist (bob phase)  vH=horizontal velocity (bob input)  swayY=yRot-yBob (hand sway offset)");
         int end = written;                    // snapshot
         int start = Math.max(0, end - N);
         Object prevDim = null;
         Double prevSign = null;               // previous frame's plane side (same dim)
         int pastPlaneFrames = 0;
+        int bobDips = 0;
+        float prevBob = Float.NaN;
         for (int k = start; k < end; k++) {
             int i = k % N;
             long t = tN[i];
@@ -190,10 +207,19 @@ public final class CrossingTracer {
                 note = "  <-- CAMERA CROSSED PLANE, NO SWAP (flash frame)";
                 pastPlaneFrames++;
             }
+            // Hand-glitch annotator: the walk-bob amplitude lerps 0.4/tick toward the
+            // horizontal speed — at steady walk it is ~constant frame-to-frame. A drop
+            // >0.015 in one frame means the amplitude INPUT collapsed (velocity was
+            // overwritten) or a tick anomaly — the hand visibly sinks toward rest.
+            if (!Float.isNaN(prevBob) && prevBob - bobAmp[i] > 0.015f) {
+                note += "  <-- BOB DIP (hand sink)";
+                bobDips++;
+            }
+            prevBob = bobAmp[i];
             if (!Double.isNaN(pd) && pd != 0.0) prevSign = Math.signum(pd);
             byte ds = detStates[i];
             sb.append(String.format(
-                "\n  %+9.1fms  %-12s %s pd=%+7.3f@%-14s cam=(%.2f,%.2f,%.2f) pl=(%.2f,%.2f,%.2f) views=%d %s%s",
+                "\n  %+9.1fms  %-12s %s pd=%+7.3f@%-14s cam=(%.2f,%.2f,%.2f) pl=(%.2f,%.2f,%.2f) hand[%.3f %7.2f %.3f %+6.2f] views=%d %s%s",
                 (t - arm) / 1e6,
                 d == null ? "?" : ((net.minecraft.resources.ResourceKey<?>) d).identifier().getPath(),
                 DET_NAMES[Math.max(0, Math.min(4, ds))],
@@ -201,6 +227,7 @@ public final class CrossingTracer {
                 portalRef[i] == null ? "-" : ((net.minecraft.core.BlockPos) portalRef[i]).toShortString(),
                 camX[i], camY[i], camZ[i],
                 plX[i], plY[i], plZ[i],
+                bobAmp[i], walkD[i], velH[i], swayY[i],
                 portalsRendered[i],
                 (flags[i] & 1) != 0 ? "B" : "-",
                 note));
@@ -208,7 +235,8 @@ public final class CrossingTracer {
         }
         sb.append("\n[SEAMLESS XTRACE] SUMMARY: flash frames (camera crossed plane, no swap that frame) = ")
           .append(pastPlaneFrames)
-          .append(". For each, the det column says WHY the frame detector didn't fire (cool/prim/chk).");
+          .append(", bob dips (hand-sink frames) = ").append(bobDips)
+          .append(". For flash frames, the det column says WHY the frame detector didn't fire (cool/prim/chk).");
         SeamlessPortalsConstants.LOGGER.warn(sb.toString());
     }
 }
