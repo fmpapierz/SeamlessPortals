@@ -39,6 +39,7 @@
     "client.ChunkLightLambdaGuardMixin",
     "client.ClientPacketListenerAccessorMixin",
     "client.ClientPacketListenerAddEntityAdoptMixin",
+    "client.ClientPacketListenerForgetGuardMixin",
     "client.NetherPortalUninteractableMixin",
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin",
@@ -53,6 +54,7 @@
     "client.compat.SodiumFogOverrideMixin"
   ],
   "mixins": [
+    "ChunkMapResendSuppressMixin",
     "EntityMixin",
     "EntityLevelAccessorMixin",
     "ServerPlayerMixin",

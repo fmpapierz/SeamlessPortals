@@ -638,6 +638,23 @@ public final class SeamlessClientTeleport {
      */
     public static volatile long lastSwapMonotonicNanos = 0L;
 
+    /**
+     * Within the short window after a visual swap where the server's OLD-dim
+     * teardown packets are still in flight. Used by
+     * {@code ClientPacketListenerForgetGuardMixin}: vanilla drops every old-dim
+     * chunk via ClientboundForgetLevelChunkPacket at the teleport, but the
+     * client is already in the NEW dim — those forgets apply to the active
+     * level, and old-dim chunk coordinates can ALIAS new-dim positions
+     * (OW x/8 ≈ nether x), wrongly unloading freshly-promoted chunks. With the
+     * vanilla re-send now suppressed for client-held chunks, such a wrong drop
+     * would no longer be masked by an immediate re-send — so the forgets are
+     * absorbed during this window. A legitimately-forgotten chunk self-heals:
+     * vanilla re-marks it pending when its view re-enters.
+     */
+    public static boolean isInPostSwapWindow() {
+        return System.nanoTime() - lastSwapMonotonicNanos < 3_000_000_000L;
+    }
+
     // POST_SWAP_COOLDOWN_NANOS: REMOVED 2026-07-04 (full IP parity — IP has no cooldown).
     // History: 500ms → 150ms → gone. Each of its jobs has a dedicated replacement:
     //   * stale cross-dim chunk packets → ChunkPacketGuardMixin (drop, not disconnect;

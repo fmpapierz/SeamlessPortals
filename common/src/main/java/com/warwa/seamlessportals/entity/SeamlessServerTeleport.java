@@ -166,6 +166,15 @@ public final class SeamlessServerTeleport {
         // the protocol state still advances, but the visual-swap logic is
         // elided. Server side: nothing special, just the vanilla teleport.
         //
+        // Chunk hand-off BEFORE the teleport (player.level() is still the old
+        // dim): arms one-shot suppression of vanilla's re-send for the chunks
+        // our tracker already streamed for the dest dim, and seeds the old
+        // dim's sent-record so redirected streaming resumes incrementally
+        // instead of cold-restarting at burst rate. Kills ~85% of the
+        // per-crossing render-thread freeze (chunk decode + light re-init).
+        com.warwa.seamlessportals.chunk.PortalChunkTracker.onPlayerCrossing(
+            player, player.level().dimension(), destDim);
+
         // RELATIVE rotation + velocity (union(DELTA, ROTATION), yaw/pitch 0):
         // the accompanying ClientboundPlayerPositionPacket must not disturb the
         // client's rotation or momentum. With the old all-absolute teleport the

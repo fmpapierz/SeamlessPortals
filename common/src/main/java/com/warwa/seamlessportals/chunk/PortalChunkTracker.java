@@ -36,6 +36,116 @@ public class PortalChunkTracker {
 
     private int scanCooldown = 0;
 
+    /** The one live tracker (created by the loader entrypoint) — for the crossing hook. */
+    private static volatile PortalChunkTracker ACTIVE;
+
+    public PortalChunkTracker() {
+        ACTIVE = this;
+    }
+
+    // ===== Crossing hand-off: stop the post-teleport re-send storm =====
+    //
+    // vanilla ServerPlayer.teleportTo restarts BOTH trackers from scratch: the
+    // dest dim's ChunkMap re-sends the player's whole view distance (the client
+    // already holds the near-field — this tracker streamed it via redirected
+    // packets and the block mirror kept it live), and this tracker itself used
+    // to cold-restart the OLD dim at 32 chunks/tick (the player never had a
+    // sentChunks record for the dim they were standing in). Both re-sends were
+    // decoded synchronously on the render thread → the per-crossing ~150-300ms
+    // freeze ([SEAMLESS STUCK]: 18/21 stalls in chunk decode + light init).
+    //
+    // onPlayerCrossing (called BEFORE teleportTo, while player.level() is still
+    // the old dim) does the hand-off both ways:
+    //  1. ARMS one-shot suppression of vanilla's re-send for exactly the chunks
+    //     this tracker already delivered for the NEW dim
+    //     (ChunkMapResendSuppressMixin cancels markChunkPendingToSend for them);
+    //  2. SEEDS the OLD dim's sent-record with the player's vanilla view around
+    //     their old position (the client provably has those chunks, and the
+    //     demoted level preserves them) so streaming resumes incrementally
+    //     instead of restarting cold.
+
+    private static final class ResendSuppression {
+        final ResourceKey<Level> dim;
+        final Set<Long> chunks;
+        final long armedNanos;
+        ResendSuppression(ResourceKey<Level> dim, Set<Long> chunks, long armedNanos) {
+            this.dim = dim;
+            this.chunks = chunks;
+            this.armedNanos = armedNanos;
+        }
+    }
+
+    /** Per-player armed suppression; server thread only; entries expire after 60s. */
+    private static final Map<UUID, ResendSuppression> VANILLA_RESEND_SUPPRESS = new HashMap<>();
+    private static final long SUPPRESS_TTL_NANOS = 60_000_000_000L;
+
+    /** Called by SeamlessServerTeleport BEFORE the vanilla teleport. */
+    public static void onPlayerCrossing(ServerPlayer player,
+            ResourceKey<Level> oldDim, ResourceKey<Level> newDim) {
+        PortalChunkTracker tracker = ACTIVE;
+        if (tracker == null) return;
+        UUID uuid = player.getUUID();
+        Map<ResourceKey<Level>, Set<ChunkPos>> perDim =
+            tracker.sentChunks.computeIfAbsent(uuid, k -> new HashMap<>());
+
+        // 1. Arm suppression for the redirected set of the dim being entered.
+        Set<ChunkPos> redirected = perDim.get(newDim);
+        if (redirected != null && !redirected.isEmpty()) {
+            Set<Long> packed = new java.util.HashSet<>(redirected.size() * 2);
+            for (ChunkPos p : redirected) packed.add(p.pack());
+            VANILLA_RESEND_SUPPRESS.put(uuid,
+                new ResendSuppression(newDim, packed, System.nanoTime()));
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS CROSSING] Armed vanilla-resend suppression: {} chunks of {} already client-held",
+                packed.size(), newDim.identifier());
+        }
+        // Vanilla owns the entered dim now — drop the redirected record
+        // (pruneAndSend's retainAll would do this next tick anyway).
+        perDim.remove(newDim);
+
+        // 2. Seed the OLD dim's record with the player's vanilla view (Chebyshev
+        // square, one ring of safety margin) around their pre-teleport position:
+        // the client had all of it loaded, and demoteFromMain preserves the
+        // chunks. Without this, streaming the old dim (now visible back through
+        // the portal) restarted COLD at the 32/tick burst rate.
+        MinecraftServer server = player.level().getServer();
+        int viewDist = Math.min(player.requestedViewDistance(),
+            server != null ? server.getPlayerList().getViewDistance() : 10);
+        int seedRadius = Math.max(2, viewDist - 1);
+        net.minecraft.world.level.ChunkPos center = player.chunkPosition();
+        Set<ChunkPos> seeded = perDim.computeIfAbsent(oldDim, k -> new java.util.HashSet<>());
+        int added = 0;
+        for (int dx = -seedRadius; dx <= seedRadius; dx++) {
+            for (int dz = -seedRadius; dz <= seedRadius; dz++) {
+                if (seeded.add(new ChunkPos(center.x() + dx, center.z() + dz))) added++;
+            }
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            "[SEAMLESS CROSSING] Seeded {} client-held chunks of {} (radius {}) — no cold restart",
+            added, oldDim.identifier(), seedRadius);
+    }
+
+    /**
+     * One-shot: {@code true} ⇒ the client already holds this chunk (we streamed
+     * it) — the caller (ChunkMapResendSuppressMixin) cancels vanilla's re-send.
+     * Consuming removes the entry so any LATER legitimate send (view re-enter
+     * after a real client-side forget) passes through untouched.
+     */
+    public static boolean consumeVanillaResendSuppression(ServerPlayer player, ChunkPos pos) {
+        ResendSuppression r = VANILLA_RESEND_SUPPRESS.get(player.getUUID());
+        if (r == null) return false;
+        if (System.nanoTime() - r.armedNanos > SUPPRESS_TTL_NANOS) {
+            VANILLA_RESEND_SUPPRESS.remove(player.getUUID());
+            return false;
+        }
+        if (!player.level().dimension().equals(r.dim)) return false;
+        boolean suppressed = r.chunks.remove(pos.pack());
+        if (suppressed && r.chunks.isEmpty()) {
+            VANILLA_RESEND_SUPPRESS.remove(player.getUUID());
+        }
+        return suppressed;
+    }
+
     /**
      * Phase 4a (IP "live window" residency): keep each player's nearby
      * portal-destination chunks LOADED on the server so the dest dimension is
