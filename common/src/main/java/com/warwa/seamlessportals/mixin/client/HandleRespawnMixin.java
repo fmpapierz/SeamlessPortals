@@ -22,6 +22,7 @@ import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.ai.attributes.AttributeMap;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
 import org.spongepowered.asm.mixin.Mixin;
@@ -525,6 +526,47 @@ public abstract class HandleRespawnMixin {
             "[SEAMLESS PLAYER-REUSE] Preserved LocalPlayer (id={}) across dim change → {}",
             oldPlayer.getId(), destLevel.dimension().identifier());
         return oldPlayer;
+    }
+
+    /**
+     * ROOT CAUSE of the post-crossing sprint-modifier theft (and the FOV pulse
+     * it produced): after createPlayer, vanilla handleRespawn copies the old
+     * player's attributes onto the new one —
+     * {@code newPlayer.getAttributes().assignAllValues(oldPlayer.getAttributes())}
+     * (shouldKeep((byte)1) is true for our Respawn((byte)3) teleport packet).
+     * With the player-reuse redirect above, newPlayer == oldPlayer, so this is
+     * a SELF-copy — and {@code AttributeInstance.replaceFrom} implements the
+     * copy as {@code modifierById.clear(); modifierById.putAll(other.modifierById)}.
+     * When other == this, the clear empties the very map it then copies from:
+     * every modifier on every attribute is silently destroyed, including the
+     * {@code minecraft:sprinting} speed modifier — walk-speed FOV for one tick
+     * until the sprint keeper repaired it (the visible FOV dip).
+     *
+     * A self-assign is never meaningful (the copy's purpose is old→new transfer,
+     * and identity reuse already IS the transfer), so both assignment overloads
+     * are skipped on identity. Distinct instances (vanilla fresh-player path)
+     * call through untouched.
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/ai/attributes/AttributeMap;"
+                + "assignAllValues(Lnet/minecraft/world/entity/ai/attributes/AttributeMap;)V"))
+    private void seamlessportals$skipSelfAssignAllValues(AttributeMap self, AttributeMap other) {
+        if (self == other) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PLAYER-REUSE] Skipped self assignAllValues (would wipe all attribute modifiers)");
+            return;
+        }
+        self.assignAllValues(other);
+    }
+
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/ai/attributes/AttributeMap;"
+                + "assignBaseValues(Lnet/minecraft/world/entity/ai/attributes/AttributeMap;)V"))
+    private void seamlessportals$skipSelfAssignBaseValues(AttributeMap self, AttributeMap other) {
+        if (self == other) return; // self-copy of base values is a semantic no-op; skip for symmetry
+        self.assignBaseValues(other);
     }
 
     /**
