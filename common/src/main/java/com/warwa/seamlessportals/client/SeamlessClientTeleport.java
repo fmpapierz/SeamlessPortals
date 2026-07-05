@@ -346,10 +346,22 @@ public final class SeamlessClientTeleport {
 
         if (mc.level.dimension().equals(destDim)) {
             // Already on dest dim — nothing to do visually. Just snap player.
+            // Shift the lagged rotation fields by the delta too (same treatment as
+            // the full swap below): a server-initiated rotation correction must not
+            // make the hand chase the change. Deltas are ~0 for the common
+            // reconcile-echo case, so this is a no-op there.
+            float sameDimYawDelta = destYaw - player.getYRot();
+            float sameDimPitchDelta = destPitch - player.getXRot();
             player.setPos(destPos.x, destPos.y, destPos.z);
             player.setDeltaMovement(destVel);
             player.setYRot(destYaw);
             player.setXRot(destPitch);
+            player.yRotO += sameDimYawDelta;
+            player.xRotO += sameDimPitchDelta;
+            player.yBob += sameDimYawDelta;
+            player.yBobO += sameDimYawDelta;
+            player.xBob += sameDimPitchDelta;
+            player.xBobO += sameDimPitchDelta;
             return true;
         }
 
@@ -496,10 +508,32 @@ public final class SeamlessClientTeleport {
         player.xo = destPos.x; player.yo = destPos.y; player.zo = destPos.z;
         player.xOld = destPos.x; player.yOld = destPos.y; player.zOld = destPos.z;
         player.setDeltaMovement(destVel);
+        // Rotation: shift EVERY lagged rotation field by the same delta so the
+        // first-person hand and camera stay rotation-continuous across the swap.
+        //
+        // transformYaw rotates yaw ±90° when the two portals' axes differ. The
+        // hand-sway fields (LocalPlayer.yBob/xBob + *O, public; ticked with a 0.5
+        // lerp toward rotation, LocalPlayer:701-704) feed ItemInHandRenderer:340-343
+        // which rotates the hand by (viewRot - bob) * 0.1 — left unadjusted they
+        // CHASE the yaw delta over the next ~6 ticks, so the hand swung off-center
+        // and recentered on every axis-mismatched crossing. IP's parity treatment
+        // (TransformationManager.managePlayerRotationAndChangeGravity:195-203) sets
+        // yRotO/xRotO/yBob/xBob/yBobO/xBobO to the final rotation; shifting them BY
+        // THE DELTA is identical when the player isn't turning (all fields equal
+        // rotation at rest) and additionally preserves the sway/lerp offsets of an
+        // in-flight pan, so a moving hand keeps moving instead of snapping to
+        // center. Differences between the fields are preserved, so lerp direction
+        // and sway magnitude are unchanged regardless of yaw wrapping.
+        float yawDelta = destYaw - player.getYRot();
+        float pitchDelta = destPitch - player.getXRot();
         player.setYRot(destYaw);
         player.setXRot(destPitch);
-        player.yRotO = destYaw;
-        player.xRotO = destPitch;
+        player.yRotO += yawDelta;
+        player.xRotO += pitchDelta;
+        player.yBob += yawDelta;
+        player.yBobO += yawDelta;
+        player.xBob += pitchDelta;
+        player.xBobO += pitchDelta;
         com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
             "SWAP setPos done pos=(%.2f,%.2f,%.2f) prevs synced", destPos.x, destPos.y, destPos.z));
 
