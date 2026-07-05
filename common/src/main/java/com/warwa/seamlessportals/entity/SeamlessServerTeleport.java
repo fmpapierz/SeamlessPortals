@@ -165,8 +165,31 @@ public final class SeamlessServerTeleport {
         // performed the visual swap and cancels handleRespawn as a no-op —
         // the protocol state still advances, but the visual-swap logic is
         // elided. Server side: nothing special, just the vanilla teleport.
+        //
+        // RELATIVE rotation + velocity (union(DELTA, ROTATION), yaw/pitch 0):
+        // the accompanying ClientboundPlayerPositionPacket must not disturb the
+        // client's rotation or momentum. With the old all-absolute teleport the
+        // packet (a) set absolute yaw — the client's UNWRAPPED yaw can differ
+        // from the server's wrapped value by ±360, and while the camera angle is
+        // identical mod 360, LocalPlayer's lagged hand-sway fields chase the
+        // numeric jump at 0.5/tick → a ~36°-decaying first-person hand swing
+        // (XTRACE 2026-07-05: swayY +360.17 → +180.09 → +90.12 right at the
+        // packet's arrival) — and (b) zeroed deltaMovement → the walk-bob
+        // amplitude collapsed and re-accelerated (the BOB DIP frames). Vanilla
+        // itself uses exactly this relative set for "move without disturbing
+        // rotation/momentum" (ServerPlayer:1680). The client's own transform
+        // already applied the crossing's yaw/velocity change at the visual swap;
+        // for the rare server-first fallback, rotation arrives via our reconcile
+        // payload (doVisualSwap carries the lagged fields), never this packet.
         player.teleportTo(destLevel, destPos.x, destPos.y, destPos.z,
-            Set.<Relative>of(), destYaw, destPitch, false);
+            Relative.union(Relative.DELTA, Relative.ROTATION), 0.0F, 0.0F, false);
+
+        // The relative teleport leaves the SERVER player's rotation at its
+        // pre-crossing value — set the transformed rotation explicitly (rotation
+        // is client-authoritative; the next client move packet confirms it).
+        player.setYRot(destYaw);
+        player.setXRot(destPitch);
+        player.setYHeadRot(destYaw);
 
         player.setDeltaMovement(destVel);
 
