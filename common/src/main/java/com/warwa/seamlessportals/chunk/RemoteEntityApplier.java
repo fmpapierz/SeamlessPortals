@@ -37,11 +37,28 @@ public final class RemoteEntityApplier {
         ClientLevel level = PortalWorldManager.getLevel(dim);
         if (level == null) return;
 
-        // If an entity with this id already exists (e.g. stale from a
-        // previous visit), replace rather than spawn two. level.removeEntity
-        // with DISCARDED reason cleanly evicts it and its render state.
+        // ADOPT an existing same-identity entity instead of discard+recreate
+        // (2026-07-05): after a crossing the demoted level KEEPS its entity
+        // population (no wipe — see PortalWorldManager promote/demote adoption)
+        // and the server tracker's cold restart re-streams an Add for each of
+        // them. Recreating made them blink in the portal view and re-paid
+        // entity construction on the render thread (piglin Brain ~160ms stall,
+        // [SEAMLESS STUCK] proven). Same id+uuid+type → update the existing
+        // instance in place with exactly the state a fresh mirror would get.
         Entity existing = level.getEntity(p.entityId());
         if (existing != null) {
+            EntityType<?> existingType = BuiltInRegistries.ENTITY_TYPE.byId(p.entityTypeId());
+            if (existingType == existing.getType() && existing.getUUID().equals(p.uuid())) {
+                existing.syncPacketPositionCodec(p.x(), p.y(), p.z());
+                existing.absSnapTo(p.x(), p.y(), p.z(), p.yRot(), p.xRot());
+                existing.setYHeadRot(p.yHeadRot());
+                existing.setDeltaMovement(0, 0, 0);
+                existing.noPhysics = true; // mirror: position-driven, physics off
+                PortalWorldManager.noteEntityAdopted(level, p.entityId());
+                return;
+            }
+            // Different identity reusing the id (stale from a previous visit):
+            // evict and fall through to the create path.
             level.removeEntity(p.entityId(), Entity.RemovalReason.DISCARDED);
         }
 

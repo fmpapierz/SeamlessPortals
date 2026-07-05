@@ -186,6 +186,10 @@ public class StencilPortalRenderer {
         // immediately → the portal window fills smoothly instead of in staging-overflow bursts.
         com.warwa.seamlessportals.client.PortalWorldManager.flushDestStagedUploads();
 
+        // Entity-adoption bookkeeping: prune mirrors whose authoritative re-add
+        // never arrived by the deadline (they no longer exist server-side).
+        com.warwa.seamlessportals.client.PortalWorldManager.pruneEntityAdoptions();
+
         // Phase 5 (stencil-direct): there is NO phase-1 FBO render. The dest world is drawn
         // directly into the main target during phase 2 (renderOnePortal → renderDestWorldDirect),
         // so the rest of this renderLevel-HEAD hook does nothing.

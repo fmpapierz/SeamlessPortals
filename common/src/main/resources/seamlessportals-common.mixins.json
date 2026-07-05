@@ -38,6 +38,7 @@
     "client.ApplyLightDataGuardMixin",
     "client.ChunkLightLambdaGuardMixin",
     "client.ClientPacketListenerAccessorMixin",
+    "client.ClientPacketListenerAddEntityAdoptMixin",
     "client.NetherPortalUninteractableMixin",
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin",

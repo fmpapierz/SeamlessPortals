@@ -1120,32 +1120,27 @@ public class PortalWorldManager {
         // FIRST post-promote applyFrustum actually run so the bridge engages.
         com.warwa.seamlessportals.render.PortalContextSwitch.armPromoteBridge();
 
-        // Wipe any entities that accumulated in this level while it was
-        // a cached mirror target. Phase 2a's RemoteEntityApplier added
-        // mirrored entities via level.addEntity(...); those live in the
-        // level's entity-getter. If we don't clear them before the level
-        // becomes mc.level, the main-view renderer will render them as
-        // real entities at their (often nether-mapped) coordinates —
-        // producing the "entities render through walls / in crosshair"
-        // symptom where a mirrored-piglin at nether (14.5, 81, 4.1) ends
-        // up visible in the OW at the same coords. Vanilla will re-sync
-        // the authoritative entity list via Clientbound(Add|Remove)Entity
-        // packets as the server picks up our teleport.
+        // ADOPT, DON'T WIPE (2026-07-05). This used to DISCARD every mirrored
+        // entity and wait for vanilla's post-teleport re-adds — which is exactly
+        // the user-visible "entities disappear and reappear" blink at each
+        // crossing, plus a render-thread stall re-CONSTRUCTING each entity
+        // (piglin Brain init ~160ms, [SEAMLESS STUCK] proven). The mirrors are
+        // in the CORRECT level at their true dest coordinates (the old
+        // wrong-coords fear predates per-dimension mirror levels), so KEEP
+        // them: vanilla's re-add packets now ADOPT the existing instances in
+        // place (ClientPacketListenerAddEntityAdoptMixin — same id+type+uuid →
+        // update from packet, no discard, no recreate). Mirrors that vanilla
+        // does NOT re-add by the deadline no longer exist server-side; the
+        // deferred prune removes those quietly.
         Minecraft mc0 = Minecraft.getInstance();
         net.minecraft.client.player.LocalPlayer lp0 = mc0.player;
-        int promoteWiped = 0;
-        java.util.List<Integer> promoteToRemove = new java.util.ArrayList<>();
+        java.util.Set<Integer> promotePending = new java.util.HashSet<>();
         for (net.minecraft.world.entity.Entity ent : level.entitiesForRendering()) {
             if (ent == lp0) continue;
-            promoteToRemove.add(ent.getId());
+            promotePending.add(ent.getId());
         }
-        for (int id : promoteToRemove) {
-            try {
-                level.removeEntity(id,
-                    net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
-                promoteWiped++;
-            } catch (Exception ignored) {}
-        }
+        armEntityAdoption(level, promotePending, 4_000L);
+        int promoteWiped = promotePending.size(); // log: mirrors HELD for adoption (none wiped)
 
         // 26.2 CRITICAL: re-point mc.levelExtractor onto the PROMOTED renderer.
         // mc.levelExtractor is the SINGLE main extractor (public final, bound once
@@ -1197,9 +1192,73 @@ public class PortalWorldManager {
         }
 
         SeamlessPortalsConstants.rlog(
-            "[SEAMLESS PHASE2] Promoted renderer → mc.levelRenderer for {} (marked for SOG sync prime; wiped {} mirrored entities)",
+            "[SEAMLESS PHASE2] Promoted renderer → mc.levelRenderer for {} (marked for SOG sync prime; {} mirrored entities held for adoption)",
             dim.identifier(), promoteWiped);
         return new Promotion(renderer, level);
+    }
+
+    // ===== Entity adoption across crossings (no wipe, no blink) =====
+    //
+    // At promote/demote the level's mirrored entity population is NOT discarded;
+    // instead the ids are armed here and either (a) ADOPTED when the authoritative
+    // re-add arrives (vanilla ClientboundAddEntityPacket for the promoted dim,
+    // RemoteEntityAddPayload for the demoted one) — the arrival unmarks the id —
+    // or (b) PRUNED quietly at the deadline (no re-add ⇒ the entity no longer
+    // exists server-side; a stale mirror must not linger). Render-thread only.
+
+    private static final class PendingAdoption {
+        final java.lang.ref.WeakReference<ClientLevel> level;
+        final java.util.Set<Integer> ids;
+        final long deadlineNanos;
+        PendingAdoption(ClientLevel level, java.util.Set<Integer> ids, long deadlineNanos) {
+            this.level = new java.lang.ref.WeakReference<>(level);
+            this.ids = ids;
+            this.deadlineNanos = deadlineNanos;
+        }
+    }
+
+    private static final java.util.List<PendingAdoption> PENDING_ADOPTIONS = new java.util.ArrayList<>();
+
+    /** Arm a level's current mirror ids for adopt-or-prune. */
+    public static void armEntityAdoption(ClientLevel level, java.util.Set<Integer> ids, long timeoutMs) {
+        if (ids.isEmpty()) return;
+        PENDING_ADOPTIONS.add(new PendingAdoption(
+            level, ids, System.nanoTime() + timeoutMs * 1_000_000L));
+    }
+
+    /** The authoritative re-add for this id arrived (and adopted the mirror) — unmark it. */
+    public static void noteEntityAdopted(net.minecraft.world.level.Level level, int id) {
+        for (PendingAdoption p : PENDING_ADOPTIONS) {
+            if (p.level.get() == level) p.ids.remove(id);
+        }
+    }
+
+    /** Once per frame (renderLevel HEAD): prune expired never-re-added mirrors. */
+    public static void pruneEntityAdoptions() {
+        if (PENDING_ADOPTIONS.isEmpty()) return;
+        long now = System.nanoTime();
+        java.util.Iterator<PendingAdoption> it = PENDING_ADOPTIONS.iterator();
+        while (it.hasNext()) {
+            PendingAdoption p = it.next();
+            ClientLevel lvl = p.level.get();
+            if (lvl == null || p.ids.isEmpty()) { it.remove(); continue; }
+            if (now < p.deadlineNanos) continue;
+            int pruned = 0;
+            for (int id : p.ids) {
+                try {
+                    if (lvl.getEntity(id) != null) {
+                        lvl.removeEntity(id, net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
+                        pruned++;
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (pruned > 0) {
+                SeamlessPortalsConstants.rlog(
+                    "[SEAMLESS LIVE ENT] Pruned {} stale mirrors in {} (not re-added by deadline)",
+                    pruned, lvl.dimension().identifier());
+            }
+            it.remove();
+        }
     }
 
     /**
@@ -1532,19 +1591,22 @@ public class PortalWorldManager {
         // dim's level by SeamlessClientTeleport.doVisualSwap's
         // oldLevel.removeEntity(player.getId(), ...) — so it's not in
         // this list. Still guard defensively.
+        // ADOPT, DON'T WIPE (2026-07-05, same treatment as promoteToMain): the
+        // demoted level's entities are kept and armed for adoption — the server's
+        // PortalEntityTracker cold-restarts the (now-remote) dim and re-streams
+        // RemoteEntityAddPayload for every live entity; RemoteEntityApplier
+        // adopts the existing instances (same id+uuid+type → update in place,
+        // no discard/recreate — no blink in the portal view, no construction
+        // stall). Entities not re-streamed by the deadline are pruned. Longer
+        // deadline than promote: the remote restream is drain-budgeted.
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         net.minecraft.client.player.LocalPlayer player = mc.player;
-        java.util.List<Integer> toRemove = new java.util.ArrayList<>();
-        int kept = 0;
+        java.util.Set<Integer> demotePending = new java.util.HashSet<>();
         for (net.minecraft.world.entity.Entity e : level.entitiesForRendering()) {
-            if (e == player) { kept++; continue; }
-            toRemove.add(e.getId());
+            if (e == player) continue;
+            demotePending.add(e.getId());
         }
-        for (int id : toRemove) {
-            try {
-                level.removeEntity(id, net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
-            } catch (Exception ignored) {}
-        }
+        armEntityAdoption(level, demotePending, 8_000L);
 
         // The demoted renderer was the vanilla main (driven by the shared
         // mc.levelExtractor); as a secondary it needs its OWN per-dimension
@@ -1581,8 +1643,8 @@ public class PortalWorldManager {
         renderers.put(dim, renderer);
         levels.put(dim, level);
         SeamlessPortalsConstants.rlog(
-            "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, created extractor, cleared {} stale entities (kept {})",
-            dim.identifier(), toRemove.size(), kept);
+            "[SEAMLESS PHASE2] Demoted renderer for {} — preserved meshes, created extractor, {} entities held for adoption",
+            dim.identifier(), demotePending.size());
     }
 
     /**
