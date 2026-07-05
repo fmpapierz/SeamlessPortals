@@ -37,6 +37,7 @@ public final class HandLightSmoother {
     private static float smoothedSky;
     private static long lastSampleNanos;
     private static boolean initialized;
+    private static Object lastDimension;
 
     /** @param targetPacked the live packed light (classic format) sampled at the player. */
     public static int smooth(int targetPacked) {
@@ -49,7 +50,29 @@ public final class HandLightSmoother {
             smoothedSky = targetSky;
             initialized = true;
             lastSampleNanos = now;
+            net.minecraft.client.multiplayer.ClientLevel lvl0 = net.minecraft.client.Minecraft.getInstance().level;
+            lastDimension = lvl0 == null ? null : lvl0.dimension();
             return targetPacked;
+        }
+
+        // Dimension change: the LIGHTMAP TEXTURE swaps instantly with the level (its
+        // sky factor / ambient / tints come from the camera attributeProbe, which the
+        // crossing flash-fix intentionally resets to the dest values — correct for the
+        // world, but it invalidates the MEANING of our smoothed coords). The nether's
+        // sky factor is ~0: sampling it at the carried-over sky-15 coordinate reads
+        // ~black in one frame — the "still instant" pop. Remap so perceived brightness
+        // carries across the swap: move it onto the BLOCK axis (present and monotonic
+        // in every dimension's lightmap) and clamp the sky coordinate to its new
+        // target so a dead sky column is never sampled above its real level. Then the
+        // normal fade walks from the carried brightness to the true dest levels.
+        // (Known approximation: an overworld-NIGHT sky level carries at full value —
+        // the moonlit-dim → warm-bright mismatch is accepted for now.)
+        net.minecraft.client.multiplayer.ClientLevel lvl = net.minecraft.client.Minecraft.getInstance().level;
+        Object dim = lvl == null ? null : lvl.dimension();
+        if (dim != null && !dim.equals(lastDimension)) {
+            smoothedBlock = Math.max(smoothedBlock, smoothedSky);
+            smoothedSky = Math.min(smoothedSky, targetSky);
+            lastDimension = dim;
         }
 
         float step = LEVELS_PER_SECOND * ((now - lastSampleNanos) / 1_000_000_000.0f);
