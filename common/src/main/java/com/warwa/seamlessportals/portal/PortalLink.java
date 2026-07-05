@@ -22,15 +22,16 @@ public class PortalLink {
     }
 
     /**
-     * Teleport landing pushed OUT past the destination portal plane so the entity emerges
-     * clear of the portal instead of embedded on it (which caused the OW↔nether teleport
-     * oscillation). Exit direction derives from the transformed source velocity. Both client
-     * (provisional swap) and server (authoritative) call this with the same inputs so they
-     * land at the same place. See {@link PortalTransform#applyExitClearance}.
+     * Teleport landing with OVERSHOOT-PRESERVING depth: the entity lands as far past the
+     * destination plane (on its yaw-facing exit side) as it was past the source plane at
+     * detection — a visually continuous crossing instead of the old fixed 0.5-block throw.
+     * Both client (provisional swap) and server (authoritative) call this with the same
+     * inputs so they land at the same place. See {@link PortalTransform#applyExitOvershoot}.
      */
     public Vec3 transformTeleportPosition(Vec3 sourcePos, float destYaw) {
         Vec3 destPos = PortalTransform.transformTeleportPoint(source, destination, source.getType(), sourcePos);
-        return PortalTransform.applyExitClearance(destination, destPos, destYaw);
+        double overshoot = PortalTransform.sourceDepthOvershoot(source, sourcePos);
+        return PortalTransform.applyExitOvershoot(destination, destPos, destYaw, overshoot);
     }
 
     public Vec3 transformVelocity(Vec3 velocity) {
@@ -38,7 +39,7 @@ public class PortalLink {
     }
 
     /** Yaw-preserving velocity transform for PLAYER teleports: the depth sign follows the
-     *  yaw-facing exit side (same rule as applyExitClearance's landing side), so the player
+     *  yaw-facing exit side (same rule as applyExitOvershoot's landing side), so the player
      *  keeps moving the way they face instead of drifting back toward the portal. */
     public Vec3 transformVelocityFacing(Vec3 velocity, float destYaw) {
         return PortalTransform.transformVelocityFacing(source, destination, source.getType(), velocity, destYaw);

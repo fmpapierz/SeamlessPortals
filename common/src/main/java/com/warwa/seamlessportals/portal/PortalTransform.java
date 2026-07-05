@@ -64,53 +64,59 @@ public final class PortalTransform {
     }
 
     /**
-     * Distance (blocks) a teleported entity is pushed OUT past the destination portal
-     * plane along the exit/travel direction, so it emerges clear of the portal instead of
-     * embedded ON it. Set to 0 to disable the push (restores the old on-plane landing).
+     * OVERSHOOT-PRESERVING landing (2026-07-05, replaces the fixed 0.5-block exit
+     * clearance): the landing depth past the destination plane MIRRORS how far the
+     * entity was past the source plane at detection — cross 0.03 past the source
+     * plane, land 0.03 past the dest plane. Because the portal window's parallax is
+     * a 1:1 translation ({@code transformPoint}), this makes the crossing visually
+     * CONTINUOUS: what you saw at distance d through the window is at distance d
+     * after the swap. The old constant 0.5 threw the player ~0.45 blocks forward on
+     * every crossing (the user-visible "jumps me to a further position").
      *
-     * <p>Root bug this fixes: crossing is detected by PLANE-crossing, so at the crossing
-     * instant the source-relative depth is ≈0; {@link #transformTeleportPoint} negates that
-     * (~0) and the entity lands exactly on the destination portal plane. Sitting on the
-     * plane, the entity's very next movement re-straddles it → instant re-cross (the OW↔nether
-     * teleport oscillation). IP avoids this by transforming the entity's already-overshot
-     * current position; we push by a small explicit clearance instead.
+     * <p>{@code MIN}: never land exactly on the plane (float-noise re-cross safety)
+     * and stay past the camera near-plane (~0.05) so an instant 180° turn renders
+     * the dest portal window cleanly. Binds only at high fps (typical per-frame
+     * detection overshoot at walking speed is 0.03-0.07) — a ≤5 cm remap,
+     * imperceptible. {@code MAX}: a pathological late detection (stalled frame,
+     * server-side lag) must not land the entity deep past the portal where the
+     * clear exit area is no longer guaranteed; 0.5 = the old clearance behaviour.
+     *
+     * <p>Safety context: landing this close to the plane is only safe with the full
+     * crossing stack in place — plane-crossing segment detection with its baseline
+     * reset at the swap (the landing itself is never a segment), swapSeq-ordered
+     * reconciles (ACK-only), and tolerant vanilla teleport-packet application. The
+     * 0.5 clearance predates all of that hardening.
      */
-    public static final double TELEPORT_EXIT_CLEARANCE = 0.5;
+    public static final double MIN_EXIT_OVERSHOOT = 0.08;
+    public static final double MAX_EXIT_OVERSHOOT = 0.5;
+
+    /** |depth past the source portal plane| of a source-dim position (the crossing overshoot). */
+    public static double sourceDepthOvershoot(PortalInfo source, Vec3 sourcePos) {
+        Vec3 offset = sourcePos.subtract(source.getCenter());
+        LocalCoords local = toLocalCoords(source.getAxis(), offset);
+        return Math.abs(local.depth());
+    }
 
     /**
-     * Push a teleport landing OUT of the destination portal along its depth axis, in the
-     * direction the ALREADY-TRANSFORMED velocity points (the exit/travel direction), so the
-     * entity emerges clear of the portal plane rather than embedded on it.
-     *
-     * <p>The exit SIGN is taken from {@code destVel}, NOT from a static portal normal:
-     * {@link PortalInfo#computeNormal()} is direction-agnostic (always +Z/+X regardless of
-     * which face the entity entered), so using it would push the entity to the WRONG side for
-     * one of the two travel directions. The transformed velocity always points the way the
-     * entity is actually moving through the portal, so it is correct both ways.
+     * Place the landing exactly {@code overshoot} (clamped) past the destination portal
+     * plane on the side the entity is FACING, so pressing "forward" walks it AWAY —
+     * no immediate re-cross. The exit side must come from the yaw, NOT the velocity or
+     * {@code computeNormal} (direction-agnostic) — see {@link #exitDepthSign}. Width
+     * (lateral) + height are kept from the base transform, so the entity emerges at the
+     * same spot along/up the portal.
      *
      * <p>Depth-axis mapping mirrors {@link #fromLocalCoords}: dest axis X → depth is world Z;
      * dest axis Z → depth is world X.
      */
-    public static Vec3 applyExitClearance(PortalInfo destination, Vec3 destPos, float destYaw) {
-        double clearance = TELEPORT_EXIT_CLEARANCE;
-        if (clearance == 0.0) return destPos;
-        // OVERRIDE the depth coordinate (don't just nudge it): place the entity exactly
-        // `clearance` past the portal plane on the side it is FACING, so pressing "forward"
-        // walks it AWAY from the portal — no immediate re-cross. The exit side must come from
-        // the yaw, NOT the velocity: the transform preserves yaw but NEGATES velocity depth, so
-        // they point opposite ways; placing on the velocity side leaves the entity FACING the
-        // portal → "move forward → teleport again" (observed). And NOT from computeNormal (it is
-        // direction-agnostic). Width (lateral) + height are kept from the base transform, so the
-        // entity emerges at the same spot along/up the portal, just cleanly in front of it.
-        // MC yaw: 0=+Z, 90=-X, 180=-Z, 270=+X → forward = (-sin(yaw), 0, cos(yaw)).
+    public static Vec3 applyExitOvershoot(PortalInfo destination, Vec3 destPos, float destYaw, double overshoot) {
+        double depth = Math.max(MIN_EXIT_OVERSHOOT, Math.min(MAX_EXIT_OVERSHOOT, overshoot));
         Vec3 center = destination.getCenter();
+        double sign = exitDepthSign(destination.getAxis(), destYaw);
         if (destination.getAxis() == Direction.Axis.X) {
             // axis X → portal spans X, depth (perpendicular) is world Z
-            double sign = exitDepthSign(destination.getAxis(), destYaw);
-            return new Vec3(destPos.x, destPos.y, center.z + sign * clearance);
+            return new Vec3(destPos.x, destPos.y, center.z + sign * depth);
         }
-        double sign = exitDepthSign(destination.getAxis(), destYaw);
-        return new Vec3(center.x + sign * clearance, destPos.y, destPos.z);
+        return new Vec3(center.x + sign * depth, destPos.y, destPos.z);
     }
 
     /**
