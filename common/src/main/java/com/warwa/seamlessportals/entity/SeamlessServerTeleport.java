@@ -146,7 +146,7 @@ public final class SeamlessServerTeleport {
         // teleport again"). Yaw, not velocity: the transform negates velocity depth but keeps
         // yaw, so the velocity side would face the portal.
         Vec3 destPos = link.transformTeleportPosition(srcPos, destYaw);
-        Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
+        Vec3 destVel = link.transformVelocityFacing(player.getDeltaMovement(), destYaw);
         float destPitch = player.getXRot();
 
         SeamlessPortalsConstants.LOGGER.info(

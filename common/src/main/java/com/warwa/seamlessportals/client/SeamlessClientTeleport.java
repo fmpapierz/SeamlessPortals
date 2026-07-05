@@ -189,7 +189,7 @@ public final class SeamlessClientTeleport {
         // FACES, so the provisional swap also places them in front of the dest portal facing
         // away — no instant re-cross.
         Vec3 destPos = link.transformTeleportPosition(srcPos, destYaw);
-        Vec3 destVel = link.transformVelocity(player.getDeltaMovement());
+        Vec3 destVel = link.transformVelocityFacing(player.getDeltaMovement(), destYaw);
         float destPitch = player.getXRot();
 
         com.warwa.seamlessportals.render.CrossingTracer.event(String.format(

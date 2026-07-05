@@ -22,6 +22,7 @@
     "client.GameRendererLightmapMixin",
     "client.GameRendererPortalPrepareMixin",
     "client.GameRendererFrameCrossingMixin",
+    "client.GameRendererHandLightMixin",
     "client.LevelRendererAccessorMixin",
     "client.LevelRendererBlockOutlineMixin",
     "client.HandleRespawnMixin",

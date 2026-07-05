@@ -37,6 +37,13 @@ public class PortalLink {
         return PortalTransform.transformVector(source, destination, source.getType(), velocity);
     }
 
+    /** Yaw-preserving velocity transform for PLAYER teleports: the depth sign follows the
+     *  yaw-facing exit side (same rule as applyExitClearance's landing side), so the player
+     *  keeps moving the way they face instead of drifting back toward the portal. */
+    public Vec3 transformVelocityFacing(Vec3 velocity, float destYaw) {
+        return PortalTransform.transformVelocityFacing(source, destination, source.getType(), velocity, destYaw);
+    }
+
     public float transformYaw(float sourceYaw) {
         return PortalTransform.transformYaw(source, destination, sourceYaw);
     }

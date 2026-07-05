@@ -104,23 +104,60 @@ public final class PortalTransform {
         // entity emerges at the same spot along/up the portal, just cleanly in front of it.
         // MC yaw: 0=+Z, 90=-X, 180=-Z, 270=+X → forward = (-sin(yaw), 0, cos(yaw)).
         Vec3 center = destination.getCenter();
-        double yawRad = Math.toRadians(destYaw);
         if (destination.getAxis() == Direction.Axis.X) {
-            // axis X → portal spans X, depth (perpendicular) is world Z; facing Z = cos(yaw)
-            double sign = Math.cos(yawRad) >= 0 ? 1.0 : -1.0;
+            // axis X → portal spans X, depth (perpendicular) is world Z
+            double sign = exitDepthSign(destination.getAxis(), destYaw);
             return new Vec3(destPos.x, destPos.y, center.z + sign * clearance);
         }
-        // axis Z → depth is world X; facing X = -sin(yaw)
-        double sign = -Math.sin(yawRad) >= 0 ? 1.0 : -1.0;
+        double sign = exitDepthSign(destination.getAxis(), destYaw);
         return new Vec3(center.x + sign * clearance, destPos.y, destPos.z);
+    }
+
+    /**
+     * Which side of the destination portal plane the entity FACES (the exit side), as the
+     * sign of the depth-axis world coordinate. Single source of truth shared by
+     * {@link #applyExitClearance} (landing side) and {@link #transformVelocityFacing}
+     * (velocity direction) — the two MUST agree or the entity lands on one side while
+     * moving toward the other (the observed ~0.02-block backward drift after crossing).
+     */
+    private static double exitDepthSign(Direction.Axis destAxis, float destYaw) {
+        double yawRad = Math.toRadians(destYaw);
+        if (destAxis == Direction.Axis.X) {
+            // axis X → depth is world Z; facing Z = cos(yaw)
+            return Math.cos(yawRad) >= 0 ? 1.0 : -1.0;
+        }
+        // axis Z → depth is world X; facing X = -sin(yaw)
+        return -Math.sin(yawRad) >= 0 ? 1.0 : -1.0;
     }
 
     public static Vec3 transformVector(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector) {
         // Same logic as transformPoint but without the center offset.
         // Depth negated: walking INTO source = walking OUT OF destination.
+        //
+        // NOTE (player teleports use transformVelocityFacing instead): this blanket depth
+        // negation is CONSISTENT with transformTeleportPoint's landing side (entity lands at
+        // −ε moving −depth = away from the plane), so projectiles/entities are fine. Player
+        // landings are OVERRIDDEN to the yaw-facing side by applyExitClearance, so a player's
+        // velocity must use the SAME yaw rule or it points back at the portal.
         LocalCoords local = toLocalCoords(source.getAxis(), vector);
         local = new LocalCoords(-local.depth(), local.width(), local.height());
         return fromLocalCoords(destination.getAxis(), local);
+    }
+
+    /**
+     * Velocity transform for YAW-PRESERVING teleports (players). Width/height map exactly
+     * like {@link #transformVector}, but the depth component's SIGN follows the yaw-facing
+     * exit side — the same rule {@link #applyExitClearance} uses for the landing — with the
+     * magnitude preserved. The player therefore keeps moving the way they face ("walking
+     * forward stays walking forward"); the old blanket negation sent them drifting BACKWARD
+     * toward the portal for the 1-2 ticks until input re-accelerated (XTRACE 2026-07-05:
+     * pl z reversing ~0.02 blocks right after the swap on a same-facing link).
+     */
+    public static Vec3 transformVelocityFacing(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector, float destYaw) {
+        LocalCoords local = toLocalCoords(source.getAxis(), vector);
+        double sign = exitDepthSign(destination.getAxis(), destYaw);
+        LocalCoords out = new LocalCoords(sign * Math.abs(local.depth()), local.width(), local.height());
+        return fromLocalCoords(destination.getAxis(), out);
     }
 
     public static float transformYaw(PortalInfo source, PortalInfo destination, float sourceYaw) {
