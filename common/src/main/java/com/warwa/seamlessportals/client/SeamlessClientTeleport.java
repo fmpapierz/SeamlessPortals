@@ -54,11 +54,14 @@ public final class SeamlessClientTeleport {
     private SeamlessClientTeleport() {}
 
     /**
-     * Set to {@code true} the frame we perform a client-first visual swap.
-     * Cleared when the server reconciliation packet arrives or the player
-     * steps out of any portal bounding box. Guards against re-entering the
-     * crossing detector on the next client tick while still inside the
-     * destination portal.
+     * Set to {@code true} the first time the client performs (or acknowledges)
+     * a visual swap — and STICKY by design: it is never reset. Its only
+     * consumers are HandleRespawnMixin's idempotent + stale branches, which
+     * additionally gate on {@code packet.shouldKeep((byte)2)} (crossing-style
+     * respawn), the 3s post-swap window, and the recent-swap history — do NOT
+     * add clearing logic without re-auditing those branches: a respawn
+     * processed after a clear would take the vanilla path and mislabel
+     * {@code ClientPacketListener.level} (the floating-lava bug class).
      */
     public static volatile boolean justTeleportedClient = false;
 
@@ -78,6 +81,57 @@ public final class SeamlessClientTeleport {
      * matches what we already did.
      */
     private static volatile ResourceKey<Level> lastClientSwapDim = null;
+
+    /** The last client-first swap's destination dim — the client's current VISUAL
+     *  dim whenever {@link #justTeleportedClient} is set. Used by HandleRespawnMixin
+     *  to recognize a STALE (superseded-crossing) respawn packet. */
+    public static ResourceKey<Level> getLastClientSwapDim() {
+        return lastClientSwapDim;
+    }
+
+    /**
+     * Recent visual-swap history (render thread only), newest first. Feeds
+     * {@link #wasSupersededSwapInto}: the discriminator that separates a
+     * SUPERSEDED-crossing respawn (the client itself swapped INTO the packet's
+     * dim and then swapped onward) from any other cross-dim teleport that merely
+     * arrives near a crossing (e.g. a /tp — vanilla sends the identical
+     * Respawn((byte)3), so the packet alone cannot tell them apart, and
+     * misclassifying a /tp as stale would strand the visuals in the old dim
+     * with no follow-up respawn to realign).
+     */
+    private static final java.util.ArrayDeque<RecentSwap> recentSwaps = new java.util.ArrayDeque<>();
+    private record RecentSwap(ResourceKey<Level> dest, long nanos) {}
+
+    private static void noteSwap(ResourceKey<Level> dest) {
+        lastClientSwapDim = dest;
+        long now = System.nanoTime();
+        recentSwaps.addFirst(new RecentSwap(dest, now));
+        while (recentSwaps.size() > 8) recentSwaps.removeLast();
+    }
+
+    /**
+     * True iff the client performed a visual swap INTO {@code dim} within the
+     * post-swap window AND has since swapped onward (the entry is not the
+     * newest) — i.e. a respawn packet for {@code dim} confirms a crossing the
+     * client has already superseded. CONSUMES the matched entry: each bounce
+     * through a dim justifies exactly ONE stale respawn, so a later /tp into a
+     * recently-bounced dim (indistinguishable on the wire) cannot re-match a
+     * spent entry and correctly takes the full promotion path.
+     */
+    public static boolean consumeSupersededSwapInto(ResourceKey<Level> dim) {
+        long now = System.nanoTime();
+        boolean newest = true;
+        for (java.util.Iterator<RecentSwap> it = recentSwaps.iterator(); it.hasNext(); ) {
+            RecentSwap s = it.next();
+            if (now - s.nanos() > 3_000_000_000L) break; // same 3s window as isInPostSwapWindow
+            if (!newest && s.dest().equals(dim)) {
+                it.remove();
+                return true;
+            }
+            newest = false;
+        }
+        return false;
+    }
 
     /**
      * Client-first path. We already know the link (detected locally); perform
@@ -227,7 +281,7 @@ public final class SeamlessClientTeleport {
             link.getSource().getPortalId().toString(), seq, exitSign));
 
         justTeleportedClient = true;
-        lastClientSwapDim = link.getDestination().getDimension();
+        noteSwap(link.getDestination().getDimension());
 
         // DIAG: count client-initiated crossings via the PerfTimers count column (off-thread).
         // In a "stand still after teleport" test, a rising clientCrossing count = residual auto-
@@ -328,7 +382,7 @@ public final class SeamlessClientTeleport {
             // matters for the server-first path (vanilla handleRespawn ran,
             // client-first never did, so performCrossing never set the flag).
             justTeleportedClient = true;
-            lastClientSwapDim = payloadDim;
+            noteSwap(payloadDim);
             return;
         }
 
@@ -356,9 +410,14 @@ public final class SeamlessClientTeleport {
         Optional<PortalLink> linkOpt = PortalManager.getClientInstance().getLinkForPortal(portalId);
         // Link may be unavailable on the client — still do the swap using
         // the payload's destDim. Demote/promote only needs the dim key.
-        doVisualSwap(payloadDim, destPos, destVel, payload.yaw(), payload.pitch());
+        boolean fallbackSwapped = doVisualSwap(payloadDim, destPos, destVel, payload.yaw(), payload.pitch());
         justTeleportedClient = true;
-        lastClientSwapDim = payloadDim;
+        // Only record the swap if it actually happened — a phantom entry would
+        // desync lastClientSwapDim from the visual dim (the invariant the stale-
+        // respawn discriminator relies on).
+        if (fallbackSwapped) {
+            noteSwap(payloadDim);
+        }
     }
 
     /**

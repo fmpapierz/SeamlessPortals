@@ -37,6 +37,15 @@ public class PortalDimensionManager {
     public static void loadChunkIntoRemoteLevel(ResourceKey<Level> dimension,
                                                   int chunkX, int chunkZ,
                                                   byte[] sectionData) {
+        // ACTIVE-DIM GUARD (mirrors RedirectedPacketApplier): a stale in-flight
+        // snapshot for the dim the player JUST entered must not re-create a
+        // duplicate level+renderer for the ACTIVE dim (promoteToMain removed the
+        // map entry; getOrCreateRenderer below would silently fabricate one,
+        // breaking the "active dim not in the levels map" invariant that the
+        // block-mirror and entity appliers rely on for their stale-payload drop).
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc.level != null && mc.level.dimension().equals(dimension)) return;
+
         // Get the SINGLE level from PortalWorldManager (creates level + renderer if needed)
         PortalWorldManager.getOrCreateRenderer(dimension);
         ClientLevel destLevel = PortalWorldManager.getLevel(dimension);

@@ -131,6 +131,16 @@ public abstract class HandleRespawnMixin {
     private boolean seamlessportals$alreadyClientSwapped = false;
 
     /**
+     * Non-null while handling a STALE (superseded-crossing) respawn: the cached
+     * secondary ClientLevel for the packet's dimension that {@code this.level}
+     * must be pointed at — the packet-stream framing follows the SERVER's dim
+     * while the visuals stay on the client's newer dim. Set in
+     * {@code beforeRespawn}'s stale branch, consumed by the new-ClientLevel
+     * redirect and the player-reuse helper, cleared in {@code afterRespawn}.
+     */
+    private ClientLevel seamlessportals$staleRespawnLevel = null;
+
+    /**
      * Detect seamless transitions: if we have pre-loaded chunks for the destination,
      * flag it so startWaitingForNewLevel can be skipped.
      *
@@ -140,9 +150,30 @@ public abstract class HandleRespawnMixin {
 
     @Inject(method = "handleRespawn", at = @At("HEAD"))
     private void seamlessportals$beforeRespawn(ClientboundRespawnPacket packet, CallbackInfo ci) {
+        Minecraft mc = Minecraft.getInstance();
+        // NETTY PRE-PASS GUARD (root cause of the 20:04:41 floating-lava misfire):
+        // handleRespawn is entered FIRST on the Netty thread; vanilla's
+        // ensureRunningOnSameThread then re-queues it to the main thread by THROWING —
+        // so this HEAD inject runs twice, and on the netty pass the @At("RETURN")
+        // cleanup (afterRespawn) never runs. Acting here off-thread both (a) mutated
+        // this.level/levelData + the transition flags concurrently with the render
+        // thread and (b) leaked alreadyClientSwapped=true into the NEXT handleRespawn
+        // execution — whose new-ClientLevel redirect then mislabeled the CURRENT
+        // mc.level as the packet's dimension. ClientPacketListener.level pointed at
+        // the overworld object while the server streamed nether packets; vanilla
+        // per-block updates (dimension-less) painted nether lava into the overworld
+        // at 1:1 aliased coords. Only the main-thread pass may touch our state.
+        if (!mc.isSameThread()) return;
+        // Defensive re-init: any Throwable escaping a previous handleRespawn body
+        // skips the @At("RETURN") cleanup (the same shape as the netty throw) —
+        // never let stale transition state leak into this pass.
+        seamlessportals$seamlessTransition = false;
+        seamlessportals$rendererWasPromoted = false;
+        seamlessportals$alreadyClientSwapped = false;
+        seamlessportals$pendingPromotion = null;
+        seamlessportals$staleRespawnLevel = null;
         seamlessportals$respawnStartNanos = System.nanoTime();
         ResourceKey<Level> destDim = packet.commonPlayerSpawnInfo().dimension();
-        Minecraft mc = Minecraft.getInstance();
 
         if (mc.player != null && mc.level != null) {
             ResourceKey<Level> currentDim = mc.level.dimension();
@@ -173,7 +204,13 @@ public abstract class HandleRespawnMixin {
             // run normally — the rest of its logic (setCameraEntity(null),
             // createPlayer, addEntity, startWaitingForNewLevel) is handled by
             // our existing redirects + the rendererWasPromoted flag.
+            // shouldKeep((byte)2) discriminates crossing teleports (server sends
+            // Respawn((byte)3), keep-all-data) from DEATH respawns (byte 0):
+            // justTeleportedClient is sticky, so without this a same-dim death
+            // respawn after any crossing would take the idempotent path and
+            // REUSE THE DEAD PLAYER instead of letting vanilla rebuild.
             if (currentDim.equals(destDim)
+                    && packet.shouldKeep((byte) 2)
                     && com.warwa.seamlessportals.client.SeamlessClientTeleport.justTeleportedClient) {
                 seamlessportals$alreadyClientSwapped = true;
                 seamlessportals$seamlessTransition = true;
@@ -187,6 +224,55 @@ public abstract class HandleRespawnMixin {
                     "[SEAMLESS TIMING] handleRespawn IDEMPOTENT: pre-swapped to {}, wrote this.level + this.levelData",
                     destDim.identifier());
                 return;
+            }
+
+            // STALE RESPAWN (superseded crossing): a double-crossing race — this
+            // respawn's crossing was already client-first swapped AND swapped BACK
+            // before the packet got processed (currentDim != destDim, but the
+            // client's latest swap targeted the current dim). The packet-stream
+            // framing must still advance to the packet's dim: every vanilla play
+            // packet between this respawn and the next one is dest-dim traffic, and
+            // block updates carry NO dimension — they write blindly to
+            // ClientPacketListener.level. Mislabeling it paints nether blocks into
+            // the overworld (the floating-lava bug). So: point this.level at the
+            // CACHED dest level (the demoted secondary — it exists because the
+            // client crossed there and back), keep ALL visuals on the current dim,
+            // and let the imminent next respawn realign via the idempotent branch.
+            // The dest-dim traffic meanwhile lands in the very level the portal
+            // view renders — correct on both counts.
+            // Guards: shouldKeep((byte)2) = crossing teleport, not a death respawn
+            // (a cross-dim DEATH respawn must take the full vanilla path — no later
+            // respawn would come to realign the visuals); post-swap window = a
+            // superseded crossing's respawn always arrives within ~RTT of the swap;
+            // consumeSupersededSwapInto = the client ITSELF swapped into destDim and
+            // has since swapped onward — the discriminator a /tp or other server-
+            // initiated cross-dim teleport (identical Respawn((byte)3) on the wire)
+            // does not satisfy, so those take the full promotion path and swap the
+            // visuals for real. CONSUMING: each bounce entry matches exactly one
+            // respawn, so even a /tp INTO a just-bounced dim only misfires if it
+            // beats that bounce's own respawn — which then realigns everything.
+            if (com.warwa.seamlessportals.client.SeamlessClientTeleport.justTeleportedClient
+                    && packet.shouldKeep((byte) 2)
+                    && com.warwa.seamlessportals.client.SeamlessClientTeleport.isInPostSwapWindow()
+                    && !currentDim.equals(destDim)
+                    && currentDim.equals(
+                        com.warwa.seamlessportals.client.SeamlessClientTeleport.getLastClientSwapDim())
+                    && com.warwa.seamlessportals.client.SeamlessClientTeleport
+                        .consumeSupersededSwapInto(destDim)) {
+                ClientLevel cached = PortalWorldManager.getLevel(destDim);
+                if (cached != null) {
+                    seamlessportals$staleRespawnLevel = cached;
+                    seamlessportals$alreadyClientSwapped = true;  // setLevel skip + player reuse
+                    seamlessportals$seamlessTransition = true;    // loading-screen skip + afterRespawn cleanup
+                    seamlessportals$rendererWasPromoted = true;   // camera-null elide + removed-flag clear
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS TIMING] handleRespawn STALE: superseded crossing → this.level follows packet dim {} (visuals stay {})",
+                        destDim.identifier(), currentDim.identifier());
+                    return;
+                }
+                SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS TIMING] handleRespawn STALE but no cached level for {} — falling through to promotion path",
+                    destDim.identifier());
             }
 
             boolean dimensionChanged = destDim != currentDim;
@@ -236,17 +322,53 @@ public abstract class HandleRespawnMixin {
             int seaLevel) {
 
         if (seamlessportals$alreadyClientSwapped) {
-            // Client-first path: SeamlessClientTeleport.performCrossing
-            // already promoted the cached ClientLevel to mc.level. Returning
-            // mc.level here tells vanilla handleRespawn to use the SAME
-            // instance, so ClientPacketListener.level ends up pointed at our
-            // already-swapped level (no fresh allocation, no allChanged(),
-            // no mesh loss). Compiled chunk meshes stay alive.
             Minecraft mc = Minecraft.getInstance();
-            SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS RENDERER-SWAP] alreadyClientSwapped → return existing mc.level for {}",
-                dimension.identifier());
-            return mc.level;
+            // STALE respawn (superseded crossing): the stream framing must follow
+            // the PACKET's dim — hand vanilla the cached secondary level for it,
+            // never mc.level (which is on the client's newer dim). Dim-verified:
+            // a leaked/stale field must never reintroduce the mislabel.
+            if (seamlessportals$staleRespawnLevel != null
+                    && seamlessportals$staleRespawnLevel.dimension().equals(dimension)) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS RENDERER-SWAP] STALE respawn → return cached secondary level for {}",
+                    dimension.identifier());
+                return seamlessportals$staleRespawnLevel;
+            }
+            if (seamlessportals$staleRespawnLevel != null) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS RENDERER-SWAP] staleRespawnLevel is {} ≠ packet {} — discarding it",
+                    seamlessportals$staleRespawnLevel.dimension().identifier(), dimension.identifier());
+                seamlessportals$staleRespawnLevel = null;
+            }
+            // DIMENSION VERIFY (belt-and-braces for the 20:04:41 class of bug):
+            // returning mc.level is only ever correct when it IS the packet's dim.
+            // A mismatch here means a flag leak/race — mislabeling this.level would
+            // route the server's dest-dim packet stream (incl. dimension-less block
+            // updates) into the wrong level. Resolve BY DIMENSION instead, with no
+            // promotion side effects (setLevel stays skipped → visuals untouched):
+            // the cached secondary if present, else a vanilla fresh level.
+            if (mc.level != null && !mc.level.dimension().equals(dimension)) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    "[SEAMLESS RENDERER-SWAP] alreadyClientSwapped but mc.level is {} ≠ packet {} — "
+                        + "refusing the mislabel, resolving by dimension",
+                    mc.level.dimension().identifier(), dimension.identifier());
+                ClientLevel byDim = PortalWorldManager.getLevel(dimension);
+                if (byDim != null) return byDim;
+                return new ClientLevel(connection, levelData, dimension, dimensionType,
+                    serverChunkRadius, serverSimulationDistance, levelExtractor,
+                    isDebug, seed, seaLevel);
+            } else {
+                // Client-first path: SeamlessClientTeleport.performCrossing
+                // already promoted the cached ClientLevel to mc.level. Returning
+                // mc.level here tells vanilla handleRespawn to use the SAME
+                // instance, so ClientPacketListener.level ends up pointed at our
+                // already-swapped level (no fresh allocation, no allChanged(),
+                // no mesh loss). Compiled chunk meshes stay alive.
+                SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAMLESS RENDERER-SWAP] alreadyClientSwapped → return existing mc.level for {}",
+                    dimension.identifier());
+                return mc.level;
+            }
         }
         if (seamlessportals$seamlessTransition) {
             Minecraft mc = Minecraft.getInstance();
@@ -514,6 +636,28 @@ public abstract class HandleRespawnMixin {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer oldPlayer = mc.player;
         if (oldPlayer == null) return null;
+        // STALE respawn: the player's VISUAL dim is ahead of this packet — its
+        // level field already points at the newer (current) dim and must NOT be
+        // dragged back to the superseded dest. Reuse the instance untouched; the
+        // imminent next respawn's idempotent pass confirms the current dim.
+        if (seamlessportals$staleRespawnLevel != null) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PLAYER-REUSE] Preserved LocalPlayer (id={}) — stale respawn, level untouched ({})",
+                oldPlayer.getId(), oldPlayer.level().dimension().identifier());
+            return oldPlayer;
+        }
+        // Dim-verify (defensive-path guard): only re-point the player's level
+        // when the destination IS the visual level — on the dimension-verify
+        // fallback path destLevel is a by-dim-resolved secondary while visuals
+        // stay put; dragging the player's level field there would make
+        // collision/sound resolve against a non-rendered level.
+        if (mc.level != null && !destLevel.dimension().equals(mc.level.dimension())) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                "[SEAMLESS PLAYER-REUSE] Preserved LocalPlayer (id={}) — dest {} ≠ visual {}, level untouched",
+                oldPlayer.getId(), destLevel.dimension().identifier(),
+                mc.level.dimension().identifier());
+            return oldPlayer;
+        }
         // Re-point the player's level field to the destination level. The
         // old level still contains the player in its storage + players list;
         // that's tolerated because the old level has been demoted to dormant
@@ -526,6 +670,40 @@ public abstract class HandleRespawnMixin {
             "[SEAMLESS PLAYER-REUSE] Preserved LocalPlayer (id={}) across dim change → {}",
             oldPlayer.getId(), destLevel.dimension().identifier());
         return oldPlayer;
+    }
+
+    /**
+     * STALE-pass guard for vanilla's {@code this.level.addEntity(newPlayer)}
+     * (ClientPacketListener.java:1322). On a stale respawn {@code this.level} is
+     * the superseded dim's SECONDARY level and {@code newPlayer} is the live,
+     * visually-elsewhere reused LocalPlayer — registering it there would (a)
+     * rebind the player's single levelCallback to the secondary's section
+     * storage, (b) add it to that level's tickingEntities (players are
+     * always-ticking), double-ticking the local player via tickRemoteWorlds
+     * (double physics + duplicate move packets — violates the crossing rule
+     * that nothing may disturb rotation/velocity), and (c) arm a
+     * DISCARDED-flag trap for the dim's next promotion (its addEntity's
+     * internal removeEntity would flag the live player AFTER doVisualSwap's
+     * unsetRemoved — a frozen player). The packet framing does not need the
+     * player inside the dest storage; skip the add entirely.
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/multiplayer/ClientLevel;addEntity(Lnet/minecraft/world/entity/Entity;)V"))
+    private void seamlessportals$skipStaleAddEntity(ClientLevel level, Entity entity) {
+        // Symmetric condition (covers the stale branch AND the defensive
+        // dimension-verify fallbacks, where staleRespawnLevel was discarded):
+        // never register the LIVE local player into a level that is not the
+        // visual one.
+        Minecraft mc = Minecraft.getInstance();
+        if (seamlessportals$staleRespawnLevel != null
+                || (entity == mc.player && level != mc.level)) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS PLAYER-REUSE] Skip addEntity of the live player into non-visual level {}",
+                level.dimension().identifier());
+            return;
+        }
+        level.addEntity(entity);
     }
 
     /**
@@ -609,10 +787,16 @@ public abstract class HandleRespawnMixin {
         // into a non-promoted transition later.
         boolean didPromote = seamlessportals$rendererWasPromoted;
         boolean didClientSwap = seamlessportals$alreadyClientSwapped;
+        boolean didStale = seamlessportals$staleRespawnLevel != null;
         seamlessportals$rendererWasPromoted = false;
         seamlessportals$pendingPromotion = null;
         seamlessportals$alreadyClientSwapped = false;
-        if (didClientSwap) {
+        seamlessportals$staleRespawnLevel = null;
+        if (didStale) {
+            SeamlessPortalsConstants.LOGGER.info(
+                "[SEAMLESS TIMING] handleRespawn STALE finished ({}ms) — stream framing follows packet dim, visuals untouched",
+                (System.nanoTime() - seamlessportals$respawnStartNanos) / 1_000_000);
+        } else if (didClientSwap) {
             SeamlessPortalsConstants.LOGGER.info(
                 "[SEAMLESS TIMING] handleRespawn IDEMPOTENT finished ({}ms) — client-first swap still intact",
                 (System.nanoTime() - seamlessportals$respawnStartNanos) / 1_000_000);

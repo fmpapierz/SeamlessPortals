@@ -57,6 +57,12 @@ public final class BlockUpdateMirrorBuffer {
             for (Map.Entry<ResourceKey<Level>, Long2IntLinkedOpenHashMap> dimEntry : playerEntry.getValue().entrySet()) {
                 Long2IntLinkedOpenHashMap updates = dimEntry.getValue();
                 if (updates.isEmpty()) continue;
+                // Dim-flip re-check: the batch was buffered while the player watched
+                // this dim from OUTSIDE; if they crossed INTO it earlier this tick,
+                // the mirror is obsolete — they now receive these blocks through the
+                // vanilla channel. (The client would also drop it — its levels map
+                // has no entry for the active dim — but don't rely on that invariant.)
+                if (player.level().dimension().equals(dimEntry.getKey())) continue;
                 List<Long> positions = new ArrayList<>(updates.size());
                 List<Integer> stateIds = new ArrayList<>(updates.size());
                 for (Long2IntLinkedOpenHashMap.Entry e : updates.long2IntEntrySet()) {
