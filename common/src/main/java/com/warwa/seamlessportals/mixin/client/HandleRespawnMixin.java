@@ -261,6 +261,15 @@ public abstract class HandleRespawnMixin {
                         .consumeSupersededSwapInto(destDim)) {
                 ClientLevel cached = PortalWorldManager.getLevel(destDim);
                 if (cached != null) {
+                    // The secondary's bounded cache (radius portalRenderDistance=8,
+                    // storage 11) must accept the dest-dim deliveries of the stale
+                    // window — a send discarded client-side but counted delivered
+                    // server-side becomes a false "held" seed on the next crossing
+                    // (the walking-limbo mechanism in miniature). No-op on the
+                    // unbounded store and when already sized.
+                    cached.getChunkSource().updateViewRadius(
+                        ((ClientPacketListenerAccessorMixin) (Object) this)
+                            .seamlessportals$getServerChunkRadius());
                     seamlessportals$staleRespawnLevel = cached;
                     seamlessportals$alreadyClientSwapped = true;  // setLevel skip + player reuse
                     seamlessportals$seamlessTransition = true;    // loading-screen skip + afterRespawn cleanup
@@ -447,6 +456,15 @@ public abstract class HandleRespawnMixin {
             .seamlessportals$setLevelRenderer(promotion.renderer());
         mc.level = level;
         seamlessportals$rendererWasPromoted = true;
+
+        // Resize the promoted level's chunk cache to the server view distance —
+        // same latent-limbo fix as doVisualSwap step 1 (a mod-created secondary's
+        // bounded cache radius is portalRenderDistance=8; as the ACTIVE level it
+        // would silently discard every vanilla send beyond storage 11, unhealable
+        // because the chunks stay inside the tracking view). No-op on the
+        // unbounded SeamlessClientChunkMap.
+        level.getChunkSource().updateViewRadius(
+            ((ClientPacketListenerAccessorMixin) (Object) this).seamlessportals$getServerChunkRadius());
 
         // Phase B (2026-04-17): seed the promoted renderer's
         // {@code lastCameraSection*} bookkeeping fields to the section the
@@ -670,6 +688,33 @@ public abstract class HandleRespawnMixin {
             "[SEAMLESS PLAYER-REUSE] Preserved LocalPlayer (id={}) across dim change → {}",
             oldPlayer.getId(), destLevel.dimension().identifier());
         return oldPlayer;
+    }
+
+    /**
+     * Skip the input replacement on the REUSED player (same rationale as the
+     * attribute self-copy skips): vanilla's {@code newPlayer.input = new
+     * KeyboardInput(...)} makes sense for a fresh player, but on the reused
+     * instance it blanks all held keys for one tick (forcing a spurious
+     * EMPTY→held ServerboundPlayerInput resend and a fake jump edge on the
+     * next tick) at every crossing. The existing KeyboardInput keeps its
+     * held-key state; nothing else references the replaced object.
+     */
+    @Redirect(method = "handleRespawn",
+        at = @At(value = "FIELD",
+            target = "Lnet/minecraft/client/player/LocalPlayer;input:Lnet/minecraft/client/player/ClientInput;",
+            opcode = org.objectweb.asm.Opcodes.PUTFIELD))
+    private void seamlessportals$skipInputReplacementOnReuse(
+            LocalPlayer player, net.minecraft.client.player.ClientInput value) {
+        // The instanceof guard makes this safe even if a promoted transition ever
+        // ships a genuinely FRESH player: its field-initializer base ClientInput
+        // (whose tick() is a no-op — dead keyboard) would not satisfy it, so the
+        // fresh KeyboardInput still gets assigned.
+        if (seamlessportals$rendererWasPromoted
+                && player == Minecraft.getInstance().player
+                && player.input instanceof net.minecraft.client.player.KeyboardInput) {
+            return;
+        }
+        player.input = value;
     }
 
     /**

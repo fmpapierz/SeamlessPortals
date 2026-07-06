@@ -41,6 +41,7 @@
     "client.ClientPacketListenerAccessorMixin",
     "client.ClientPacketListenerAddEntityAdoptMixin",
     "client.ClientPacketListenerForgetGuardMixin",
+    "client.ClientPacketListenerLocalPlayerFallbackMixin",
     "client.ClientPacketListenerPositionInvoker",
     "client.ClientPacketListenerTeleportToleranceMixin",
     "client.NetherPortalUninteractableMixin",
@@ -58,6 +59,7 @@
   ],
   "mixins": [
     "ChunkMapResendSuppressMixin",
+    "EntityFlagsAccessor",
     "EntityMixin",
     "EntityLevelAccessorMixin",
     "ServerPlayerMixin",

@@ -27,4 +27,12 @@ public interface ClientPacketListenerAccessorMixin {
 
     @Accessor("level")
     void seamlessportals$setLevel(ClientLevel level);
+
+    /** The server's view distance as last told to this client (drives the vanilla
+     *  ClientChunkCache storage radius at level construction). Promotion of a
+     *  mod-created secondary level must resize its chunk cache to this — the
+     *  secondary was built at portalRenderDistance (default 8), and a smaller
+     *  storage silently discards every vanilla chunk send beyond it. */
+    @Accessor("serverChunkRadius")
+    int seamlessportals$getServerChunkRadius();
 }

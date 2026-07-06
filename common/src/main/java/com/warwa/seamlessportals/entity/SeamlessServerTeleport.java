@@ -223,6 +223,19 @@ public final class SeamlessServerTeleport {
 
         player.setDeltaMovement(destVel);
 
+        // FORCE A SHARED-FLAGS RESYNC (2026-07-06, the stuck-elytra companion fix):
+        // entity-data syncs are one-shot (packDirty clears dirtiness at send time),
+        // and around a crossing the client has a window where player-addressed
+        // SetEntityData packets can be lost (see
+        // ClientPacketListenerLocalPlayerFallbackMixin — which closes the delivery
+        // hole; this is the belt-and-braces healer). Re-dirtying the flags byte
+        // guarantees one authoritative resync per crossing, sent by the NEW dim's
+        // ServerEntity after the respawn packet — healing any prior divergence of
+        // fall-flying/sprint/sneak/fire in either direction.
+        net.minecraft.network.syncher.EntityDataAccessor<Byte> flagsId =
+            com.warwa.seamlessportals.mixin.EntityFlagsAccessor.seamlessportals$getSharedFlagsId();
+        player.getEntityData().set(flagsId, player.getEntityData().get(flagsId), true);
+
         // Block EntityMixin.tick fallback from re-detecting this crossing
         // on the next server tick while the player is still inside the dest
         // portal's bounding box.

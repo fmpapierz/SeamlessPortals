@@ -103,26 +103,41 @@ public class PortalChunkTracker {
         // (pruneAndSend's retainAll would do this next tick anyway).
         perDim.remove(newDim);
 
-        // 2. Seed the OLD dim's record with the player's vanilla view (Chebyshev
-        // square, one ring of safety margin) around their pre-teleport position:
-        // the client had all of it loaded, and demoteFromMain preserves the
-        // chunks. Without this, streaming the old dim (now visible back through
-        // the portal) restarted COLD at the 32/tick burst rate.
-        MinecraftServer server = player.level().getServer();
-        int viewDist = Math.min(player.requestedViewDistance(),
-            server != null ? server.getPlayerList().getViewDistance() : 10);
-        int seedRadius = Math.max(2, viewDist - 1);
-        net.minecraft.world.level.ChunkPos center = player.chunkPosition();
+        // 2. Seed the OLD dim's record with the chunks the client VERIFIABLY holds
+        // — vanilla's own held-set at this instant: in the player's tracking view
+        // AND not still pending in the ACK-throttled PlayerChunkSender (the exact
+        // isChunkTracked predicate, ChunkMap.java:227-229). demoteFromMain
+        // preserves these client-side, so re-entering the dim must not re-send
+        // them (the cold-restart burst this seeding exists to prevent).
+        //
+        // THE OLD BLIND SQUARE WAS THE WALKING-LIMBO ROOT CAUSE (2026-07-06): a
+        // Chebyshev radius-(VD-1) square claimed 3969 chunks "client-held"
+        // regardless of delivery. At VD 32 the sender ships ~9 chunks/tick
+        // ACK-gated, so a deep mid-distance band was still PENDING at every
+        // crossing — wiped silently by the dimension change, then stamped "held"
+        // by the seed, then its restart re-send CANCELLED one-shot by the armed
+        // suppression on the return crossing. Vanilla has no sent-ledger (in
+        // view ∧ not pending = held) and only re-marks a chunk after it fully
+        // EXITS the view (≥33 chunks away) and re-enters — so every falsely
+        // claimed chunk was a permanent void while the player walked inside the
+        // seed square: "terrain stops loading → limbo → new area only past
+        // ~500 blocks". Seeding facts instead of claims fixes it, and the
+        // tracking-view shape (a rounded disc) also kills the square-corner
+        // entries that outlived the restart and cancelled mid-walk sends.
         Set<ChunkPos> seeded = perDim.computeIfAbsent(oldDim, k -> new java.util.HashSet<>());
-        int added = 0;
-        for (int dx = -seedRadius; dx <= seedRadius; dx++) {
-            for (int dz = -seedRadius; dz <= seedRadius; dz++) {
-                if (seeded.add(new ChunkPos(center.x() + dx, center.z() + dz))) added++;
+        final int[] added = { 0 };
+        final int[] skippedPending = { 0 };
+        net.minecraft.server.network.PlayerChunkSender chunkSender = player.connection.chunkSender;
+        player.getChunkTrackingView().forEach(pos -> {
+            if (chunkSender.isPending(pos.pack())) {
+                skippedPending[0]++;
+                return;
             }
-        }
+            if (seeded.add(pos)) added[0]++;
+        });
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS CROSSING] Seeded {} client-held chunks of {} (radius {}) — no cold restart",
-            added, oldDim.identifier(), seedRadius);
+            "[SEAMLESS CROSSING] Seeded {} verifiably client-held chunks of {} ({} undelivered-pending excluded) — no cold restart",
+            added[0], oldDim.identifier(), skippedPending[0]);
     }
 
     /**
@@ -604,6 +619,9 @@ public class PortalChunkTracker {
 
     public void onPlayerDisconnect(UUID playerId) {
         sentChunks.remove(playerId);
+        // A leftover armed set from a crossing <60s before disconnect would
+        // cancel login-adjacent sends against a rejoining client holding nothing.
+        VANILLA_RESEND_SUPPRESS.remove(playerId);
     }
 
     public void clear() {

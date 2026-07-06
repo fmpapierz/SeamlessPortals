@@ -486,6 +486,23 @@ public final class SeamlessClientTeleport {
         mc.level = promotion.level();
         com.warwa.seamlessportals.render.CrossingTracer.event("SWAP level+renderer installed");
 
+        // Resize the promoted level's chunk cache to the SERVER view distance
+        // (2026-07-06, latent-limbo fix for the default config): a mod-created
+        // secondary is built with cache radius portalRenderDistance (default 8 →
+        // storage 11). Promotion makes it the ACTIVE level without vanilla's
+        // respawn ctor (which would have applied serverChunkRadius), and no
+        // SetChunkCacheRadius packet is sent on dimension change — so with the
+        // bounded vanilla cache every chunk send beyond 11 would be silently
+        // discarded ("Ignoring chunk since it's not in the view range") and,
+        // being inside the tracking view, NEVER resent. updateViewRadius
+        // migrates existing chunks into the bigger storage; on the unbounded
+        // SeamlessClientChunkMap it is a no-op.
+        if (mc.getConnection() != null) {
+            int serverRadius = ((com.warwa.seamlessportals.mixin.client.ClientPacketListenerAccessorMixin)
+                mc.getConnection()).seamlessportals$getServerChunkRadius();
+            mc.level.getChunkSource().updateViewRadius(serverRadius);
+        }
+
         // 2. Seed the promoted renderer's ViewArea center to the destination
         // section so the first vanilla repositionCamera is a no-op and doesn't
         // wipe ViewArea meshes (matches HandleRespawnMixin rationale:
