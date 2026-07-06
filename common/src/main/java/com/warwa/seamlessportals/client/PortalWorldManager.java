@@ -1990,6 +1990,7 @@ public class PortalWorldManager {
         levels.clear();
         extractors.clear();
         particleEngines.clear();
+        com.warwa.seamlessportals.render.PortalContextSwitch.resetPerDimRenderState();
         initialized = false;
     }
 }

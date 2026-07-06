@@ -243,9 +243,72 @@ public class PortalContextSwitch {
     private static volatile long promoteBridgeMinUntilNanos = 0L;
     private static volatile long promoteBridgeMaxUntilNanos = 0L;
 
+    /**
+     * Monotonic counter bumped each time the bridge is armed (i.e. each promotion).
+     * Lets {@code SectionOcclusionGraphPartialUpdateSkipMixin} scope its flood-skip
+     * to the FIRST post-promote rebuild only: the flood hazard is the demoted-era
+     * graph's accumulated propagation backlog, which the first completed rebuild
+     * discards wholesale — after that, partial updates are cheap AND are the
+     * graph's healing path (chunk-arrival releases + compile propagation), which
+     * must run while the player walks or the view oscillates between the bridge
+     * flood and a truncated graph (the post-return limbo-bands bug, 2026-07-06).
+     */
+    private static volatile long promoteBridgeGeneration = 0L;
+
+    public static long getPromoteBridgeGeneration() {
+        return promoteBridgeGeneration;
+    }
+
+    /**
+     * Per-dim smoothed dest-view fog radius (render thread only). Converges toward
+     * the graduated dest-scope radius at {@link #DEST_FOG_SMOOTH_CHUNKS_PER_SEC}
+     * so the hard 5/15-block scope steps read as a ~1.5s distance-fog fade instead
+     * of a pop. dt is clamped so a portal re-entering view after a long gap
+     * catches up gently rather than lurching.
+     */
+    private static final java.util.Map<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, float[]>
+        DEST_FOG_SMOOTH = new java.util.HashMap<>();
+    private static final java.util.Map<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, Long>
+        DEST_FOG_SMOOTH_NANOS = new java.util.HashMap<>();
+    private static final float DEST_FOG_SMOOTH_CHUNKS_PER_SEC = 8.0f;
+
+    /** Per-dim identity of the last delta-window set applied to the dest SOG (see the
+     *  finally-feed in doFboRender) — the cache double-buffers, so the state's set
+     *  references alternate per flip; identity equality means "extract did not flip
+     *  since we last applied" (skip, never re-apply a stale window). */
+    private static final java.util.Map<net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level>, Object>
+        LAST_APPLIED_DELTA_WINDOW = new java.util.HashMap<>();
+
+    /** World-exit cleanup for the per-dim render-smoothing/bookkeeping maps
+     *  (called from PortalWorldManager.cleanup): stale entries would make the first
+     *  portal view after rejoining fade from the previous world's radius and could
+     *  false-skip the first delta window on a fresh cache. */
+    public static void resetPerDimRenderState() {
+        DEST_FOG_SMOOTH.clear();
+        DEST_FOG_SMOOTH_NANOS.clear();
+        LAST_APPLIED_DELTA_WINDOW.clear();
+    }
+
+    private static int smoothedDestFogRadius(
+            net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dim, int targetRadius) {
+        long now = System.nanoTime();
+        float[] value = DEST_FOG_SMOOTH.computeIfAbsent(dim, d -> new float[] { targetRadius });
+        Long last = DEST_FOG_SMOOTH_NANOS.put(dim, now);
+        float dt = last == null ? 0f : Math.min(0.25f, (now - last) / 1.0e9f);
+        float maxStep = DEST_FOG_SMOOTH_CHUNKS_PER_SEC * dt;
+        float delta = targetRadius - value[0];
+        if (Math.abs(delta) <= maxStep) {
+            value[0] = targetRadius;
+        } else {
+            value[0] += Math.copySign(maxStep, delta);
+        }
+        return Math.max(2, Math.round(value[0]));
+    }
+
     /** Arm the post-promote flash-bridge (called from promoteToMain). */
     public static void armPromoteBridge() {
         long now = System.nanoTime();
+        promoteBridgeGeneration++;
         promoteBridgeMinUntilNanos = now + 1_000_000_000L; // always-bridge floor (~1s)
         // Bridge-until-rebuilt cap. Raised 8s→30s: the just-promoted dim's occlusion graph can
         // stay EMPTY well past 8s (the empty-rescue fires 50-86×/5s in the logs — the rebuilt
@@ -1388,8 +1451,18 @@ public class PortalContextSwitch {
         // SKY where the terrain stopped (user: "no distant fog, sky color where terrain stops").
         // Matching the fog to the loaded radius fades the terrain edge into distance fog (the
         // vanilla look) with no sky gap, and composes correctly if the load radius is later raised.
-        int destFogRadius = Math.max(2,
-            com.warwa.seamlessportals.client.PortalWorldManager.getDestScopeRadius(destDim));
+        //
+        // SMOOTHED (2026-07-06): the graduated radius steps HARD at the 5/15-block
+        // thresholds (IP parity: ChunkVisibility has no hysteresis; its smoothing is
+        // purely temporal — a ~3.9s unload grace + throttled re-send). Feeding the
+        // stepped value straight into fog snapped the dest view's fog end (e.g.
+        // 512→336 blocks crossing the 5-block line) — the user-visible "far chunks
+        // disappear when I step away from the portal" pop. Converge the fog radius
+        // toward the target over ~1.5s instead; the underlying chunks are retained
+        // client-side (pruneAndSend keeps the sent-union), so the fade is honest in
+        // both directions.
+        int destFogRadius = smoothedDestFogRadius(destDim, Math.max(2,
+            com.warwa.seamlessportals.client.PortalWorldManager.getDestScopeRadius(destDim)));
         FogData destFogData = fogRenderer.setupFog(
             virtualCamera,
             destFogRadius,
@@ -1466,7 +1539,48 @@ public class PortalContextSwitch {
                     //     occlusion-graph result is sparse/lagging for a just-fed
                     //     secondary level).
                     if (destExtractor != null) {
-                        destExtractor.extract(deltaTracker, virtualCamera, partialTick);
+                        // FEED THE DEST SOG'S CHUNK MODEL (2026-07-06, the "distant
+                        // chunks vanish + walking limbo bands after returning" root
+                        // cause). extract() reads AND FLIPS the dest ClientChunkCache's
+                        // added/removedLoadedChunks + empty-section delta sets into the
+                        // extractor's ChunkLoadingRenderState (LevelExtractor.java:
+                        // 136-142). Vanilla's ONLY consumer of those deltas is
+                        // LevelRenderer.render → sectionOcclusionGraph.update
+                        // (SectionOcclusionGraph.java:146-147) — which the stencil-
+                        // direct path NEVER runs for the dest renderer (we draw via
+                        // renderGroup). Without this, every portal-view frame DISCARDS
+                        // the demoted dim's chunk deltas: its SOG loadedChunks/
+                        // emptySections silently desync from the cache for the whole
+                        // away-stay, and the return crossing promotes a SOG whose
+                        // rebuild BFS parks at phantom holes.
+                        //
+                        // Applied in a FINALLY: extract() can throw AFTER the flip
+                        // (the createRegion loop is post-flip), and losing that window
+                        // silently would re-create the desync. The set-object IDENTITY
+                        // guard distinguishes windows (the cache double-buffers, so the
+                        // state's set references alternate per flip): if extract threw
+                        // BEFORE assigning fresh references, we see the same objects we
+                        // already applied and skip — never re-applying a stale
+                        // removed-set against a re-added chunk. Applying is idempotent
+                        // within a window (set addAll/remove; the empty-section removal
+                        // no-ops when already removed), so double-apply on the FBO
+                        // fallback path (destRenderer.render → sog.update) is safe too.
+                        try {
+                            destExtractor.extract(deltaTracker, virtualCamera, partialTick);
+                        } finally {
+                            net.minecraft.client.renderer.state.level.ChunkLoadingRenderState destDeltas =
+                                ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) destExtractor)
+                                    .seamlessportals$getLevelRenderState().chunkLoadingRenderState;
+                            if (LAST_APPLIED_DELTA_WINDOW.get(destDim) != destDeltas.addedLoadedChunks) {
+                                LAST_APPLIED_DELTA_WINDOW.put(destDim, destDeltas.addedLoadedChunks);
+                                net.minecraft.client.renderer.SectionOcclusionGraph destSog =
+                                    destRenderer.sectionOcclusionGraph();
+                                destSog.updateLoadedChunks(
+                                    destDeltas.addedLoadedChunks, destDeltas.removedLoadedChunks);
+                                destSog.updateEmptySections(
+                                    destDeltas.addedEmptySections, destDeltas.removedEmptySections);
+                            }
+                        }
                     }
                     // Diagnostic (gated, temporary): at render time mc.particleEngine
                     // is the dest engine — confirm it holds particles to draw and

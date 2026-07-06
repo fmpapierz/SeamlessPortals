@@ -143,6 +143,13 @@ public class StencilPortalRenderer {
                     && !mainFrustum.isVisible(portal.getBoundingBox().inflate(8.0))) continue;
             Optional<PortalLink> linkOpt = pm.getLinkForPortal(portal.getPortalId());
             if (linkOpt.isEmpty()) continue;
+            // SAME-DIM guard: a link whose destination is the ACTIVE dim would make
+            // the render path getOrCreateRenderer(activeDim) — fabricating a duplicate
+            // level+renderer for the active dimension and breaking the "active dim not
+            // in the levels map" invariant every dim-keyed applier relies on. Same-dim
+            // portal views need a dedicated path (IP renders them through the active
+            // renderer's own storage); until built, skip rather than corrupt.
+            if (linkOpt.get().getDestination().getDimension().equals(currentDim)) continue;
             groups.add(new RenderGroup(portal, linkOpt.get()));
         }
         if (groups.isEmpty()) return null;

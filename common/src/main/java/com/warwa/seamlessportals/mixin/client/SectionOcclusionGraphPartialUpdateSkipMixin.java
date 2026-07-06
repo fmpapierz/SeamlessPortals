@@ -41,24 +41,63 @@ import java.util.concurrent.Future;
 public abstract class SectionOcclusionGraphPartialUpdateSkipMixin {
 
     @Shadow private @Nullable Future<?> fullUpdateTask;
+    @Shadow private boolean needsFullUpdate;
+
+    /**
+     * Post-promote flood-skip scoping (2026-07-06, the limbo-bands fix): the flood
+     * hazard on the PROMOTED (main) SOG exists only until its FIRST post-promote
+     * rebuild completes — that rebuild discards the demoted-era graph whose
+     * propagation backlog is the multi-second flood. Subsequent rebuilds (vanilla's
+     * 8-block walk invalidations) run against fresh graphs where runPartialUpdate is
+     * cheap AND is the graph's only healing path (chunk-arrival releases + compile
+     * propagation). The old blanket 30s window suppressed that healing for the whole
+     * post-crossing walk: the view oscillated between the bridge flood and a
+     * truncated rebuilt graph — the "terrain vanishes in rolling bands" bug.
+     * Generation from PortalContextSwitch resets the latch at each promotion.
+     */
+    @org.spongepowered.asm.mixin.Unique
+    private long seamlessportals$lastBridgeGen = -1L;
+    @org.spongepowered.asm.mixin.Unique
+    private boolean seamlessportals$firstRebuildDone = false;
 
     @Inject(method = "runPartialUpdate", at = @At("HEAD"), cancellable = true, require = 0)
     private void seamlessportals$skipSyncFloodDuringPortalView(
             CameraRenderState camera, LongSet loadedExpectedChunks, CallbackInfo ci) {
+        if (!Minecraft.getInstance().isSameThread()) return;
+
+        long gen = PortalContextSwitch.getPromoteBridgeGeneration();
+        if (gen != this.seamlessportals$lastBridgeGen) {
+            this.seamlessportals$lastBridgeGen = gen;
+            this.seamlessportals$firstRebuildDone = false;
+        }
+        // needsFullUpdate==true here proves update():150 saw an IN-FLIGHT task (a
+        // done task would have been consumed by scheduleFullUpdate, which clears the
+        // flag, before runPartialUpdate) — treating it as in-flight closes the
+        // microsecond race where the async task completes between update()'s isDone
+        // read and ours, which would otherwise latch firstRebuildDone off the
+        // PREVIOUS era's rebuild and drain the demote-era queue un-gated.
+        // NOTE (useContinuousExtract=true, future Phase-3 path): this latch relies on
+        // promoteToMain's unconditional sog.invalidate() under the current
+        // useContinuousExtract=false — if that flag is ever flipped, pair the
+        // promotion with an explicit invalidate or the first-rebuild gate is defeated.
+        boolean taskInFlight = this.needsFullUpdate
+            || this.fullUpdateTask == null || !this.fullUpdateTask.isDone();
+        if (!taskInFlight) {
+            // Observed a completed rebuild since this promotion: the hazardous
+            // demoted-era propagation backlog is gone; partial updates are cheap
+            // incremental healing from here on.
+            this.seamlessportals$firstRebuildDone = true;
+        }
+
         // Skip the synchronous flood during a portal-view render (the secondary's
-        // bulk-loaded graph) AND during the post-promote bridge (the entered dim's
-        // first-frame main render, which floods on a big demoted overworld — the
-        // "small freeze"). In both cases the async scheduleFullUpdate still builds
+        // bulk-loaded graph) and, on the promoted main SOG, ONLY until its first
+        // post-promote rebuild lands. The async scheduleFullUpdate still builds
         // the graph off-thread; the bridge paints terrain via VisibleSectionDiscovery
         // meanwhile.
-        if ((PortalContextSwitch.isRenderingPortal || PortalContextSwitch.isPromoteBridgeActive())
-                && Minecraft.getInstance().isSameThread()
-                // Only skip while the async full rebuild is still in flight — that's
-                // when currentGraph still holds the huge bulk-load propagation seed
-                // that would flood. Once it completes, currentGraph is replaced with a
-                // fresh graph and the incremental runPartialUpdate is cheap again, so
-                // let it run (keeps occlusion current without re-flooding).
-                && (this.fullUpdateTask == null || !this.fullUpdateTask.isDone())) {
+        if ((PortalContextSwitch.isRenderingPortal
+                || (PortalContextSwitch.isPromoteBridgeActive()
+                    && !this.seamlessportals$firstRebuildDone))
+                && taskInFlight) {
             ci.cancel();
         }
     }
