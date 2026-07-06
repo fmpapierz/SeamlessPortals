@@ -218,7 +218,12 @@ public class ModPayloads {
      */
     public record ClientPortalCrossingPayload(
         String portalId,
-        int swapSeq
+        int swapSeq,
+        /* Crossing-direction sign on the source portal's depth axis (±1), from the
+         * client's detection segment. Keys the motion-continuous exit side on the
+         * server (the server's own position/velocity lag the crossing by a
+         * round-trip). The server sanitizes it and treats it as a hint. */
+        double exitDepthSign
     ) implements CustomPacketPayload {
         public static final Type<ClientPortalCrossingPayload> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "client_portal_crossing")
@@ -227,6 +232,7 @@ public class ModPayloads {
         public static final StreamCodec<FriendlyByteBuf, ClientPortalCrossingPayload> STREAM_CODEC = StreamCodec.composite(
             ByteBufCodecs.STRING_UTF8, ClientPortalCrossingPayload::portalId,
             ByteBufCodecs.VAR_INT, ClientPortalCrossingPayload::swapSeq,
+            ByteBufCodecs.DOUBLE, ClientPortalCrossingPayload::exitDepthSign,
             ClientPortalCrossingPayload::new
         );
 

@@ -28,9 +28,9 @@ import java.util.UUID;
  *       {@code EntityMixin.tick} server-side fallback detection (via
  *       {@link PortalTeleporter}). Does the cross-dim move AND sends
  *       {@link ModPayloads.ClientboundSeamlessMovePayload} back.</li>
- *   <li>{@link #handleClientInitiatedCrossing(ServerPlayer, String)} — packet
- *       entry point. Validates proximity + link, then calls
- *       {@link #performCrossing}.</li>
+ *   <li>{@link #handleClientInitiatedCrossing(ServerPlayer, String, int, double)} —
+ *       packet entry point. Validates proximity + link + the crossing-direction
+ *       hint, then calls {@link #performCrossing}.</li>
  * </ul>
  *
  * <p><b>Why we do NOT suppress {@code ClientboundRespawnPacket}.</b> An earlier
@@ -58,7 +58,7 @@ public final class SeamlessServerTeleport {
      * the portal link exists, then performs the server-side teleport.
      */
     public static void handleClientInitiatedCrossing(ServerPlayer player, String portalIdString,
-                                                     int swapSeq) {
+                                                     int swapSeq, double exitDepthSign) {
         if (player.isRemoved()) return;
 
         UUID portalId;
@@ -106,12 +106,25 @@ public final class SeamlessServerTeleport {
             return;
         }
 
-        performCrossing(player, link, swapSeq);
+        // Sanitize the client's crossing-direction hint: anything that is not a clean
+        // ±1 (0, NaN, corrupt) falls back to server-side derivation. A wrong sign from
+        // a hostile client only moves that client to the other side of the dest portal
+        // plane (within the 8-block-validated area) — no privilege gained.
+        double exitSign = Math.signum(exitDepthSign);
+        if (exitSign == 0.0 || Double.isNaN(exitSign)) {
+            exitSign = link.crossingDepthSignFromState(player.position(), player.getKnownMovement());
+        }
+
+        performCrossing(player, link, swapSeq, exitSign);
     }
 
-    /** Server-initiated crossings (no client seq to echo): swapSeq = -1, always honored. */
+    /** Server-initiated crossings (no client seq to echo): swapSeq = -1, always honored.
+     *  No detection segment exists on this path — derive the crossing direction from the
+     *  client-reported movement ({@code getKnownMovement}; server player physics is not
+     *  simulated, so {@code getDeltaMovement} is stale), then the position's plane side. */
     public static void performCrossing(ServerPlayer player, PortalLink link) {
-        performCrossing(player, link, -1);
+        double exitSign = link.crossingDepthSignFromState(player.position(), player.getKnownMovement());
+        performCrossing(player, link, -1, exitSign);
     }
 
     /**
@@ -124,8 +137,12 @@ public final class SeamlessServerTeleport {
      *
      * @param swapSeq the client's crossing sequence number to echo in the reconcile
      *                ({@code -1} = server-initiated; the client always honors it)
+     * @param exitDepthSign crossing-direction sign on the source depth axis (±1) —
+     *                from the client's detection segment (payload) or the server-side
+     *                fallback derivation; keys the motion-continuous exit side + velocity
      */
-    public static void performCrossing(ServerPlayer player, PortalLink link, int swapSeq) {
+    public static void performCrossing(ServerPlayer player, PortalLink link, int swapSeq,
+                                       double exitDepthSign) {
         ResourceKey<Level> destDim = link.getDestination().getDimension();
         MinecraftServer server = player.level().getServer();
         if (server == null) return;
@@ -140,22 +157,26 @@ public final class SeamlessServerTeleport {
 
         Vec3 srcPos = player.position();
         float destYaw = link.transformYaw(player.getYRot());
-        // Landing is placed `clearance` PAST the dest portal on the side the player FACES
-        // (destYaw), so they emerge cleanly in front of it and pressing forward walks AWAY —
-        // no immediate re-cross (the OW↔nether oscillation / "land embedded, walk forward,
-        // teleport again"). Yaw, not velocity: the transform negates velocity depth but keeps
-        // yaw, so the velocity side would face the portal.
-        Vec3 destPos = link.transformTeleportPosition(srcPos, destYaw);
-        Vec3 destVel = link.transformVelocityFacing(player.getDeltaMovement(), destYaw);
+        // Landing is placed `overshoot` PAST the dest portal on the side the crossing
+        // MOTION continues toward (exitDepthSign — client detection segment via the
+        // payload, or the server-side fallback), moving away from the plane — no
+        // immediate re-cross from either entry direction. The old yaw-keyed side
+        // assumed face-first crossings and flipped backward/strafe walkers to a
+        // forward-walker exit (plus wrong-side landings that ping-ponged under held
+        // input). Velocity is the plain same-sign mapping, so it agrees with the
+        // landing side by construction.
+        Vec3 destPos = link.transformTeleportPosition(srcPos, exitDepthSign);
+        Vec3 destVel = link.transformVelocityMotion(player.getKnownMovement());
         float destPitch = player.getXRot();
 
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS SERVER-CROSSING] {} {} -> {} in {} (portal {})",
+            "[SEAMLESS SERVER-CROSSING] {} {} -> {} in {} (portal {}, exitSign {})",
             player.getName().getString(),
             String.format("(%.1f,%.1f,%.1f)", srcPos.x, srcPos.y, srcPos.z),
             String.format("(%.1f,%.1f,%.1f)", destPos.x, destPos.y, destPos.z),
             destDim.identifier(),
-            link.getSource().getPortalId().toString());
+            link.getSource().getPortalId().toString(),
+            String.format("%+.0f", exitDepthSign));
 
         // NB: vanilla's ServerPlayer.teleportTo WILL send ClientboundRespawnPacket.
         // We deliberately let it through — fully suppressing the packet breaks the

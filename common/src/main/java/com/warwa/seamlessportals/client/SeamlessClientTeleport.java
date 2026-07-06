@@ -28,10 +28,12 @@ import java.util.UUID;
  *
  * <p>Two entry points:
  * <ul>
- *   <li>{@link #performCrossing(PortalLink)} — called synchronously from
- *       {@code LocalPlayerMixin.tick} HEAD the instant the client detects
- *       its own crossing of a portal plane. Does the visual swap (promote
- *       cached renderer, re-level player, demote outgoing) and sends
+ *   <li>{@link #performCrossing(PortalLink, Vec3, Vec3)} — called synchronously
+ *       from {@code LocalPlayerMixin.tick} HEAD (or the per-frame camera
+ *       detector) the instant the client detects its own crossing of a portal
+ *       plane, with the detection movement segment (its depth sign = the
+ *       crossing direction). Does the visual swap (promote cached renderer,
+ *       re-level player, demote outgoing) and sends
  *       {@link ModPayloads.ClientPortalCrossingPayload} to the server.</li>
  *   <li>{@link #handleServerReconcile} — called when
  *       {@link ModPayloads.ClientboundSeamlessMovePayload} arrives from the
@@ -174,27 +176,38 @@ public final class SeamlessClientTeleport {
             linkOpt.get().getSource().getOrigin().toShortString(),
             last.x, last.y, last.z, current.x, current.y, current.z));
         com.warwa.seamlessportals.render.CrossingTracer.armDump();
-        performCrossing(linkOpt.get());
+        performCrossing(linkOpt.get(), last, current);
         lastCameraPos = null;
     }
 
-    public static boolean performCrossing(PortalLink link) {
+    /**
+     * @param moveFrom start of the movement segment that produced the crossing detection
+     * @param moveTo   end of that segment (past the source plane) — the segment's depth
+     *                 sign is the crossing DIRECTION, which keys the exit side + velocity
+     *                 (motion-continuous, any entry direction), replacing the old yaw rule
+     *                 that flipped backward/strafe walkers to a forward-walker exit
+     */
+    public static boolean performCrossing(PortalLink link, Vec3 moveFrom, Vec3 moveTo) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null) return false;
 
         Vec3 srcPos = player.position();
         float destYaw = link.transformYaw(player.getYRot());
-        // Exit clearance (same as the server's authoritative landing) on the side the player
-        // FACES, so the provisional swap also places them in front of the dest portal facing
-        // away — no instant re-cross.
-        Vec3 destPos = link.transformTeleportPosition(srcPos, destYaw);
-        Vec3 destVel = link.transformVelocityFacing(player.getDeltaMovement(), destYaw);
+        // Exit overshoot (same as the server's authoritative landing) on the side the
+        // crossing MOTION continues toward, moving away from the plane — no instant
+        // re-cross from either entry direction. The sign travels to the server in the
+        // crossing payload so both sides land identically (client-authoritative crossing,
+        // IP parity — IP's teleport packet carries the client's eye pos the same way).
+        double exitSign = link.crossingDepthSign(moveFrom, moveTo);
+        Vec3 destPos = link.transformTeleportPosition(srcPos, exitSign);
+        Vec3 destVel = link.transformVelocityMotion(player.getDeltaMovement());
         float destPitch = player.getXRot();
 
         com.warwa.seamlessportals.render.CrossingTracer.event(String.format(
-            "PERFORM src=(%.2f,%.2f,%.2f) dest=(%.2f,%.2f,%.2f) yaw=%.1f",
-            srcPos.x, srcPos.y, srcPos.z, destPos.x, destPos.y, destPos.z, destYaw));
+            "PERFORM src=(%.2f,%.2f,%.2f) dest=(%.2f,%.2f,%.2f) yaw=%.1f exitSign=%+.0f vel=(%.3f,%.3f,%.3f)",
+            srcPos.x, srcPos.y, srcPos.z, destPos.x, destPos.y, destPos.z, destYaw,
+            exitSign, destVel.x, destVel.y, destVel.z));
 
         boolean swapped = doVisualSwap(link.getDestination().getDimension(),
             destPos, destVel, destYaw, destPitch);
@@ -206,9 +219,12 @@ public final class SeamlessClientTeleport {
 
         // Tell the server to perform its authoritative teleport. Using the
         // source portal id so the server can validate + look up the same
-        // PortalLink on its side; the seq comes back in the reconcile.
+        // PortalLink on its side; the seq comes back in the reconcile. The
+        // exit sign rides along because only the client has the detection
+        // segment — the server's own position/velocity lag the crossing by a
+        // round-trip (and server player physics isn't simulated).
         PlatformHelper.getInstance().sendToServer(new ModPayloads.ClientPortalCrossingPayload(
-            link.getSource().getPortalId().toString(), seq));
+            link.getSource().getPortalId().toString(), seq, exitSign));
 
         justTeleportedClient = true;
         lastClientSwapDim = link.getDestination().getDimension();

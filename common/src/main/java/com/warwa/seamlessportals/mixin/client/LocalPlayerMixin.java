@@ -80,7 +80,7 @@ public abstract class LocalPlayerMixin {
             lastPos.x, lastPos.y, lastPos.z, currentPos.x, currentPos.y, currentPos.z));
         com.warwa.seamlessportals.render.CrossingTracer.armDump();
 
-        SeamlessClientTeleport.performCrossing(linkOpt.get());
+        SeamlessClientTeleport.performCrossing(linkOpt.get(), lastPos, currentPos);
         // Start next tick's segment from the post-swap position (defensive — also
         // done in doVisualSwap) so the teleport jump is not a "movement" crossing.
         SeamlessClientTeleport.lastClientPos = self.position();

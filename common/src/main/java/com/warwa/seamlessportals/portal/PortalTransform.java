@@ -98,20 +98,65 @@ public final class PortalTransform {
     }
 
     /**
+     * The crossing direction as the sign of the SOURCE-plane depth axis, derived from the
+     * detected movement segment (the ground truth of the crossing: {@code from} is on the
+     * entry side, {@code to} past the plane on the exit side). Fallback for a degenerate
+     * segment: the side of {@code to} itself (past the plane at detection).
+     *
+     * <p>This replaces the old yaw-keyed {@code exitDepthSign} (2026-07-05): keying the
+     * exit to the FACING assumed every crossing is face-first, so walking BACKWARD or
+     * strafing through exited the player on the wrong side moving the wrong way —
+     * "come out facing forwards", plus wrong-side landings that re-crossed immediately
+     * under held input (the seq12-89 oscillation burst in the 18:32 run). IP keys nothing
+     * to yaw: position, velocity, and view go through one rigid transform. For a FORWARD
+     * walker this sign is provably identical to the old yaw rule on both axis pairings
+     * (facing == motion ⇒ sign(cos yaw) == sign(motion depth); cross-axis:
+     * −sin(yaw∓90°) == ±cos(yaw)), so only the broken backward/strafe cases change.
+     */
+    public static double crossingDepthSign(PortalInfo source, Vec3 moveFrom, Vec3 moveTo) {
+        LocalCoords delta = toLocalCoords(source.getAxis(), moveTo.subtract(moveFrom));
+        if (delta.depth() != 0.0) {
+            return Math.signum(delta.depth());
+        }
+        LocalCoords pos = toLocalCoords(source.getAxis(), moveTo.subtract(source.getCenter()));
+        return pos.depth() >= 0.0 ? 1.0 : -1.0;
+    }
+
+    /**
+     * Crossing-direction sign when no movement segment is available (server side without a
+     * client payload: server-first fallback crossings). Motion first — for a
+     * {@code ServerPlayer}, pass {@code getKnownMovement()} (the client-reported movement),
+     * not {@code getDeltaMovement()} (server-side player physics is not simulated) — then
+     * the side of the position itself (past the plane once the crossing really happened).
+     */
+    public static double crossingDepthSignFromState(PortalInfo source, Vec3 position, Vec3 velocity) {
+        LocalCoords vel = toLocalCoords(source.getAxis(), velocity);
+        if (Math.abs(vel.depth()) > 1.0e-7) {
+            return Math.signum(vel.depth());
+        }
+        LocalCoords pos = toLocalCoords(source.getAxis(), position.subtract(source.getCenter()));
+        return pos.depth() >= 0.0 ? 1.0 : -1.0;
+    }
+
+    /**
      * Place the landing exactly {@code overshoot} (clamped) past the destination portal
-     * plane on the side the entity is FACING, so pressing "forward" walks it AWAY —
-     * no immediate re-cross. The exit side must come from the yaw, NOT the velocity or
-     * {@code computeNormal} (direction-agnostic) — see {@link #exitDepthSign}. Width
-     * (lateral) + height are kept from the base transform, so the entity emerges at the
-     * same spot along/up the portal.
+     * plane on the side the crossing MOTION continues toward ({@code exitDepthSign}, from
+     * {@link #crossingDepthSign}) — the same-sign mapping of the side the entity exited
+     * toward at the source. Same-sign is the view-consistent choice: the window parallax
+     * is {@code transformPoint} (same-sign depth, a 1:1 translation on a same-axis link),
+     * so the landing continues the walk exactly where the window showed it. The velocity
+     * ({@link #transformVelocityMotion}) keeps the same depth sign, so the entity always
+     * moves AWAY from the plane after landing — no immediate re-cross from either
+     * crossing direction. Width (lateral) + height are kept from the base transform, so
+     * the entity emerges at the same spot along/up the portal.
      *
      * <p>Depth-axis mapping mirrors {@link #fromLocalCoords}: dest axis X → depth is world Z;
      * dest axis Z → depth is world X.
      */
-    public static Vec3 applyExitOvershoot(PortalInfo destination, Vec3 destPos, float destYaw, double overshoot) {
+    public static Vec3 applyExitOvershoot(PortalInfo destination, Vec3 destPos, double exitDepthSign, double overshoot) {
         double depth = Math.max(MIN_EXIT_OVERSHOOT, Math.min(MAX_EXIT_OVERSHOOT, overshoot));
         Vec3 center = destination.getCenter();
-        double sign = exitDepthSign(destination.getAxis(), destYaw);
+        double sign = exitDepthSign >= 0.0 ? 1.0 : -1.0;
         if (destination.getAxis() == Direction.Axis.X) {
             // axis X → portal spans X, depth (perpendicular) is world Z
             return new Vec3(destPos.x, destPos.y, center.z + sign * depth);
@@ -119,51 +164,41 @@ public final class PortalTransform {
         return new Vec3(center.x + sign * depth, destPos.y, destPos.z);
     }
 
-    /**
-     * Which side of the destination portal plane the entity FACES (the exit side), as the
-     * sign of the depth-axis world coordinate. Single source of truth shared by
-     * {@link #applyExitClearance} (landing side) and {@link #transformVelocityFacing}
-     * (velocity direction) — the two MUST agree or the entity lands on one side while
-     * moving toward the other (the observed ~0.02-block backward drift after crossing).
-     */
-    private static double exitDepthSign(Direction.Axis destAxis, float destYaw) {
-        double yawRad = Math.toRadians(destYaw);
-        if (destAxis == Direction.Axis.X) {
-            // axis X → depth is world Z; facing Z = cos(yaw)
-            return Math.cos(yawRad) >= 0 ? 1.0 : -1.0;
-        }
-        // axis Z → depth is world X; facing X = -sin(yaw)
-        return -Math.sin(yawRad) >= 0 ? 1.0 : -1.0;
-    }
-
     public static Vec3 transformVector(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector) {
         // Same logic as transformPoint but without the center offset.
         // Depth negated: walking INTO source = walking OUT OF destination.
         //
-        // NOTE (player teleports use transformVelocityFacing instead): this blanket depth
+        // NOTE (player teleports use transformVelocityMotion instead): this blanket depth
         // negation is CONSISTENT with transformTeleportPoint's landing side (entity lands at
-        // −ε moving −depth = away from the plane), so projectiles/entities are fine. Player
-        // landings are OVERRIDDEN to the yaw-facing side by applyExitClearance, so a player's
-        // velocity must use the SAME yaw rule or it points back at the portal.
+        // −ε moving −depth = away from the plane), so projectiles/entities are fine — an
+        // internally consistent MIRRORED pair. Player landings use the motion-signed
+        // overshoot (applyExitOvershoot + crossingDepthSign, the SAME-SIGN/view-consistent
+        // pair), so a player's velocity must be same-sign too or it points back at the portal.
         LocalCoords local = toLocalCoords(source.getAxis(), vector);
         local = new LocalCoords(-local.depth(), local.width(), local.height());
         return fromLocalCoords(destination.getAxis(), local);
     }
 
     /**
-     * Velocity transform for YAW-PRESERVING teleports (players). Width/height map exactly
-     * like {@link #transformVector}, but the depth component's SIGN follows the yaw-facing
-     * exit side — the same rule {@link #applyExitClearance} uses for the landing — with the
-     * magnitude preserved. The player therefore keeps moving the way they face ("walking
-     * forward stays walking forward"); the old blanket negation sent them drifting BACKWARD
-     * toward the portal for the 1-2 ticks until input re-accelerated (XTRACE 2026-07-05:
-     * pl z reversing ~0.02 blocks right after the swap on a same-facing link).
+     * Velocity transform for MOTION-CONTINUOUS teleports (players): the plain same-sign
+     * local mapping — depth, width, and height all keep their local components (IP's
+     * {@code transformLocalVec} analog; on a same-axis link this is the identity, matching
+     * the window's 1:1 {@code transformPoint} parallax — you exit moving exactly as the
+     * window showed you moving). Depth sign therefore equals the motion sign, agreeing
+     * with the segment-signed landing side of {@link #applyExitOvershoot} +
+     * {@link #crossingDepthSign} for any crossing direction (forward, backward, strafe).
+     * (Not a hard invariant: the landing uses the DETECTION SEGMENT's sign, the velocity
+     * the instantaneous movement — a mid-crossing knockback can oppose them, which
+     * resolves as one terminating bounce back through the portal, not an oscillation.)
+     *
+     * <p>Replaces {@code transformVelocityFacing} (yaw-forced depth sign, 2026-07-05):
+     * for a forward walker the outputs are identical (facing == motion); for a backward
+     * walker the yaw rule REVERSED the velocity — "walk in backwards, come out moving
+     * forwards".
      */
-    public static Vec3 transformVelocityFacing(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector, float destYaw) {
+    public static Vec3 transformVelocityMotion(PortalInfo source, PortalInfo destination, PortalType type, Vec3 vector) {
         LocalCoords local = toLocalCoords(source.getAxis(), vector);
-        double sign = exitDepthSign(destination.getAxis(), destYaw);
-        LocalCoords out = new LocalCoords(sign * Math.abs(local.depth()), local.width(), local.height());
-        return fromLocalCoords(destination.getAxis(), out);
+        return fromLocalCoords(destination.getAxis(), local);
     }
 
     public static float transformYaw(PortalInfo source, PortalInfo destination, float sourceYaw) {

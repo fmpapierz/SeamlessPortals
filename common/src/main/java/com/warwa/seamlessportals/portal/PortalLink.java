@@ -23,26 +23,40 @@ public class PortalLink {
 
     /**
      * Teleport landing with OVERSHOOT-PRESERVING depth: the entity lands as far past the
-     * destination plane (on its yaw-facing exit side) as it was past the source plane at
-     * detection — a visually continuous crossing instead of the old fixed 0.5-block throw.
-     * Both client (provisional swap) and server (authoritative) call this with the same
-     * inputs so they land at the same place. See {@link PortalTransform#applyExitOvershoot}.
+     * destination plane as it was past the source plane at detection, on the side its
+     * crossing MOTION continues toward ({@code exitDepthSign}, see
+     * {@link #crossingDepthSign}/{@link #crossingDepthSignFromState}) — a visually
+     * continuous crossing for any entry direction (forward, backward, strafe). Both
+     * client (provisional swap) and server (authoritative, sign carried in the crossing
+     * payload) call this with the same inputs so they land at the same place.
+     * See {@link PortalTransform#applyExitOvershoot}.
      */
-    public Vec3 transformTeleportPosition(Vec3 sourcePos, float destYaw) {
+    public Vec3 transformTeleportPosition(Vec3 sourcePos, double exitDepthSign) {
         Vec3 destPos = PortalTransform.transformTeleportPoint(source, destination, source.getType(), sourcePos);
         double overshoot = PortalTransform.sourceDepthOvershoot(source, sourcePos);
-        return PortalTransform.applyExitOvershoot(destination, destPos, destYaw, overshoot);
+        return PortalTransform.applyExitOvershoot(destination, destPos, exitDepthSign, overshoot);
     }
 
     public Vec3 transformVelocity(Vec3 velocity) {
         return PortalTransform.transformVector(source, destination, source.getType(), velocity);
     }
 
-    /** Yaw-preserving velocity transform for PLAYER teleports: the depth sign follows the
-     *  yaw-facing exit side (same rule as applyExitOvershoot's landing side), so the player
-     *  keeps moving the way they face instead of drifting back toward the portal. */
-    public Vec3 transformVelocityFacing(Vec3 velocity, float destYaw) {
-        return PortalTransform.transformVelocityFacing(source, destination, source.getType(), velocity, destYaw);
+    /** Motion-continuous velocity transform for PLAYER teleports: plain same-sign local
+     *  mapping (IP's transformLocalVec analog), so the depth sign is the crossing-motion
+     *  sign — always agreeing with the motion-signed landing side of
+     *  {@link #transformTeleportPosition(Vec3, double)}. */
+    public Vec3 transformVelocityMotion(Vec3 velocity) {
+        return PortalTransform.transformVelocityMotion(source, destination, source.getType(), velocity);
+    }
+
+    /** Crossing-direction sign (source depth axis) from the detected movement segment. */
+    public double crossingDepthSign(Vec3 moveFrom, Vec3 moveTo) {
+        return PortalTransform.crossingDepthSign(source, moveFrom, moveTo);
+    }
+
+    /** Crossing-direction sign when no segment is available (server-first fallback). */
+    public double crossingDepthSignFromState(Vec3 position, Vec3 velocity) {
+        return PortalTransform.crossingDepthSignFromState(source, position, velocity);
     }
 
     public float transformYaw(float sourceYaw) {
