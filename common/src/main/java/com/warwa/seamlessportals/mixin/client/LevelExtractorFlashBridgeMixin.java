@@ -39,6 +39,7 @@ public abstract class LevelExtractorFlashBridgeMixin {
     @Shadow @Final private LevelRenderer levelRenderer;
     @Shadow @Final private LevelRenderState levelRenderState;
     @Shadow @Final private Minecraft minecraft;
+    @Shadow private net.minecraft.client.multiplayer.ClientLevel level;
 
     @Inject(method = "applyFrustum", at = @At("HEAD"), cancellable = true, require = 0)
     private void seamlessportals$flashBridge(Frustum frustum, CallbackInfo ci) {
@@ -87,7 +88,8 @@ public abstract class LevelExtractorFlashBridgeMixin {
         this.levelRenderer.clearVisibleSections();
         int viewDistance = this.minecraft.options.getEffectiveRenderDistance();
         VisibleSectionDiscovery.discoverVisibleSections(
-            viewArea, cameraPos, frustum, viewDistance, this.levelRenderer.visibleSections());
+            viewArea, cameraPos, frustum, viewDistance, this.level,
+            this.levelRenderer.visibleSections());
         ci.cancel();
     }
 
@@ -100,7 +102,7 @@ public abstract class LevelExtractorFlashBridgeMixin {
      * main view BLANKS. Here, on every {@code applyFrustum} RETURN within the post-promote
      * window, if the engine cull produced NOTHING, flood-fill instead — so the view never
      * blanks mid-bridge regardless of why the graph came back empty. Runs only when empty +
-     * within the (≤8s) bridge window; normal gameplay is untouched. Safe re: the historical
+     * within the (≤30s) bridge window; normal gameplay is untouched. Safe re: the historical
      * applyFrustum freeze — that is the SOG WALK (skipped at HEAD); this fires after it.
      */
     @Inject(method = "applyFrustum", at = @At("RETURN"), require = 0)
@@ -115,7 +117,8 @@ public abstract class LevelExtractorFlashBridgeMixin {
         if (cameraPos == null) return;
         int viewDistance = this.minecraft.options.getEffectiveRenderDistance();
         VisibleSectionDiscovery.discoverVisibleSections(
-            viewArea, cameraPos, frustum, viewDistance, this.levelRenderer.visibleSections());
+            viewArea, cameraPos, frustum, viewDistance, this.level,
+            this.levelRenderer.visibleSections());
         // DIAG: how often the engine handed back an EMPTY graph and we rescued it (count column).
         com.warwa.seamlessportals.render.PerfTimers.add("promoteEmptyRescue", 0L);
     }

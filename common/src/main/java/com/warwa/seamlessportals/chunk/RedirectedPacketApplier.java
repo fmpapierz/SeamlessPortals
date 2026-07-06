@@ -61,6 +61,17 @@ public final class RedirectedPacketApplier {
         PENDING.add(payload);
     }
 
+    /**
+     * Per-drain ACK batch: (dimId → packed chunk positions) applied THIS drain,
+     * flushed as one {@code RedirectedChunkAckPayload} per dim at the end of
+     * {@link #drainPending}. The server records a redirected chunk as client-held
+     * ONLY on this ack — never at send time — so payloads this class drops (the
+     * active-dim guard below, apply failures, disconnect clears) can never become
+     * false "held" claims that arm the crossing suppression (the nether-limbo /
+     * OW-holes bug, 2026-07-06). Main-thread only.
+     */
+    private static final java.util.Map<String, java.util.List<Long>> ACK_BATCH = new java.util.HashMap<>();
+
     /** Main-thread (client tick): apply queued redirected chunks within the time budget. */
     public static void drainPending() {
         if (PENDING.isEmpty()) return;
@@ -70,6 +81,14 @@ public final class RedirectedPacketApplier {
             if (p == null) break;
             applyChunk(p);
         } while (System.nanoTime() - start < DRAIN_BUDGET_NS);
+
+        if (!ACK_BATCH.isEmpty()) {
+            for (java.util.Map.Entry<String, java.util.List<Long>> e : ACK_BATCH.entrySet()) {
+                com.warwa.seamlessportals.network.PlatformHelper.getInstance().sendToServer(
+                    new ModPayloads.RedirectedChunkAckPayload(e.getKey(), e.getValue()));
+            }
+            ACK_BATCH.clear();
+        }
     }
 
     /** Drop any queued chunks (e.g. on disconnect) so a stale dim's chunks never apply. */
@@ -105,6 +124,18 @@ public final class RedirectedPacketApplier {
         macc.seamlessportals$setLevelRenderer(destRenderer);
         try {
             p.innerPacket().handle(listener);
+            // ACK only on VERIFIED apply — "handled without exception" is not
+            // enough: a bounded vanilla ClientChunkCache (the default-config
+            // secondary store) silently IGNORES out-of-range chunks (warn +
+            // return null, no throw). Confirm the chunk is actually present in
+            // the dest store before acking; anything else stays un-acked, the
+            // server's inflight entry expires, and the chunk re-sends.
+            if (destLevel.getChunkSource().hasChunk(
+                    p.innerPacket().getX(), p.innerPacket().getZ())) {
+                ACK_BATCH.computeIfAbsent(p.dimensionId(), k -> new java.util.ArrayList<>())
+                    .add(net.minecraft.world.level.ChunkPos.pack(
+                        p.innerPacket().getX(), p.innerPacket().getZ()));
+            }
         } catch (Throwable t) {
             SeamlessPortalsConstants.LOGGER.error(
                 "[SEAMLESS 4C] redirected chunk apply failed for {}", dim.identifier(), t);

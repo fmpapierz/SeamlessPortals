@@ -48,6 +48,17 @@ public class LevelExtractorCreateRegionBudgetMixin {
     /**
      * Redirects the single {@code dirtyState.isDirty()} gate in extract's section-update loop.
      * Returns the real dirty value until the per-frame budget is spent, then false (defer).
+     *
+     * <p>CHARGE MOVED (2026-07-06, trees-before-ground amplifier fix): this gate no
+     * longer decrements the budget — vanilla's condition is
+     * {@code isDirty() && (mesh != UNCOMPILED || hasAllNeighbors)}, and charging
+     * here burned slots on dirty-but-INELIGIBLE sections (unlit frontier columns,
+     * whose neighbors aren't ready) that were never extracted. Under a
+     * post-crossing re-send burst (thousands dirty at once) most of each frame's
+     * 24 slots went to no-ops, stretching the occlusion cascade's per-stage
+     * latency from ~1 frame to seconds — the visible "canopy floats above missing
+     * ground". The charge now sits on {@code createRegion} itself (the actual
+     * ~1ms cost), so only extracted sections spend budget.
      */
     @Redirect(
         method = "extract",
@@ -55,13 +66,19 @@ public class LevelExtractorCreateRegionBudgetMixin {
             value = "INVOKE",
             target = "Lnet/minecraft/client/SectionUpdateTracker$SectionDirtyState;isDirty()Z"))
     private boolean seamlessportals$budgetCreateRegion(SectionUpdateTracker.SectionDirtyState ds) {
-        if (!ds.isDirty()) {
-            return false;
-        }
-        if (this.seamlessportals$createRegionBudget <= 0) {
-            return false; // over budget → defer to a later frame (section stays dirty)
-        }
+        return ds.isDirty() && this.seamlessportals$createRegionBudget > 0;
+    }
+
+    /** The actual charge: one slot per real createRegion snapshot (see above). */
+    @Redirect(
+        method = "extract",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/chunk/RenderRegionCache;createRegion(Lnet/minecraft/client/multiplayer/ClientLevel;J)Lnet/minecraft/client/renderer/chunk/RenderSectionRegion;"))
+    private net.minecraft.client.renderer.chunk.RenderSectionRegion seamlessportals$chargeCreateRegion(
+            net.minecraft.client.renderer.chunk.RenderRegionCache cache,
+            net.minecraft.client.multiplayer.ClientLevel level, long sectionNode) {
         this.seamlessportals$createRegionBudget--;
-        return true;
+        return cache.createRegion(level, sectionNode);
     }
 }

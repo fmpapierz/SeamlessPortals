@@ -46,6 +46,10 @@ public final class VisibleSectionDiscovery {
     private static PortalInnerCull.Cone scratchInnerCull;
     private static double scratchCamWX, scratchCamWY, scratchCamWZ;
 
+    /** Per-run level for {@link #checkSection}'s own-chunk gate (render-thread-only,
+     *  like the other scratch statics). Nullable → gate skipped. */
+    private static net.minecraft.client.multiplayer.ClientLevel scratchLevel;
+
     /**
      * Flood-fill from the camera section, frustum-culled and bounded by
      * {@code viewDistanceSections} (a Chebyshev cube), into {@code out}.
@@ -54,14 +58,18 @@ public final class VisibleSectionDiscovery {
      * @param cameraPos            world-space camera position (the virtual/dest camera for a portal view)
      * @param frustum             the cull frustum (already prepared at cameraPos)
      * @param viewDistanceSections per-axis half-extent in sections (e.g. fog/render distance in chunks)
+     * @param level               the level this ViewArea renders — gates {@code out} on the
+     *                            section's OWN chunk being loaded (nullable: gate skipped)
      * @param out                  cleared, then filled with the visited visible RenderSections
      */
     public static void discoverVisibleSections(
             ViewArea viewArea, Vec3 cameraPos, Frustum frustum, int viewDistanceSections,
+            net.minecraft.client.multiplayer.ClientLevel level,
             List<SectionRenderDispatcher.RenderSection> out) {
         out.clear();
         SCRATCH_QUEUE.clear();
         SCRATCH_VISITED.clear();
+        scratchLevel = level;
 
         int camX = SectionPos.blockToSectionCoord((int) Math.floor(cameraPos.x));
         int camY = SectionPos.blockToSectionCoord((int) Math.floor(cameraPos.y));
@@ -84,6 +92,7 @@ public final class VisibleSectionDiscovery {
             checkSection(viewArea, frustum, cx, cy, cz + 1, camX, camY, camZ, viewDistanceSections, false, out);
             checkSection(viewArea, frustum, cx, cy, cz - 1, camX, camY, camZ, viewDistanceSections, false, out);
         }
+        scratchLevel = null; // don't pin the level between runs
     }
 
     private static void checkSection(
@@ -110,7 +119,22 @@ public final class VisibleSectionDiscovery {
 
         if (skipFrustum || frustum.isVisible(section.getBoundingBox())) {
             SCRATCH_QUEUE.add(section);
-            out.add(section);
+            // OWN-CHUNK GATE (2026-07-06, the trees-before-ground fix): only sections
+            // whose chunk is actually loaded enter visibleSections. Vanilla's SOG
+            // guarantees this invariant; the flood didn't — extract() then ran
+            // createRegion on EMPTY centers (vanilla's hasAllNeighbors gate checks
+            // only the 8 NEIGHBOR columns, never the own chunk), producing premature
+            // EMPTY meshes whose later real compile is deprioritized as a RECOMPILE
+            // (SectionTaskDynamicQueue prefers initial compiles) — floating canopies
+            // over invisible ground at the streaming wavefront. Excluding unloaded
+            // sections loses nothing visually (their mesh is UNCOMPILED — they draw
+            // nothing) and the fill still propagates THROUGH them (queue add above)
+            // so loaded terrain beyond a gap is reached; the per-frame re-run picks
+            // a section up the frame after its chunk arrives.
+            if (scratchLevel == null
+                    || scratchLevel.getChunkSource().hasChunk(cx, cz)) {
+                out.add(section);
+            }
         }
     }
 

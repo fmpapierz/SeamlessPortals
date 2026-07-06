@@ -103,6 +103,10 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.ClientPortalCrossingPayload.TYPE,
             ModPayloads.ClientPortalCrossingPayload.STREAM_CODEC
         );
+        PayloadTypeRegistry.serverboundPlay().register(
+            ModPayloads.RedirectedChunkAckPayload.TYPE,
+            ModPayloads.RedirectedChunkAckPayload.STREAM_CODEC
+        );
 
         SeamlessPortalsConstants.LOGGER.info("Fabric network payloads registered");
     }
@@ -144,6 +148,30 @@ public class FabricPlatformHelper implements PlatformHelper {
         // crossing locally and already did its visual swap; the server now
         // performs the authoritative teleport (without sending a respawn
         // packet) and replies with ClientboundSeamlessMovePayload.
+        // Redirected-chunk ACK: the client confirms which redirected chunks it
+        // actually APPLIED; the tracker's ledger records them as client-held only
+        // now (arming the crossing suppression with anything less than applied
+        // truth voids chunks permanently).
+        ServerPlayNetworking.registerGlobalReceiver(
+            ModPayloads.RedirectedChunkAckPayload.TYPE,
+            (payload, context) -> {
+                ServerPlayer ackPlayer = context.player();
+                context.server().execute(() -> {
+                    net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dim =
+                        switch (payload.dimensionId()) {
+                            case "minecraft:overworld" -> net.minecraft.world.level.Level.OVERWORLD;
+                            case "minecraft:the_nether" -> net.minecraft.world.level.Level.NETHER;
+                            case "minecraft:the_end" -> net.minecraft.world.level.Level.END;
+                            default -> null;
+                        };
+                    if (dim != null) {
+                        com.warwa.seamlessportals.chunk.PortalChunkTracker.handleChunkAcks(
+                            ackPlayer, dim, payload.packedPositions());
+                    }
+                });
+            }
+        );
+
         ServerPlayNetworking.registerGlobalReceiver(
             ModPayloads.ClientPortalCrossingPayload.TYPE,
             (payload, context) -> {

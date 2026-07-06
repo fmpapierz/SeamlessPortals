@@ -205,6 +205,32 @@ public class ModPayloads {
     }
 
     /**
+     * Client → Server: batch acknowledgment that redirected chunks were APPLIED
+     * to the destination ClientLevel (sent once per client tick from
+     * {@code RedirectedPacketApplier.drainPending}). The server's redirected-send
+     * ledger records a chunk as client-held ONLY on this ack — the crossing
+     * suppression must never be armed with chunks the client's budgeted apply
+     * queue dropped (the active-dim discard) or failed to apply.
+     */
+    public record RedirectedChunkAckPayload(
+        String dimensionId,
+        java.util.List<Long> packedPositions
+    ) implements CustomPacketPayload {
+        public static final Type<RedirectedChunkAckPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "redirected_chunk_ack")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, RedirectedChunkAckPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, RedirectedChunkAckPayload::dimensionId,
+            ByteBufCodecs.VAR_LONG.apply(ByteBufCodecs.list()), RedirectedChunkAckPayload::packedPositions,
+            RedirectedChunkAckPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /**
      * Client → Server: "I crossed portal X client-side, please perform the server
      * teleport." IP-style client-initiated seamless teleport.
      *

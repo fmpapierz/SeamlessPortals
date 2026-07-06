@@ -32,6 +32,33 @@ public class PortalChunkTracker {
     // player was in overworld) block sending chunks from dimension B at the same
     // ChunkPos (e.g., overworld chunks when player enters nether).
     private final Map<UUID, Map<ResourceKey<Level>, Set<ChunkPos>>> sentChunks = new HashMap<>();
+
+    /**
+     * ACK LEDGER (2026-07-06, the redirected-channel honesty fix): {@link #sentChunks}
+     * is now the ACKED ledger — a chunk enters it only when the client confirms it
+     * APPLIED the redirected packet ({@link #handleChunkAcks}). Chunks handed to netty
+     * live here first, keyed to their send time. Why: the old unconditional
+     * previouslySent.add-at-send lied whenever the client's budgeted apply queue
+     * dropped a payload (every queued/in-flight redirected chunk for a dim is
+     * discarded the moment that dim becomes ACTIVE — RedirectedPacketApplier's
+     * active-dim guard); the false claims then armed the crossing suppression and
+     * cancelled vanilla's only re-send (~408 overworld voids from one 792-packet
+     * burst in the 03:05 run). Per-connection FIFO makes the ack sound: every ack
+     * sent before the crossing payload arrives before it, so the acked set at arm
+     * time is exactly the applied-before-swap set; at worst the last tick's
+     * applied-but-unacked chunks under-arm, costing one duplicate vanilla send the
+     * client handles as a refresh. Un-acked entries expire after
+     * {@link #INFLIGHT_TTL_NANOS} and become re-send eligible (covers dropped and
+     * failed applies with no dedicated failure reporting).
+     */
+    private final Map<UUID, Map<ResourceKey<Level>, Map<ChunkPos, Long>>> inflightChunks = new HashMap<>();
+    private static final long INFLIGHT_TTL_NANOS = 10_000_000_000L; // 10s
+    /** Flow control: max un-acked redirected chunks outstanding per player+dim. The
+     *  backlog then waits SERVER-side in the needed set (re-checked per tick) instead
+     *  of in the client's drop-prone pending queue — the structural fix for the
+     *  producer/consumer mismatch (server 12-32/tick vs client ~2-4 applies/tick). */
+    private static final int MAX_INFLIGHT = 64;
+
     private static boolean loggedFirstSend = false;
 
     private int scanCooldown = 0;
@@ -100,8 +127,13 @@ public class PortalChunkTracker {
                 packed.size(), newDim.identifier());
         }
         // Vanilla owns the entered dim now — drop the redirected record
-        // (pruneAndSend's retainAll would do this next tick anyway).
+        // (pruneAndSend's retainAll would do this next tick anyway). Inflight
+        // entries for the entered dim are guaranteed client-drops (the applier's
+        // active-dim guard discards them) — drop them too so nothing lingers.
         perDim.remove(newDim);
+        Map<ResourceKey<Level>, Map<ChunkPos, Long>> perDimInflight =
+            tracker.inflightChunks.get(uuid);
+        if (perDimInflight != null) perDimInflight.remove(newDim);
 
         // 2. Seed the OLD dim's record with the chunks the client VERIFIABLY holds
         // — vanilla's own held-set at this instant: in the player's tracking view
@@ -127,17 +159,43 @@ public class PortalChunkTracker {
         Set<ChunkPos> seeded = perDim.computeIfAbsent(oldDim, k -> new java.util.HashSet<>());
         final int[] added = { 0 };
         final int[] skippedPending = { 0 };
+        final int[] skippedUnloaded = { 0 };
         net.minecraft.server.network.PlayerChunkSender chunkSender = player.connection.chunkSender;
+        // THIRD CONJUNCT — loaded server-side (2026-07-06, the nether-limbo fix):
+        // "in view ∧ not pending" is only equivalent to "delivered" for chunks
+        // vanilla ever MARKED — a chunk whose holder was never loaded during the
+        // stay was never marked, never sent, yet passes !isPending. A fresh dim
+        // (nether: ~625 of 3725 view chunks generated at the first crossings) got
+        // ~3100 phantoms stamped "held"; those generate later under our residency
+        // tickets while the player is AWAY (no ready-to-send fires — the player
+        // is not in that dim's ChunkMap), and at the next entry their first-ever
+        // restart send was cancelled by the phantom suppression → permanent voids
+        // = the in-nether walking limbo. Loaded ∧ in-view ∧ !pending chunks were
+        // genuinely dispatched during the stay (entry restart marks loaded view
+        // chunks; later loads fire ready-to-send for the in-dim player).
+        net.minecraft.server.level.ServerLevel oldLevel =
+            (net.minecraft.server.level.ServerLevel) player.level();
+        net.minecraft.server.level.ChunkMap chunkMap = oldLevel.getChunkSource().chunkMap;
         player.getChunkTrackingView().forEach(pos -> {
             if (chunkSender.isPending(pos.pack())) {
                 skippedPending[0]++;
                 return;
             }
+            // getChunkToSend (not getChunkNow): vanilla's EXACT sendability
+            // predicate (FULL + sendSync done). A chunk that is FULL but not yet
+            // ticking-ready was never markable → never sent — getChunkNow would
+            // stamp that generation-frontier ring (~100-200 chunks mid-gen) held.
+            // Over-strict failures only under-seed → a duplicate vanilla re-send
+            // the client absorbs as a refresh.
+            if (chunkMap.getChunkToSend(pos.pack()) == null) {
+                skippedUnloaded[0]++;
+                return;
+            }
             if (seeded.add(pos)) added[0]++;
         });
         SeamlessPortalsConstants.LOGGER.info(
-            "[SEAMLESS CROSSING] Seeded {} verifiably client-held chunks of {} ({} undelivered-pending excluded) — no cold restart",
-            added[0], oldDim.identifier(), skippedPending[0]);
+            "[SEAMLESS CROSSING] Seeded {} verifiably client-held chunks of {} ({} pending + {} unloaded excluded) — no cold restart",
+            added[0], oldDim.identifier(), skippedPending[0], skippedUnloaded[0]);
     }
 
     /**
@@ -447,9 +505,40 @@ public class PortalChunkTracker {
             // Drop records only for dims the player is no longer near (not in neededByDim).
             playerSent.keySet().retainAll(neededByDim.keySet());
         }
+        Map<ResourceKey<Level>, Map<ChunkPos, Long>> playerInflight = inflightChunks.get(player.getUUID());
+        if (playerInflight != null) {
+            playerInflight.keySet().retainAll(neededByDim.keySet());
+        }
 
         for (Map.Entry<ResourceKey<Level>, Set<ChunkPos>> e : neededByDim.entrySet()) {
             sendChunksToPlayer(player, e.getKey(), e.getValue(), server);
+        }
+    }
+
+    /**
+     * Client confirmation that redirected chunks were APPLIED (sent per client tick
+     * by {@code RedirectedPacketApplier.drainPending}). Moves entries inflight →
+     * acked ({@link #sentChunks}); only acked entries arm the crossing suppression
+     * and skip re-sends. Unknown positions (already expired / dim record dropped)
+     * are ignored — a later re-send simply refreshes the client chunk.
+     */
+    public static void handleChunkAcks(ServerPlayer player, ResourceKey<Level> dim,
+                                       java.util.List<Long> packedPositions) {
+        PortalChunkTracker tracker = ACTIVE;
+        if (tracker == null) return;
+        UUID playerId = player.getUUID();
+        Map<ChunkPos, Long> inflight = tracker.inflightChunks
+            .getOrDefault(playerId, java.util.Collections.emptyMap())
+            .get(dim);
+        if (inflight == null) return;
+        Set<ChunkPos> acked = tracker.sentChunks
+            .computeIfAbsent(playerId, k -> new HashMap<>())
+            .computeIfAbsent(dim, k -> new HashSet<>());
+        for (Long packed : packedPositions) {
+            ChunkPos pos = new ChunkPos(ChunkPos.getX(packed), ChunkPos.getZ(packed));
+            if (inflight.remove(pos) != null) {
+                acked.add(pos);
+            }
         }
     }
 
@@ -488,8 +577,18 @@ public class PortalChunkTracker {
             ? COLD_START_CHUNK_SENDS_PER_TICK
             : MAX_CHUNK_SENDS_PER_TICK;
         int sentThisTick = 0;
+        // ACK ledger: skip acked AND live-inflight chunks; lazily expire stale
+        // inflight entries (never acked → the client dropped or failed the apply →
+        // eligible again). Flow control: stop when MAX_INFLIGHT are outstanding.
+        Map<ChunkPos, Long> inflight = inflightChunks
+            .computeIfAbsent(playerId, k -> new HashMap<>())
+            .computeIfAbsent(dimension, k -> new HashMap<>());
+        long now = System.nanoTime();
+        inflight.values().removeIf(sentNanos -> now - sentNanos > INFLIGHT_TTL_NANOS);
         for (ChunkPos pos : chunks) {
             if (previouslySent.contains(pos)) continue;
+            if (inflight.containsKey(pos)) continue;
+            if (inflight.size() >= MAX_INFLIGHT) break;
             if (sentThisTick >= cap) break;
 
             // Phase 4a: send only chunks ALREADY loaded. The Phase-4a residency
@@ -523,7 +622,10 @@ public class PortalChunkTracker {
 
                 PlatformHelper.getInstance().sendToClient(player,
                     new ModPayloads.RedirectedChunkPayload(dimId, vanillaPkt));
-                previouslySent.add(pos);
+                // ACKED-only ledger: record as inflight; previouslySent (the acked
+                // set that arms suppression + skips re-sends) is written only by
+                // handleChunkAcks when the client confirms the apply.
+                inflight.put(pos, now);
                 sentThisTick++;
             }
         }
@@ -619,6 +721,7 @@ public class PortalChunkTracker {
 
     public void onPlayerDisconnect(UUID playerId) {
         sentChunks.remove(playerId);
+        inflightChunks.remove(playerId);
         // A leftover armed set from a crossing <60s before disconnect would
         // cancel login-adjacent sends against a rejoining client holding nothing.
         VANILLA_RESEND_SUPPRESS.remove(playerId);
@@ -626,6 +729,7 @@ public class PortalChunkTracker {
 
     public void clear() {
         sentChunks.clear();
+        inflightChunks.clear();
         loggedFirstSend = false;
     }
 }

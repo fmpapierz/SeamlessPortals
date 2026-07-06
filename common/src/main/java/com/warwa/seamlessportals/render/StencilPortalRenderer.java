@@ -197,6 +197,23 @@ public class StencilPortalRenderer {
         // never arrived by the deadline (they no longer exist server-side).
         com.warwa.seamlessportals.client.PortalWorldManager.pruneEntityAdoptions();
 
+        // Bridge repaint pump (2026-07-06): with the flood's own-chunk gate, a chunk
+        // arriving during the bridge can only enter visibleSections when the flood
+        // RE-RUNS — and vanilla only calls applyFrustum on a frustum-update signal or
+        // a ≥2° camera rotation. A stationary camera would leave freshly streamed
+        // chunks invisible until the first post-promote SOG rebuild lands. Forcing
+        // the frustum-update flag once per frame during the bridge window makes the
+        // next extract re-flood (~0.3-1ms), so arriving terrain paints continuously.
+        if (com.warwa.seamlessportals.render.PortalContextSwitch.isPromoteBridgeActive()) {
+            net.minecraft.client.renderer.LevelRenderer mainRenderer =
+                net.minecraft.client.Minecraft.getInstance().levelRenderer;
+            if (mainRenderer != null) {
+                ((com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphAccessorMixin)
+                    (Object) mainRenderer.sectionOcclusionGraph())
+                    .seamlessportals$getNeedsFrustumUpdate().set(true);
+            }
+        }
+
         // Phase 5 (stencil-direct): there is NO phase-1 FBO render. The dest world is drawn
         // directly into the main target during phase 2 (renderOnePortal → renderDestWorldDirect),
         // so the rest of this renderLevel-HEAD hook does nothing.
