@@ -90,4 +90,23 @@ public final class PortalRenderBuffersPool {
         inUse--;
         available.push(buf);
     }
+
+    /**
+     * End the frame of every idle pooled buffer — the vanilla per-frame
+     * {@code RenderBuffers.endFrame()} these instances never got. Pooled buffers are
+     * swapped in as the ACTIVE renderBuffers during portal sub-renders
+     * ({@code PortalContextSwitch}), so their {@code StagedVertexBuffer}s accumulate
+     * GPU buffers per use exactly like the per-secondary ones; without endFrame the
+     * fence-recycle never runs and the buffers leak (see
+     * {@code PortalWorldManager.endSecondaryRenderFrames} for the full mechanism).
+     *
+     * <p>Called from {@code GameRenderer.render} TAIL — all sub-renders acquire/release
+     * within {@code renderLevel}, so the pool is fully idle here ({@code inUse} 0);
+     * an in-flight buffer (impossible today) simply gets ended on a later frame.
+     */
+    public static void endFramePooled() {
+        for (RenderBuffers buf : available) {
+            buf.endFrame();
+        }
+    }
 }

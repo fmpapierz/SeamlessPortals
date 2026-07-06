@@ -1880,6 +1880,79 @@ public class PortalWorldManager {
     }
 
     /**
+     * End the render frame of every {@link RenderBuffers} the mod created that vanilla
+     * does not own — the missing 1:1 counterpart of {@code GameRenderer.render():447}
+     * ({@code this.renderBuffers.endFrame()}), which only covers the GameRenderer's OWN
+     * buffers.
+     *
+     * <p><b>THE VRAM LEAK THIS FIXES (2026-07-05):</b> each per-secondary
+     * {@code new RenderBuffers(4)} (see {@link #createRenderer}) owns a
+     * {@code StagedVertexBuffer} whose {@code GpuBufferPool.acquire} creates a fresh
+     * ≥256KB GPU buffer whenever nothing has been recycled — and recycling happens ONLY
+     * in {@code endFrame()} (fence {@code usedThisFrame} → recycle when the GPU passes;
+     * StagedVertexBuffer.java:326-336). Without a per-frame endFrame, every frame that
+     * draws dest entities/block-entities through a portal parks new GPU buffers in
+     * {@code usedThisFrame} forever: tens of MB/s of VRAM while a portal is in view.
+     * After ~2 minutes the driver hits memory exhaustion and synchronously pages inside
+     * arbitrary GL calls — the logged 150-193ms [SEAMLESS STUCK] stalls and 3-5.6s
+     * [SEAMLESS FREEZE]s, all RUNNABLE inside {@code nglDrawElementsInstancedBaseVertex}
+     * with ZERO GC, first in the portal pass, then the main pass and GUI, plus the ~3s
+     * shutdown {@code glDeleteFramebuffers} freeze tearing the bloated space down.
+     *
+     * <p>Coverage (identity-deduped, skipping the one vanilla endFrames itself):
+     * <ol>
+     *   <li>The CURRENT {@code mc.levelRenderer}'s buffers — after a crossing the
+     *       promoted renderer draws the MAIN world out of its own ex-dest buffers
+     *       (promotion never swaps {@code gameRenderer.renderBuffers}), so vanilla's
+     *       endFrame misses the active world's buffers entirely.</li>
+     *   <li>Every live secondary in {@link #renderers} (the demoted vanilla renderer
+     *       shares the GameRenderer's buffers — the identity skip avoids a double
+     *       endFrame there).</li>
+     * </ol>
+     * The pooled sub-render buffers are ended separately by
+     * {@link com.warwa.seamlessportals.render.PortalRenderBuffersPool#endFramePooled()}.
+     *
+     * <p>Called from {@code GameRenderer.render} TAIL (render thread, after vanilla's
+     * own endFrame — the same lifecycle point). Cheap no-op for idle dims: endFrame
+     * only fences when {@code usedThisFrame} is non-empty.
+     */
+    public static void endSecondaryRenderFrames() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.gameRenderer == null) return;
+
+        java.util.Set<RenderBuffers> done =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        RenderBuffers vanillaOwned =
+            ((com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin) mc.gameRenderer)
+                .seamlessportals$getRenderBuffers();
+        if (vanillaOwned != null) {
+            done.add(vanillaOwned); // GameRenderer.render:447 endFrames this one itself
+        }
+
+        endRendererBuffersOnce(mc.levelRenderer, done);
+        for (LevelRenderer renderer : renderers.values()) {
+            endRendererBuffersOnce(renderer, done);
+            // Sibling frame-end vanilla also only does for the CURRENT renderer
+            // (Minecraft.runTick:1336 → LevelRenderer.endFrame → cloudRenderer.endFrame
+            // → cloud UBO ring rotate): a secondary that drew clouds in the portal view
+            // would otherwise re-map the SAME ring slice every frame while the GPU may
+            // still be reading it (implicit-sync stall / cloud flicker). Skip the
+            // installed renderer — vanilla ends it itself right after render().
+            if (renderer != null && renderer != mc.levelRenderer) {
+                renderer.endFrame();
+            }
+        }
+    }
+
+    private static void endRendererBuffersOnce(LevelRenderer renderer, java.util.Set<RenderBuffers> done) {
+        if (renderer == null) return;
+        RenderBuffers buffers =
+            ((LevelRendererAccessorMixin) renderer).seamlessportals$getRenderBuffers();
+        if (buffers == null || !done.add(buffers)) return;
+        buffers.endFrame();
+    }
+
+    /**
      * Clean up all registered renderers and levels. Called on disconnect/quit.
      *
      * <p>Note: the entry registered by {@link #initializeIfNeeded()} holds a
