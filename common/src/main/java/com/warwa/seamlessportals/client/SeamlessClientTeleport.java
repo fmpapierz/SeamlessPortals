@@ -102,6 +102,23 @@ public final class SeamlessClientTeleport {
     private static final java.util.ArrayDeque<RecentSwap> recentSwaps = new java.util.ArrayDeque<>();
     private record RecentSwap(ResourceKey<Level> dest, long nanos) {}
 
+    /**
+     * World-exit reset (called from ClientLevelMixin's disconnect hook): none of
+     * this crossing state may leak into a rejoined session — a sticky
+     * justTeleportedClient or a recent-swap entry from the previous world could
+     * misfire the idempotent/stale respawn branches or the crossing detectors
+     * against a fresh connection.
+     */
+    public static void onDisconnect() {
+        justTeleportedClient = false;
+        lastClientSwapDim = null;
+        lastClientPos = null;
+        lastCameraPos = null;
+        recentSwaps.clear();
+        lastSwapMonotonicNanos = 0L;
+        sprintKeeperTicks = 0;
+    }
+
     private static void noteSwap(ResourceKey<Level> dest) {
         lastClientSwapDim = dest;
         long now = System.nanoTime();

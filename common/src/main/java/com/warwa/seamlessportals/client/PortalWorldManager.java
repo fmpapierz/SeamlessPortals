@@ -1182,6 +1182,19 @@ public class PortalWorldManager {
                 "[SEAMLESS PHASE2] No destExtractor for {} on promote — "
                     + "mc.levelExtractor.sectionUpdateTracker left stale", dim.identifier());
         }
+        // SYMMETRIC RE-POINT (the other half of the demote-side block-freeze
+        // fix): while promoted, the level's own levelExtractor field must be
+        // mc.levelExtractor ITSELF — the exact identity vanilla gives its
+        // level at construction — not merely an extractor sharing the same
+        // tracker SNAPSHOT. Any allChanged() (render-distance change, F3+A,
+        // video settings, resource reload) REPLACES mc.levelExtractor's
+        // sectionUpdateTracker (LevelExtractor.java:411); with only a snapshot
+        // share, the level would keep writing dirty-marks into the replaced
+        // tracker and the frozen-blocks bug would return until the next
+        // crossing. Writing through mc.levelExtractor survives replacement.
+        // demoteFromMain re-points back to the per-dim extractor on the way out.
+        ((com.warwa.seamlessportals.mixin.client.ClientLevelExtractorAccessor) level)
+            .seamlessportals$setLevelExtractor(mc0.levelExtractor);
 
         // Flag this renderer for synchronous SOG prime on its next
         // cullTerrain call. Eliminates the 1-2 blank-terrain frames
@@ -1635,6 +1648,20 @@ public class PortalWorldManager {
             dea.seamlessportals$setLastViewDistance(mc.options.getEffectiveRenderDistance());
             demotedExtractor.onResourceManagerReload(mc.getResourceManager());
             extractors.put(dim, demotedExtractor);
+            // RE-POINT THE LEVEL'S OWN EXTRACTOR FIELD (2026-07-06, the nether
+            // block-freeze fix): every visual block-change on a ClientLevel goes
+            // through its FINAL construction-time levelExtractor (setBlocksDirty →
+            // setBlockDirty → that extractor's SectionUpdateTracker). Without this,
+            // the level keeps writing dirty-marks into its ORIGINAL extractor's
+            // tracker while the next promote wires mc.levelExtractor to consume
+            // THIS new extractor's tracker — block break/place/server-updates then
+            // change chunk data but never remesh (frozen visuals from the second
+            // entry into a mod-created dim). Keeping the level pointed at the
+            // CURRENT map extractor keeps writer and reader on one tracker across
+            // every promote/demote cycle, for both mod-created and the original
+            // vanilla level.
+            ((com.warwa.seamlessportals.mixin.client.ClientLevelExtractorAccessor) level)
+                .seamlessportals$setLevelExtractor(demotedExtractor);
         } catch (Exception e) {
             SeamlessPortalsConstants.LOGGER.error(
                 "[SEAMLESS PHASE2] Failed to create demoted extractor for {}", dim.identifier(), e);

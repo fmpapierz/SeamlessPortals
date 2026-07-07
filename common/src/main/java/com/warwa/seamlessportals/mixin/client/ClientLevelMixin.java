@@ -142,6 +142,15 @@ public abstract class ClientLevelMixin {
         com.warwa.seamlessportals.chunk.RedirectedPacketApplier.clearPending();
         RemoteChunkManager.clearAll();
         PortalManager.resetClient();
+        // THE MISSING LIFECYCLE CALL (2026-07-06): cleanup() existed with a
+        // "called on disconnect/quit" javadoc but had ZERO call sites — a
+        // rejoin in the same JVM reused the previous session's cached
+        // ClientLevels/renderers/extractors, all built against the DEAD
+        // connection (proven by the one-shot "Initialized"/"T3 installed"
+        // log lines never re-appearing after a relog). Every crossing in the
+        // new session then promoted stale-connection levels.
+        com.warwa.seamlessportals.client.PortalWorldManager.cleanup();
+        com.warwa.seamlessportals.client.SeamlessClientTeleport.onDisconnect();
         seamlessportals$loggedChunkScan = false;
         seamlessportals$lastDimension = null;
     }
