@@ -194,7 +194,10 @@ public final class SeamlessServerTeleport {
         // instead of cold-restarting at burst rate. Kills ~85% of the
         // per-crossing render-thread freeze (chunk decode + light re-init).
         com.warwa.seamlessportals.chunk.PortalChunkTracker.onPlayerCrossing(
-            player, player.level().dimension(), destDim);
+            player, player.level().dimension(), destDim,
+            new net.minecraft.world.level.ChunkPos(
+                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destPos.x)),
+                net.minecraft.core.SectionPos.blockToSectionCoord((int) Math.floor(destPos.z))));
 
         // RELATIVE rotation + velocity (union(DELTA, ROTATION), yaw/pitch 0):
         // the accompanying ClientboundPlayerPositionPacket must not disturb the

@@ -1203,7 +1203,19 @@ public class PortalContextSwitch {
             net.minecraft.core.SectionPos gridSectionPos =
                 gridCenter != null ? net.minecraft.core.SectionPos.of(gridCenter) : cameraSectionPos;
             viewArea.repositionCamera(gridSectionPos);
-            destLevel.getChunkSource().updateViewCenter(cameraSectionPos.x(), cameraSectionPos.z());
+            // PIN the dest chunk-store view center to the PORTAL (same anchor as the
+            // grid), NOT the mirror camera (2026-07-06, the OW-holes fix). The old
+            // per-frame camera-centering slid a demoted level's BOUNDED vanilla
+            // chunk array (floorMod window, radius VD+3) across dest-space as the
+            // player moved on the other side — silently replacing already-ACKED
+            // chunks off the far edge with no signal to the server ledger, which
+            // then armed them as held and cancelled their only re-send: scattered
+            // permanent holes in the dim you return to. Portal-centered, the array
+            // covers the whole streamed radius-≤32 region permanently (the portal
+            // view can only draw within destDepthRadius of the portal anyway, and
+            // redirected applies target that same region — inRange stays satisfied
+            // for everything that matters). No-op on the unbounded store.
+            destLevel.getChunkSource().updateViewCenter(gridSectionPos.x(), gridSectionPos.z());
 
             SectionRenderDispatcher dispatcher = destRenderer.sectionRenderDispatcher();
             // CRITICAL: Tell the dispatcher where the camera is.

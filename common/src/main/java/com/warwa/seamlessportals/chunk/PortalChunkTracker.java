@@ -108,23 +108,49 @@ public class PortalChunkTracker {
 
     /** Called by SeamlessServerTeleport BEFORE the vanilla teleport. */
     public static void onPlayerCrossing(ServerPlayer player,
-            ResourceKey<Level> oldDim, ResourceKey<Level> newDim) {
+            ResourceKey<Level> oldDim, ResourceKey<Level> newDim,
+            ChunkPos destChunk) {
         PortalChunkTracker tracker = ACTIVE;
         if (tracker == null) return;
         UUID uuid = player.getUUID();
         Map<ResourceKey<Level>, Set<ChunkPos>> perDim =
             tracker.sentChunks.computeIfAbsent(uuid, k -> new HashMap<>());
 
-        // 1. Arm suppression for the redirected set of the dim being entered.
+        // 1. Arm suppression for the redirected set of the dim being entered —
+        // FILTERED to the post-teleport tracking-view SHAPE (2026-07-06, the
+        // lingering-corner fix): the redirected needed set is a Chebyshev SQUARE
+        // while vanilla's view is corner-ROUNDED, so ~500 acked corner chunks per
+        // crossing sat OUTSIDE the restart's EMPTY→view diff, were never consumed,
+        // and lingered armed for the 60s TTL — as the player walked outward, the
+        // moving view swept into them and the one-shot consume cancelled each
+        // chunk's FIRST-EVER send (scattered holes along the walk). Armed ⊆ view
+        // ⇒ the restart consumes everything atomically; nothing can cancel a
+        // later movement-driven send. The filter view must be built at the DEST
+        // landing chunk (NEW-dim coordinates — the player's own current view is
+        // centered at the OLD-dim position, which only coincidentally overlaps
+        // near the origin), with vanilla's own radius formula. Un-armed corner
+        // chunks merely re-send once (client absorbs as refresh).
         Set<ChunkPos> redirected = perDim.get(newDim);
         if (redirected != null && !redirected.isEmpty()) {
+            MinecraftServer viewServer = player.level().getServer();
+            int viewDist = Math.min(player.requestedViewDistance(),
+                viewServer != null ? viewServer.getPlayerList().getViewDistance() : 10);
+            net.minecraft.server.level.ChunkTrackingView restartView =
+                net.minecraft.server.level.ChunkTrackingView.of(destChunk, Math.max(2, viewDist));
             Set<Long> packed = new java.util.HashSet<>(redirected.size() * 2);
-            for (ChunkPos p : redirected) packed.add(p.pack());
+            int outsideView = 0;
+            for (ChunkPos p : redirected) {
+                if (restartView.contains(p.x(), p.z())) {
+                    packed.add(p.pack());
+                } else {
+                    outsideView++;
+                }
+            }
             VANILLA_RESEND_SUPPRESS.put(uuid,
                 new ResendSuppression(newDim, packed, System.nanoTime()));
             SeamlessPortalsConstants.LOGGER.info(
-                "[SEAMLESS CROSSING] Armed vanilla-resend suppression: {} chunks of {} already client-held",
-                packed.size(), newDim.identifier());
+                "[SEAMLESS CROSSING] Armed vanilla-resend suppression: {} chunks of {} already client-held ({} outside-view not armed)",
+                packed.size(), newDim.identifier(), outsideView);
         }
         // Vanilla owns the entered dim now — drop the redirected record
         // (pruneAndSend's retainAll would do this next tick anyway). Inflight
