@@ -1592,6 +1592,55 @@ public class PortalContextSwitch {
                                 destSog.updateEmptySections(
                                     destDeltas.addedEmptySections, destDeltas.removedEmptySections);
                             }
+                            // DRAIN THE EXTRACT COMPILE QUEUE (2026-07-07, the "OW still
+                            // has holes" round-2 root cause). extract()'s sectionUpdates
+                            // loop (LevelExtractor.java:152-168) consumes each visible
+                            // dirty section's ONE-SHOT flag — it pays createRegion,
+                            // queues a SectionUpdateRenderState into
+                            // levelRenderState.sectionUpdateRenderStates, then calls
+                            // dirtyState.setNotDirty(). Vanilla's contract: render() →
+                            // compileSections (:254-255/:608) drains that queue the SAME
+                            // frame; the next extract's levelRenderState.reset() (:110)
+                            // clears it. The stencil-direct path draws via renderGroup and
+                            // never calls render() for the dest renderer, so every queued
+                            // compile was DISCARDED: sections ended dirty=false +
+                            // mesh=UNCOMPILED — invisible to every dirty-gated compiler
+                            // (extract, the pump, discovery), traversed by the SOG but
+                            // drawing nothing. Chunks streamed in while their dim was
+                            // demoted (2s nether stay = the mid-distance frontier band)
+                            // came back from the return-promote as permanent chunk-shaped
+                            // sky holes: the vanilla resend that would have re-dirtied
+                            // them is (correctly) suppressed by the crossing ledger.
+                            // Invoke the renderer's REAL private compileSections — 1:1
+                            // vanilla pairing (fade windows, sync-nearby options,
+                            // translucent resort), with the
+                            // LevelRendererCompileSectionsMixin out-of-range filter
+                            // applying to it automatically — so every consumed flag gets
+                            // its compile. TIMING: this runs mid-main-framegraph (the
+                            // AFTER_TRANSLUCENT_TERRAIN event), which is safe — no GPU
+                            // RenderPass is open here (renderGroup closes its pass in
+                            // try-with-resources) and with the default
+                            // prioritizeChunkUpdates=NONE the drain is pure compileAsync
+                            // task scheduling (CPU only; NEARBY/PLAYER_AFFECTED users get
+                            // vanilla's ≤budget synchronous builds — a frame-time cost,
+                            // not a correctness hazard, and any emergency staging flush
+                            // touches only the DEST dispatcher's own buffers, before this
+                            // portal's prepareChunkRenders captures its slices). The
+                            // staged results reach the GPU via flushDestStagedUploads
+                            // (the render():257-265 upload tail, run per frame at
+                            // renderLevel HEAD, OUTSIDE the framegraph — do NOT upload
+                            // here mid-pass, that resizes bound buffers). Per-frame
+                            // cost is bounded by the same createRegion budget that
+                            // already capped the (previously wasted) extract loop. FBO
+                            // mode is excluded: render() runs there and drains it —
+                            // draining twice would compileAsync the same regions twice
+                            // per frame (compileAsync cancels in-flight tasks). In the
+                            // same finally as the delta feed: extract can throw AFTER
+                            // consuming flags, and the queue still holds those entries.
+                            if (stencilDirectMode) {
+                                ((com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) destRenderer)
+                                    .seamlessportals$invokeCompileSections(destCameraState);
+                            }
                         }
                     }
                     // Diagnostic (gated, temporary): at render time mc.particleEngine

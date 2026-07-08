@@ -1883,7 +1883,9 @@ public class PortalWorldManager {
             scheduled++;
         }
 
-        // PASS 2: outer radius (≤8 chunks). Bounded by budget.
+        // PASS 2: outer radius (≤ compilePumpRadiusSq() = portalRenderDistance², i.e.
+        // the FULL portal-view radius — NOT the old fixed 8 chunks; that stale figure
+        // misdirected a root-cause hunt on 2026-07-07). Bounded by budget.
         for (net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section
                 : viewArea.sections) {
             if (section == null) continue;

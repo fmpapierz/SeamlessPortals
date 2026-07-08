@@ -146,4 +146,25 @@ public interface LevelRendererAccessorMixin {
         LevelRenderState levelRenderState,
         net.minecraft.client.renderer.SubmitNodeCollector submitNodeCollector,
         boolean renderOutline);
+
+    /**
+     * Invoke the renderer's private {@code compileSections(CameraRenderState)}
+     * (LevelRenderer.java:608) — the ONLY vanilla consumer of the
+     * {@code levelRenderState.sectionUpdateRenderStates} queue that
+     * {@code LevelExtractor.extract}'s sectionUpdates loop fills (each entry's
+     * dirty flag is consumed by {@code setNotDirty} at queue time,
+     * LevelExtractor.java:167). Vanilla pairs them inside {@code render()}
+     * (:254-255); the stencil-direct portal path never calls {@code render()}
+     * for the dest renderer, so it must invoke this directly after each
+     * {@code extract(...)} or the queued compiles are discarded by the next
+     * extract's {@code levelRenderState.reset()} — stranding sections
+     * dirty=false + UNCOMPILED forever (the post-crossing chunk-hole bug).
+     * Invoking the real method keeps the 1:1 vanilla semantics (fade windows,
+     * sync-nearby compile options, translucent resort) and the
+     * {@link LevelRendererCompileSectionsMixin} out-of-range filter applies
+     * to it automatically.
+     */
+    @org.spongepowered.asm.mixin.gen.Invoker("compileSections")
+    void seamlessportals$invokeCompileSections(
+        net.minecraft.client.renderer.state.level.CameraRenderState camera);
 }
