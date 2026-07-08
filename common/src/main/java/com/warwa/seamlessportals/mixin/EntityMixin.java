@@ -129,7 +129,7 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
                 to,
                 self instanceof net.minecraft.world.entity.item.ItemEntity item
                     ? " x" + item.getItem().getCount() : "");
-            if (PortalTeleporter.teleportEntity(self, linkOpt.get())) {
+            if (PortalTeleporter.teleportEntity(self, linkOpt.get(), from, to)) {
                 // Same-dim teleports keep THIS object: null the segment so
                 // the source-side position can't pair with the post-teleport
                 // position into a bogus cross-portal segment next tick.

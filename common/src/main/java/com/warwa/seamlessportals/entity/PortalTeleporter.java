@@ -17,7 +17,13 @@ import java.util.Set;
 
 public class PortalTeleporter {
 
-    public static boolean teleportEntity(Entity entity, PortalLink link) {
+    /**
+     * Teleport a non-player entity (item, mob, animal) or run the player
+     * server-first fallback. {@code moveFrom}/{@code moveTo} are the movement
+     * segment that detected the crossing (EntityMixin plane-segment detection),
+     * used to sign the exit exactly as the player path does.
+     */
+    public static boolean teleportEntity(Entity entity, PortalLink link, Vec3 moveFrom, Vec3 moveTo) {
         if (entity.level().isClientSide()) return false;
 
         PortalInfo destPortal = link.getDestination();
@@ -32,19 +38,38 @@ public class PortalTeleporter {
             return false;
         }
 
-        Vec3 currentPos = entity.position();
-        Vec3 destPos = link.transformTeleportPosition(currentPos);
-        Vec3 destVelocity = link.transformVelocity(entity.getDeltaMovement());
-
         if (entity instanceof ServerPlayer player) {
-            return teleportPlayer(player, destLevel, destPos, destVelocity, link);
-        } else {
-            return teleportNonPlayer(entity, destLevel, destPos, destVelocity);
+            return teleportPlayer(player, link);
         }
+
+        // NON-PLAYER LANDING (2026-07-08, the "thrown items vanish / burn in
+        // lava / can't be picked up" fix). Route items and mobs through the
+        // EXACT same motion-signed landing the player uses, instead of the bare
+        // depth-negating single-arg transformTeleportPosition + depth-negated
+        // transformVelocity this method used before. That old pairing landed a
+        // crossed entity ~0.2 blocks PAST the plane on the side OPPOSITE the
+        // player's emergence (behind the destination portal-block column + its
+        // wall — physically unreachable) with velocity pointing back through the
+        // frame, so items drifted into the adjacent lava lake and burned (census:
+        // ~59 of one burst destroyed) while survivors sat where the player could
+        // never reach them. The player path (SeamlessServerTeleport.performCrossing)
+        // does: exitSign = crossingDepthSign(segment); pos =
+        // transformTeleportPosition(src, exitSign) [overshoot PAST the plane on the
+        // motion side]; vel = transformVelocityMotion(vel) [same-sign, moving AWAY
+        // from the plane]. Mirroring it makes a thrown item emerge exactly where
+        // the player would — same reachable side, moving into the destination
+        // (away from the portal-frame lava) — the IP-faithful behavior (IP applies
+        // an exit overshoot along the motion direction to every regular entity).
+        double exitSign = link.crossingDepthSign(moveFrom, moveTo);
+        if (exitSign == 0.0 || Double.isNaN(exitSign)) {
+            exitSign = link.crossingDepthSignFromState(entity.position(), entity.getDeltaMovement());
+        }
+        Vec3 destPos = link.transformTeleportPosition(entity.position(), exitSign);
+        Vec3 destVelocity = link.transformVelocityMotion(entity.getDeltaMovement());
+        return teleportNonPlayer(entity, destLevel, destPos, destVelocity);
     }
 
-    private static boolean teleportPlayer(ServerPlayer player, ServerLevel destLevel,
-                                           Vec3 destPos, Vec3 destVelocity, PortalLink link) {
+    private static boolean teleportPlayer(ServerPlayer player, PortalLink link) {
         // IP-style: server-first fallback path (when client-initiated crossing
         // hasn't fired yet). Delegates to SeamlessServerTeleport which uses
         // vanilla teleportTo + sends ClientboundSeamlessMovePayload for
