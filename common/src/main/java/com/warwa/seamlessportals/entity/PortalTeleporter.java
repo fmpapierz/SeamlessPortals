@@ -64,16 +64,21 @@ public class PortalTeleporter {
 
         Entity newEntity = entity.teleport(transition);
         if (newEntity != null) {
-            // Vanilla cross-dim teleport replaces the entity object — the
-            // @Unique seamlessportals$justTeleported flag on the source
-            // entity is lost, and the new entity spawns inside the
-            // destination portal bounds. Without a cooldown it would be
-            // picked up by our EntityMixin on the very next tick,
-            // teleported back, creating a new entity each hop. Setting the
-            // standard 300-tick (15 s) portal cooldown on the new entity
-            // matches vanilla's cross-portal anti-loop behaviour and
-            // guarantees the mob has time to walk out of the portal bounds.
-            newEntity.setPortalCooldown(300);
+            // 2-tick anti-jitter dedup (2026-07-08 — was 300 ticks). The old
+            // 15s cooldown existed as anti-loop armor for CONTAINMENT
+            // detection (a recreated entity spawns inside the dest portal
+            // volume and would re-fire every tick); EntityMixin now detects
+            // by PLANE-SEGMENT crossing, and the recreated entity starts
+            // with a null segment — it structurally cannot re-fire unless it
+            // actually moves back through the plane, which is a legitimate
+            // crossing. Two ticks only absorbs plane-straddling jitter (an
+            // entity resting exactly on the plane), mirroring IP's 1-tick
+            // teleportation dedup. This also ends the 15-second window in
+            // which every freshly-crossed entity was INVISIBLE through the
+            // portal (PortalEntityTracker skips cooldown-flagged entities
+            // from the mirror) — the user-visible "items thrown through the
+            // portal disappear".
+            newEntity.setPortalCooldown(2);
         }
         return newEntity != null;
     }

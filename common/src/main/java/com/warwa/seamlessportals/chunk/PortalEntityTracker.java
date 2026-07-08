@@ -274,15 +274,21 @@ public class PortalEntityTracker {
             for (Entity e : destLevel.getEntities((Entity) null, aabb)) {
                 if (e instanceof ServerPlayer) continue; // players handled separately
                 if (!e.isAlive()) continue;
-                // Skip entities that just spawned or are mid-portal-crossing.
-                // Vanilla's nether portal logic deletes-and-recreates the
-                // entity on every crossing, so an entity caught in a portal
-                // loop gets a new id every tick. Mirroring those would
-                // flood payloads (observed: hundreds of fake Add/Remove per
-                // second for two stationary "piglins" at a portal). A
-                // freshness gate drops them until they settle.
-                if (e.tickCount < 20) continue;
-                if (e.isOnPortalCooldown()) continue;
+                // 2-tick freshness guard (2026-07-08 — was tickCount<20 +
+                // isOnPortalCooldown). The old pair existed to hide the
+                // containment-detection portal LOOP (an entity recreated
+                // with a fresh id every tick = hundreds of fake Add/Remove
+                // per second); with EntityMixin's plane-segment detection
+                // the loop is structurally gone, and the cooldown check had
+                // become the user-visible bug: every freshly-crossed entity
+                // carried a 300-tick cooldown, so items/animals were
+                // INVISIBLE through the portal for 15 seconds after
+                // crossing ("items thrown through the portal disappear").
+                // Two ticks still keeps a single re-teleport's transient id
+                // out of the mirror (a hop's short-lived entity never
+                // survives 2 ticks) without perceptible delay. IP pairs
+                // far-dim entities within ~1 tick with no gate at all.
+                if (e.tickCount < 2) continue;
                 double dx = e.getX() - center.x;
                 double dz = e.getZ() - center.z;
                 if (dx * dx + dz * dz > rangeBlocks * rangeBlocks) continue;
