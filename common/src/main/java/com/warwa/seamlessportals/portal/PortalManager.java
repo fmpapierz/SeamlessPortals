@@ -515,11 +515,16 @@ public class PortalManager {
         double scale = source.getType().getCoordinateScale();
         BlockPos origin = source.getOrigin();
 
+        // Math.floor, NOT (int) cast: a cast truncates TOWARD ZERO, which is
+        // wrong for negative coordinates on the OW->nether divide (e.g. x=-17,
+        // scale 8: -17/8 = -2.125 -> (int) gives -2 but vanilla floors to -3),
+        // offsetting the linked portal by one block in negative-coordinate
+        // regions. Vanilla dimension transitions floor the scaled coordinate.
         if (source.getDimension() == Level.OVERWORLD && source.getType() == PortalType.NETHER) {
-            return new BlockPos((int) (origin.getX() / scale), origin.getY(), (int) (origin.getZ() / scale));
+            return new BlockPos((int) Math.floor(origin.getX() / scale), origin.getY(), (int) Math.floor(origin.getZ() / scale));
         }
         if (source.getDimension() == Level.NETHER && source.getType() == PortalType.NETHER) {
-            return new BlockPos((int) (origin.getX() * scale), origin.getY(), (int) (origin.getZ() * scale));
+            return new BlockPos((int) Math.floor(origin.getX() * scale), origin.getY(), (int) Math.floor(origin.getZ() * scale));
         }
         return origin;
     }

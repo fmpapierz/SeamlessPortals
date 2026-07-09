@@ -92,17 +92,22 @@ public final class SeamlessServerTeleport {
             return;
         }
 
-        // Validate: player is reasonably near the source portal. Generous
-        // radius — client-server position skew can be several blocks during
-        // the tick-before-crossing moment.
+        // Validate: the player is reasonably near the source portal. Measure
+        // against the portal's BOUNDING BOX (inflated by a generous margin), NOT
+        // its center point (2026-07-08 fix). A fixed 8-block CENTER radius falsely
+        // rejected legitimate crossings near the edge of a LARGE/TALL portal — a
+        // 21-tall portal's top row is ~10 blocks from center, beyond the old
+        // radius — which left the client teleported (the visual swap already
+        // happened) while the server REFUSED, a permanent client-in-dest /
+        // server-in-source desync. The box scales with the portal, so the margin
+        // stays uniform from the aperture regardless of portal size; the 8-block
+        // inflate still absorbs the several-block client-server position skew at
+        // the crossing tick while rejecting far-away spoofed crossings.
         PortalInfo srcPortal = link.getSource();
-        Vec3 portalCenter = srcPortal.getCenter();
-        double d2 = player.position().distanceToSqr(portalCenter);
-        double maxD2 = 64.0; // 8-block radius
-        if (d2 > maxD2) {
+        if (!srcPortal.getBoundingBox().inflate(8.0).contains(player.position())) {
             SeamlessPortalsConstants.LOGGER.warn(
-                "[SEAMLESS SERVER-CROSSING] Rejected: player {} is {} blocks from portal center (max {})",
-                player.getName().getString(), Math.sqrt(d2), Math.sqrt(maxD2));
+                "[SEAMLESS SERVER-CROSSING] Rejected: player {} at {} is not within 8 blocks of source portal box {}",
+                player.getName().getString(), player.position(), srcPortal.getBoundingBox());
             return;
         }
 

@@ -22,13 +22,21 @@ import java.util.Optional;
  * — which also notifies the server so it can do its authoritative cross-dim
  * move.
  *
- * <p>The server-side fallback in {@code EntityMixin.tick} still runs for all
- * entities; for the local player specifically, the client-first detection
- * should always win the race because it runs earlier in the frame and
- * doesn't wait for a packet round-trip. If the client misses the detection
- * (e.g. {@link PortalLink} hasn't been synced yet), the server falls back
- * ~50 ms later and the client performs a deferred swap on receiving
- * {@code ClientboundSeamlessMovePayload}.
+ * <p>The client-first detection here is the ONLY path that crosses the local
+ * player: {@code EntityMixin.tick} returns early for {@code ServerPlayer}
+ * (line 86) so its server-side detector never runs for players, and vanilla
+ * portal travel is suppressed. THERE IS CURRENTLY NO SERVER-SIDE PLAYER
+ * FALLBACK (the {@code SeamlessServerTeleport.performCrossing(player, link)}
+ * server-first dispatch exists but is unreachable — no code detects a player
+ * crossing on the server). So if the client misses the detection — e.g. a
+ * hitch, or {@link PortalLink} not yet synced, or the visual swap failing when
+ * the dest renderer isn't cached yet ({@code SeamlessClientTeleport} returns
+ * before emitting the crossing payload) — the player is SILENTLY NOT
+ * teleported (no vanilla purple-overlay fallback either). Adding a debounced
+ * server-side player crossing detector that invokes the existing
+ * {@code performCrossing} dispatch as a reliability net is a tracked item for
+ * the entity-portal migration's crossing rework (task #11). Do NOT rely on a
+ * server fallback existing today.
  */
 @Mixin(LocalPlayer.class)
 public abstract class LocalPlayerMixin {
