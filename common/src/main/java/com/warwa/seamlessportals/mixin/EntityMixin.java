@@ -87,6 +87,23 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
             return;
         }
 
+        // Skip an ELYTRA-BOOST firework (2026-07-08, the "a rocket shoots out
+        // in front of me when i teleport while boosting" fix — the SECOND half
+        // of it). The attached boost firework is glued to the gliding player's
+        // position, so its per-tick segment crosses the plane when the player
+        // does and THIS detector (not just ProjectilePortalHandler) catches it
+        // — every firework crossing this run logged via this path, not the
+        // projectile handler. Crossing it recreates it detached as a free
+        // visible rocket pointing straight up (attachment is not saved in NBT).
+        // Both crossing paths must skip it; the orphan self-explodes harmlessly
+        // in the old dim once its player teleports away. Non-attached fireworks
+        // (dispenser/crossbow) still cross normally.
+        if (self instanceof net.minecraft.world.entity.projectile.FireworkRocketEntity firework
+                && ((com.warwa.seamlessportals.mixin.FireworkRocketEntityAccessor) firework)
+                    .seamlessportals$isAttachedToEntity()) {
+            return;
+        }
+
         // PLANE-SEGMENT DETECTION (2026-07-08, the "items/animals vanish
         // through portals" fix — the same switch that fixed the PLAYER
         // oscillation freeze in LocalPlayerMixin). The old containment test
