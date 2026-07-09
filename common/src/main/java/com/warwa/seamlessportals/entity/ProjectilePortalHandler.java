@@ -21,6 +21,25 @@ public class ProjectilePortalHandler {
         if (projectile.level().isClientSide()) return false;
         if (projectile.getPortalCooldown() > 0) return false;
 
+        // Skip an ELYTRA-BOOST firework (2026-07-08, the "a rocket shoots out
+        // in front of me when i teleport while boosting" fix). A boost firework
+        // is an INVISIBLE entity attached to the gliding player, glued to the
+        // player's position + velocity each tick (FireworkRocketEntity.tick),
+        // so its per-tick segment crosses the portal plane exactly when the
+        // player does. Crossing it here recreated it in the destination as a
+        // FREE, VISIBLE rocket pointing straight up — attachment is NOT
+        // persisted through the cross-dim NBT recreate, so the new entity is
+        // detached (isShotAtAngle=false → vertical free-flight). Vanilla loses
+        // the boost rocket through a portal anyway; the skipped orphan
+        // self-explodes harmlessly in the old dim once its attached player is
+        // gone. Non-attached fireworks (dispenser/crossbow) are unaffected and
+        // cross normally.
+        if (projectile instanceof net.minecraft.world.entity.projectile.FireworkRocketEntity firework
+                && ((com.warwa.seamlessportals.mixin.FireworkRocketEntityAccessor) firework)
+                    .seamlessportals$isAttachedToEntity()) {
+            return false;
+        }
+
         Vec3 currentPos = projectile.position();
         Vec3 movement = projectile.getDeltaMovement();
         Vec3 nextPos = currentPos.add(movement);

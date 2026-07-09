@@ -61,6 +61,7 @@
   "mixins": [
     "ChunkMapResendSuppressMixin",
     "EntityFlagsAccessor",
+    "FireworkRocketEntityAccessor",
     "LivingEntityHurtAccessor",
     "EntityMixin",
     "EntityLevelAccessorMixin",
