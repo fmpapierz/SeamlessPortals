@@ -190,6 +190,31 @@ public final class FrontClipping {
     }
 
     /**
+     * Entity-pass variant of {@link #setupInnerClipping}: the SAME dest-portal
+     * clip plane, pushed {@code margin} blocks toward the camera so a mirrored
+     * dest entity STRADDLING the portal plane is not bisected (2026-07-08, the
+     * "animal clips out of existence on the portal window" fix).
+     *
+     * <p>The inner clip keeps the half-space {@code nw·(X-c) >= 0} (the far side,
+     * away from the mirror camera) and discards the camera-side half — correct
+     * for TERRAIN (near-side occluders must go) but it slices the camera-side
+     * half off any entity sitting at the plane. Entities that just crossed land
+     * within the landing-overshoot band right at the plane, so their near half
+     * vanishes. Adding {@code margin} to {@code planeW} shifts the kept condition
+     * to {@code nw·(X-c) >= -margin} — everything from {@code margin} blocks
+     * camera-side of the plane outward is kept — which covers a mob's ~0.3-0.6
+     * body depth. Used ONLY around {@link com.warwa.seamlessportals.render.PortalContextSwitch}'s
+     * dest-entity pass; terrain keeps the tight clip, so the only cost is a dest
+     * entity physically standing within {@code margin} of the plane on the camera
+     * side leaking into the window (rare — the dest portal is frame-embedded).
+     */
+    public static void setupInnerClippingForEntities(PortalInfo destPortal, Vec3 virtualCameraPos,
+                                                     org.joml.Matrix4fc viewRotation, double margin) {
+        setupInnerClipping(destPortal, virtualCameraPos, viewRotation);
+        planeW += (float) margin;
+    }
+
+    /**
      * Disable clipping. Sets the uniform to {@code (0, 0, 0, 1)} — a
      * constant positive {@code gl_ClipDistance} so nothing is clipped,
      * and turns off {@code GL_CLIP_DISTANCE0}.

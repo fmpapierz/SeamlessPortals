@@ -1923,7 +1923,29 @@ public class PortalContextSwitch {
                                             // Step 2c: dest entities / block-entities / particles
                                             // (submit model), drawn over the opaque terrain — matches
                                             // addMainPass's executeSolid placement (after OPAQUE).
+                                            //
+                                            // ENTITY CLIP PUSHED BACK (2026-07-08, the "animal clips
+                                            // out of existence on the portal window" fix): the tight
+                                            // inner clip discards the camera-side half of anything at
+                                            // the dest plane — correct for terrain occluders, but it
+                                            // BISECTS a mirrored mob straddling the plane (its near
+                                            // half vanishes). Re-arm the clip pushed MARGIN blocks
+                                            // toward the camera for the entity pass ONLY, so a
+                                            // straddling mob renders WHOLE while far occluders still
+                                            // clip; then re-tighten for the translucent terrain pass.
+                                            // (Fixes the emergence/dest-side half-vanish; the
+                                            // source-side approach seam — a mob walking INTO the source
+                                            // portal, occluded by the composited window — needs a
+                                            // cross-portal entity renderer and is a separate task.)
+                                            if (FrontClipping.INNER_CLIP_ENABLED) {
+                                                FrontClipping.setupInnerClippingForEntities(
+                                                    destPortal, destCameraPos, destViewMatrix, 0.5);
+                                            }
                                             renderPortalEntities(destRenderer, destLRS, destViewMatrix);
+                                            if (FrontClipping.INNER_CLIP_ENABLED) {
+                                                FrontClipping.setupInnerClipping(
+                                                    destPortal, destCameraPos, destViewMatrix);
+                                            }
                                             // Step 2a: TRANSLUCENT terrain (water, ice, stained glass).
                                             // The dest renderer never ran render(), so its
                                             // targets.translucent is null → TRANSLUCENT.outputTarget()
