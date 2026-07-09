@@ -54,10 +54,30 @@ public class ProjectilePortalHandler {
         if (destLevel == null) return false;
 
         Vec3 intersection = portal.getIntersectionPoint(from, to);
-        Vec3 remainingMovement = to.subtract(intersection);
 
-        Vec3 destPos = link.transformPosition(intersection);
-        Vec3 destVelocity = link.transformVelocity(projectile.getDeltaMovement());
+        // MOTION-SIGNED LANDING (2026-07-08, the "arrows disappear in the portal /
+        // no arrow on the other side" fix — the projectile-path analog of the
+        // item/mob fix in PortalTeleporter). The old pairing —
+        // transformPosition(intersection) [lands AT the plane, no overshoot] +
+        // transformVelocity(...) [transformVector, depth-NEGATED] + a
+        // depth-negated remaining-movement add — emerged the arrow embedded in
+        // the destination portal-block column moving BACKWARD into the frame, so
+        // it stuck inGround behind the wall (unreachable, invisible). Mirror the
+        // proven player/item landing instead: sign the exit by the crossing
+        // segment, land PAST the plane on the motion side (applyExitOvershoot,
+        // ≥0.08 in open air), and keep velocity same-sign (transformVelocityMotion:
+        // magnitude-preserving, no 8x coordinate scale, moving AWAY from the plane
+        // into the destination). The arrow now emerges on the reachable exit side
+        // flying continuously — visible through the portal for the same reason
+        // items are. No remaining-movement term (it double-counted the overshoot
+        // and the working item path omits it entirely). IP-faithful: IP crosses
+        // arrows as regular entities (no depth negation, motion-direction exit).
+        double exitSign = link.crossingDepthSign(from, to);
+        if (exitSign == 0.0 || Double.isNaN(exitSign)) {
+            exitSign = link.crossingDepthSignFromState(intersection, projectile.getDeltaMovement());
+        }
+        Vec3 destPos = link.transformTeleportPosition(intersection, exitSign);
+        Vec3 destVelocity = link.transformVelocityMotion(projectile.getDeltaMovement());
 
         SeamlessPortalsConstants.LOGGER.debug("Projectile {} crossing portal at {} -> {}",
             projectile.getType().getDescriptionId(), intersection, destPos);
@@ -77,15 +97,14 @@ public class ProjectilePortalHandler {
 
         Entity newProjectile = projectile.teleport(transition);
         if (newProjectile instanceof Projectile newProj) {
-            newProj.setPortalCooldown(EntityPortalCollision.getTeleportCooldown());
-
-            // Apply remaining movement in the new dimension
-            Vec3 transformedRemaining = link.transformVelocity(remainingMovement);
-            newProj.setPos(
-                destPos.x + transformedRemaining.x,
-                destPos.y + transformedRemaining.y,
-                destPos.z + transformedRemaining.z
-            );
+            // 2-tick anti-jitter dedup, matching items/mobs (PortalTeleporter).
+            // Was 20; the recreated projectile already emerges ≥0.08 past the
+            // plane moving away under plane-segment detection, so it cannot
+            // re-cross — the long cooldown only delayed its through-portal
+            // visibility. The TeleportTransition already placed it at destPos
+            // with destVelocity, so no post-teleport reposition is needed (the
+            // old remaining-movement setPos double-counted the overshoot).
+            newProj.setPortalCooldown(2);
             return true;
         }
 
@@ -105,7 +124,7 @@ public class ProjectilePortalHandler {
 
         Entity newPearl = pearl.teleport(transition);
         if (newPearl != null) {
-            newPearl.setPortalCooldown(EntityPortalCollision.getTeleportCooldown());
+            newPearl.setPortalCooldown(2);
         }
 
         SeamlessPortalsConstants.LOGGER.debug("Ender pearl crossed portal, owner: {}",
