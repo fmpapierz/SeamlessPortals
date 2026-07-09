@@ -1421,6 +1421,51 @@ public class PortalWorldManager {
         }
     }
 
+    /**
+     * Run each live secondary (cached dest) ClientLevel's light engine at
+     * frame-render END — the missing HALF of the portal-view light pipeline
+     * (2026-07-08, the "nether portal-view lighting is wrong until the first
+     * crossing" fix).
+     *
+     * <p>{@link #tickRemoteWorlds} already calls {@code cached.pollLightUpdates()},
+     * which drains the queued light lambdas → {@code applyLightData} →
+     * {@code queueSectionData} — but that ONLY stashes the light nibbles into
+     * {@code queuedSections} and sets {@code hasInconsistencies}; it does NOT
+     * publish them. Only {@code LevelLightEngine.runLightUpdates()} swaps the
+     * queued nibbles into the live map ({@code swapSectionMap}) and drains the
+     * block-light recompute queued by mirrored block changes ({@code checkBlock}
+     * from {@code RemoteBlockUpdater}). Vanilla {@code ClientLevel.update()} runs
+     * BOTH halves every frame for the ACTIVE level; the inactive secondary never
+     * gets {@code update()}, and the mod had ported only the poll half — so the
+     * nether portal view (no skylight → block light is everything) showed stale/
+     * dark light until a crossing promoted the secondary and the now-active
+     * level's {@code update()} finally ran the engine.
+     *
+     * <p>IP-faithful: this is IP's {@code MyRenderHelper.lateUpdateLight}, invoked
+     * at frame-render END (its {@code MixinGameRenderer}), deliberately NOT
+     * mid-tick — IP's comment: running it before world rendering can make
+     * section-edge smooth lighting abnormal. {@code runLightUpdates} fires the
+     * engine's {@code onLightUpdate} reports, which
+     * {@link SeamlessClientChunkMap#onLightUpdate} routes to the secondary's
+     * extractor ({@code setSectionDirty}) so the portal-view sections re-mesh next
+     * frame. {@code mc.level} stays the ACTIVE dim here (no swap), so
+     * {@code onLightUpdate} correctly takes the secondary-extractor branch.
+     */
+    public static void lateUpdateSecondaryLight() {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel active = mc.level;
+        for (Map.Entry<ResourceKey<Level>, ClientLevel> e : levels.entrySet()) {
+            ClientLevel cached = e.getValue();
+            if (cached == null || cached == active) continue;
+            if (!isDestScopeLive(e.getKey())) continue; // paused: no nearby portal
+            try {
+                cached.getChunkSource().getLightEngine().runLightUpdates();
+            } catch (Throwable t) {
+                // Best-effort — never crash the render frame on a light update.
+            }
+        }
+    }
+
     public static void tickCachedEntities() {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel active = mc.level;
