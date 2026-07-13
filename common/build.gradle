@@ -12,12 +12,35 @@ neoForge {
     }
 }
 
+repositories {
+    // JUnit (S0 test infrastructure) resolves from Maven Central. Declared
+    // explicitly (harmless if a plugin already added it) and AFTER the
+    // plugin-provided repositories, so existing dependency resolution is
+    // unchanged.
+    mavenCentral()
+}
+
 dependencies {
     compileOnly group: 'org.spongepowered', name: 'mixin', version: '0.8.5'
     // ASM tree types are required for IMixinConfigPlugin.preApply/postApply
     // signatures (org.objectweb.asm.tree.ClassNode). Mixin itself depends on
     // them at runtime; we just need them on the compile classpath.
     compileOnly group: 'org.ow2.asm', name: 'asm-tree', version: '9.7'
+
+    // S0 JUnit test infrastructure for the entity-portal migration
+    // (migration/EXECUTION_PLAN.md §3 S0(a); D4.5 math harness — the S2
+    // DQuaternion/Plane invariant tests and, at S13, the carried IP
+    // Mesh2DTest/HelperTest run through this). :common:compileTestJava
+    // carries its OWN held-paths list (IpHeldPaths.TEST_HELD_PATHS, D1.3).
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    // Gradle 9 no longer injects the platform launcher onto the test runtime
+    // classpath automatically.
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
 }
 
 configurations {

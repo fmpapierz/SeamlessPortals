@@ -1,0 +1,60 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.neoforged.moddev'
+}
+
+neoForge {
+    version = project.neo_version
+
+    def at = project(':common').file('src/main/resources/META-INF/accesstransformer.cfg')
+    if (at.exists()) {
+        accessTransformers.from(at.absolutePath)
+    }
+
+    runs {
+        configureEach {
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+        client {
+            client()
+            gameDirectory = file('runs/client')
+        }
+        server {
+            server()
+            programArgument '--nogui'
+            gameDirectory = file('runs/server')
+        }
+    }
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets.main.resources {
+    srcDir('src/generated/resources')
+}
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+        minecraft_version      : project.minecraft_version,
+        minecraft_version_range : project.minecraft_version_range,
+        neo_version             : project.neo_version,
+        neo_version_range       : project.neo_version_range,
+        loader_version_range    : project.loader_version_range,
+        mod_id                  : project.mod_id,
+        mod_name                : project.mod_name,
+        mod_license             : project.mod_license,
+        mod_version             : project.mod_version,
+        mod_description         : project.mod_description,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
