@@ -1,0 +1,40 @@
+import com.warwa.seamlessportals.gradle.IpHeldPaths
+
+plugins {
+    id 'multiloader-common'
+}
+
+configurations {
+    commonJava {
+        canBeResolved = true
+    }
+    commonResources {
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    commonJava project(path: ':common', configuration: 'commonJava')
+    commonResources project(path: ':common', configuration: 'commonResources')
+    compileOnly project(':common')
+}
+
+tasks.named('compileJava', JavaCompile).configure { JavaCompile t ->
+    t.source(configurations.commonJava)
+    // D1 holding machinery (migration/EXECUTION_PLAN.md §1 D1 item 2): the line above
+    // feeds the RAW common source directory to this loader's compiler, so a held-paths
+    // filter on :common:compileJava does NOT propagate here — the same MAIN list must be
+    // applied to this task too, or the loader build goes red the moment the first held
+    // qouteall/** file lands. Inert while the MAIN list has no matches on disk; gated on
+    // ip_scc_closed != 'true'. Removed at S20.
+    IpHeldPaths.applyHolding(project, t, IpHeldPaths.MAIN_HELD_PATHS)
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    from(configurations.commonResources)
+}
+
+tasks.named('sourcesJar', Jar).configure {
+    from(configurations.commonJava)
+    from(configurations.commonResources)
+}
