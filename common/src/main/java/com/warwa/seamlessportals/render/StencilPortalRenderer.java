@@ -166,27 +166,28 @@ public class StencilPortalRenderer {
     }
 
     /**
-     * PHASE 1 — render the destination world into the secondary FBO.
+     * PER-FRAME UPKEEP (A4) — re-homed at S3 out of {@link #prepareDestinationRender} (which runs
+     * at {@code GameRenderer.renderLevel} HEAD) into the relocated pre-render pump
+     * ({@link com.warwa.seamlessportals.mixin.client.MinecraftFramePumpMixin}, fired inside
+     * {@code Minecraft.renderFrame} BEFORE {@code gameRenderer.update}). This is the faithful
+     * block-era analog of IP's pre-render-block upkeep ({@code earlyRemoteUpload} etc.,
+     * {@code MixinGameRenderer.java:86-96}).
      *
-     * <p>Called from {@code GameRenderer.renderLevel} HEAD (via
-     * {@link com.warwa.seamlessportals.mixin.client.GameRendererPortalPrepareMixin}),
-     * BEFORE the main frame's level-render framegraph is built/executed. Issuing the
-     * heavy nested {@code destRenderer.render(...)} here — rather than from
-     * {@code AFTER_TRANSLUCENT_TERRAIN} (which fires mid-main-framegraph) — is what
-     * stops the overworld from blanking: the nested deferred render is no longer
-     * inside the main frame's in-flight framegraph.
+     * <p><b>GPU-upload safety (A4 caveat).</b> The new call site is the earliest render-thread
+     * point in the frame — before {@code GameRenderer.update} ({@code Minecraft.java:1290}),
+     * {@code extract} ({@code :1295}) and {@code render} ({@code :1302}, where the main-world
+     * {@code FrameGraphBuilder} is built and executed). The staged-upload flush here is therefore
+     * strictly OUTSIDE any in-flight framegraph — it was already pre-framegraph at renderLevel
+     * HEAD, and this position is pre-framegraph AND pre-extract, i.e. strictly earlier and equally
+     * safe. Flushing mid-pass would resize bound GPU buffers and flash the screen; that hazard
+     * cannot arise this early in the frame.
      *
-     * <p>This does ONLY the FBO render. The stencil mask + composite stay in phase 2
-     * ({@link #renderPortals}) because they need the main framegraph's depth buffer
-     * (so the obsidian frame occludes the mask) and run on the screen target.
+     * <p>Every item self-guards ({@code flushDestStagedUploads} returns on {@code level == null};
+     * {@code pruneEntityAdoptions} returns when the adoption set is empty; the bridge pump gates on
+     * {@code isPromoteBridgeActive()}), and the caller additionally gates on {@code level != null}
+     * — preserving the old renderLevel-HEAD precondition (renderLevel only fires with a level).
      */
-    public static void prepareDestinationRender() {
-        // NB the per-frame crossing check used to live here (renderLevel HEAD) — WRONG: in 26.2
-        // the frame's camera is positioned in GameRenderer.update BEFORE extract/renderLevel, so
-        // a swap here rendered the dest level with the stale source-position camera for one frame
-        // (the fog-colored flash, proven by [SEAMLESS XTRACE] pd=-39.9). It now runs at
-        // GameRenderer.update HEAD via GameRendererFrameCrossingMixin (IP's placement).
-
+    public static void frameUpkeep() {
         // Instant-portal-view: flush the dest renderers' staged mesh uploads once per frame at
         // this pre-framegraph point (GPU-upload-safe timing — mid-pass flushing resizes bound
         // buffers and flashes the screen). Freshly compiled dest meshes become drawable
@@ -213,6 +214,31 @@ public class StencilPortalRenderer {
                     .seamlessportals$getNeedsFrustumUpdate().set(true);
             }
         }
+    }
+
+    /**
+     * PHASE 1 — render the destination world into the secondary FBO.
+     *
+     * <p>Called from {@code GameRenderer.renderLevel} HEAD (via
+     * {@link com.warwa.seamlessportals.mixin.client.GameRendererPortalPrepareMixin}),
+     * BEFORE the main frame's level-render framegraph is built/executed. Issuing the
+     * heavy nested {@code destRenderer.render(...)} here — rather than from
+     * {@code AFTER_TRANSLUCENT_TERRAIN} (which fires mid-main-framegraph) — is what
+     * stops the overworld from blanking: the nested deferred render is no longer
+     * inside the main frame's in-flight framegraph.
+     *
+     * <p>This does ONLY the FBO render. The stencil mask + composite stay in phase 2
+     * ({@link #renderPortals}) because they need the main framegraph's depth buffer
+     * (so the obsidian frame occludes the mask) and run on the screen target.
+     */
+    public static void prepareDestinationRender() {
+        // S3 (R2/A4 re-home): the per-frame crossing check AND the per-frame upkeep (staged-upload
+        // flush, adoption prune, bridge repaint pump) that used to live here now run in the
+        // relocated pre-render pump — MinecraftFramePumpMixin, fired inside Minecraft.renderFrame
+        // BEFORE the gameRenderer.update call (the faithful IP anchor; see frameUpkeep() below and
+        // migration/port-notes/S03-frame-anchor.md). What REMAINS here is ONLY phase-1: the FBO
+        // dest render, which MUST stay at renderLevel HEAD because it reads the extracted camera
+        // render-state that GameRenderer.extract populates (before the main framegraph builds).
 
         // Phase 5 (stencil-direct): there is NO phase-1 FBO render. The dest world is drawn
         // directly into the main target during phase 2 (renderOnePortal → renderDestWorldDirect),

@@ -22,7 +22,7 @@
     "client.GameRendererAccessorMixin",
     "client.GameRendererLightmapMixin",
     "client.GameRendererPortalPrepareMixin",
-    "client.GameRendererFrameCrossingMixin",
+    "client.MinecraftFramePumpMixin",
     "client.GameRendererHandLightMixin",
     "client.LevelRendererAccessorMixin",
     "client.LevelRendererBlockOutlineMixin",
