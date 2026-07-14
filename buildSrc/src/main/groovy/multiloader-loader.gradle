@@ -17,6 +17,15 @@ dependencies {
     commonJava project(path: ':common', configuration: 'commonJava')
     commonResources project(path: ':common', configuration: 'commonResources')
     compileOnly project(':common')
+
+    // F21 stub-classpath (entity-portal migration — S00-U0-decisions F21;
+    // migration/EXECUTION_PLAN.md §3 S4(a)). This loader's compileJava recompiles the RAW
+    // common source directory (source(configurations.commonJava) below), so at the
+    // -Pip_scc_closed=true probe it also compiles IP's held compat files, which reference
+    // third-party sodium/iris/gravity_changer types absent on MC 26.2. The same empty
+    // shells :common uses must therefore be on THIS task's compile classpath too.
+    // compileOnly ONLY — never shipped by the loader jar. Removed at S20.
+    compileOnly project(path: ':common', configuration: 'ipStubsClasspath')
 }
 
 tasks.named('compileJava', JavaCompile).configure { JavaCompile t ->

@@ -3,6 +3,19 @@ plugins {
     id 'net.neoforged.moddev'
 }
 
+// F21 compileOnly stub-classpath source set (entity-portal migration —
+// migration/EXECUTION_PLAN.md §3 S4(a) "Sodium/Iris compile reality"; S00-U0-decisions
+// F21; S04-compat.md §3). IP's HELD compat files reference third-party mod types
+// (net.caffeinemc.mods.sodium.*, net.irisshaders.iris.*, gravity_changer.*) that have no
+// MC 26.2 build. This source set holds EMPTY shells of exactly those types (correct
+// FQN/kind + only the members IP touches). It is compileOnly ONLY — never shipped: it is
+// wired onto :common's and the loaders' COMPILE classpaths (the loaders recompile the raw
+// common source, so the -Pip_scc_closed=true probe there also needs the shells) but never
+// onto runtime/implementation. Deleted at S20 with the rest of the holding machinery.
+sourceSets {
+    ipStubs
+}
+
 neoForge {
     neoFormVersion = project.neo_form_version
 
@@ -17,6 +30,11 @@ neoForge {
     // modding dependencies the main source set gets by default. Without this,
     // :common:compileTestJava cannot resolve net.minecraft.* from test code.
     addModdingDependenciesTo sourceSets.test
+
+    // F21: the stub method signatures reference vanilla types (Level, TextureAtlasSprite,
+    // Entity, Player, Direction, Vec3) + JOML (Quaternionf), so the stub source set needs
+    // the same Minecraft compile classpath the main source set gets.
+    addModdingDependenciesTo sourceSets.ipStubs
 }
 
 repositories {
@@ -33,6 +51,13 @@ dependencies {
     // signatures (org.objectweb.asm.tree.ClassNode). Mixin itself depends on
     // them at runtime; we just need them on the compile classpath.
     compileOnly group: 'org.ow2.asm', name: 'asm-tree', version: '9.7'
+
+    // F21 stub shells on :common:compileJava's compile classpath ONLY (never runtime,
+    // never in the shipped jar — jar packages sourceSets.main.output only). Referenced by
+    // the held compat files, which are excluded in the shipping build and compiled only at
+    // the -Pip_scc_closed=true probe. See the ipStubs source set above and S00-U0-decisions
+    // F21. Removed at S20.
+    compileOnly sourceSets.ipStubs.output
 
     // S0 JUnit test infrastructure for the entity-portal migration
     // (migration/EXECUTION_PLAN.md §3 S0(a); D4.5 math harness — the S2
@@ -59,9 +84,26 @@ configurations {
         canBeResolved = false
         canBeConsumed = true
     }
+    // F21: consumable view of the compiled stub classes so the loader modules — which
+    // recompile the RAW common source directory and therefore also see the held compat
+    // files at the -Pip_scc_closed=true probe — can put the same shells on their
+    // compileJava classpath (multiloader-loader.gradle). Consume-only; never resolved here.
+    // Removed at S20.
+    ipStubsClasspath {
+        canBeResolved = false
+        canBeConsumed = true
+    }
+}
+
+// F21: package the compiled stub shells into a jar exposed via ipStubsClasspath. compileOnly
+// on the consuming side — never shipped. Removed at S20.
+tasks.register('ipStubsJar', Jar) {
+    archiveClassifier = 'f21-ipstubs'
+    from sourceSets.ipStubs.output
 }
 
 artifacts {
     commonJava sourceSets.main.java.sourceDirectories.singleFile
     commonResources sourceSets.main.resources.sourceDirectories.singleFile
+    ipStubsClasspath tasks.named('ipStubsJar')
 }
