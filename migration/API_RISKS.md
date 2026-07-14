@@ -332,8 +332,14 @@ Citation conventions follow the slice docs: bare `File.java:line` or `26.2:` = d
   `SavedDataType(id, ctor, Codec, DataFixTypes)` (`SavedDataType.java:8`) — **`dataFixType` may not be
   null, and the failure mode is SILENT DATA LOSS**: the NPE is swallowed by `readSavedData`'s
   catch(Exception) and a fresh empty storage overwrites `global_portal.dat`
-  (`SavedDataStorage.java:65-124`; portal-generation G1 — **UNKNOWN-NEEDS-DESIGN: which DataFixTypes
-  constant**; there is no NONE). `EntityType.Builder.build(ResourceKey)` requires the id at build time
+  (`SavedDataStorage.java:65-124`; portal-generation G1 — ~~UNKNOWN-NEEDS-DESIGN~~ **SETTLED by
+  SPIKE-R11 (`migration/spikes/SPIKE-R11-saveddata.md`): pass `DataFixTypes.SAVED_DATA_COMMAND_STORAGE`
+  (bit-exact round-trip proven incl. a real 3465→4903 datafixer pass; zero fixes target it). Nuances the
+  spike added: (a) BOTH loaders patch the null-NPE in 26.2 (Fabric `handleNullDataFixType`, NeoForge
+  binary patch) so null does not actually lose data on either loader — pass the real constant anyway
+  (loader-independent); (b) the silent-loss funnel is REAL for corruption and codec rejects — two
+  captured log signatures for S13's relog check are in the memo; (c) the per-dim data file LOCATION
+  moved — see the portal-generation.md G1 erratum.** `EntityType.Builder.build(ResourceKey)` requires the id at build time
   (`EntityType.java:590`) — restructure `createPortalEntityType` (portal-core C10/hazard 4); Fabric
   `trackRangeBlocks(96)` ≙ vanilla `clientTrackingRange(6)` **chunks** (hazard 5 — writing 96 would mean
   a 1536-block radius; current-mod-core §11.6). Bounding-box caching inverts: `getBoundingBox()` is
