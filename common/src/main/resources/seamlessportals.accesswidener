@@ -46,3 +46,12 @@ accessible field net/minecraft/server/MinecraftServer storageSource Lnet/minecra
 # faithful port of that entry (plain non-transitive `accessible`, matching this mod's AW
 # convention; read-only, so no `mutable`).
 accessible field net/minecraft/world/level/biome/BiomeManager biomeZoomSeed J
+
+# Entity-portal migration S10-C (U8 held MixinServerPlayerGameMode.redirectNewUseOnContext): 26.2
+# demotes the 5-arg UseOnContext ctor to `protected UseOnContext(Level, @Nullable Player,
+# InteractionHand, ItemStack, BlockHitResult)` (UseOnContext.java:24); in IP's 1.21.3 it was
+# public, so IP's imm_ptl.accesswidener has NO UseOnContext entry (none was needed).
+# MixinServerPlayerGameMode.java constructs it verbatim to route block break/use through the
+# actual (cross-portal) destination dimension. Faithful fix = grow the AW to restore the access
+# IP had for free (member ctor, so `accessible method ... <init> ...`; no `mutable`).
+accessible method net/minecraft/world/item/context/UseOnContext <init> (Lnet/minecraft/world/level/Level;Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/InteractionHand;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/phys/BlockHitResult;)V

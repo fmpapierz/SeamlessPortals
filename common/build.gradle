@@ -72,6 +72,16 @@ dependencies {
     // them at runtime; we just need them on the compile classpath.
     compileOnly group: 'org.ow2.asm', name: 'asm-tree', version: '9.7'
 
+    // Entity-portal migration S10-C: MixinExtras on :common:compileJava's compile classpath.
+    // The IP common mixins use com.llamalad7.mixinextras (@WrapOperation / @Local / Operation /
+    // LocalRef) — first consumed by the held S10-C container_gui + interaction mixins
+    // (MixinAbstractContainerMenu, MixinContainer, MixinServerPlayerGameMode, MixinBucketItem;
+    // the landed chunk_sync/mc_util mixins used base Mixin only, hence no prior need). MixinExtras
+    // is bundled with the loader at runtime (the neoforge run uses mixinextras 0.5.4), exactly
+    // like base Mixin above — so this is compileOnly, never shipped. Needed for the
+    // -Pip_scc_closed=true probe to compile the held IP mixin tree. Removed at S20.
+    compileOnly group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.5.3'
+
     // F21 stub shells on :common:compileJava's compile classpath ONLY (never runtime,
     // never in the shipped jar — jar packages sourceSets.main.output only). Referenced by
     // the held compat files, which are excluded in the shipping build and compiled only at
