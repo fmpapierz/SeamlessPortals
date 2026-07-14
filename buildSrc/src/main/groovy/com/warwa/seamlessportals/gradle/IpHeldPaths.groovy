@@ -28,6 +28,12 @@ import org.gradle.api.tasks.compile.JavaCompile
  * Compile probe (the machine-checked forward-ref debt ledger, EXPECTED red until S13):
  *   .\gradlew.bat :common:compileJava -Pip_scc_closed=true --console=plain --no-daemon
  * (:common alone is enough for triage — the loaders recompile the same sources.)
+ *
+ * F21 note (S4): the held compat files reference third-party sodium/iris/gravity_changer
+ * types absent on MC 26.2. Empty compileOnly shells live in the ipStubs source set
+ * (common/build.gradle) and are wired onto :common:compileJava (there) AND the loader
+ * compileJava tasks (multiloader-loader.gradle, ipStubsClasspath configuration) — the
+ * probe compiles those held files on BOTH. compileOnly only; never shipped. Removed at S20.
  */
 final class IpHeldPaths {
 
@@ -48,15 +54,77 @@ final class IpHeldPaths {
      * at AARotation.java:58 — same-package references count).
      */
     static final List<String> MAIN_HELD_PATHS = [
-            // everything outside q_misc_util stays held wholesale
-            'qouteall/imm_ptl/**',
+            // === imm_ptl (S4 narrowing) ============================================
+            // S2 held imm_ptl wholesale ('qouteall/imm_ptl/**'). S4 pokes exactly two
+            // holes: the vanilla-only-COMPILABLE ducks and the @IPVanillaCopy annotation.
+            // Every other imm_ptl subpackage is enumerated held so future-stage landings
+            // still arrive default-held (IP source is frozen at 1.21.3, so this covers the
+            // complete package universe). If any enumerated subtree were missed, its held
+            // files would be compiled by the SHIPPING build and turn it red — the shipping
+            // gate is thus self-checking on this enumeration's completeness.
+            'qouteall/imm_ptl/core/*.java',
+            'qouteall/imm_ptl/core/api/**',
+            'qouteall/imm_ptl/core/block_manipulation/**',
+            'qouteall/imm_ptl/core/chunk_loading/**',
+            'qouteall/imm_ptl/core/collision/**',
+            'qouteall/imm_ptl/core/commands/**',
+            'qouteall/imm_ptl/core/compat/**',
+            'qouteall/imm_ptl/core/debug/**',
+            'qouteall/imm_ptl/core/mc_utils/**',
+            'qouteall/imm_ptl/core/mixin/**',
+            'qouteall/imm_ptl/core/network/**',
+            'qouteall/imm_ptl/core/platform_specific/**',
+            'qouteall/imm_ptl/core/portal/**',
+            'qouteall/imm_ptl/core/redstone/**',
+            'qouteall/imm_ptl/core/render/**',
+            'qouteall/imm_ptl/core/teleportation/**',
+            'qouteall/imm_ptl/peripheral/**',
+            // core/miscellaneous: hold every file EXCEPT the carved-in IPVanillaCopy.java.
+            // The dir is NOT complete at S4 (the other 4 land later), so they are held by
+            // name (no wildcard, which would re-hold IPVanillaCopy).
+            'qouteall/imm_ptl/core/miscellaneous/ClientPerformanceMonitor.java',
+            'qouteall/imm_ptl/core/miscellaneous/DubiousThings.java',
+            'qouteall/imm_ptl/core/miscellaneous/GcMonitor.java',
+            'qouteall/imm_ptl/core/miscellaneous/IPortalInitialScreen.java',
+            // core/ducks (S4 carve-in = 29 of 36; the other 7 are HELD, two reasons):
+            //  (1) 3 ducks import HELD qouteall classes (IEClientWorld->Portal U4,
+            //      IEEntity->PortalCollisionHandler+Portal U4/U6,
+            //      IEMinecraftServer->IPPerServerInfo held U2).
+            //  (2) 4 ducks reference GONE/INCOMPATIBLE 26.2 vanilla types that NO access
+            //      widener can fix (renamed/removed classes, generic-arity change) and do NOT
+            //      compile against vanilla (empirically confirmed by :common:compileJava —
+            //      the D1 "the compiler is the authority" rule; redesign is a later
+            //      render/mixin/command slice, not a mechanical S4 translation):
+            //        IEWorldRenderer     -> MultiBufferSource GONE (S11/S12)
+            //        IEShader            -> com.mojang.blaze3d.shaders.Uniform GONE (S11/S12)
+            //        IEGameRenderer      -> LightTexture GONE (S11/S12)
+            //        IEDistanceManager   -> Ticket is non-generic in 26.2 (S13/commands)
+            // IEChunkMap is NOT held: 26.2 makes ChunkMap.TrackedEntity a private nested class
+            // (the S04-ducks.md fragment verified the type EXISTS but not that it is
+            // ACCESSIBLE — the compiler caught it), but IP's own accesswidener widens exactly
+            // that type. The faithful fix is to grow the mod's AW+AT (done: seamlessportals
+            // .accesswidener + accesstransformer.cfg), after which IEChunkMap compiles and is
+            // carved in — "grow AW/AT lists as ducks demand" (plan S4(a)).
+            'qouteall/imm_ptl/core/ducks/IEClientWorld.java',
+            'qouteall/imm_ptl/core/ducks/IEEntity.java',
+            'qouteall/imm_ptl/core/ducks/IEMinecraftServer.java',
+            'qouteall/imm_ptl/core/ducks/IEWorldRenderer.java',
+            'qouteall/imm_ptl/core/ducks/IEShader.java',
+            'qouteall/imm_ptl/core/ducks/IEGameRenderer.java',
+            'qouteall/imm_ptl/core/ducks/IEDistanceManager.java',
+            // === q_misc_util =======================================================
             // q_misc_util root files (Helper, MiscGlobals, + later-stage landings)
             'qouteall/q_misc_util/*.java',
-            // q_misc_util subtrees other than my_util
+            // q_misc_util subtrees other than my_util + the two S4 carve-ins:
+            //   ducks/IEMinecraftServer_Misc (vanilla-only) is carved in -> hold nothing
+            //     in q_misc_util/ducks (it is the dir's only file, complete at S4).
+            //   mixin/IELevelStorageAccess_Misc (vanilla-only @Accessor) is carved in ->
+            //     hold the future S7 mixin files by name/subtree so they stay default-held.
             'qouteall/q_misc_util/api/**',
             'qouteall/q_misc_util/dimension/**',
-            'qouteall/q_misc_util/ducks/**',
-            'qouteall/q_misc_util/mixin/**',
+            'qouteall/q_misc_util/mixin/MixinMinecraftServer_Misc.java',
+            'qouteall/q_misc_util/mixin/client/**',
+            'qouteall/q_misc_util/mixin/dimension/**',
             // the 9 held my_util files (Helper chain; see javadoc above)
             'qouteall/q_misc_util/my_util/AARotation.java',
             'qouteall/q_misc_util/my_util/IntBox.java',

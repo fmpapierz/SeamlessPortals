@@ -12,3 +12,19 @@ accessible field net/minecraft/client/renderer/ViewArea sections Lnet/minecraft/
 
 # 26.2: the section dirty/rebuild state moved onto the LevelExtractor's SectionUpdateTracker.
 accessible field net/minecraft/client/renderer/extract/LevelExtractor sectionUpdateTracker Lnet/minecraft/client/SectionUpdateTracker;
+
+# Entity-portal migration S4 (U2 duck): 26.2 makes ChunkMap.TrackedEntity a private nested
+# class, so IEChunkMap.ip_getEntityTrackerMap()'s Int2ObjectMap<ChunkMap.TrackedEntity>
+# signature no longer compiles against vanilla. IP's own accesswidener widens exactly this
+# type (imm_ptl.accesswidener: transitive-accessible class ...ChunkMap$TrackedEntity) — this
+# is the faithful port of that entry, growing the AW as the duck demands (plan S4(a)).
+accessible class net/minecraft/server/level/ChunkMap$TrackedEntity
+
+# Entity-portal migration S4 (U2 held facade RequiemCompat): 26.2 reduces ServerPlayer.server
+# to `private final MinecraftServer` (ServerPlayer.java:232); in IP's 1.21.3 it was public, so
+# IP's imm_ptl.accesswidener has NO ServerPlayer entry (none was needed). RequiemCompat.java:91
+# reads `player.server` verbatim (ServerTeleportationManager.of(player.server)). Faithful fix =
+# grow the AW to restore the access IP had for free, keeping RequiemCompat byte-verbatim
+# (identical in class to the ChunkMap$TrackedEntity growth above; read-only, so no `mutable`).
+# RequiemCompat is HELD until S13 — this is its probe/closure obligation, landed now.
+accessible field net/minecraft/server/level/ServerPlayer server Lnet/minecraft/server/MinecraftServer;
