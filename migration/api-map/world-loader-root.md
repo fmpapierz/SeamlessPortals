@@ -8,7 +8,12 @@ MIGRATION_API_MAP)" and were re-confirmed where this slice touches them. Verifie
 corrections from the 2026-07-12 adversarial re-verification (`migration/verify/world-loader-root.md` R1-R3)
 applied 2026-07-12.
 
-Verdict counts: **GONE 14 · CHANGED 27 · SAME 101** (SAME counted as rows in §5; grouped members in one row count once).
+Verdict counts: **GONE 17 · CHANGED 29 · SAME 101** (SAME counted as rows in §5; grouped members in one row count once).
+
+**S5 amendment (2026-07-14, from the `-Pip_scc_closed=true` probe on the landed U3 helpers):** +3 GONE
+(`ChunkPos(BlockPos)` ctor, `Entity/ServerPlayer.getServer()`, `net.minecraft.util.Tuple`), +2 CHANGED
+(`ResourceKey.location()`→`identifier()`, `ChunkPos` record `.x/.z`→`.x()/.z()`); the SAME `Level.isClientSide()`
+row annotated with its now-private field-form. Rows below carry an "Applied S5" tag.
 
 Two global renames cascade through every row (stated once, not repeated per-row):
 
@@ -16,6 +21,9 @@ Two global renames cascade through every row (stated once, not repeated per-row)
   (`net/minecraft/resources/Identifier.java`; `fromNamespaceAndPath` :40, `parse` :44). Every signature that
   took/returned `ResourceLocation` now uses `Identifier`.
 - **`net.minecraft.Util` → `net.minecraft.util.Util`** — package move (`net/minecraft/util/Util.java`).
+- **`ResourceKey.location()` → `ResourceKey.identifier()`** — member rename (`ResourceKey.java:64`; field
+  `identifier` :16; **no `location()` member remains**). RECURRING across later stages wherever a dim/registry
+  key's id is read (S5 sites: McHelper.java:769/880/972/973/985, CHelper.java:157). See the §2 row.
 
 ---
 
@@ -37,6 +45,9 @@ Two global renames cascade through every row (stated once, not repeated per-row)
 | `GlUtil.getVendor()` (IPMcHelper.isNvidiaVideocard :317-319) | GONE | `GlUtil` (`com/mojang/blaze3d/opengl/GlUtil.java:8`) now contains only `selectBufferBindTarget`. Vendor info is backend-agnostic: `RenderSystem.getDevice().getDeviceInfo().vendorName()` — `DeviceInfo` record `com/mojang/blaze3d/systems/DeviceInfo.java:8-20` (`vendorName` :10, also `backendName` :13, `type` :19). GL backend fills it from `GlStateManager._getString(GL_VENDOR)` (`GlHeuristics.java:68`); Vulkan from `VulkanPhysicalDevice.vendorName()` (`VulkanPhysicalDevice.java:138-151`). | Straight swap. Note 26.2 has **two GPU backends** (`com/mojang/blaze3d/opengl/GlBackend.java`, `com/mojang/blaze3d/vulkan/VulkanBackend.java`) — vendor strings differ per backend. |
 | Raw depth clamp: `GL11.glDisable/glEnable(GL32.GL_DEPTH_CLAMP)` (CHelper.disableDepthClamp/enableDepthClamp :138-146, gated by `IPGlobal.enableClippingMechanism`) | GONE — **UNKNOWN-NEEDS-DESIGN** | Grep for `depthClamp|DEPTH_CLAMP|DepthClamp` over all of mc262-ref: **zero matches**. Neither `RenderPipeline.Builder` (full method list, MIGRATION_API_MAP "RenderPipeline.Builder" section) nor `DepthStencilState` (`com/mojang/blaze3d/pipeline/DepthStencilState.java:8` — `(CompareOp depthTest, boolean writeDepth, float depthBiasScaleFactor, float depthBiasConstant)`) has a depth-clamp toggle. | No vanilla 26.2 mechanism exists. Raw LWJGL GL calls remain *possible only on the GL backend* (this repo's stencil-direct work verified raw-GL state persists — see memory `stencil-direct-rework-status`), and are meaningless under the Vulkan backend. How IP's clipping fidelity is preserved is a design-stage decision for the render slice; do not silently drop. |
 | `GL11.glGetError()` debug check (CHelper.checkGlError/doCheckGlError :69-86, gated by `IPGlobal.doCheckGlError`) | GONE | No vanilla polling-glGetError analog; GL-backend debug plumbing is `com/mojang/blaze3d/opengl/GlDebug.java` (driver debug-message callbacks). Raw `GL11.glGetError()` is GL-backend-only. | Debug-only utility. Keep behind a GL-backend check (`DeviceInfo.backendName`, `DeviceInfo.java:13`) or retire at design stage. |
+| **[S5]** `new ChunkPos(BlockPos)` ctor (McHelper.getDoesRegionFileExist :428) | GONE | `ChunkPos` is a `record ChunkPos(int x, int z)` (`ChunkPos.java:19`); the only ctor is the canonical `(int, int)` — no `(BlockPos)` ctor. Vanilla replacement: static `ChunkPos.containing(BlockPos)` :45, whose body is exactly `new ChunkPos(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()))`. | Applied S5 with the inline `SectionPos.blockToSectionCoord` form (`SectionPos.java:81` int / :85 double) — byte-identical to `ChunkPos.containing`; `SectionPos` already imported by McHelper. |
+| **[S5]** `Entity.getServer()` / `ServerPlayer.getServer()` (McHelper.getPlayerLoadDistance :251-252; invokeCommandAs :459/462) | GONE | No `getServer()` on `Entity` or `ServerPlayer`. Reach the server through the level: `Level.getServer()` (`Level.java:168`, `@Nullable`; base returns null, `ServerLevel` overrides non-null) — vanilla idiom `Entity.java:3625` `level.getServer()`. | Applied S5: `player.level().getServer()` (ServerPlayer path); `((ServerLevel) commandSender.level()).getServer()` (generic-Entity server-only command path, matching the `(ServerLevel) commandSender.level()` cast already used for the ctor's level arg). Some of these `getServer()` uses were introduced by the prior `createCommandSourceStack` manual-ctor rewrite (§1 GONE row); made internally consistent. |
+| **[S5]** `net.minecraft.util.Tuple<A,B>` type (IPMcHelper.rayTracePortals/rayTrace :122-274) | GONE | No `Tuple` class anywhere in mc262-ref (repo-wide grep: zero matches; no `Tuple.java`). | **FORCED type-replacement decision (B).** Swap to `com.mojang.datafixers.util.Pair` (DFU 10.0.21 — always on the classpath; already imported by held `q_misc_util/Helper.java` + `my_util/DQuaternion.java`). `import net.minecraft.util.Tuple`→`import com.mojang.datafixers.util.Pair`; `new Tuple<>(a,b)`→`Pair.of(a,b)`; `.getA()/.getB()`→`.getFirst()/.getSecond()`. Least-deviation faithful choice for a GONE type — zero behavioral change (immutable 2-tuple → immutable 2-tuple). Applied S5. |
 
 ---
 
@@ -71,6 +82,8 @@ Two global renames cascade through every row (stated once, not repeated per-row)
 | `GameProfile.getId()` (CHelper.getClientPlayerListEntry :46-47) | CHANGED (authlib record-style) | `profile.id()` — vanilla usage `PlayerInfo.java:36`, `PlayerTabOverlay.java:208`; `name()` (`AbstractClientPlayer.java:29`). `Player.getGameProfile()` still exists (`AbstractClientPlayer.java:29`). Vanilla's own "my PlayerInfo" idiom: `Minecraft.getInstance().getConnection().getPlayerInfo(this.getUUID())` (`AbstractClientPlayer.java:38-41`). | Rename only. |
 | `Util.backgroundExecutor()` (McHelper multi-threaded finding :168) | CHANGED (package + return type) | `net.minecraft.util.Util.backgroundExecutor()` returns **`TracingExecutor`** — `util/Util.java:252`. | Import move; `TracingExecutor` is an `Executor` — `CompletableFuture.supplyAsync(..., executor)` usage pattern survives. |
 | `EntityType.Builder` / entity-type registration values (IPModMain.registerEntityTypes :162-213) | CHANGED (+ FABRIC-API routing) | `EntityType.Builder.of(EntityFactory, MobCategory)` — `EntityType.java:479`; `build(ResourceKey<EntityType<?>>)` :590 (takes a ResourceKey, not a string id). | Registration itself is loader-routed (see §3). The `ENTITY_TYPE` statics' builder chains must adopt the ResourceKey-based `build`. |
+| **[S5]** `ResourceKey.location()` (McHelper.dimensionTypeId :769, getServerWorld :880, getDimensionName :972-985; CHelper.getDimensionIconPath :157) | CHANGED (renamed) | `ResourceKey.identifier()` — `ResourceKey.java:64` (backing field `identifier` :16; **no `location()` member**). | Straight member rename → `Identifier`. RECURRING (header note) wherever a dim/registry key's id is read. Applied S5. |
+| **[S5]** `ChunkPos.x` / `.z` field access (McHelper.isServerChunkFullyLoaded :509) | CHANGED (now record accessors) | `ChunkPos` is a `public record ChunkPos(int x, int z)` — `ChunkPos.java:19`; components are read via the accessors `.x()` / `.z()`. | Field-style `.x`/`.z` no longer compiles outside the record (record components are private final); use `.x()`/`.z()`. Applied S5. (`ChunkPos.pack`/`getRegionX`/`getRegionZ` unchanged — §2 pack row / §5.7.) |
 
 ---
 
@@ -255,7 +268,7 @@ is exhaustive for this slice.
 
 | IP usage | 26.2 citation |
 |---|---|
-| `Level.isClientSide()` (:501 etc.) | `Level.java:163` |
+| `Level.isClientSide()` (:501 etc.; IPMcHelper.withSwitchedContext :182; ScaleUtils.doScalingForEntity :155/166) | `Level.java:163` (method). **[S5] ⚠ field-form flag:** the backing field `isClientSide` is now `private final` (`Level.java:127`), so IP's field-style reads `world.isClientSide` no longer compile — call the method `isClientSide()`. S5 converted the three field-form sites (IPMcHelper :182, ScaleUtils :155/166); McHelper's uses were already method-form. |
 | `Level.clip(ClipContext)` (IPMcHelper.java:220) | `BlockGetter.clip(ClipContext)` — `BlockGetter.java:65` |
 | `ClipContext` private `from`/`to` mutation via duck + `getFrom()/getTo()` (:200-201, :240-244) | `ClipContext.java:22-23` (private final from/to), `getTo()` :40, `getFrom()` :44, ctors :28/:32 |
 | `BlockHitResult.miss(Vec3, Direction, BlockPos)` (:210) | `BlockHitResult.java:13` |
