@@ -100,7 +100,7 @@ public class Portal extends Entity implements
     // R11(i): EntityType.Builder.build(ResourceKey) requires the registry key at build
     // time (26.2), so the portal entity-type ids are baked in here at class-init instead
     // of being assigned only at registration. Namespace kept verbatim (D2).
-    static ResourceKey<EntityType<?>> portalEntityTypeKey(String path) {
+    public static ResourceKey<EntityType<?>> portalEntityTypeKey(String path) {
         return ResourceKey.create(
             Registries.ENTITY_TYPE,
             Identifier.fromNamespaceAndPath("immersive_portals", path)
