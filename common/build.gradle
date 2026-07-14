@@ -14,6 +14,20 @@ plugins {
 // onto runtime/implementation. Deleted at S20 with the rest of the holding machinery.
 sourceSets {
     ipStubs
+    // S10-A loader-seam foundation (migration/EXECUTION_PLAN.md §3 S10; port-note
+    // S10A-loader-seam.md). SEPARATE from ipStubs: this set holds compileOnly shells of the
+    // net.fabricmc.* types the HELD IP tree references (@Environment/EnvType, the FabricLoader
+    // family, tick/chunk lifecycle events, config-phase networking, the Fabric Event phase
+    // system, the attachment-impl sync types). Unlike sodium/iris/gravity (ipStubs), these
+    // Fabric types ARE provided by the real fabric-api on the loader classpath — so this set is
+    // wired onto :common's compile classpath ONLY (below), NEVER onto the loader classpath
+    // (ipStubsClasspath). That keeps them off the fabric loader compile, where a stub of e.g.
+    // PayloadTypeRegistry would SHADOW the real fabric-api type that FabricPlatformHelper uses
+    // and turn the shipping :fabric build red. At S13 (ip_scc_closed=true) the fabric loader
+    // recompiles the held tree against REAL fabric-api, which provides every net.fabricmc type
+    // (and the addTask/completeTask interface injections a compileOnly stub cannot reproduce).
+    // compileOnly only, never shipped. Removed at S20.
+    fabricStubs
 }
 
 neoForge {
@@ -35,6 +49,12 @@ neoForge {
     // Entity, Player, Direction, Vec3) + JOML (Quaternionf), so the stub source set needs
     // the same Minecraft compile classpath the main source set gets.
     addModdingDependenciesTo sourceSets.ipStubs
+
+    // S10-A: the net.fabricmc.* shells reference vanilla types (MinecraftServer, ServerLevel,
+    // ClientLevel, LevelChunk, ServerPlayer, Identifier, CustomPacketPayload, StreamCodec,
+    // ServerConfigurationPacketListenerImpl, ...), so the fabricStubs set needs the same
+    // Minecraft compile classpath.
+    addModdingDependenciesTo sourceSets.fabricStubs
 }
 
 repositories {
@@ -58,6 +78,14 @@ dependencies {
     // the -Pip_scc_closed=true probe. See the ipStubs source set above and S00-U0-decisions
     // F21. Removed at S20.
     compileOnly sourceSets.ipStubs.output
+
+    // S10-A: net.fabricmc.* shells on :common:compileJava's compile classpath ONLY. NOT
+    // exposed to the loader classpath (no ipStubsClasspath entry) — the loaders provide the
+    // real fabric-api. This resolves the held tree's loader-facade/@Environment/config-phase
+    // references at the -Pip_scc_closed=true probe without shadowing real fabric-api on the
+    // fabric build. compileOnly only, never shipped. Removed at S20. See fabricStubs above and
+    // port-note S10A-loader-seam.md.
+    compileOnly sourceSets.fabricStubs.output
 
     // S0 JUnit test infrastructure for the entity-portal migration
     // (migration/EXECUTION_PLAN.md §3 S0(a); D4.5 math harness — the S2

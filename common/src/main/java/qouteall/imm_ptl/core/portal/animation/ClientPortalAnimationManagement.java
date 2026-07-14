@@ -2,7 +2,7 @@ package qouteall.imm_ptl.core.portal.animation;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.event.Event;
+import com.warwa.seamlessportals.event.Event;
 import qouteall.imm_ptl.core.ClientWorldLoader;
 import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
