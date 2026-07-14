@@ -64,8 +64,14 @@ import java.util.function.Function;
  *   {@code onSectionEmptinessChanged} against own double-buffered sets, woven into {@code drop} +
  *   {@code replaceWithPacketData}) has NO 1.21.3/IP analog and MUST be reproduced per dimension or
  *   every renderer bound to a secondary dimension sees phantom/missing chunks in its occlusion graph;
- *   plus the store-center machinery (tracked view center + bounded eviction sweeps) whose per-tick
- *   DRIVER is the ported {@code ClientWorldLoader} (S10, replacing {@code PortalWorldManager.evictUnboundedStores}).
+ *   plus the store-center machinery (tracked view center + bounded eviction sweeps). NOTE: the
+ *   verbatim IP {@code ClientWorldLoader} (landed S10) has NO eviction driver — IP has no
+ *   1.21.3 analog for these sweeps and relies on server-side chunk tracking; adding a per-tick
+ *   sweep driver into the verbatim file would itself be a fidelity deviation. The live per-tick
+ *   DRIVER therefore REMAINS the mod's {@code PortalWorldManager.evictUnboundedStores} (on the mod
+ *   store {@code SeamlessClientChunkMap}) until cutover; whether these sweeps are re-homed onto a
+ *   mod-side driver over THIS store or dropped (IP's server tracking may make them redundant) is
+ *   the S14/S17 C8/F20 decision (see the PORT-FORWARD note on the store-center methods below).
  *   These blocks are byte-identical to the mod's runtime-proven {@code SeamlessClientChunkMap} carriage.</li>
  * </ol>
  *
@@ -289,7 +295,11 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
 
     @Override
     public void onLightUpdate(LightLayer lightType, SectionPos chunkSectionPos) {
-        ClientWorldLoader.getWorldRenderer(level.dimension())
+        // 26.2 render-split (S9-deferred routing, resolved at S10): setSectionDirty moved
+        // LevelRenderer → LevelExtractor (api-map chunk-loading #45). getWorldExtractor routes to
+        // the per-dim extractor (the ACTIVE dim → the global mc.levelExtractor itself, extractor
+        // identity — memory nether-block-freeze-orphaned-extractor).
+        ClientWorldLoader.getWorldExtractor(level.dimension())
             .setSectionDirty(chunkSectionPos.x(), chunkSectionPos.y(), chunkSectionPos.z());
     }
 
@@ -384,8 +394,12 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
     // ================================================================================================
     // R13f carriage — store-center machinery (memory walking-limbo-seed-overclaim §5;
     // current-mod-core §5). The per-tick DRIVER (recenter on the nearest in-range portal's dest
-    // origin, grace-window release) is the ported ClientWorldLoader at S10 — replacing the mod's
-    // PortalWorldManager.evictUnboundedStores. These are the STORE-side methods it calls.
+    // origin, grace-window release) is NOT the ported ClientWorldLoader — the verbatim IP
+    // ClientWorldLoader (landed S10) deliberately has no eviction driver (these sweeps have NO
+    // 1.21.3/IP analog, so injecting a driver into the verbatim file would deviate). Until cutover
+    // the live driver REMAINS the mod's PortalWorldManager.evictUnboundedStores over the mod store
+    // SeamlessClientChunkMap. These are the STORE-side methods a cutover driver WOULD call on THIS
+    // store IF the sweeps prove necessary — which the PORT-FORWARD note below gates at S14/S17.
     // PORT-FORWARD (verify): under IP's constructor-hook install (EVERY client world, incl. main),
     // the server's ImmPtlChunkTracking already drives vanilla forget packets (→ drop); whether these
     // sweeps remain necessary for INACTIVE secondaries is re-proven at S14/S17 (C8/F20 gate).
@@ -397,9 +411,11 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
 
     /**
      * Bounded eviction: drop resident chunks more than {@code radius} chunks (Chebyshev) from the
-     * tracked view center. Main-thread only. Called per client tick by the S10 driver so an
-     * inactive-secondary store stays bounded (vanilla's forget-chunk path only drops on the ACTIVE
-     * level).
+     * tracked view center. Main-thread only. Called per client tick by the eviction driver (until
+     * cutover: the mod's {@code PortalWorldManager.evictUnboundedStores} over
+     * {@code SeamlessClientChunkMap}; re-homing onto this store is the S14/S17 gate — see the
+     * section header) so an inactive-secondary store stays bounded (vanilla's forget-chunk path only
+     * drops on the ACTIVE level).
      */
     public void evictBeyond(int radius) {
         if (Thread.currentThread() != this.mainThread || this.chunkMapForMainThread.isEmpty() || !this.viewCenterSet) {
@@ -410,9 +426,10 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
 
     /**
      * Bounded eviction around an EXPLICIT center (chunk coords) rather than the tracked view center —
-     * the store-center PINNING path (memory walking-limbo-seed-overclaim §5): the S10 driver recenters
-     * on the nearest in-range portal's dest origin every tick so a still-"near" dim keeps its live
-     * region resident even when not currently viewed. Main-thread only.
+     * the store-center PINNING path (memory walking-limbo-seed-overclaim §5): the eviction driver
+     * (deferred to cutover; see the section header) recenters on the nearest in-range portal's dest
+     * origin every tick so a still-"near" dim keeps its live region resident even when not currently
+     * viewed. Main-thread only.
      */
     public void evictAround(int centerChunkX, int centerChunkZ, int radius) {
         if (Thread.currentThread() != this.mainThread || this.chunkMapForMainThread.isEmpty()) {

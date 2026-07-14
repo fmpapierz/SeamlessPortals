@@ -31,6 +31,10 @@ import java.util.Set;
 public class DimensionAPI {
     public static final DimensionDynamicUpdateEvent SERVER_DIMENSION_DYNAMIC_UPDATE_EVENT = null;
     public static final DimensionRemoveEvent SERVER_PRE_REMOVE_DIMENSION_EVENT = null;
+    // Grown for S10-B (ClientWorldLoader, U8) — the first consumer of the CLIENT-side event
+    // (ClientWorldLoader.init registers on it to dispose dynamically-removed dimensions client-side);
+    // the SERVER events above were grown by earlier stages. Never-firing under static dimensions.
+    public static final ClientDimensionUpdateEvent CLIENT_DIMENSION_UPDATE_EVENT = null;
 
     /** Holder for the dynamic dimension-set update event (DimensionIntId, GlobalPortalStorage). */
     public static class DimensionDynamicUpdateEvent {
@@ -50,9 +54,20 @@ public class DimensionAPI {
         }
     }
 
+    /** Holder for the client-side dimension-set update event (ClientWorldLoader.init). */
+    public static class ClientDimensionUpdateEvent {
+        public void register(ClientDimensionsUpdateCallback listener) {
+        }
+    }
+
     @FunctionalInterface
     public interface ServerDimensionsUpdateCallback {
         void run(MinecraftServer server, Set<ResourceKey<Level>> dimensions);
+    }
+
+    @FunctionalInterface
+    public interface ClientDimensionsUpdateCallback {
+        void run(Set<ResourceKey<Level>> dimensions);
     }
 
     @FunctionalInterface

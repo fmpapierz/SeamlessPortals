@@ -37,3 +37,12 @@ accessible field net/minecraft/server/level/ServerPlayer server Lnet/minecraft/s
 # is the faithful port of that entry (plain non-transitive `accessible`, matching this mod's AW
 # convention; read-only, so no `mutable`).
 accessible field net/minecraft/server/MinecraftServer storageSource Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;
+
+# Entity-portal migration S10-B (U8 held ClientWorldLoader.createSecondaryClientWorld): 26.2
+# keeps BiomeManager.biomeZoomSeed as `private final long` (BiomeManager.java:16) with no getter.
+# ClientWorldLoader.java reads CLIENT.level.getBiomeManager().biomeZoomSeed verbatim (the shared
+# per-save seed passed to the secondary ClientLevel ctor). IP's own imm_ptl.accesswidener widens
+# exactly this field (transitive-accessible field ...BiomeManager biomeZoomSeed J) — this is the
+# faithful port of that entry (plain non-transitive `accessible`, matching this mod's AW
+# convention; read-only, so no `mutable`).
+accessible field net/minecraft/world/level/biome/BiomeManager biomeZoomSeed J
