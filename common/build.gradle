@@ -10,6 +10,13 @@ neoForge {
     if (at.exists()) {
         accessTransformers.from(at.absolutePath)
     }
+
+    // S2 math harness (migration/EXECUTION_PLAN.md §3 S2(a), D4.5): the authored
+    // DQuaternion/Plane invariant tests exercise ported IP classes whose API surface is
+    // Minecraft types (Vec3, CompoundTag, JOML), so the TEST source set needs the same
+    // modding dependencies the main source set gets by default. Without this,
+    // :common:compileTestJava cannot resolve net.minecraft.* from test code.
+    addModdingDependenciesTo sourceSets.test
 }
 
 repositories {
