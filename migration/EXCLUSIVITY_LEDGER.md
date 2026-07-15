@@ -177,6 +177,10 @@ To be completed in the SAME commit that registers the IP mixin set:
 - [ ] B4 (`HandleRespawnMixin` death-respawn scope) decided and recorded.
 - [ ] Unconditional-registration list confirmed (D3: entity types, `PortalPlaceholderBlock`,
       argument types, payloads — identical in both flag states).
+- [ ] The §6 flag-ON ADDITIVE IP mixin set registered into
+      `seamlessportals-ip-client.mixins.json "client":[]` (render install + R3 clip mixins landed
+      S12-A Slice C, + the concrete-renderer-family + multiworld/render halves) — each was held
+      UNREGISTERED; the install `@Redirect` self-gates on `IPCGlobal.useHackedChunkRenderDispatcher`.
 - [ ] Both-states verification run recorded: flag OFF = BASELINE-SANITY unchanged; flag ON =
       rung-1 script; in each state exactly one driver set ran.
 
@@ -193,3 +197,38 @@ To be completed in the SAME commit that registers the IP mixin set:
       registrations).
 - [ ] This ledger's active role ends; file archived (plan S20: "the exclusivity ledger's active
       role (archive the file)").
+
+## 6. Flag-ON ADDITIVE IP mixin set — held-UNREGISTERED, registered at S13
+
+Beyond the §1 driver SUPPRESSIONS and the §3 substrate KEEPs, S13 REGISTERS a set of ADDITIVE IP
+mixins: inert flag-OFF (held-UNREGISTERED — `seamlessportals-ip-client.mixins.json "client":[]` empty),
+driving the ported entity-portal render path flag-ON. They land held at S11/S12 so the S13 diff-gate +
+mixin registration expects exactly this set (CUTOVER_SPEC §6.2 "what flips ON at S13"; EXECUTION_PLAN
+S12 "~62 client mixins, unregistered until S13"). These are ADDITIVE, not driver-suppressions — no `!entityPortals`
+gate on mod code; the install `@Redirect` self-gates on the global `IPCGlobal.useHackedChunkRenderDispatcher`
+(the S13-bound `entityPortals` toggle), and the whole set is only registered flag-ON.
+
+### 6.1 Render install + R3 per-entity clip mixins (S12-A Slice C — `qouteall/imm_ptl/core/mixin/client/render/`)
+
+| Mixin | Target | Role | Landed | S13 register |
+|---|---|---|---|---|
+| `MixinEntityRenderDispatcher` | `EntityRenderDispatcher.shouldRender` | entity-visibility gate (render-core S35), 1:1 | S11-C | flag-ON |
+| `MixinLevelRenderer` | `LevelRenderer.invalidateCompiledGeometry` | R4 `ImmPtlViewArea` install `@Redirect` (gate `IPCGlobal.useHackedChunkRenderDispatcher`) | S12-A/C | flag-ON |
+| `MixinLevelRenderer_CrossPortalEntity` | `LevelRenderer.submitEntities` | R3 submit HEAD/TAIL anchors + per-entity submit `@WrapOperation` | S12-A/C | flag-ON |
+| `MixinEntityRenderState` | `EntityRenderState` | R3 clip-context tag HOLDER (implements `IEEntityRenderState`) | S12-A/C | flag-ON |
+| `MixinLevelExtractor` | `LevelExtractor.extractVisibleEntities` | R3 clip-context tag SETTER (`@WrapOperation` on `extractEntity`) | S12-A/C | flag-ON |
+| `MixinPreparedFrame` | `FeatureRenderDispatcher.PreparedFrame.executePhase` | R3 Mechanism-A `executePhase` clip bracket | S12-A/C | flag-ON |
+| `IERenderSystem` | `RenderSystem` (accessor) | `modelViewStack` accessor duck (verbatim IP; target present) | S12-A/C | flag-ON |
+| `IESectionRenderDispatcher` | `SectionRenderDispatcher` (accessor) | `fixedBuffers` accessor duck (verbatim IP; target present, swap UNWIRED) | S12-A/C | flag-ON |
+
+Supporting duck (NOT a mixin): `ducks/IEEntityRenderState` — held by name in `IpHeldPaths.MAIN_HELD_PATHS`
+(carve-in-dir duck importing held `Portal`). **NOT landed:** `mixin/client/accessor/CoreShadersAccessor`
+(RETIRED — its `CoreShaders.register`→`ShaderProgram` target is G9-GONE on 26.2; re-expressed onto the
+`PortalRenderTypes` substrate; `fragments/S12A-installs.md` task 5).
+
+### 6.2 The remaining S12 client-mixin set (the balance of ~62)
+
+The concrete-renderer-family mixins (S12-A renderer slices: `PortalRenderer` / `RendererUsingStencil` /
+`RendererUsingFrameBuffer` drivers + the multiworld + render mixin halves, `api-map/mixin-client.md`) land
+held-UNREGISTERED across the S12 commits and register in the same S13 step. §6.1 is the render-install +
+R3 anchor for the §5.1 "the IP mixin set" registration; `mixin-client.md` is the full enumeration.

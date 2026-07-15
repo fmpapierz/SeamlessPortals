@@ -112,6 +112,11 @@ final class IpHeldPaths {
             'qouteall/imm_ptl/core/ducks/IEShader.java',
             'qouteall/imm_ptl/core/ducks/IEGameRenderer.java',
             'qouteall/imm_ptl/core/ducks/IEDistanceManager.java',
+            //  (S12-A, Slice C) IEEntityRenderState — the R3 per-entity clip-context tag duck (NEW; the
+            //  ducks/ dir is a carve-in, so a new duck is NOT auto-held). Same reason (1) as IEEntity/
+            //  IEClientWorld above: it imports the HELD qouteall.imm_ptl.core.portal.Portal (U6), so it
+            //  cannot compile in the shipping build and must be held by name until S13.
+            'qouteall/imm_ptl/core/ducks/IEEntityRenderState.java',
             // === q_misc_util =======================================================
             // q_misc_util root files (Helper, MiscGlobals, + later-stage landings)
             'qouteall/q_misc_util/*.java',

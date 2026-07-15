@@ -38,6 +38,18 @@ public class IPConfig implements ConfigData {
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     public boolean correctCrossPortalEntityRendering = true;
+    // S12-A (Slice C) — the R3 cross-portal entity clip DELIVERY mechanism, the C4-rider A/B switch persisted
+    // to the in-game config screen (closes the S11-C-deferred IPConfig wiring; S11-R3 §5, S11C §1.2 / §7.2 V1
+    // P3). Mirrors the correctCrossPortalEntityRendering template above (client category + Tooltip) with an
+    // EnumHandler for the enum, exactly like netherPortalMode/endPortalMode below. The FQN mirrors IPGlobal's
+    // server-safe reference style: naming the nested PerEntityClipBracket.Mechanism constant never force-loads
+    // the client-only PerEntityClipBracket render class (the enum class file carries no client dependency in
+    // its <clinit>) — the same discipline IPGlobal.crossPortalEntityClipMechanism already ships.
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.EnumHandler(option = ConfigEntry.Gui.EnumHandler.EnumDisplayOption.BUTTON)
+    @ConfigEntry.Gui.Tooltip
+    public qouteall.imm_ptl.core.render.PerEntityClipBracket.Mechanism crossPortalEntityClipMechanism =
+        qouteall.imm_ptl.core.render.PerEntityClipBracket.Mechanism.SUBMIT_ORDER_UNIFORM;
     @ConfigEntry.Category("client")
     public boolean reducedPortalRendering = false;
     @ConfigEntry.Category("client")
@@ -164,7 +176,11 @@ public class IPConfig implements ConfigData {
         if (endPortalMode == null) {
             endPortalMode = IPGlobal.EndPortalMode.normal;
         }
-        
+        if (crossPortalEntityClipMechanism == null) {
+            crossPortalEntityClipMechanism =
+                qouteall.imm_ptl.core.render.PerEntityClipBracket.Mechanism.SUBMIT_ORDER_UNIFORM;
+        }
+
         IPGlobal.renderMode = compatibilityRenderMode ? IPGlobal.RenderMode.compatibility : IPGlobal.RenderMode.normal;
         IPGlobal.enableWarning = enableWarning;
         IPGlobal.enableMirrorCreation = enableMirrorCreation;
@@ -177,6 +193,7 @@ public class IPConfig implements ConfigData {
         IPGlobal.activeLoading = serverSideNormalChunkLoading;
         IPGlobal.teleportationDebugEnabled = teleportationDebug;
         IPGlobal.correctCrossPortalEntityRendering = correctCrossPortalEntityRendering;
+        IPGlobal.crossPortalEntityClipMechanism = crossPortalEntityClipMechanism;
         IPGlobal.looseMovementCheck = looseMovementCheck;
         IPGlobal.pureMirror = pureMirror;
         IPGlobal.indirectLoadingRadiusCap = indirectLoadingRadiusCap;

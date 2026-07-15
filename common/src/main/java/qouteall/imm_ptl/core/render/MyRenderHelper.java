@@ -6,9 +6,19 @@ import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.DepthStencilState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.CompareOp;
+import com.mojang.blaze3d.systems.GpuDevice;
+import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.warwa.seamlessportals.render.PortalRenderTypes;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
@@ -16,6 +26,7 @@ import net.minecraft.client.renderer.rendertype.RenderSetup;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import org.apache.commons.lang3.Validate;
+import org.lwjgl.opengl.GL11;
 import qouteall.imm_ptl.core.ClientWorldLoader;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
@@ -31,6 +42,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.stream.IntStream;
 
 import static org.lwjgl.opengl.GL11.GL_BACK;
@@ -110,6 +122,13 @@ public class MyRenderHelper {
     // on first class-load (S13+, device ready), never under flag-OFF (this held class is not loaded then).
     private static final RenderType[] PORTAL_AREA_TYPES = new RenderType[8];
 
+    // S12-A: the STENCIL_ONLY screen-triangle pipeline (R5 Row 15, clampStencilValue) — a full-screen
+    // core/screenquad draw with the depth test DISABLED (Optional.empty()) and color masked OFF
+    // (WRITE_NONE). Neither of the proven substrate pipelines fits Row 15 (portalScreenDepthClear writes
+    // depth; portalCompositeBlit writes color), so this one purpose-pipeline is added here alongside the
+    // consumed substrate ones. Registered device-ready on first class-load (S13+); see renderScreenTriangle.
+    private static RenderPipeline SCREEN_TRIANGLE_STENCIL_ONLY;
+
     private static int portalAreaKey(boolean writeColor, boolean writeDepth, boolean doFaceCulling) {
         return (writeColor ? 4 : 0) | (writeDepth ? 2 : 0) | (doFaceCulling ? 1 : 0);
     }
@@ -157,13 +176,36 @@ public class MyRenderHelper {
                     RenderSetup.builder(pipeline).createRenderSetup()
                 );
             }
+
+            // R5 Row 15 (clampStencilValue) STENCIL_ONLY: screenquad full-screen draw, depth test OFF,
+            // color WRITE_NONE. Same core/screenquad + core/blit_screen + GLOBALS + IN_SAMPLER shape as
+            // PortalRenderTypes' composite/depth-clear pipelines (proven), but depth-off + color-off so
+            // the pass ONLY triggers the caller's raw glStencilOp(KEEP,REPLACE,REPLACE) clamp (stencil
+            // state persists — applyPipelineState never touches stencil).
+            RenderPipeline stencilOnlyScreen = RenderPipeline.builder()
+                .withLocation("seamlessportals/pipeline/screen_triangle_stencil_only")
+                .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+                .withVertexShader("core/screenquad")
+                .withFragmentShader("core/blit_screen")
+                .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withColorTargetState(
+                    new ColorTargetState(
+                        Optional.empty(), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
+                .withDepthStencilState(Optional.empty()) // depth test OFF
+                .withCull(false)
+                .build();
+            SCREEN_TRIANGLE_STENCIL_ONLY = (RenderPipeline) registerMethod.invoke(null, stencilOnlyScreen);
         }
         catch (Exception e) {
-            // Robustness parity with PortalRenderTypes' catch: never leave a null RenderType.
+            // Robustness parity with PortalRenderTypes' catch: never leave a null RenderType/pipeline.
             for (int key = 0; key < 8; key++) {
                 if (PORTAL_AREA_TYPES[key] == null) {
                     PORTAL_AREA_TYPES[key] = RenderTypes.debugQuads();
                 }
+            }
+            if (SCREEN_TRIANGLE_STENCIL_ONLY == null) {
+                SCREEN_TRIANGLE_STENCIL_ONLY = RenderPipelines.TRACY_BLIT;
             }
         }
     }
@@ -383,5 +425,277 @@ public class MyRenderHelper {
         );
 
         System.out.println("oops");
+    }
+
+    // ===== S12-A (U10 A1 slice): the deferred immediate-mode blit-draw family =====
+    // S11-B DEFERRED this family (S11B-render-drivers.md §1.2): IP's drawPortalAreaWithFramebuffer,
+    // drawScreenFrameBuffer, renderScreenTriangle* all rest on the 1.21.3 submit->prepare->execute /
+    // CoreShaders / RenderTarget.bindWrite path that is GONE on 26.2 (render-core G6/G7/G8/G9/G12/G29/G40),
+    // to be "authored WITH those consuming slices ... re-expressed onto PortalRenderTypes.drawMesh +
+    // RenderTarget.blitAndBlendToTexture substrate". This IS the consuming slice: RendererUsingFrameBuffer
+    // (A1, reachable via renderMode=compatibility) consumes drawPortalAreaWithFramebuffer; drawScreenFrameBuffer
+    // is consumed by the never-loaded Iris shells (IrisPortalRenderer/IrisCompatibility — no Iris build on 26.2,
+    // IrisInterface.isIrisPresent()=false forever, so their classes never load). **renderScreenTriangle is NOT
+    // Iris-only** — its PRIMARY consumer is RendererUsingStencil (the S13 cutover-core stencil driver,
+    // renderMode=normal DEFAULT), which draws it at all three choreography sites (replaceFrameBufferClearing
+    // Row 16 / clearDepthOfThePortalViewArea Row 7 / clampStencilValue Row 15); the never-loaded
+    // ExperimentalIrisPortalRenderer also consumes it (Rows 7/15). So renderScreenTriangle is a LIVE cutover-core
+    // draw, re-expressed onto the proven per-purpose screenquad pipelines below (NOT deferred to the S18 Iris
+    // gap). Held/inert until S13; drawPortalAreaWithFramebuffer/drawScreenFrameBuffer stay A1 PERIPHERY,
+    // runtime-verified at S18 (CUTOVER_SPEC §6.5).
+    //
+    // These re-express IP's LOGIC onto the mod's PROVEN KEEP substrate (PortalRenderTypes.drawMesh /
+    // portalCompositeBlit — CONSUMED, never duplicated) + vanilla RenderTarget.blitAndBlendToTexture. The
+    // exact GPU-level fidelity of the portal-AREA screen-space FBO sampling (IP's GONE PORTAL_DRAW_FB_IN_AREA
+    // custom shader, render-core G9 — no 26.2 core-profile analog) and the per-call blend/alpha-mode selection
+    // (GONE BLIT_SCREEN shaders, G29/G40) is the documented S18/A1 GPU-refinement; no IP LOGIC in the consuming
+    // renderer classes is deviated.
+    //
+    // SIGN NOTE (D4.4 / R5, CUTOVER_SPEC row 12 FBO-mode): drawPortalAreaWithFramebuffer is the FBO-mode
+    // composite of row 12. IP's op #12 (re-render the view-area mesh at its real projected depth to restore a
+    // depth shield) has, in the mod's stencil-direct driver, the STEP-3.5 NEAR-shield form (glDepthRange(1,1),
+    // StencilPortalRenderer:408) written BEFORE the composite. The FBO-mode composite here uses the mod's
+    // portalCompositeBlit pipeline (Optional.empty() depth = _disableDepthTest, PortalRenderTypes.java:199),
+    // so the composite is NOT depth-gated (no reversed-Z compare to flip) and no separate NEAR shield is
+    // written on this path — the FBO's own depth already carries the dest scene. This is the row-12 FBO-mode
+    // STEP-3.5 case: the shield direction question does not arise because the composite pass runs depth-test-off.
+
+    /**
+     * IP's {@code drawPortalAreaWithFramebuffer}: composite the SECONDARY FBO's rendered dest world back onto
+     * the main frame through the portal area. Consumed by {@code RendererUsingFrameBuffer} (renderMode=
+     * compatibility) and the never-loaded {@code IrisCompatibilityPortalRenderer}.
+     *
+     * <p>26.2 re-expression: IP drew the portal view-area TRIANGLE mesh with a custom
+     * {@code PORTAL_DRAW_FB_IN_AREA} shader that sampled {@code textureProvider}'s color texture by
+     * screen-space coords (w/h uniforms) — the GONE 1.21.3 shader path (render-core G9). The mod's PROVEN
+     * FBO->screen composite is a full-screen screenquad blit through {@code portalCompositeBlit} sampling the
+     * FBO color view (the {@code PortalContextSwitch.compositePortalFbo} idiom). {@code RendererUsingFrameBuffer}
+     * disables stencil, so this composite covers the whole opening; limiting it to the portal SHAPE
+     * (screen-space UV clipped to the view-area mesh) is the S18/A1 GPU-refinement. The {@code modelViewMatrix}
+     * / {@code projectionMatrix} params are vestigial on this full-screen path (IP used them to place the
+     * mesh); kept for IP API-shape parity.
+     */
+    public static void drawPortalAreaWithFramebuffer(
+        Portal portal,
+        RenderTarget textureProvider,
+        Matrix4f modelViewMatrix,
+        Matrix4f projectionMatrix
+    ) {
+        if (textureProvider.getColorTextureView() == null) {
+            return;
+        }
+        RenderTarget mainRt = client.gameRenderer.mainRenderTarget();
+        if (mainRt.getColorTextureView() == null) {
+            return;
+        }
+
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+            () -> "seamlessportals_fbo_area_composite",
+            mainRt.getColorTextureView(),
+            Optional.empty(),
+            mainRt.getDepthTextureView(),
+            OptionalDouble.empty(),
+            new RenderPass.RenderArea(0, 0, mainRt.width, mainRt.height)
+        )) {
+            // portalCompositeBlit: Optional.empty() depth state -> depth-test OFF (PortalRenderTypes.java:199),
+            // so the composite is never reversed-Z GEQUAL-gated by leftover portal-plane depth (the mod's
+            // curtain fix). Full-screen screenquad triangle sampling the FBO color view.
+            pass.setPipeline(PortalRenderTypes.portalCompositeBlit());
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.bindTexture(
+                "InSampler", textureProvider.getColorTextureView(),
+                RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST)
+            );
+            pass.draw(3, 1, 0, 0);
+        }
+    }
+
+    /**
+     * IP's {@code drawScreenFrameBuffer}: blit a source FBO's color onto the currently-bound target as a
+     * full-screen quad, with optional alpha-blend / alpha-write control. Consumed ONLY by the never-loaded
+     * Iris shells ({@code IrisPortalRenderer} / {@code IrisCompatibilityPortalRenderer}).
+     *
+     * <p>26.2 re-expression: the 1.21.3 {@code BLIT_SCREEN}/{@code BLIT_SCREEN_NOBLEND} CoreShaders + the
+     * per-call {@code blendFuncSeparate} (render-core G29/G40) and the bound-FBO target concept (render-sub G8)
+     * are GONE. {@code RenderTarget.blitAndBlendToTexture} (RenderTarget.java:97 — the vanilla FBO->texture
+     * blit) is the closest proven analog; it targets the main render target's views. The blend/alpha-mode
+     * booleans and the Iris deferred-FBO target (which has no 26.2 bound-target analog) are the documented
+     * S18/never-run Iris gap — these renderers never load on 26.2 (no Iris build).
+     */
+    public static void drawScreenFrameBuffer(
+        RenderTarget textureProvider,
+        boolean doUseAlphaBlend,
+        boolean doEnableModifyAlpha
+    ) {
+        RenderTarget mainRt = client.gameRenderer.mainRenderTarget();
+        if (textureProvider.getColorTextureView() == null
+            || mainRt.getColorTextureView() == null
+            || mainRt.getDepthTextureView() == null) {
+            return;
+        }
+        textureProvider.blitAndBlendToTexture(
+            mainRt.getColorTextureView(), mainRt.getDepthTextureView()
+        );
+    }
+
+    // ===== S12-A: the per-purpose full-screen screen-triangle re-expression (renderScreenTriangle) =====
+    // IP's renderScreenTriangle drew a POSITION_COLOR full-screen NDC triangle whose pixels were shaped
+    // ENTIRELY by the CALLER's ambient raw-GL depth/stencil/color state (render-core G6/G7/G8/G9 — that
+    // identity-ortho immediate shader draw is GONE on 26.2; and a POSITION_COLOR mesh drawn through the
+    // world projection would be mis-transformed). The PROVEN 26.2 re-expression is the mod's stencil-gated
+    // full-screen SCREENQUAD draw (core/screenquad generates the 3 full-screen positions from gl_VertexID —
+    // no vertex buffer, no matrices, so the NDC-vs-world-projection question never arises — exactly what
+    // StencilPortalRenderer.drawScreenFillStencilGated / drawScreenDepthClearStencilGated prove at runtime).
+    // Because 26.2 pipelines DICTATE depth/color state (applyPipelineState), each caller passes its INTENT as
+    // a ScreenTrianglePurpose that selects the correct per-purpose pipeline — restoring the exact per-caller
+    // effect IP got from ambient GL state (CUTOVER_SPEC §2.1 rows):
+    //
+    //   * DEPTH_CLEAR  (R5 Row 7, clearDepthOfThePortalViewArea): ALWAYS_PASS depth test + depth WRITE +
+    //       color OFF. Consumes PortalRenderTypes.portalScreenDepthClear() (the proven substrate pipeline:
+    //       ALWAYS_PASS + write + WRITE_NONE). The written depth VALUE comes from the caller's
+    //       glDepthRange(0,0) = reversed-Z FAR — applyPipelineState never touches glDepthRange, so the FAR
+    //       value lands, pushing the opening to FAR so the dest terrain (drawn next under GEQUAL) all passes.
+    //   * STENCIL_ONLY (R5 Row 15, clampStencilValue): depth test DISABLED + color OFF. A stencil-only pass:
+    //       the caller's raw glStencilFunc(GL_LESS,…)+glStencilOp(KEEP,REPLACE,REPLACE) persists
+    //       (applyPipelineState never touches stencil) and REPLACEs the clamped stencil values; no depth
+    //       compare (nothing to reversed-Z flip), no color splat.
+    //   * COLOR_FILL   (R5 Row 16, replaceFrameBufferClearing): depth test DISABLED + FULL color write.
+    //       Consumes PortalRenderTypes.portalCompositeBlit() (depth-off), so the dest sky/fog fill is
+    //       depth-INDEPENDENT (never reversed-Z GEQUAL-gated by leftover portal-plane depth); the fog COLOR
+    //       rides a 1x1 texture through core/blit_screen (the proven substrate's color mechanism, mirroring
+    //       StencilPortalRenderer.ensureScreenFillTexture).
+    //
+    // The caller's raw glStencilFunc EQUAL(layer) (set in the choreography) SURVIVES into every purpose draw
+    // (applyPipelineState never touches stencil), so all three stay gated to the portal opening — exactly as
+    // IP relied on the ambient stencil test.
+    //
+    // CONSUMERS (correcting the earlier "Iris shells only" prose): RendererUsingStencil — the S13 cutover-core
+    // stencil driver, renderMode=normal DEFAULT — calls all three purposes; the never-loaded
+    // ExperimentalIrisPortalRenderer calls DEPTH_CLEAR + STENCIL_ONLY.
+
+    /** Screen-triangle intent — selects the per-purpose 26.2 pipeline that carries the depth/color state IP
+     *  got from ambient raw-GL. See the class-comment block above for each row's derivation. */
+    public enum ScreenTrianglePurpose {
+        /** R5 Row 7: ALWAYS_PASS + depth WRITE + color OFF (the depth VALUE comes from caller glDepthRange). */
+        DEPTH_CLEAR,
+        /** R5 Row 15: depth test OFF + color OFF (stencil-only clamp pass). */
+        STENCIL_ONLY,
+        /** R5 Row 16: depth test OFF + FULL color write (depth-independent dest fog fill). */
+        COLOR_FILL
+    }
+
+    // 1x1 fill texture feeding core/blit_screen the screen-triangle color (mirrors
+    // StencilPortalRenderer.ensureScreenFillTexture). Only COLOR_FILL needs a real color; DEPTH_CLEAR /
+    // STENCIL_ONLY mask color off, so they reuse whatever is current (no needless re-upload). Lazily created
+    // device-ready (S13+).
+    private static GpuTexture screenTriTexture;
+    private static GpuTextureView screenTriTextureView;
+    private static int screenTriTextureArgb;
+
+    private static GpuTextureView ensureScreenTriTexture(int argb) {
+        GpuDevice device = RenderSystem.getDevice();
+        if (screenTriTexture == null) {
+            screenTriTexture = device.createTexture(
+                "seamlessportals screen triangle fill",
+                GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
+                GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+            screenTriTextureView = device.createTextureView(screenTriTexture);
+            screenTriTextureArgb = ~argb; // force the first upload
+        }
+        if (screenTriTextureArgb != argb) {
+            // RGBA8_UNORM uploads as GL_RGBA + GL_UNSIGNED_BYTE -> byte order R,G,B,A.
+            ByteBuffer px = ByteBuffer.allocateDirect(4);
+            px.put((byte) ((argb >> 16) & 0xFF));
+            px.put((byte) ((argb >> 8) & 0xFF));
+            px.put((byte) (argb & 0xFF));
+            px.put((byte) ((argb >> 24) & 0xFF));
+            px.flip();
+            device.createCommandEncoder().writeToTexture(screenTriTexture, px, 0, 0, 0, 0, 1, 1);
+            screenTriTextureArgb = argb;
+        }
+        return screenTriTextureView;
+    }
+
+    public static void renderScreenTriangle(ScreenTrianglePurpose purpose) {
+        renderScreenTriangle(255, 255, 255, 255, purpose);
+    }
+
+    public static void renderScreenTriangle(Vec3 color, ScreenTrianglePurpose purpose) {
+        renderScreenTriangle(
+            (int) (color.x * 255),
+            (int) (color.y * 255),
+            (int) (color.z * 255),
+            255,
+            purpose
+        );
+    }
+
+    /**
+     * IP's full-screen color triangle, re-expressed onto the proven stencil-gated screenquad draw with a
+     * per-purpose pipeline (see the class-comment block above for each R5 row). Consumed by
+     * {@code RendererUsingStencil} (the S13 cutover-core stencil driver, renderMode=normal DEFAULT) at all
+     * three choreography sites and by the never-loaded {@code ExperimentalIrisPortalRenderer}
+     * (DEPTH_CLEAR + STENCIL_ONLY). The caller's raw {@code glStencilFunc EQUAL(layer)} + {@code glDepthRange}
+     * survive into the draw (applyPipelineState touches neither stencil nor depth-range), so the fill stays
+     * gated to the portal opening and Row-7's FAR depth value lands.
+     */
+    public static void renderScreenTriangle(int r, int g, int b, int a, ScreenTrianglePurpose purpose) {
+        RenderTarget mainRt = client.gameRenderer.mainRenderTarget();
+        if (mainRt.getColorTextureView() == null || mainRt.getDepthTextureView() == null) {
+            return;
+        }
+
+        // COLOR_FILL carries a real color (the dest fog); the masked purposes reuse the current fill (mirrors
+        // StencilPortalRenderer.drawScreenDepthClearStencilGated — avoids a needless 1x1 re-upload each frame).
+        int argb = (a << 24) | (r << 16) | (g << 8) | b;
+        GpuTextureView texView = (purpose == ScreenTrianglePurpose.COLOR_FILL)
+            ? ensureScreenTriTexture(argb)
+            : ensureScreenTriTexture(screenTriTexture == null ? 0xFF000000 : screenTriTextureArgb);
+        if (texView == null) {
+            return;
+        }
+
+        RenderPipeline pipeline;
+        if (purpose == ScreenTrianglePurpose.DEPTH_CLEAR) {
+            pipeline = PortalRenderTypes.portalScreenDepthClear();
+        }
+        else if (purpose == ScreenTrianglePurpose.COLOR_FILL) {
+            pipeline = PortalRenderTypes.portalCompositeBlit();
+        }
+        else {
+            pipeline = SCREEN_TRIANGLE_STENCIL_ONLY;
+        }
+
+        // Raw-GL backstops for the applyPipelineState short-circuit (skips state re-apply when lastPipeline is
+        // unchanged) — the exact discipline StencilPortalRenderer's stencil-gated draws use. They AGREE with
+        // the selected pipeline (DEPTH_CLEAR needs the depth test ENABLED for its write; the depth-off purposes
+        // need it DISABLED), which is the only case a raw backstop is sound (it never contradicts the pipeline).
+        GL11.glDisable(GL11.GL_BLEND);
+        if (purpose == ScreenTrianglePurpose.DEPTH_CLEAR) {
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+        }
+        else {
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+        }
+
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+            () -> "seamlessportals_screen_triangle",
+            mainRt.getColorTextureView(),
+            Optional.empty(),
+            mainRt.getDepthTextureView(),
+            OptionalDouble.empty(),
+            new RenderPass.RenderArea(0, 0, mainRt.width, mainRt.height)
+        )) {
+            pass.setPipeline(pipeline);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.bindTexture(
+                "InSampler", texView,
+                RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST)
+            );
+            pass.draw(3, 1, 0, 0);
+        }
+
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
     }
 }
