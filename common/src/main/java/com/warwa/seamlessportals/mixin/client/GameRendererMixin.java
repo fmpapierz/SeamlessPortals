@@ -17,6 +17,11 @@ public abstract class GameRendererMixin {
 
     @Inject(method = "render", at = @At("HEAD"))
     private void seamlessportals$beforeRender(DeltaTracker deltaTracker, boolean advanceGameTime, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (row 17 — CameraTransitionHandler). Flag ON → IP's
+        // TransformationManager.managePlayerRotationAndChangeGravity supersedes it; this block-era
+        // camera-transition driver stays off. Flag OFF (default) → unchanged. (The TAIL half below is
+        // §3 substrate — GPU-buffer endFrame + secondary light — and stays active in BOTH states.)
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         CameraTransitionHandler.tick();
     }
 

@@ -71,6 +71,12 @@ public abstract class ClientLevelMixin {
      */
     @Inject(method = "onChunkLoaded", at = @At("TAIL"))
     private void seamlessportals$onChunkLoaded(ChunkPos chunkPos, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (A9 — the client-side block-portal SCAN half only). Flag ON → IP's
+        // MixinClientLevel + ClientWorldLoader own dimension-change/portal detection; this block-era
+        // scan (→ PortalDetector.onNetherPortalDetectedClient) stays off. NOTE: A9's other halves —
+        // the doAddParticle particle bypass and the disconnect teardown — are SEPARATE injects that
+        // deliberately survive in both flag states and are NOT gated here. Flag OFF → unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         ClientLevel level = (ClientLevel)(Object) this;
 
         // ONLY process events from the PRIMARY level.

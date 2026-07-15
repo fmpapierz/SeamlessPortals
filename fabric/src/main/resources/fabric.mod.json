@@ -25,7 +25,11 @@
   },
   "accessWidener": "seamlessportals.accesswidener",
   "mixins": [
-    "seamlessportals-common.mixins.json"
+    "seamlessportals-common.mixins.json",
+    "seamlessportals-ip-qmisc.mixins.json",
+    "seamlessportals-ip-core-common.mixins.json",
+    "seamlessportals-ip-client.mixins.json",
+    "seamlessportals-ip-fabric.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",

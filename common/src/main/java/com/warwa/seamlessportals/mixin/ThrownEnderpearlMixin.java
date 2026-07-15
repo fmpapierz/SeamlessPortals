@@ -18,6 +18,9 @@ public abstract class ThrownEnderpearlMixin {
      */
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$onEnderPearlTick(CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (row 4 / B8 — ProjectilePortalHandler host). Flag ON → IP's unified
+        // regular-entity crossing path owns it; this block-era handler stays off. Flag OFF → unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         ThrownEnderpearl pearl = (ThrownEnderpearl)(Object) this;
 
         if (ProjectilePortalHandler.handleProjectileTick(pearl)) {

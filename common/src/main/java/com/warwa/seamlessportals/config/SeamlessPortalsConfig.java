@@ -47,6 +47,18 @@ public class SeamlessPortalsConfig {
     }
 
     /**
+     * The entity-portal migration MASTER SWITCH (D3). {@code true} = the ported Immersive-Portals
+     * entity-portal driver set runs; {@code false} (default) = the block-era driver set runs,
+     * byte-for-byte unchanged. Load-time, read ONCE (see {@link com.warwa.seamlessportals.EntityPortalsFlag}
+     * for the mechanism and the mixin-plugin/runtime-gate consistency contract). Every
+     * {@code !entityPortals} gate in mod-owned driver code, and the IP-mixin gating in
+     * {@code SeamlessMixinConfigPlugin}, read this same value.
+     */
+    public static boolean isEntityPortals() {
+        return com.warwa.seamlessportals.EntityPortalsFlag.isOn();
+    }
+
+    /**
      * Load the configurable knob(s) from {@code <configDir>/seamlessportals.properties}
      * (creating the file with current defaults if absent), then re-write it so it
      * always reflects the live values. Called once at mod init. The headline knob is
@@ -94,6 +106,13 @@ public class SeamlessPortalsConfig {
                 if (unb != null) INSTANCE.unboundedClientChunkStore = Boolean.parseBoolean(unb.trim());
                 String spec = props.getProperty("speculativePrewarm");
                 if (spec != null) INSTANCE.speculativePrewarm = Boolean.parseBoolean(spec.trim());
+                // Entity-portal migration master switch (D3). Seed the load-time flag from the same
+                // file the mixin plugin reads, so the two never disagree within a session. seedIfUnset
+                // is a no-op if the plugin already resolved it (read-once semantics).
+                String ep = props.getProperty("entityPortals");
+                if (ep != null) {
+                    com.warwa.seamlessportals.EntityPortalsFlag.seedIfUnset(Boolean.parseBoolean(ep.trim()));
+                }
             } catch (Exception e) {
                 com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
                     "[SEAMLESS] Failed to read config, using defaults: {}", e.toString());
@@ -116,9 +135,14 @@ public class SeamlessPortalsConfig {
             props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
             props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
             props.setProperty("speculativePrewarm", String.valueOf(INSTANCE.speculativePrewarm));
+            props.setProperty("entityPortals", String.valueOf(isEntityPortals()));
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"
+                    + "# entityPortals: MASTER SWITCH for the entity-portal engine. false (default) =\n"
+                    + "#   the classic block-portal system. true = the Immersive-Portals entity-portal\n"
+                    + "#   engine (experimental). LOAD-TIME: edit and RESTART the game to change it;\n"
+                    + "#   only change it in a dedicated test world for now.\n"
                     + "# portalRenderDistance: how many chunks deep the portal DESTINATION is kept\n"
                     + "#   loaded + meshed. Set to \"auto\" for IP-style GRADUATED depth (full near the\n"
                     + "#   portal, less as you back away — cheaper, the default), OR a number 1..32 to\n"

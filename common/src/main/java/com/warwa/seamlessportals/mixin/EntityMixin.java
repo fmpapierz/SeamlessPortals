@@ -72,6 +72,14 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
             setPortalCooldown(getPortalCooldown() - 1);
         }
 
+        // D3 EXCLUSIVITY GATE (row 2 — EntityMixin server-side detection). Flag ON → IP's per-portal
+        // scan (Portal.SERVER_PORTAL_TICK_SIGNAL → getEntitiesToTeleport) is the sole non-player
+        // detector; this one stays off. The cooldown tick-down ABOVE and the handlePortal cancel BELOW
+        // are the §2 always-active suppression (kept in BOTH flag states, config-gated on
+        // isSeamlessTeleportation — NOT on entityPortals — so vanilla nether-portal blocks stay inert
+        // pre-S16). Flag OFF (default) → falls through to the block-era detection unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
+
         // IP-style: for ServerPlayer entities, the client is the authoritative
         // crossing detector — it calls SeamlessClientTeleport.performCrossing
         // on LocalPlayer.tick HEAD, which does the visual swap synchronously

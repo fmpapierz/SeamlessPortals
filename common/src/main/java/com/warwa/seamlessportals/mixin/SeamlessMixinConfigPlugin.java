@@ -1,5 +1,6 @@
 package com.warwa.seamlessportals.mixin;
 
+import com.warwa.seamlessportals.EntityPortalsFlag;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
@@ -94,6 +95,17 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        // D3 EXCLUSIVITY GATE (entity-portal migration, migration/EXCLUSIVITY_LEDGER.md §4):
+        // the ported Immersive-Portals mixin set lives in the qouteall.* packages. It is woven
+        // ONLY when the entity-portal engine is ON. Flag OFF (the shipping default) → every IP
+        // mixin is skipped here, so the block-era com.warwa mixins are the only portal driver set
+        // applied. This is the load-time half of the one-driver-per-session contract; the runtime
+        // half is the `!entityPortals` gates in the block-era mod driver code.
+        if (mixinClassName != null && mixinClassName.startsWith("qouteall.")) {
+            if (!EntityPortalsFlag.isOn()) {
+                return false;
+            }
+        }
         if (isSodiumPresent() && SODIUM_INCOMPATIBLE_MIXINS.contains(mixinClassName)) {
             System.out.println("[SEAMLESS COMPAT] Skipping mixin " + mixinClassName
                 + " (incompatible with Sodium)");

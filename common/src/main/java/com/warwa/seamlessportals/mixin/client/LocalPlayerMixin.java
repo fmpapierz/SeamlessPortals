@@ -48,11 +48,18 @@ public abstract class LocalPlayerMixin {
      */
     @Inject(method = "tick", at = @At("TAIL"))
     private void seamlessportals$sprintKeeperTick(CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (row 1 — LocalPlayerMixin crossing detection). Flag ON → the ported
+        // ClientTeleportationManager owns the whole client-crossing + sprint path; this block-era
+        // driver stays off. Flag OFF (default) → falls through unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         SeamlessClientTeleport.tickSprintKeeper((LocalPlayer) (Object) this);
     }
 
     @Inject(method = "tick", at = @At("HEAD"))
     private void seamlessportals$clientPortalCrossingCheck(CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (row 1). Flag ON → ClientTeleportationManager.manageTeleportation is the
+        // sole client crossing detector; this one stays off. Flag OFF (default) → unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         LocalPlayer self = (LocalPlayer) (Object) this;
 
         if (!SeamlessPortalsConfig.get().isSeamlessTeleportation()) return;

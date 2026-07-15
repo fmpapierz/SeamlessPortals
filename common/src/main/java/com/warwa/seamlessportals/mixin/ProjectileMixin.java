@@ -17,6 +17,10 @@ public abstract class ProjectileMixin {
      */
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$onTick(CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (row 4 / B8 — ProjectilePortalHandler host). Flag ON → IP unifies
+        // projectiles into the one regular-entity crossing path; this block-era handler stays off.
+        // Flag OFF (default) → unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         Projectile projectile = (Projectile)(Object) this;
 
         if (ProjectilePortalHandler.handleProjectileTick(projectile)) {

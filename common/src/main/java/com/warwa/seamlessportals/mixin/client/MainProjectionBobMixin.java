@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
@@ -32,6 +33,14 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 @Mixin(GameRenderer.class)
 public abstract class MainProjectionBobMixin {
 
+    // D3 EXCLUSIVITY GATE (A7). Shadows of the private targets so that, flag ON, we restore the real
+    // vanilla bob call rather than no-opping it — IP's own bobView/bobHurt injects (the ported
+    // viewBobbingReduce trio, D5 A2 / checkpoint C5) then scale it. Flag OFF (default) → the redirects
+    // no-op exactly as before, keeping the world projection free of bob.
+    @Shadow protected abstract void bobHurt(CameraRenderState cameraState, PoseStack poseStack);
+
+    @Shadow protected abstract void bobView(CameraRenderState cameraState, PoseStack poseStack);
+
     @Redirect(
         method = "renderLevel",
         at = @At(
@@ -42,7 +51,11 @@ public abstract class MainProjectionBobMixin {
     private void seamlessportals$skipMainBobHurt(GameRenderer self,
                                                   CameraRenderState cameraState,
                                                   PoseStack poseStack) {
-        // no-op: keep the world projection free of hurt-tilt
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            this.bobHurt(cameraState, poseStack); // flag ON: run vanilla bob; IP's injects handle scaling
+            return;
+        }
+        // no-op: keep the world projection free of hurt-tilt (flag-OFF baseline)
     }
 
     @Redirect(
@@ -55,6 +68,10 @@ public abstract class MainProjectionBobMixin {
     private void seamlessportals$skipMainBobView(GameRenderer self,
                                                   CameraRenderState cameraState,
                                                   PoseStack poseStack) {
-        // no-op: keep the world projection free of walk-bob
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            this.bobView(cameraState, poseStack); // flag ON: run vanilla bob; IP's injects handle scaling
+            return;
+        }
+        // no-op: keep the world projection free of walk-bob (flag-OFF baseline)
     }
 }

@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "qouteall.imm_ptl.core.platform_specific.mixin",
+  "plugin": "com.warwa.seamlessportals.mixin.SeamlessMixinConfigPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "minVersion": "0.8",
+  "mixins": [
+    "common.MixinPlayerManager_MA",
+    "common.MixinServerPlayerEntity_MA"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

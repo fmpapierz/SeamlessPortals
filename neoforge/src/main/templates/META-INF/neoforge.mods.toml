@@ -9,6 +9,15 @@ description='''${mod_description}'''
 [[mixins]]
 config = "seamlessportals-common.mixins.json"
 
+[[mixins]]
+config = "seamlessportals-ip-qmisc.mixins.json"
+
+[[mixins]]
+config = "seamlessportals-ip-core-common.mixins.json"
+
+[[mixins]]
+config = "seamlessportals-ip-client.mixins.json"
+
 [[dependencies.${mod_id}]]
     modId="neoforge"
     type="required"

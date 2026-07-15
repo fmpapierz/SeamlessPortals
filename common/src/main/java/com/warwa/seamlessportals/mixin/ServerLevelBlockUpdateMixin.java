@@ -52,6 +52,10 @@ public abstract class ServerLevelBlockUpdateMixin {
     )
     private void seamlessportals$mirrorToPortalWatchers(
             BlockPos pos, BlockState oldState, BlockState newState, int flags, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (B3 — portal-destruction observation driving PortalManager). Flag ON →
+        // IP's breakable-portal revalidation + native tracking own this; the block-era PortalManager
+        // is inert. Flag OFF (default) → unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         if (oldState == newState) return;
         ServerLevel self = (ServerLevel) (Object) this;
         MinecraftServer server = self.getServer();

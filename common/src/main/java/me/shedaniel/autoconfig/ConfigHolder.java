@@ -1,13 +1,14 @@
-// F21 Cloth-Config / AutoConfig compileOnly stub — see ConfigData.java header. NOT shipped. Removed at S20.
+// F21 Cloth-Config / AutoConfig — SHIPPED functional no-op (see ConfigData.java header; S13-B P-1).
 package me.shedaniel.autoconfig;
 
 import net.minecraft.world.InteractionResult;
 
 /**
  * Held config handle (IPGlobal.configHolder). Only the members IP touches are declared:
- * getConfig / setConfig / save (IPConfig.getConfig, onConfigChanged) and registerSaveListener
- * (IPModMain.initConfig — the save listener returns {@link InteractionResult}, matching Cloth-Config's
- * mojmap SaveEvent return type).
+ * {@code getConfig} / {@code setConfig} / {@code save} (IPConfig.getConfig, IPConfig.saveConfigFile)
+ * and {@code registerSaveListener} (IPModMain.loadConfig — the save listener returns
+ * {@link InteractionResult}, matching Cloth-Config's mojmap SaveEvent return type). The shipped
+ * implementation is {@link ConfigManager}.
  */
 public interface ConfigHolder<T extends ConfigData> {
     T getConfig();

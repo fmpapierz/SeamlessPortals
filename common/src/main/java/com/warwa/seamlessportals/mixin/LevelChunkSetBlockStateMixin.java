@@ -84,6 +84,9 @@ public abstract class LevelChunkSetBlockStateMixin {
     private void seamlessportals$mirrorChunkBlockStateChange(
             BlockPos pos, BlockState newState, int flags,
             CallbackInfoReturnable<BlockState> cir) {
+        // D3 EXCLUSIVITY GATE (A3 — block-update observation feeding RemoteBlockUpdater's send path).
+        // Flag ON → IP tracking's native block sync replaces it. Flag OFF (default) → unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         BlockState oldState = cir.getReturnValue();
         // Filter 1: setBlockState returns null on no-op write. Nothing changed.
         if (oldState == null) return;

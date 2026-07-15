@@ -86,6 +86,13 @@ public abstract class QuadParticleGroupMixin {
     )
     private boolean seamlessportals$cullBehindPortal(
             Frustum frustum, double x, double y, double z) {
+        // D3 EXCLUSIVITY GATE (A5 — the block-era PortalParticleClip cull call inside this KEEP'd
+        // substrate mixin). Flag ON → IP render-side clipping (FrontClipping + CrossPortalEntityRenderer)
+        // owns particle clipping, so skip the block-era portal cull but KEEP vanilla frustum culling.
+        // Flag OFF (default) → falls through to the full block-era cull below, unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            return frustum.pointInFrustum(x, y, z);
+        }
         // Vanilla cull first (cheap; frustum check is fast).
         if (!frustum.pointInFrustum(x, y, z)) return false;
         // During the DEST portal render the camera + particles are the

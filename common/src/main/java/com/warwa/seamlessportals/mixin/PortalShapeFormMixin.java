@@ -32,6 +32,11 @@ public abstract class PortalShapeFormMixin {
 
     @Inject(method = "createPortalBlocks", at = @At("TAIL"))
     private void seamlessportals$onPortalLit(LevelAccessor level, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (A1 — block-era portal-formation hook). Flag ON → the peripheral
+        // ignition chain (MixinAbstractFireBlock_CVB → IntrinsicPortalGeneration) owns portal
+        // formation; this must NOT queue block-era formations (its drain, PortalChunkTracker.tick, is
+        // gated off too). Flag OFF (default) → unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         if (level instanceof ServerLevel sl) {
             // QUEUE, don't run inline: this fires inside the fire block's onPlace. Doing the
             // dest-portal search/creation here stalled the tick and delayed the block broadcast

@@ -50,38 +50,34 @@ public abstract class MinecraftFramePumpMixin {
         )
     )
     private void seamlessportals$preRenderPump(boolean advanceGameTime, CallbackInfo ci) {
-        // ===== S13 FLAG-DISPATCH SCAFFOLD (still-INERT at S12-B) =====================================
-        // Per S03-frame-anchor.md §6 + EXCLUSIVITY_LEDGER §4 (row 1, "The S3-relocated pre-render pump
-        // host") this body is the S13 flag-dispatch point. At S13 step 3 — the SAME commit that
-        // registers the IP client-mixin set and introduces the load-time `entityPortals` flag — it
-        // becomes:
-        //
-        //   if (entityPortals) {
-        //       // ported IP pre-render chain (IP anchor MixinGameRenderer.java:86-96), all held qouteall.*:
-        //       //   float partialTick = deltaTracker.getGameTimeDeltaPartialTick(true);
-        //       //   RenderStates.updatePreRenderInfo(partialTick);
-        //       //   StableClientTimer.update(level.getGameTime(), partialTick);
-        //       //   ClientPortalAnimationManagement.update();          // must update before teleportation
-        //       //   ClientTeleportationManager.manageTeleportation(false);
-        //       //   IPGlobal.PRE_GAME_RENDER_EVENT.invoker().run();
-        //       //   if (IPCGlobal.earlyRemoteUpload) MyRenderHelper.earlyRemoteUpload();
-        //   } else {
-        //       <the block-era pump below, verbatim>
-        //   }
-        //
-        // The IP branch CANNOT be live code yet, so it stays a documented scaffold here (inert):
-        //   (a) the `entityPortals` flag is created at S13 (does not exist to reference now); and
-        //   (b) RenderStates / StableClientTimer / ClientPortalAnimationManagement /
-        //       ClientTeleportationManager / MyRenderHelper are HELD qouteall.* classes EXCLUDED from
-        //       the shipping build until the S13 cutover — referencing them from this shipped mod file
-        //       would break the shipping-green invariant.
-        // The block-era pump therefore runs UNCONDITIONALLY at S12-B — runtime behavior byte-identical
-        // to S3 (this edit adds only the scaffold comment; no live call changed). The D3 rule is
-        // preserved: mod code dispatches on the flag, the ported IP body lives in its own branch and is
-        // never flag-polluted. Kept as a single ordered unit so S13 wraps it without restructuring.
-        // ============================================================================================
+        // ===== S13 FLAG-DISPATCH (D3 shared host — EXCLUSIVITY_LEDGER §4, row "S3-relocated pump") ====
+        // Mod code dispatches on the load-time entityPortals master switch; the ported IP body lives in
+        // its OWN branch and is never flag-polluted (the D3 shared-host rule). Flag OFF (the shipping
+        // default) → the block-era pump below runs, byte-for-byte unchanged. Flag ON → IP's pre-render
+        // chain, which is IP MixinGameRenderer.onFarBeforeRendering:86-96 relocated onto this
+        // renderFrame anchor (S03-frame-anchor.md §6): it must run before the frame's camera is
+        // positioned so a render-time teleport renders the crossing frame from the DESTINATION.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level == null) {
+                return;
+            }
+            // Note: use PARTIAL tick, not delta tick (IP MixinGameRenderer:85-86).
+            float partialTick = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+            qouteall.imm_ptl.core.render.context_management.RenderStates.updatePreRenderInfo(partialTick);
+            qouteall.imm_ptl.core.portal.animation.StableClientTimer.update(
+                mc.level.getGameTime(), partialTick);
+            // must update before teleportation (IP MixinGameRenderer:91)
+            qouteall.imm_ptl.core.portal.animation.ClientPortalAnimationManagement.update();
+            qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.manageTeleportation(false);
+            qouteall.imm_ptl.core.IPGlobal.PRE_GAME_RENDER_EVENT.invoker().run();
+            if (qouteall.imm_ptl.core.IPCGlobal.earlyRemoteUpload) {
+                qouteall.imm_ptl.core.render.MyRenderHelper.earlyRemoteUpload();
+            }
+            return;
+        }
 
-        // ----- flag-OFF path: BLOCK-ERA pre-render pump (the ONLY live path until S13) -----
+        // ----- flag-OFF path: BLOCK-ERA pre-render pump (the shipping baseline — UNCHANGED) -----
         // Ordering mirrors IP's MixinGameRenderer.onFarBeforeRendering: teleport/crossing management
         // FIRST, then the per-frame upload/upkeep.
 

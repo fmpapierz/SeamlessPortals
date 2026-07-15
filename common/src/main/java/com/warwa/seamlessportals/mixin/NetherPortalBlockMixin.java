@@ -40,6 +40,11 @@ public abstract class NetherPortalBlockMixin {
     private void seamlessportals$onEntityInside(BlockState state, Level level, BlockPos pos,
                                                  Entity entity, InsideBlockEffectApplier effectApplier,
                                                  boolean isPrecise, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (A2 — block-behavior hooks on the vanilla portal block; every hook dies
+        // with block portals, REPLACE-BY PortalPlaceholderBlock). Flag ON → vanilla block behavior
+        // (IP's placeholder block is the real portal); the block-era PortalDetector stays off. Flag OFF
+        // (default) → unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         if (level instanceof ServerLevel serverLevel) {
             PortalDetector.onNetherPortalFormed(level, pos, serverLevel.getServer());
         }
@@ -74,6 +79,9 @@ public abstract class NetherPortalBlockMixin {
             BlockState state, LevelReader level, ScheduledTickAccess ticks,
             BlockPos pos, Direction dir, BlockPos neighbourPos, BlockState neighbourState,
             RandomSource random, CallbackInfoReturnable<BlockState> cir) {
+        // D3 EXCLUSIVITY GATE (A2). Flag ON → IP breakable-portal revalidation owns destruction; the
+        // block-era PortalManager stays off. Flag OFF (default) → unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         BlockState returned = cir.getReturnValue();
         if (returned == null || !returned.is(Blocks.AIR)) return;
         if (!(level instanceof ServerLevel serverLevel)) return;
@@ -142,6 +150,9 @@ public abstract class NetherPortalBlockMixin {
     )
     private void seamlessportals$cancelAmbientParticles(
             BlockState state, Level level, BlockPos pos, RandomSource random, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (A2). Flag ON → vanilla ambient particles on any vanilla portal block;
+        // flag OFF (default) → suppressed as before.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         ci.cancel();
     }
 
@@ -163,6 +174,9 @@ public abstract class NetherPortalBlockMixin {
     private void seamlessportals$makeUnbreakable(
             BlockState state, Player player, BlockGetter level, BlockPos pos,
             CallbackInfoReturnable<Float> cir) {
+        // D3 EXCLUSIVITY GATE (A2). Flag ON → vanilla breakability; flag OFF (default) → unbreakable
+        // as before.
+        if (SeamlessPortalsConfig.isEntityPortals()) return;
         cir.setReturnValue(0.0F);
     }
 
@@ -189,6 +203,12 @@ public abstract class NetherPortalBlockMixin {
      * overrides the inherited {@code BlockBehaviour.getRenderShape}.
      */
     public RenderShape getRenderShape(BlockState state) {
+        // D3 EXCLUSIVITY GATE (A2). Flag ON → vanilla render shape (MODEL); a stray vanilla portal
+        // block renders normally (IP's placeholder block is the real portal). Flag OFF (default) →
+        // the block-era invisible-portal-block behavior below, unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) {
+            return RenderShape.MODEL;
+        }
         if (SeamlessPortalsConfig.shouldRenderThrough(PortalType.NETHER)) {
             return RenderShape.INVISIBLE;
         }

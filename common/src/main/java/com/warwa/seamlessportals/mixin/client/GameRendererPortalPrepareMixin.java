@@ -56,6 +56,11 @@ public abstract class GameRendererPortalPrepareMixin {
 
     @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"))
     private void seamlessportals$prepareDestinationRender(DeltaTracker deltaTracker, CallbackInfo ci) {
+        // D3 EXCLUSIVITY GATE (row 14 — StencilPortalRenderer, Phase-1 destination render). Flag ON →
+        // the ported PortalRenderer / RendererUsingStencil draw the portals; this block-era phase-1
+        // dest render stays off (its Phase-2 composite, registered on AFTER_TRANSLUCENT_TERRAIN, is
+        // gated off in the loader entrypoint too). Flag OFF (default) → unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         StencilPortalRenderer.prepareDestinationRender();
     }
 }
