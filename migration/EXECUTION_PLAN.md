@@ -1033,6 +1033,22 @@ closure slice (`NetherPortalGeneration`, `NetherPortalMatcher`, `FastBlockAccess
 U12; evidence at S13(a)). This is the last pre-closure checkpoint; any other error is triaged
 per the D4.2 NOTE — an import-graph-justified miss amends the gate set (committed with the
 stage); anything else is a translation slip fixed here.
+**S12-B GATE-SET AMENDMENT (ratified — import-graph-justified; committed with S12-B).** The S12-B
+pre-closure probe surfaced one import-graph-justified miss OUTSIDE the enumerated set above:
+`qouteall.imm_ptl.core.render.ShaderCodeTransformation`. Import chain — `IPModMainClient` (the U11
+client-init closure hub, committed S10.1) imports it (`IPModMainClient.java:25`) and calls
+`ShaderCodeTransformation.init()` (`:77`) exactly as IP does, so the client-init hub's own import
+graph pulls it into the S13 closure. Per the D4.2 NOTE this AMENDS the S13 closure set to include
+`ShaderCodeTransformation`. **S13-GREEN BLOCKER (loud):** IP's `ShaderCodeTransformation` imports the
+GONE 26.2 type `com.mojang.blaze3d.shaders.CompiledShader` (api-map/mixin-client §8 `MixinCompiledShader`
+row — the whole `CompiledShader`/`CompiledShaderProgram` GLSL-compile stack is TARGET-GONE), so it is
+NOT verbatim-portable. **S13 MUST** land it as a SHELL with the shader-transform internals
+commented / FrontClipping-deferred (mirroring the dropped `MixinCompiledShader` / `MixinShaderInstance`
+/ `MixinRenderSystem_Clipping` render-shader ducks), **OR** gate/comment the `IPModMainClient.init()`
+call — else `IPModMainClient` stays RED at S13 and there is no first green build. The FrontClipping
+shader redesign owns the real transform. Recorded in port-note S12B. (Sibling S4-carried GONE-type
+duck `IEShader` — same GONE `com.mojang.blaze3d.shaders.*` origin — was resolved THIS stage: dead
+`Uniform` import removed, file held-inert until the FrontClipping redesign; port-note S12B.)
 **(c) Commits:** 1) abstract PortalRenderer + stencil renderer; 2) FBO/dummy/debug renderers +
 renderMode; 3) Iris shells; 4) client mixins in 2–3 grouped commits; 5) port-note (R5 executed
 checklist + R13c/i/k evidence).
@@ -1167,7 +1183,10 @@ WITH the U12 closure slice and the wand/dim_stack/alternate_dimension compile sh
 above; Appendix A.4).
 **(c) Commits:** 1) closure sources (U11 files + ExampleGuiPortalRendering + IPConfigGUI + the
 wand/dim_stack/alternate_dimension compile
-shells + the U12 closure slice incl. the full form package + the redstone disposition file);
+shells + the U12 closure slice incl. the full form package + the redstone disposition file
++ the `render/ShaderCodeTransformation` render-shell (S12-B gate-set amendment above): land it as a
+SHELL with its GONE-`CompiledShader` transform internals commented / FrontClipping-deferred, OR gate
+the `IPModMainClient.init()` call — REQUIRED for `IPModMainClient` to compile green);
 2) the flip + burn-down (one or more honest commits); 3) mixin-config registration +
 flag gating + block-era `!entityPortals` gates + init wiring + exclusivity ledger;
 4) unconditional registrations + renderer-seam wiring; 5) Mesh2DTest/HelperTest enable;
