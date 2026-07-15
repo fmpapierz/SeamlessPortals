@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "qouteall.q_misc_util.mixin",
+  "plugin": "com.warwa.seamlessportals.mixin.SeamlessMixinConfigPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "minVersion": "0.8",
+  "mixins": [
+    "IELevelStorageAccess_Misc",
+    "MixinMinecraftServer_Misc",
+    "dimension.MixinPlayerList_Misc"
+  ],
+  "client": [
+    "client.IEClientPacketListener_Misc",
+    "client.MixinGui_Overlay"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
