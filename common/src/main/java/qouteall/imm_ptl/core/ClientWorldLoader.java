@@ -24,6 +24,7 @@ import net.minecraft.util.profiling.Profiler;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.world.phys.Vec3;
 import org.apache.commons.lang3.Validate;
@@ -542,7 +543,10 @@ public class ClientWorldLoader {
         try {
             ClientPacketListener mainNetHandler = CLIENT.player.connection;
             assert CLIENT.level != null;
-            Map<String, MapItemSavedData> mapData = ((IEClientLevel_Accessor) CLIENT.level).ip_getMapData();
+            // S12-B category-(c) fix: 26.2 ClientLevel.mapData is Map<MapId, MapItemSavedData>
+            // (key changed String -> MapId; IEClientLevel_Accessor already returns Map<MapId,...>).
+            // The S10 locals lagged at Map<String,...>; retyped to match. See S12B-render.md §7.
+            Map<MapId, MapItemSavedData> mapData = ((IEClientLevel_Accessor) CLIENT.level).ip_getMapData();
 
             Validate.notNull(
                 dimIdToDimTypeId, "dimension type mapping is missing"
