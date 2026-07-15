@@ -25,8 +25,10 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.dimension.LevelStem;
 
 import java.util.Set;
+import java.util.function.Supplier;
 
 public class DimensionAPI {
     public static final DimensionDynamicUpdateEvent SERVER_DIMENSION_DYNAMIC_UPDATE_EVENT = null;
@@ -35,6 +37,10 @@ public class DimensionAPI {
     // (ClientWorldLoader.init registers on it to dispose dynamically-removed dimensions client-side);
     // the SERVER events above were grown by earlier stages. Never-firing under static dimensions.
     public static final ClientDimensionUpdateEvent CLIENT_DIMENSION_UPDATE_EVENT = null;
+    // Grown for S13 (the dim_stack compile shell) — DimStackManagement.init registers on it to apply
+    // the pending dim-stack the first time server dimensions finish loading
+    // (DimStackManagement.java:48). Never-firing under static dimensions.
+    public static final ServerDimensionsLoadEvent SERVER_DIMENSIONS_LOAD_EVENT = null;
 
     /** Holder for the dynamic dimension-set update event (DimensionIntId, GlobalPortalStorage). */
     public static class DimensionDynamicUpdateEvent {
@@ -60,6 +66,20 @@ public class DimensionAPI {
         }
     }
 
+    /** Holder for the server-dimensions-loaded event (DimStackManagement.init, S13 shell). */
+    public static class ServerDimensionsLoadEvent {
+        public void register(ServerDimensionsLoadCallback listener) {
+        }
+    }
+
+    // S13 (alternate_dimension compile shell): AlternateDimensions.addAltDimsIfUsedInDimStack adds
+    // an alt-dimension level stem on demand if it is not already present
+    // (AlternateDimensions.java:145-181). Never-firing under static dimensions.
+    public static void addDimensionIfNotExists(
+        MinecraftServer server, Identifier dimensionId, Supplier<LevelStem> levelStemSupplier
+    ) {
+    }
+
     @FunctionalInterface
     public interface ServerDimensionsUpdateCallback {
         void run(MinecraftServer server, Set<ResourceKey<Level>> dimensions);
@@ -73,5 +93,10 @@ public class DimensionAPI {
     @FunctionalInterface
     public interface BeforeRemovingDimensionCallback {
         void run(ServerLevel world);
+    }
+
+    @FunctionalInterface
+    public interface ServerDimensionsLoadCallback {
+        void run(MinecraftServer server);
     }
 }
