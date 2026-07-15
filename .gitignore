@@ -1,0 +1,16 @@
+# Build outputs and IDE/session artifacts (never commit)
+.gradle/
+.idea/
+build/
+buildSrc/.gradle/
+buildSrc/build/
+common/build/
+common/logs/
+fabric/.gradle/
+fabric/build/
+fabric/runs/
+neoforge/build/
+neoforge/runs/
+*.log
+threaddump*.txt
+crash-evidence.txt

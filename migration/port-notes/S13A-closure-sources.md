@@ -165,8 +165,19 @@ Appendix A.9):
 
 **Resolution: keep verbatim, document.** Removing it would deviate from IP (IP ships the file) and
 would require a non-carve-in `IpHeldPaths` edit; the faithful move is to port it and amend the census
-here — the plan's "three" becomes **four** (three imported + one dead sibling). No code change; no
-registration site (IP has none either).
+here — the plan's "three" becomes **four** (three imported + one dead sibling). No code change.
+
+> **CORRECTION (S13-B P3, `migration/port-notes/S13B-flip.md §7`):** the original parenthetical here — "no
+> registration site (IP has none either)" — was **FALSE**. IP's `imm_ptl_peripheral.mixins.json`
+> registers **all four** alt-dim `@Mixin` interfaces, `IENoiseGeneratorSettings` included
+> (`IP:src/main/resources/imm_ptl_peripheral.mixins.json:7-10`, verified). The correct disposition is
+> not "IP has no registration site" but **an S19 deferral**: the port holds all four
+> **UNREGISTERED** (`seamlessportals-ip-peripheral.mixins.json` left empty + unreferenced) because
+> their only consumers — the `alternate_dimension` generators (`NormalSkylandGenerator` etc.) — are
+> C1/S19-gated (dynamic-dimension runtime), so no code casts a target to these accessor/invoker
+> interfaces before S19. They register at S19 with the dynamic-dimension bring-up. This S19 deferral is
+> **ratified** at S13-B (`migration/port-notes/S13B-flip.md §7`); `IENoiseGeneratorSettings` remains a dead sibling
+> (its `@Invoker`s are commented out even in IP), so it carries no member either way.
 
 ### 2.3 U12 closure slice + the full `form` package
 
