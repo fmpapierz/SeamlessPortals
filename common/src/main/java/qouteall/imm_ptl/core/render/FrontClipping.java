@@ -227,6 +227,79 @@ public class FrontClipping {
         };
     }
 
+    // ------------------------------------------------------------------------------------------------
+    // R3 (S11-C Slice A) — NON-MUTATING view-space plane capture for PerEntityClipBracket.
+    //
+    // IP forced its per-entity clip out by mutating the live store mid-batch (setupOuterClipping /
+    // setupInnerClipping between endBatch() flushes). On the 26.2 submit model there is no mid-batch
+    // flush; the per-entity plane must be captured as a Snapshot and pushed by the seam AROUND the
+    // entity's own submit-order draw (Mechanism A executePhase bracket) or its isolated-storage draw
+    // (Mechanism B), NOT written into the ambient store at submit time. These capture-only variants
+    // reuse the EXACT IP plane SOURCE + kept-half-space math of setupOuterClipping/setupInnerClipping
+    // and the EXACT column-form view-space rotation of feedViewSpacePlane (see the class SIGN NOTE) —
+    // they just return the Snapshot instead of feeding the single com.warwa store. Zero live edits.
+    // ------------------------------------------------------------------------------------------------
+
+    /**
+     * OUTER-clip counterpart of {@link #setupOuterClipping} that RETURNS the view-space plane instead of
+     * feeding the live store. Returns {@code null} when the portal shape has no outer clipping (matching
+     * IP's {@code setupOuterClipping(null)} → {@code disableClipping()} — an unclipped draw).
+     */
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureOuterClipping(
+        Portal portal, Matrix4f viewRotation
+    ) {
+        if (!IPCGlobal.useFrontClipping) {
+            return null;
+        }
+        double[] clipEquationOuter = getClipEquationOuter(portal);
+        if (clipEquationOuter == null) {
+            return null;
+        }
+        return toViewSpaceSnapshot(clipEquationOuter, viewRotation);
+    }
+
+    /**
+     * INNER-clip counterpart of {@link #setupInnerClipping} that RETURNS the view-space plane instead of
+     * feeding the live store (correction 0, matching IP's renderProjectedEntity
+     * {@code setupInnerClipping(collidingPortal.getInnerClipping(), …, 0)}). Returns {@code null} for a
+     * null plane; the caller ({@code PerEntityClipBracket.submitProjectedEntityClipped}) then registers an
+     * EXPLICITLY DISABLED snapshot so the projection draws UNCLIPPED (IP's isRendering branch inherits the
+     * {@code :101} disableClipping and the else branch's {@code setupInnerClipping(null)} collapses to
+     * disableClipping — NOT the ambient dest inner clip; Verifier-1 P1).
+     */
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureInnerClipping(
+        @Nullable Plane clipping, Matrix4f viewRotation
+    ) {
+        if (!IPCGlobal.useFrontClipping) {
+            return null;
+        }
+        if (clipping == null) {
+            return null;
+        }
+        double[] clipEquationInner = getClipEquationInner(clipping.pos(), clipping.normal(), 0);
+        return toViewSpaceSnapshot(clipEquationInner, viewRotation);
+    }
+
+    /**
+     * The shared IP-before-model-view {@code {nx,ny,nz,c}} → com.warwa view-space Snapshot conversion —
+     * the EXACT math of {@link #feedViewSpacePlane} but returning the Snapshot instead of writing the live
+     * store. {@code planeXYZ = R·n} (column-form {@code Vector4f(n,0).mul(viewRotation)} = M·v; do NOT
+     * "fix" to {@code mulTranspose} — S11-A anti-fix guard), {@code planeW = c}, {@code enabled = true}.
+     * {@code viewRotation} is the world→view rotation (the model-view the 26.2 draw applies to the
+     * camera-relative submit poses); the {@code w=0} normal makes any translation column drop out.
+     */
+    private static com.warwa.seamlessportals.render.FrontClipping.Snapshot toViewSpaceSnapshot(
+        double[] beforeModelView, Matrix4f viewRotation
+    ) {
+        Vector4f nView = new Vector4f(
+            (float) beforeModelView[0], (float) beforeModelView[1], (float) beforeModelView[2], 0f
+        );
+        nView.mul(viewRotation); // COLUMN FORM M·v (anti-fix guard: never mulTranspose)
+        return new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
+            nView.x, nView.y, nView.z, (float) beforeModelView[3], true
+        );
+    }
+
     public static double[] getActiveClipPlaneEquationBeforeModelView() {
         return activeClipPlaneEquationBeforeModelView;
     }

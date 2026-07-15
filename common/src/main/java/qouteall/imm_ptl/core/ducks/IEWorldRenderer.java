@@ -1,8 +1,6 @@
 package qouteall.imm_ptl.core.ducks;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.PostChain;
 import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.ViewArea;
@@ -13,19 +11,15 @@ import net.minecraft.world.entity.Entity;
 
 public interface IEWorldRenderer {
     EntityRenderDispatcher ip_getEntityRenderDispatcher();
-    
+
     ViewArea ip_getBuiltChunkStorage();
-    
-    void ip_myRenderEntity(
-        Entity entity,
-        double cameraX,
-        double cameraY,
-        double cameraZ,
-        float partialTick,
-        PoseStack matrixStack,
-        MultiBufferSource vertexConsumerProvider
-    );
-    
+
+    // ip_myRenderEntity (the private LevelRenderer.renderEntity duck) is RETIRED at S11-C (render-core G3):
+    // the R3 cross-portal projection now uses the public EntityRenderDispatcher.extractEntity + submit path
+    // (design S11-R3-clip-bracketing.md §4). Its MultiBufferSource parameter type is GONE on 26.2 (the
+    // whole immediate-mode BufferSource model was removed), so keeping it stranded 2 permanent probe
+    // errors; nothing references it. Deleted here.
+
     RenderBuffers ip_getRenderBuffers();
     
     void ip_setRenderBuffers(RenderBuffers arg);
