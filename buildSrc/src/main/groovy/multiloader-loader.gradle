@@ -26,6 +26,19 @@ dependencies {
     // shells :common uses must therefore be on THIS task's compile classpath too.
     // compileOnly ONLY — never shipped by the loader jar. Removed at S20.
     compileOnly project(path: ':common', configuration: 'ipStubsClasspath')
+
+    // S13-B fabricStubs seam for NON-fabric loaders. Post-flip (ip_scc_closed=true) this task
+    // recompiles the RAW common source, which now includes the held qouteall tree's net.fabricmc.*
+    // references (@Environment, FabricLoader, tick/chunk events, config-phase networking, the
+    // attachment-impl sync types + the S13-B FabricServerConfigurationPacketListenerImpl injected
+    // interface). The FABRIC loader resolves those against REAL fabric-api and must NOT see these
+    // shells (they would shadow the real PayloadTypeRegistry etc. FabricPlatformHelper uses —
+    // common/build.gradle fabricStubs note / S10A §6). Every other loader (NeoForge) has no
+    // fabric-api, so it consumes the same shells :common uses. compileOnly ONLY — never shipped.
+    // Removed at S20.
+    if (project.name != 'fabric') {
+        compileOnly project(path: ':common', configuration: 'fabricStubsClasspath')
+    }
 }
 
 tasks.named('compileJava', JavaCompile).configure { JavaCompile t ->

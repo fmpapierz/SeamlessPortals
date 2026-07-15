@@ -144,12 +144,17 @@ final class IpHeldPaths {
 
     /**
      * TEST held-paths list for :common:compileTestJava — a SEPARATE list, NOT the main
-     * list (D1.3). It diverges at S2: my_util/** is carved in for tests while explicit
-     * exclusions for Mesh2DTest.java + HelperTest.java remain until S13 (both carried IP
-     * tests need the held Helper -> McHelper -> SCC chain to compile: HelperTest imports
-     * Helper directly; Mesh2DTest imports Mesh2D, which imports Helper at Mesh2D.java:24).
-     * The non-my_util qouteall subtrees stay held with the same shape as the MAIN list
-     * (no such test files exist today — IP's whole test tree is the two files above).
+     * list (D1.3). It diverges at S2: my_util/** is carved in for tests.
+     *
+     * S13-B WIRE 2 (SCC closed): the explicit Mesh2DTest.java + HelperTest.java exclusions
+     * are DROPPED — the two carried IP tests need the (now un-held) Helper -> McHelper -> SCC
+     * chain to compile, and the SCC closed at the S13-B flip (ip_scc_closed=true). Both now
+     * compile + run in :common:test (the IP math harness runs for the first time). This whole
+     * list is inert while ip_scc_closed=true anyway (applyHolding skips it); the drop makes the
+     * un-hold explicit + is the sanctioned S13 step-6 cleanup. The non-my_util qouteall subtrees
+     * stay listed with the same shape as the MAIN list (no such test files exist today — IP's
+     * whole test tree is exactly Mesh2DTest + HelperTest, both now un-held). Machinery deleted
+     * wholesale at S20.
      */
     static final List<String> TEST_HELD_PATHS = [
             'qouteall/imm_ptl/**',
@@ -158,9 +163,6 @@ final class IpHeldPaths {
             'qouteall/q_misc_util/dimension/**',
             'qouteall/q_misc_util/ducks/**',
             'qouteall/q_misc_util/mixin/**',
-            // my_util/** carved in for tests at S2, EXCEPT the two carried IP tests
-            '**/Mesh2DTest.java',
-            '**/HelperTest.java',
     ]
 
     /**

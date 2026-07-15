@@ -7,6 +7,7 @@ import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationNetworking;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.networking.v1.FabricServerConfigurationPacketListenerImpl;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerConfigurationConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerConfigurationNetworking;
@@ -191,7 +192,14 @@ public class ImmPtlNetworkConfig {
                 }
             }
             
-            networkHandler.completeTask(ImmPtlConfigurationTask.TYPE);
+            // 26.2: addTask/completeTask are fabric-networking-api interface-injection methods on
+            //       vanilla ServerConfigurationPacketListenerImpl. This build's minimal loom does not
+            //       APPLY the injection to the recompiled common source (verified S10A §4/§7), so the
+            //       calls are routed through the injected interface FabricServerConfigurationPacketListenerImpl
+            //       (renamed from FabricServerConfigurationNetworkHandler in v6). The cast is compile-legal
+            //       (non-final class -> interface) on both :common (fabricStubs shell) and :fabric (real
+            //       fabric-api provides the type + applies the mixin at runtime). Zero logic change.
+            ((FabricServerConfigurationPacketListenerImpl) networkHandler).completeTask(ImmPtlConfigurationTask.TYPE);
         }
         
         @Override
@@ -205,17 +213,20 @@ public class ImmPtlNetworkConfig {
         
         LOGGER.info("Immersive Portals Core version {}", immPtlVersion);
         
-        PayloadTypeRegistry.configurationS2C().register(
+        // 26.2: fabric-networking-api v6 renamed PayloadTypeRegistry.configurationS2C()/configurationC2S()
+        //       -> clientboundConfiguration()/serverboundConfiguration() (network.md headline-5/F1).
+        PayloadTypeRegistry.clientboundConfiguration().register(
             S2CConfigStartPacket.TYPE, S2CConfigStartPacket.CODEC
         );
-        
-        PayloadTypeRegistry.configurationC2S().register(
+
+        PayloadTypeRegistry.serverboundConfiguration().register(
             C2SConfigCompletePacket.TYPE, C2SConfigCompletePacket.CODEC
         );
         
         ServerConfigurationConnectionEvents.CONFIGURE.register((handler, server) -> {
             if (ServerConfigurationNetworking.canSend(handler, S2CConfigStartPacket.TYPE)) {
-                handler.addTask(new ImmPtlConfigurationTask());
+                // 26.2: interface-injection cast, see completeTask above.
+                ((FabricServerConfigurationPacketListenerImpl) handler).addTask(new ImmPtlConfigurationTask());
             }
             else {
                 if (server.isDedicatedServer()) {

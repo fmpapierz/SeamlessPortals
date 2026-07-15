@@ -131,6 +131,17 @@ configurations {
         canBeResolved = false
         canBeConsumed = true
     }
+    // S13-B: consumable view of the compiled net.fabricmc.* shells, for loaders that do NOT
+    // provide real fabric-api (NeoForge). Post-flip (ip_scc_closed=true) the loaders recompile
+    // the RAW common source directory, which now includes the held qouteall tree's net.fabricmc.*
+    // references. The fabric loader resolves those against REAL fabric-api (so it must NOT see
+    // these shells — they would SHADOW the real types FabricPlatformHelper uses, §6 above); the
+    // NeoForge loader has no fabric-api, so it consumes THESE shells instead. Wired neoforge-only
+    // in multiloader-loader.gradle. Consume-only; never resolved here. Removed at S20.
+    fabricStubsClasspath {
+        canBeResolved = false
+        canBeConsumed = true
+    }
 }
 
 // F21: package the compiled stub shells into a jar exposed via ipStubsClasspath. compileOnly
@@ -140,8 +151,17 @@ tasks.register('ipStubsJar', Jar) {
     from sourceSets.ipStubs.output
 }
 
+// S13-B: package the compiled net.fabricmc.* shells into a jar exposed via fabricStubsClasspath,
+// consumed compileOnly by non-fabric loaders (NeoForge) that lack real fabric-api. Never shipped.
+// Removed at S20.
+tasks.register('fabricStubsJar', Jar) {
+    archiveClassifier = 's10a-fabricstubs'
+    from sourceSets.fabricStubs.output
+}
+
 artifacts {
     commonJava sourceSets.main.java.sourceDirectories.singleFile
     commonResources sourceSets.main.resources.sourceDirectories.singleFile
     ipStubsClasspath tasks.named('ipStubsJar')
+    fabricStubsClasspath tasks.named('fabricStubsJar')
 }

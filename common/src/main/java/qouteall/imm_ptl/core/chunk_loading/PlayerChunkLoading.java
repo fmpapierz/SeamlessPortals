@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.fabricmc.fabric.impl.attachment.AttachmentTargetImpl;
 import net.fabricmc.fabric.impl.attachment.sync.AttachmentChange;
+import net.fabricmc.fabric.impl.attachment.sync.AttachmentSync;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
@@ -220,9 +221,13 @@ public class PlayerChunkLoading {
         
         List<AttachmentChange> changes = new ArrayList<>();
         ((AttachmentTargetImpl) chunk).fabric_computeInitialSyncChanges(player, changes::add);
-        
+
         if (!changes.isEmpty()) {
-            AttachmentChange.partitionAndSendPackets(changes, player);
+            // 26.2: fabric-data-attachment-api 2.2.16 removed AttachmentChange.partitionAndSendPackets;
+            //       the partition-and-send half moved to AttachmentSync.trySync(List, ServerPlayer)
+            //       (chunk-loading.md row 53; byte-faithful to Fabric's own 26.2 PlayerChunkSenderMixin,
+            //       which IP cancels + re-implements here). fabric_computeInitialSyncChanges survives.
+            AttachmentSync.trySync(changes, player);
         }
     }
     
