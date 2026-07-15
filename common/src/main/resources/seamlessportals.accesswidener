@@ -55,3 +55,30 @@ accessible field net/minecraft/world/level/biome/BiomeManager biomeZoomSeed J
 # actual (cross-portal) destination dimension. Faithful fix = grow the AW to restore the access
 # IP had for free (member ctor, so `accessible method ... <init> ...`; no `mutable`).
 accessible method net/minecraft/world/item/context/UseOnContext <init> (Lnet/minecraft/world/level/Level;Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/InteractionHand;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/phys/BlockHitResult;)V
+
+# Entity-portal migration S13 (alternate_dimension compile shell — NormalSkylandGenerator): 26.2
+# makes NoiseBasedChunkGenerator `public final` (NoiseBasedChunkGenerator.java:50). IP subclasses it
+# so ChunkMap's `generator instanceof NoiseBasedChunkGenerator` seeds the RandomState / createState
+# (NormalSkylandGenerator.java:55-59 javadoc; extending ChunkGenerator instead would lose that
+# instanceof seeding = worldgen-randomness fidelity violation, api-map platform-compat-peripheral §2
+# NoiseBasedChunkGenerator row). IP's own imm_ptl.accesswidener widens exactly this class
+# (transitive-extendable class ...NoiseBasedChunkGenerator) — this is the faithful port of that
+# entry, de-finalized so the subclass compiles (plain non-transitive `extendable`, matching this
+# mod's AW convention). Paired with the accesstransformer.cfg `public-f` entry (the compile-time
+# widener on the NeoForge ModDevGradle :common classpath).
+extendable class net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator
+
+# Entity-portal migration S13-A (U11 peripheral — CommandStickItem/PortalWandItem creative-tab wiring):
+# 26.2 makes CreativeModeTab.Output a `protected interface` (CreativeModeTab.java:246) — public in IP's
+# 1.21.3. CommandStickItem.addIntoCreativeTag(CreativeModeTab.Output) + PortalWandItem's counterpart
+# reference it verbatim. Fabric API's own accesswidener widens exactly this nested type; faithful port of
+# that access. Paired with the accesstransformer.cfg `public` entry.
+accessible class net/minecraft/world/item/CreativeModeTab$Output
+
+# Entity-portal migration S13-A (U11 commands — PortalDebugCommands./portal debug profile set_lag_logging_threshold):
+# 26.2 makes ActiveProfiler.WARNING_TIME_NANOS `private static final long` (ActiveProfiler.java:27) —
+# public static (non-final) in IP's 1.21.3, written directly by the command. Non-constant initializer
+# (Duration.ofMillis(...).toNanos()) so it is not inlined and the write is runtime-effective. Restore IP's
+# verbatim write: accessible + mutable (de-final). Paired with the accesstransformer.cfg `public-f` entry.
+accessible field net/minecraft/util/profiling/ActiveProfiler WARNING_TIME_NANOS J
+mutable field net/minecraft/util/profiling/ActiveProfiler WARNING_TIME_NANOS J

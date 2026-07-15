@@ -3,10 +3,10 @@
 // ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> ...) in
 // IPModMainClient.init (client-command registration). RUNTIME event registration that wires the
 // REAL fabric-command-api-v2 client event at S13 (compileOnly, :common classpath only — the real
-// fabric-api type resolves at the fabric loader compile; no shadow, per S10A §6). The dispatcher
-// source generic is a wildcard here: the sole consumer of the arg is the held ClientDebugCommand
-// (U11 forward-ref, unresolved on this probe by design), and the real fabric type
-// (CommandDispatcher<FabricClientCommandSource>) applies at S13. Removed at S20.
+// fabric-api type resolves at the fabric loader compile; no shadow, per S10A §6). S13-A: the
+// dispatcher source generic is now CommandDispatcher<FabricClientCommandSource> (matching the real
+// fabric-command-api-v2 3.1.0 signature), so IPModMainClient can pass `dispatcher` straight into the
+// now-ported ClientDebugCommand.register(CommandDispatcher<FabricClientCommandSource>). Removed at S20.
 package net.fabricmc.fabric.api.client.command.v2;
 
 import com.mojang.brigadier.CommandDispatcher;
@@ -17,5 +17,5 @@ import net.minecraft.commands.CommandBuildContext;
 public interface ClientCommandRegistrationCallback {
     Event<ClientCommandRegistrationCallback> EVENT = null;
 
-    void register(CommandDispatcher<?> dispatcher, CommandBuildContext registryAccess);
+    void register(CommandDispatcher<FabricClientCommandSource> dispatcher, CommandBuildContext registryAccess);
 }
