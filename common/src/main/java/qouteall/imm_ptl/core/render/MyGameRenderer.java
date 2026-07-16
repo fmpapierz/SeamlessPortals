@@ -1,5 +1,7 @@
 package qouteall.imm_ptl.core.render;
 
+import com.mojang.blaze3d.ProjectionType;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.fabricmc.api.EnvType;
@@ -25,6 +27,7 @@ import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.block_manipulation.BlockManipulationClient;
 import qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface;
 import qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface;
+import qouteall.imm_ptl.core.ducks.IECamera;
 import qouteall.imm_ptl.core.ducks.IEGameRenderer;
 import qouteall.imm_ptl.core.ducks.IEMinecraftClient;
 import qouteall.imm_ptl.core.ducks.IEParticleManager;
@@ -67,8 +70,11 @@ import java.util.function.Consumer;
 //        state (G1) — see the SCOPE LINE: the dest extract is driver-core (S12/S13).
 //   * client.getProfiler()               -> Profiler.get() -> ProfilerFiller (G16).
 //   * RenderSystem.getProjectionMatrix() save + resetProjectionMatrix() restore (G27/G19, GONE)
-//        -> RenderSystem.backupProjectionMatrix()/restoreProjectionMatrix() bracketing the invoke
-//        (proven at MOD:PortalContextSwitch.java:1800-...). The saved-Matrix4f field is dropped.
+//        -> save RenderSystem.getProjectionMatrixBuffer()+getProjectionType() into PER-INVOCATION LOCALS
+//        and re-set via setProjectionMatrix(...) on exit (proven at MOD:PortalContextSwitch.java:1800-...).
+//        The saved-Matrix4f field is dropped. NOTE (S13-H V2-DEFECT-2): must be locals, NOT
+//        RenderSystem.backup/restoreProjectionMatrix() — that static pair is a SINGLE slot and the driver
+//        core makes portal nesting live, so an inner backup() would clobber the outer layer's saved slot.
 //   * IERenderSystem.ip_getModelViewStack()/ip_setModelViewStack(new Matrix4fStack) swap (G28, the
 //        stack-object swap is meaningless on 26.2) -> push identity on RenderSystem.getModelViewStack()
 //        and pop on restore (proven at MOD:PortalContextSwitch.java:1790-1792). No IERenderSystem needed.
@@ -206,6 +212,30 @@ public class MyGameRenderer {
             ClientWorldLoader.getDimensionRenderHelper(newDimension);
         Camera newCamera = new Camera();
 
+        // ===== S13-H Step 1 — virtual-camera CONFIG (S13H-driver-core-design.md §1 Step 1) =========
+        // Must land HERE (right after construction), BEFORE helper.updateAndRender(newCamera, ...) at
+        // the first-visit lightmap prime below: that prime reads the camera's EnvironmentAttributeProbe,
+        // which is only valid once the camera has the dest level+position+tick (else black fog/ambient).
+        // Position = WorldRenderInfo.cameraPos (the ORIGINAL camera transformed through every pushed
+        // portal layer); rotation = the ORIGINAL camera angles (the portal's rotation rides
+        // cameraTransformation into the dest view matrix inside the core, NEVER the camera angles).
+        ((IECamera) newCamera).ip_resetState(WorldRenderInfo.getCameraPos(), newWorld);
+        ((IECamera) newCamera).portal_setFocusedEntity(client.getCameraEntity());
+        ((com.warwa.seamlessportals.mixin.client.CameraInvokerMixin) newCamera)
+            .seamlessportals$invokeSetRotation(
+                RenderStates.originalCamera.yRot(), RenderStates.originalCamera.xRot());
+        newCamera.tick(); // primes the camera's OWN EnvironmentAttributeProbe with dest level+position
+        ((com.warwa.seamlessportals.mixin.client.CameraInvokerMixin) newCamera)
+            .seamlessportals$setInitialized(true);
+
+        // S13-H §2.2 — capture the block-atlas sampler renderGroup needs, ONCE per frame at the
+        // OUTERMOST portal entry, while client.levelRenderer is still the TRUE main renderer (the swap
+        // to the dest renderer is below). Nested layers (layer >= 2) resolve a secondary whose sampler
+        // is null, so guard on the outermost layer.
+        if (PortalRendering.getPortalLayer() == 1) {
+            SecondaryWorldRenderCore.captureMainChunkSampler(client.levelRenderer);
+        }
+
         // store old state
         ClientLevel oldWorld = client.level;
         LevelRenderer oldWorldRenderer = client.levelRenderer;
@@ -269,9 +299,20 @@ public class MyGameRenderer {
             helper.updateAndRender(newCamera, RenderStates.getPartialTick());
         }
 
-        // Projection + model-view bracket (G27/G19/G28): back up the bobbed main projection + push an
+        // Projection + model-view bracket (G27/G19/G28): save the (bobbed main) projection + push an
         // identity model-view around the dest render; restore after.
-        RenderSystem.backupProjectionMatrix();
+        //
+        // V2-DEFECT-2 fix (S13-H verifier 2): use PER-INVOCATION LOCALS, NOT RenderSystem.backup/
+        // restoreProjectionMatrix(). That pair is a SINGLE-SLOT static save (one savedProjectionMatrixBuffer/
+        // savedProjectionType — mc262 RenderSystem.java:59,64,186-196), but the driver core now makes portal
+        // nesting LIVE (SecondaryWorldRenderCore Step 10.10 -> onBeforeTranslucentRendering -> nested
+        // switchAndRenderTheWorld). Under nesting the inner layer's backup() would overwrite the shared slot
+        // with the outer layer's dest projection, so the outer restore() would reinstate the wrong (inner)
+        // buffer — the main frame's tail (weather/clouds/hand) would run on it. Locals are recursion-safe:
+        // each invocation restores exactly what it saw (IP's 1.21.3 form saved the projection in a local
+        // too; the G27/G19 backup/restore re-expression lost that property — this restores it).
+        GpuBufferSlice savedProjectionBuffer = RenderSystem.getProjectionMatrixBuffer();
+        ProjectionType savedProjectionType = RenderSystem.getProjectionType();
         Matrix4fStack modelViewStack = RenderSystem.getModelViewStack();
         modelViewStack.pushMatrix();
         modelViewStack.identity();
@@ -280,9 +321,20 @@ public class MyGameRenderer {
         invokeWrapper.accept(() -> {
             ProfilerFiller profiler = Profiler.get();
             profiler.push("render_portal_content");
-            // G1: renders from the already-extracted state on 26.2; the dest extract() +
-            // compileSections drain is driver-core (S12/S13). C2: getTimer() -> getDeltaTracker().
-            client.gameRenderer.renderLevel(client.getDeltaTracker());
+            // S13-H THE DRIVER CORE (S13H-driver-core-design.md §0 ARCHITECTURE VERDICT): the bare
+            // `client.gameRenderer.renderLevel(...)` re-rendered the ALREADY-EXTRACTED MAIN-world
+            // state (WorldRenderInfo.cameraPos/cameraTransformation consumed by NOTHING → the window
+            // showed the player's own view). It is REPLACED by the re-expression of the runtime-proven
+            // stencil-direct dest-draw sequence: per-dim LevelExtractor.extract with the TRANSFORMED
+            // camera + compileSections drain + LevelRenderState re-point + armed VisibleSectionDiscovery
+            // + renderGroup, all masked by the live stencil, WITHOUT nesting a framegraph.
+            // V1-M2: thread the shell's PRE-SWAP source context (oldWorld/oldCamera — the immediate
+            // OUTER layer's world+camera, captured above before the swap) into the core so its
+            // Globals-UBO + diffuse-lighting restore targets the outer layer under nesting, not the
+            // layer-0 originals. At layer 1 these equal the originals (no rung-1 change).
+            SecondaryWorldRenderCore.renderDestWorld(
+                newWorld, worldRenderer, newCamera, renderDistance,
+                oldWorld, oldCamera);
             profiler.pop();
         });
 
@@ -290,7 +342,9 @@ public class MyGameRenderer {
 
         //recover
         modelViewStack.popMatrix();
-        RenderSystem.restoreProjectionMatrix();
+        // V2-DEFECT-2: restore from the per-invocation locals (recursion-safe; equivalent to the field
+        // assignment restoreProjectionMatrix() does, but sourced from this frame's saved slice/type).
+        RenderSystem.setProjectionMatrix(savedProjectionBuffer, savedProjectionType);
 
         ((IEMinecraftClient) client).ip_setWorldRenderer(oldWorldRenderer);
         client.level = oldWorld;

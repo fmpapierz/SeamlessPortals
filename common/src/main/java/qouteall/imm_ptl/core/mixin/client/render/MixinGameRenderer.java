@@ -16,7 +16,10 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.ducks.IEGameRenderer;
+import qouteall.imm_ptl.core.render.GuiPortalRendering;
+import qouteall.imm_ptl.core.render.MyRenderHelper;
 import qouteall.imm_ptl.core.render.TransformationManager;
 import qouteall.imm_ptl.core.render.context_management.RenderStates;
 
@@ -156,6 +159,37 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         cameraRenderState.viewRotationMatrix = TransformationManager.processTransformation(
             mainCamera, cameraRenderState.viewRotationMatrix
         );
+    }
+
+    // S13-H P3(d) LIFECYCLE TAIL (S13H-driver-core-design.md §3 row (d) / IP
+    // MixinGameRenderer.onAfterRenderingCenter:127-142). IP fired the frame-END portal lifecycle from
+    // an @Inject at the render→renderLevel INVOKE, shift AFTER; the 26.2 anchor is the same call
+    // (26.2:GameRenderer.render:425 → renderLevel(DeltaTracker); reached only when a level rendered,
+    // matching IP). Runs ONCE per frame after the MAIN world render (the driver core no longer nests a
+    // recursive renderLevel, so this INVOKE matches only the main call) and BEFORE guiRenderer.render
+    // (:443) — required so _onGameRenderEnd's GUI-portal framebuffers precede the GUI pass.
+    //
+    // finishRendering() STAYS in the flag-ON dispatch callback (SeamlessPortalsClientFabric:114) — a
+    // no-op on RendererUsingStencil; the remaining three run here in verbatim IP order. onTotalRenderEnd
+    // restores the current dim's lightmap identity before GUI/next-extract; lateUpdateLight runs at
+    // frame-render END (memory portalview-light-engine-half-port), iterating ClientWorldLoader's worlds
+    // — disjoint from the block-era TAIL substrate's PortalWorldManager map (which is empty flag-ON).
+    @Inject(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+            shift = At.Shift.AFTER
+        )
+    )
+    private void seamlessportals$onAfterRenderingCenter(DeltaTracker deltaTracker, boolean bl, CallbackInfo ci) {
+        RenderStates.onTotalRenderEnd();
+
+        GuiPortalRendering._onGameRenderEnd();
+
+        if (IPCGlobal.lateClientLightUpdate) {
+            MyRenderHelper.lateUpdateLight();
+        }
     }
 
     // ==== IEGameRenderer ducks (LIVE-called by MyGameRenderer.switchAndRenderTheWorld) ====

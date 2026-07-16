@@ -45,6 +45,28 @@ public class ViewAreaRenderer {
         boolean doFaceCulling, boolean doModifyColor,
         boolean doModifyDepth, boolean doClip
     ) {
+        renderPortalArea(
+            portal, fogColor, modelViewMatrix, projectionMatrix,
+            doFaceCulling, doModifyColor, doModifyDepth, doClip,
+            false
+        );
+    }
+
+    /**
+     * S13-H W1 overload (parent ruling 1 / S13H-driver-core-design.md §4-W1). {@code alwaysPassDepth}
+     * selects the ALWAYS_PASS depth-compare pipeline variant (see
+     * {@link MyRenderHelper#getPortalAreaRenderType(boolean, boolean, boolean, boolean)}). Only
+     * {@code RendererUsingStencil.restoreDepthOfPortalViewArea} (the Row-11/12 exact-projected-depth
+     * restore, drawn under {@code glDepthFunc(GL_ALWAYS)}) passes {@code true}; the 8-arg overload above
+     * delegates with {@code false}, so all other callers keep the UNCHANGED GEQUAL pipeline.
+     */
+    public static void renderPortalArea(
+        Portal portal, Vec3 fogColor,
+        Matrix4f modelViewMatrix, Matrix4f projectionMatrix,
+        boolean doFaceCulling, boolean doModifyColor,
+        boolean doModifyDepth, boolean doClip,
+        boolean alwaysPassDepth
+    ) {
 
         // ---- resolve IP's per-call GL state into pipeline-selection booleans (verbatim decisions) ----
         // color mask: fuse-view (with layers) OR !doModifyColor -> no color; else color (IP :39-49)
@@ -88,7 +110,8 @@ public class ViewAreaRenderer {
         // cull state. model-view + projection ride RenderSystem for the pass (G9/G27/G28); the passed
         // matrices are the portal-pass matrices the driver installed (modelViewMatrix still feeds the
         // clip-plane setup above). The R5 reversed-Z depth constants live inside the pipeline (S12).
-        RenderType renderType = MyRenderHelper.getPortalAreaRenderType(writeColor, writeDepth, doFaceCulling);
+        RenderType renderType = MyRenderHelper.getPortalAreaRenderType(
+            writeColor, writeDepth, doFaceCulling, alwaysPassDepth);
 
         FrontClipping.updateClippingEquationUniformForCurrentShader(false);
 

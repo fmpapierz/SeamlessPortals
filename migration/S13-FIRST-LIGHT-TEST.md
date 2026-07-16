@@ -64,6 +64,16 @@ errors. This is the "old system untouched" proof.
 > `Mixin apply ... failed` (and `InvalidInjectionException` / `@Shadow ... NOT located`) lines from
 > `latest.log`, not just the first, since they are all logged before the crash.
 
+> **Driver core landed (S13-H).** The dest-render driver core is now in — the last inert link on the
+> command→pixels chain (`port-notes/S13C-weave-audit.md` §S13-H; design contract
+> `port-notes/S13H-driver-core-design.md`). BEFORE S13-H the portal window re-rendered the player's OWN
+> view (the invoke was a bare `renderLevel` that re-used the already-extracted main-world state, so the
+> transformed camera was consumed by nothing = visually no portal). It now renders the **transformed
+> destination world** into the main target masked by the live stencil, from the portal-transformed camera,
+> via the stencil-direct decomposition (extract → SOG delta feed → `compileSections` drain → armed
+> `VisibleSectionDiscovery` → `renderGroup`). So Part 1's windows should show the FAR SIDE, not a copy of
+> where you stand — §1.2 step 1 spells out the expected result and the first-frames compile behavior.
+
 ### 1.1 Turn the flag ON, in a THROWAWAY world
 
 - **Enable the flag:** edit `fabric/runs/client/config/seamlessportals.properties`, add a line
@@ -78,8 +88,24 @@ errors. This is the "old system untouched" proof.
 Use tab-completion — the `/portal` command uses the utility-group syntax (`ducks-api-misc.md §2.3`).
 
 1. **`/portal make_portal 3 3 minecraft:overworld shift 20`**
-   EXPECTED: a **3×3 see-through window** showing terrain 20 blocks away, **stable at all view angles,
-   no Z-fighting**. Walk around it and look from both sides.
+   EXPECTED (S13-H driver core): a **3×3 see-through window** showing the **TRANSFORMED DESTINATION** —
+   the overworld as seen from the shifted viewpoint **20 blocks away**, NOT the player's own view. (Before
+   the S13-H driver core landed, the window showed the player's own view = visually no portal; that is now
+   the FAILURE signature, not the expected result.) **What to verify:**
+   - **View parallax is correct when you circle the portal** — the far view shifts like a real window into
+     an offset space (as you strafe around it, the offset scene moves with correct depth parallax); it does
+     **not invert or swim**. An inverted/swimming parallax is a transform-SIGN error, not a depth error →
+     §1.3 (suspect **S6** `transformPoint` vs `transformTeleportPoint` sign).
+   - **Stable at all view angles, no Z-fighting.** Look from both sides.
+   - **Walk up and step through — the transition is seamless** (the detailed crossing checks are step 2);
+     the window you saw is the space you arrive in.
+   - **First-frames compile delay is EXPECTED, not a defect:** at the instant of spawn the window may be
+     briefly empty or show incomplete/holey terrain that fills in over the next few frames, as dest
+     sections that were not already in the player's direct view mesh under the budgeted (**3 ms/frame**)
+     compile drain. Give it a moment to settle. Holes that PERSIST after it settles are a §1.3 symptom —
+     capture them.
+   - The **§1.3 R5 sign-flip symptom table still applies** to this window — map any wrong-looking result to
+     its suspected row/risk.
 2. **Walk through — forward AND backward AND strafing.**
    EXPECTED: seamless reposition, **no camera snap, hand steady, sprint preserved, motion-side exits, no
    oscillation** (regression items 1, 2 — the S3-soaked anchor now drives IP's `manageTeleportation`).

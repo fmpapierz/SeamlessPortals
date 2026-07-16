@@ -525,3 +525,229 @@ Flag-ON boot chain is self-identity-clean, asset-complete, and dispositioned end
 proceed to a live world. **Standing gate inherited:** any future stage that adds a flag-ON init call, a
 self-identity loader lookup, or an `immersive_portals`-asset reference re-runs this init trace (D.1-D.5)
 alongside the S13-C weave gate.
+
+---
+---
+
+# S13-H — THE DRIVER CORE LANDING (the last inert link on command→pixels)
+
+**Stage S13-H of the entity-portal migration — the DEST-RENDER DRIVER CORE landed.** Every other link on
+the command→pixels chain was already live-proven (S13-G / attempt-6): portals spawn + sync to the client,
+the flag-ON dispatch fires (`AFTER_TRANSLUCENT_TERRAIN` → `PortalRenderer` lifecycle with the correct
+`viewRotationMatrix`), `RendererUsingStencil` runs its full R5 choreography. The one missing link was the
+INVOKE BODY: `MyGameRenderer.switchAndRenderTheWorld`'s dest render was a bare
+`client.gameRenderer.renderLevel(getDeltaTracker())` that re-rendered the ALREADY-EXTRACTED MAIN-world
+state — `WorldRenderInfo.cameraPos`/`cameraTransformation` consumed by NOTHING, so the portal window
+showed the player's own view (= visually no portal). S13-H replaces that invoke with the driver core.
+
+**Contract pointer.** This is the LANDING record for the design contract in
+`port-notes/S13H-driver-core-design.md` (the ARCHITECTURE VERDICT §0, the exact invoke sequence §1, the
+state-ownership map §2, the P3 lifecycle-tail homes §3, the invariant checklist §4, recursion/nesting §5,
+the spec-decision register §6). Every §-reference below is to that contract. Ground truth also:
+`CUTOVER_SPEC.md` §5 (the pairing invariants) + §6 (the atomic-cutover set),
+`MOD:render/PortalContextSwitch.java:1533-2057` (the runtime-proven live block-era driver the core
+re-expresses).
+
+**Citation conventions:** as §S13-C/§S13-D — `IP:` = 1.21.3; `26.2:` = `mc262-ref`; `MOD:` = live
+`com.warwa.seamlessportals`; `MOD-qouteall:` = the held/registered `qouteall.*` ports. Line numbers are
+the current on-disk files.
+
+---
+
+## H.1 — ARCHITECTURE (as landed): the invoke is a stencil-direct DECOMPOSITION, not a recursive renderLevel
+
+The contract's §0 ruled out "re-point state + recurse `gameRenderer.renderLevel`" on three source-grounded
+disqualifiers (nested-framegraph blanking from `AFTER_TRANSLUCENT_TERRAIN`; the single main `FogRenderer`
+WORLD-slot + depth-clear corruption inside `renderLevel`; `GameRenderState.levelRenderState` being
+`public final`). The landed core is the RE-EXPRESSION of IP's SEMANTICS — the same pass list (sky + clip +
+opaque + entities + translucent + clouds, masked by the live stencil, from the transformed camera, with
+vanilla terrain-visibility replaced by `VisibleSectionDiscovery`) — onto 26.2's decomposed mechanics
+(extract → SOG delta feed → compileSections drain → armed discovery → `prepareChunkRenders` →
+`renderGroup`), WITHOUT nesting a framegraph.
+
+**Where it lives (the registered forced deviation, S11-B §1 / §0):** one NEW additive class,
+`MOD-qouteall:render/SecondaryWorldRenderCore.java` (~700 lines), owning the §1 sequence + the §2.2
+driver-core state. It has NO 1.21.3 analog (26.2 split extract from render, render-core G1) and is a
+REGISTERED additive deviation like `VisibleSectionDiscovery`'s armed fold / `endFramePooled`, so the S20
+diff-gate does not flag it. **DISCIPLINE BOUNDARY honored (I10 / S11-B §1):** no `com.warwa` TYPE appears
+in any signature or field of the class — it reaches private vanilla members ONLY through the pre-existing
+public `com.warwa` accessor-mixin INTERFACES (`GameRendererAccessorMixin`, `LevelRendererAccessorMixin`,
+`LevelExtractorAccessor`, `CameraInvokerMixin`), exactly as the shell already does for the lightmap. The
+live block-era driver (`PortalWorldManager`/`PortalContextSwitch`) is untouched and stays suppressed
+flag-ON. **Zero `com.warwa` source files were edited this stage** — every edit is in the qouteall render
+tree.
+
+---
+
+## H.2 — PER-STEP LANDING RECORD (§1 step → landed code)
+
+The virtual-camera CONFIG (§1 Step 1) lands in the SHELL (`MyGameRenderer.switchAndRenderTheWorld`), right
+after `new Camera()`, BEFORE the first-visit lightmap prime consumes the camera. Steps 2-10 land in
+`SecondaryWorldRenderCore.renderDestWorld`, invoked in place of the bare `renderLevel`.
+
+| §1 Step | What landed | Site |
+|---|---|---|
+| **Shell wiring** | invoke body `client.gameRenderer.renderLevel(...)` → `SecondaryWorldRenderCore.renderDestWorld(newWorld, worldRenderer, newCamera, renderDistance, oldWorld, oldCamera)` (IP's invoke SHAPE / `invokeWrapper` kept) | `MyGameRenderer.java:335-337` |
+| **1 — camera CONFIG** | `ip_resetState(WorldRenderInfo.cameraPos, destLevel)` (cameraPos consumption #1) + `portal_setFocusedEntity` + `invokeSetRotation(originalCamera yRot/xRot)` + `tick()` (primes the camera's OWN `EnvironmentAttributeProbe`) + `setInitialized(true)` | `MyGameRenderer.java:215-229` |
+| **1.6 — sampler capture** | `captureMainChunkSampler(client.levelRenderer)` at the OUTERMOST layer (`getPortalLayer()==1`) while `mc.levelRenderer` is still the TRUE main renderer | `MyGameRenderer.java:235-237` |
+| **2 — per-dim substrate** | EXTRACTOR-IDENTITY router (DEFECT-1 fix, §H.4): `destDim==RenderStates.originalPlayerDimension ? mc.levelExtractor : WORLD_EXTRACTOR_MAP.get(destDim)`; renderer-state coherence assert (no-op by construction, defensive re-point kept); `sharedState` object-identity mode selector | `SecondaryWorldRenderCore.java:198-232` |
+| **3 — dest view matrix + frustum** | `getViewRotationMatrix` → `TransformationManager.processTransformation` (**cameraTransformation consumption**, JOML column-form M·v, I6); dest projection = the UNBOBBED main extract projection; discovery frustum from the CONVENTIONAL-Z `buildCullingProjection` (I7 / §2.3, never the reversed-Z render projection); `setCullFrustum`+`setCapturedFrustum` (skips extract's `applyFrustum`) | `SecondaryWorldRenderCore.java:234-255` |
+| **4 — dispatcher cam + cam state** | `dispatcher.setCameraPosition(destCameraPos)`; **[cross-dim]** `destCameraState = destLRS.cameraRenderState`; **[same-dim]** a core-owned scratch `CameraRenderState` REASSIGNED onto `destLRS.cameraRenderState` for the pass (the load-bearing "LevelRenderState re-point") + restored; `extractRenderState` then `viewRotationMatrix.set(destViewMatrix)` AFTER extract (R13k analog); bob/hurt zeroed | `SecondaryWorldRenderCore.java:257-306` |
+| **5 — EXTRACT + SOG feed + drain [cross-dim]** | `destExtractor.extract(...)` in a `try`; in the `finally` the **SOG delta feed** (I2 §5.2, set-object identity window guard, memory `distant-chunk-vanish-sog-desync`) + the **`compileSections` drain** (I1 §5.1 pairing invariant, memory `ow-holes-consumed-compile-queue`) — never lost on throw. **[same-dim]** skipped (the main frame already extracted+drained; re-running would reset main state, I9) | `SecondaryWorldRenderCore.java:322-352` |
+| **6 — dest FOG (R9)** | compute-only `fr.setupFog(...)` (never writes the WORLD ring-buffer slot, I8) → core-owned standalone `GpuBuffer` fog UBO (`writeFogSlice`, 48-byte std140; never `fr.updateBuffer`) | `SecondaryWorldRenderCore.java:354-366, 684-701` |
+| **7 — dest PROJECTION** | `RenderSystem.setProjectionMatrix(writeProjectionSlice(destProjection), PERSPECTIVE)` (fresh 64-byte UBO per call, old never closed); the shell brackets it with per-invocation locals (V2-DEFECT-2 fix) | `SecondaryWorldRenderCore.java:368-373, 671-681` |
+| **8 — Globals UBO** | `globalSettingsUniform.update(w,h,glint, destGameTime, dt, blur, destCameraPos, RGSS-flag)` (V1-M1 fix: mirrors vanilla's RGSS texture-filtering flag, not a hardcoded `false`); restored in the finally with the SOURCE game time + camera pos (V1-M2 fix: the IMMEDIATE OUTER context) | `SecondaryWorldRenderCore.java:375-387, 490-503` |
+| **9 — ARMED discovery** | `VisibleSectionDiscovery.armCompileScheduling(destLevel, sut, cache, schedSet, 3ms)` then `discoverVisibleSections(..., new Frustum(destFrustum).offsetToFullyIncludeCameraCube(8), resultList)` — IP-verbatim call shape; result = the current renderer's live `visibleSections`; auto-disarms in its finally (P2 fix) | `SecondaryWorldRenderCore.java:389-406` |
+| **10 — DRAW sequence** | `prepareChunkRenders(destViewMatrix)` (never bail on `maxIndices==0`); `setShaderFog(destFogBuffer)`; Row-16 `replaceFrameBufferClearing`; dest sky (gated on `doRenderSky`); inner-clip bracket (`FrontClipping.setupInnerClipping` + mirror cull + depth-clamp); `renderGroup(OPAQUE, mainChunkSampler)`; **[cross-dim]** dest diffuse lighting + entities; `renderGroup(TRANSLUCENT)`; nested `onBeforeTranslucentRendering(destViewMatrix)`; dest clouds; finally: clip/cull/clamp/fog restore + defensive stencil re-assert | `SecondaryWorldRenderCore.java:408-488` |
+| **10 finally** | Globals-UBO restore (source context), source-dim diffuse restore, **[same-dim]** `cameraRenderState` reference + dispatcher-position restore / **[cross-dim]** `fogData`/`fogType` restore | `SecondaryWorldRenderCore.java:489-523` |
+| **Helpers** | `renderPortalSky` (lazy size-tracked `SkyRenderer`), `renderPortalClouds`, `renderPortalEntities` (`invokeSubmitFeatures`+`renderAllFeatures`), `buildCullingProjection` (conventional-Z), `writeProjectionSlice`/`writeFogSlice`; `init()` registers cleanup on `CLIENT_CLEANUP_EVENT` + `CLIENT_DIMENSION_DYNAMIC_REMOVE_EVENT` | `SecondaryWorldRenderCore.java:527-701, 134-137`; registered `IPModMainClient.java:118-120` |
+
+**SIGN discipline (D4.4, verified):** the core writes ZERO raw depth-compare / depth-range / stencil-op
+constants — all R5 reversed-Z lives in the `RendererUsingStencil` choreography. The one depth-sensitive
+surface (the discovery frustum) is conventional-Z (I7). No per-frame `LOGGER` on the render thread (I5,
+memory `render-thread-logging-log4j-stall`).
+
+**Same-dim (rung-1) entity gap (§6.1, ACCEPTED option (a)):** a SAME-DIM portal view renders
+terrain+sky+clouds but NO entities at first light (the main pass already consumed+cleared
+`entityRenderStates`; re-running `extract` on the main extractor is prohibited by I9). Cross-dim portals
+render entities fully. Rung 1's purpose is the terrain window; entities-through-portals are the S18/C4
+surface. Revisit after first light.
+
+---
+
+## H.3 — P3 LIFECYCLE-TAIL HOMES (each vs IP's `MixinGameRenderer` anchor)
+
+| P3 | 26.2 flag-ON home | Status this stage |
+|---|---|---|
+| (a) `RenderStates.frameIndex++` (rotates `PortalRenderInfo.updateQuerySet`'s occlusion-query buffers; else synchronous occlusion-query stalls) | `MOD:MinecraftFramePumpMixin.java:82-86`, after the ported pre-render chain, level-guarded | **ALREADY LANDED** (verified present) |
+| (b) `MyGameRenderer.endFramePooled()` (pooled `RenderBuffers` that never `endFrame()` = multi-second GL stalls, memory `gpu-buffer-leak-endframe`) | `MOD:GameRendererMixin.java:57-59`, `GameRenderer.render` TAIL after vanilla's own `renderBuffers.endFrame()`, flag-gated | **ALREADY LANDED** (verified present) |
+| (c) `IPGlobal.PRE_TOTAL_RENDER_TASK_LIST.processTasks()` (drains `PortalRenderInfo` GC-disposal one-shots; else they accumulate unboundedly) | `MOD:MinecraftFramePumpMixin.java:62-66`, render pre-`update` pump ABOVE the level guard (IP order) | **ALREADY LANDED** (verified present) |
+| (d) `RenderStates.onTotalRenderEnd()` → `GuiPortalRendering._onGameRenderEnd()` → `MyRenderHelper.lateUpdateLight()` (gated `IPCGlobal.lateClientLightUpdate`) | **NEW THIS STAGE:** `MOD-qouteall:MixinGameRenderer.seamlessportals$onAfterRenderingCenter` — `@Inject(method="render", at=@At(INVOKE `renderLevel(DeltaTracker)V`, shift=AFTER))` (`26.2:GameRenderer.render:425`; reached only when a level rendered, matching IP `MixinGameRenderer:127-142`), verbatim IP order | **LANDED** — `MixinGameRenderer.java:177-193` |
+
+**Why the after-`renderLevel` anchor for (d):** `_onGameRenderEnd` prepares the GUI-portal framebuffers
+the GUI pass consumes, so it must precede `guiRenderer.render` (`:443`); `onTotalRenderEnd` restores the
+current dim's lightmap identity before GUI/next-extract; `lateUpdateLight` is frame-render-END per memory
+`portalview-light-engine-half-port`, iterating `ClientWorldLoader`'s worlds — disjoint from the block-era
+TAIL substrate's `PortalWorldManager` map (empty flag-ON, so no double-drive). `finishRendering()` STAYS
+in the flag-ON dispatch callback (`SeamlessPortalsClientFabric:114`) — a no-op on `RendererUsingStencil`;
+it MUST move to this anchor when the A1 FBO renderer is exercised (carried note, §6.6). The decomposition
+no longer nests a recursive `renderLevel`, so this INVOKE matches ONLY the main call → fires ONCE per
+frame (the S13-C weave gate applies: the `renderLevel(DeltaTracker)V` INVOKE was confirmed present).
+
+---
+
+## H.4 — W1 RESOLUTION (parent RULING 1): the Row-11/12 ALWAYS_PASS depth-compare variant
+
+The contract's §4-W1 / §6.2 flagged the Row-12 exact-projected-depth restore
+(`RendererUsingStencil.restoreDepthOfPortalViewArea`, IP op #12): its `glDepthFunc(GL_ALWAYS)` bracket
+(Row 11) is clobbered by the GEQUAL portal-area pipeline that `applyPipelineState` installs, so the
+restore depth-write was GEQUAL-gated against the content depth — near-equivalent in the common case but
+wrong wherever dest terrain sits in FRONT of the portal plane, and NOT IP's contract. **Landed via the
+4th-bit approach (the parent-approved, additive form):**
+
+- `MyRenderHelper.java` — `PORTAL_AREA_TYPES` grown 8→16; `portalAreaKey` gained a 4th `alwaysPassDepth`
+  bit (value 8); the register loop (now `key<16`) and the catch-fallback loop derive
+  `alwaysPassDepth=(key&8)!=0` and pick `CompareOp.ALWAYS_PASS` vs `GREATER_THAN_OR_EQUAL` for the depth
+  COMPARE (write is still `writeDepth`); a new 4-arg `getPortalAreaRenderType` overload
+  (`MyRenderHelper.java:135, 144-149, 160-165, 181, 224-227, 258-262`).
+- `ViewAreaRenderer.java` — a new 9-arg `renderPortalArea` overload carrying `alwaysPassDepth`; the 8-arg
+  overload delegates with `false` (all existing callers unchanged) (`ViewAreaRenderer.java:45-70, 110-114`).
+- `RendererUsingStencil.java` — `restoreDepthOfPortalViewArea` now passes `alwaysPassDepth=true` for THAT
+  draw ONLY, so IP's op #12 exact-projected-depth lands unconditionally within the stencil region; the
+  S11-B §8 WATCH-ITEM comment is updated to RESOLVED (`RendererUsingStencil.java:363-370`).
+
+**Additive only:** every other consumer (Row-3/4 stencil-write, the Iris shells, `RendererDebug`,
+`RendererUsingFrameBuffer`) routes through the 3-arg overload → `alwaysPassDepth=false` → the UNCHANGED
+GEQUAL pipeline. Only the Row-11/12 restore passes `true`.
+
+---
+
+## H.5 — VERIFICATION TIER (dual adversarial verify + fix round; S13 is a hard live-checkpoint stage)
+
+Two independent verify passes ran against the landed core; all findings were fixed in the fix round. NO
+finding required a design change — the contract's §0 verdict, §1 sequence, and §2 ownership map held;
+every fix is a wiring/fidelity correction WITHIN the designed shape (no dropped/reordered step, no
+invariant breach, no IP-semantic displacement).
+
+**Verifier 1 — TWO MINOR (non-blocking) defects, NO MAJOR:**
+- **V1-M1 (Globals-UBO texture-filtering fidelity):** `renderDestWorld` passed a hardcoded `false` as the
+  final `globalSettingsUniform.update` arg (`texFiltering`); the restore then cleared the flag for the
+  rest of the frame. **FIXED:** mirror vanilla's RGSS flag
+  (`optionsRenderState.textureFiltering == TextureFilteringMethod.RGSS`, `26.2:GameRenderer.render:420`)
+  at BOTH the dest-pass update and the source-context restore.
+- **V1-M2 (nesting source-context restore):** the Globals-UBO game-time/camera-pos + diffuse-lighting
+  restore captured the layer-0 `RenderStates.originalCamera`/`originalPlayerDimension`, which is correct
+  at layer 1 but wrong under nesting (an inner pass would restore the layer-0 originals, not the immediate
+  OUTER dest layer). **FIXED:** thread the shell's PRE-SWAP `oldWorld`/`oldCamera` (the immediate outer
+  layer's world+camera) into the core as `sourceLevel`/`sourceCamera`; restore targets them. Identical at
+  rung 1 (no change); correct under nesting. (Matches the proven core, which captured
+  `mainCamera.position()`/`mc.level.getGameTime()` before the swap.)
+
+**Verifier 2 — one MAJOR + one nesting-safety defect:**
+- **DEFECT-1 (MAJOR — mis-wired link, would break cross-dim first light):** the Step-2 extractor-identity
+  router resolved the WRONG extractor for every cross-dim portal. It called
+  `ClientWorldLoader.getWorldExtractor(destDim)` from INSIDE the invoke, but the shell had already swapped
+  `client.level` to the DEST (`MyGameRenderer.java:264`), so `getWorldExtractor`'s
+  `CLIENT.level.dimension()==dimension` short-circuit (`ClientWorldLoader.java:378`) was ALWAYS true and
+  returned `CLIENT.levelExtractor` (the MAIN global extractor bound to the MAIN `LevelRenderState`) for
+  EVERY portal — collapsing cross-dim onto the same-dim path (`destLRS==main LRS ⇒ sharedState=true`) and
+  silently skipping the entire dest extract + SOG delta feed + `compileSections` drain the core exists to
+  add. **FIXED:** route the main-dim short-circuit by the TRUE main dim
+  (`destDim == RenderStates.originalPlayerDimension`, invariant across nesting depth) → `mc.levelExtractor`;
+  every other dim uses its construction-bound `WORLD_EXTRACTOR_MAP` instance (memory
+  `nether-block-freeze-orphaned-extractor`). With correct routing the coherence re-point is a genuine
+  no-op by construction (`SecondaryWorldRenderCore.java:198-210`).
+- **V2-DEFECT-2 (projection save/restore nesting-safety):** the shell used
+  `RenderSystem.backup/restoreProjectionMatrix()`, a SINGLE-SLOT static save — but the driver core now
+  makes portal nesting LIVE (Step 10.10 `onBeforeTranslucentRendering` → nested
+  `switchAndRenderTheWorld`), so an inner backup would overwrite the shared slot with the outer layer's
+  projection and the outer restore would reinstate the wrong buffer for the main frame's tail. **FIXED:**
+  per-invocation LOCALS (`getProjectionMatrixBuffer()`/`getProjectionType()` saved,
+  `setProjectionMatrix(...)` restored) — recursion-safe, restoring IP's 1.21.3 local-save property
+  (`MyGameRenderer.java:314-318, 345-347`).
+
+**Parent RULING 1 (W1)** landed alongside (§H.4).
+
+**Gate discipline (constraints honored):** ZERO IP-semantic deviation (re-express the MECHANICS not the
+classes); AW/AT unchanged (no new access-widener/access-transformer — the core consumes only pre-existing
+`com.warwa` accessor interfaces); flag-OFF surface byte-identical (the live block-era driver keeps running
+flag-OFF, no `com.warwa` behavior change, I10 exclusivity); the game was NOT run; no git commit; logs to
+scratchpad.
+
+**Shipping gate GREEN after every edit phase:** `:common:compileJava :fabric:compileJava
+:neoforge:compileJava :common:test` all BUILD SUCCESSFUL under the committed `ip_scc_closed=true` (the
+closure is on-classpath, so the edited qouteall/render files were actually compiled — a bad
+import/signature would have failed).
+
+**Working-tree touch (S13-H):** 7 files, ALL in the qouteall render tree, zero `com.warwa`:
+- **NEW:** `render/SecondaryWorldRenderCore.java` (the driver core).
+- **EDITED:** `render/MyGameRenderer.java` (Step-1 camera config + sampler capture + invoke body + V2-DEFECT-2
+  projection locals); `mixin/client/render/MixinGameRenderer.java` (P3(d) after-`renderLevel` handler);
+  `render/MyRenderHelper.java` (W1 4th-bit family + 4-arg overload); `render/ViewAreaRenderer.java` (W1
+  9-arg overload); `render/renderer/RendererUsingStencil.java` (W1 restore passes `true`);
+  `IPModMainClient.java` (`SecondaryWorldRenderCore.init()` registration).
+
+---
+
+## H.6 — CARRIED FORWARD (the §6 spec-decision register, post-landing)
+
+1. **Same-dim entity gap (§6.1)** — ACCEPTED option (a) for rung 1; cross-dim renders entities fully.
+   Revisit after first light; the per-entity R3 bracket (`PerEntityClipBracket`/`CrossPortalEntityRenderer`)
+   is the S18/C4 surface with the BOTH-mechanisms A/B switch.
+2. **R9 FORM override (§6.4)** — the landed fog is the core-owned standalone buffer (CUTOVER_SPEC §3.2's
+   proven FALLBACK), not the spec-preferred instance-per-dim `FogRenderer`. The §3.2 S13/S14 fog-flicker
+   watch stays live; the per-dim-instance form is the escape hatch if it trips.
+3. **`earlyRemoteUpload` required BY CONSTRUCTION (§6.5)** — the decomposition never runs `render()`'s
+   upload tail, so the pre-frame pump is mandatory (already wired flag-ON). CUTOVER_SPEC §1.4's
+   "land iff needed" clause is superseded → "landed, required by driver-core form" at the next spec touch.
+4. **Weather + world border in portal views (§6.3)** — omitted (parity with the proven core). Trailing;
+   flag if the S17 12-point regression list needs in-portal weather earlier.
+5. **`finishRendering()` placement (§6.6)** — stays in the dispatch callback for the stencil renderer
+   (no-op); MUST move to the §H.3(d) anchor when the A1 `RendererUsingFrameBuffer` is exercised.
+
+## STATUS: S13-H DRIVER CORE LANDED — command→pixels chain complete; awaiting the USER runClient first-light gate
+
+The last inert link is closed. The next action is the LIVE checkpoint: the user runs
+`S13-FIRST-LIGHT-TEST.md` Part 1 (flag-ON, same-dim command portals) — the portal window should now show
+the TRANSFORMED DESTINATION, not the player's own view. Carry the C4 A/B clip-switch note (§1.6) forward
+to the entity-through-portal rungs.

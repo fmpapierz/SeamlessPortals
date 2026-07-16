@@ -118,9 +118,21 @@ public class MyRenderHelper {
     // withCull(...). No new sign-derivation — reuses proven 26.2 defaults. The mirror-reverse cull stays
     // ViewAreaRenderer's raw glCullFace (applyMirrorFaceCulling) for now; the §3.1 "raw glCullFace is
     // clobbered by applyPipelineState -> make it a front/back pipeline selection" refinement is an S12
-    // runtime item, not required to close this forward-ref. Held/inert until S13; the 8 pipelines register
+    // runtime item, not required to close this forward-ref. Held/inert until S13; the pipelines register
     // on first class-load (S13+, device ready), never under flag-OFF (this held class is not loaded then).
-    private static final RenderType[] PORTAL_AREA_TYPES = new RenderType[8];
+    //
+    // S13-H W1 RESOLUTION (parent ruling 1 / S13H-driver-core-design.md §4-W1 + §6.2): the pipeline
+    // family gains a 4th selector bit, `alwaysPassDepth` (bit 8), doubling the family to 16. When set,
+    // the depth COMPARE is CompareOp.ALWAYS_PASS instead of GREATER_THAN_OR_EQUAL — the depth WRITE lands
+    // UNCONDITIONALLY inside the stencil region. This exists SOLELY for RendererUsingStencil's Row-11/12
+    // restore draw (restoreDepthOfPortalViewArea), which brackets its mesh re-render in
+    // glDepthFunc(GL_ALWAYS) to re-express IP's exact-projected-depth op #12: the raw GL_ALWAYS was
+    // clobbered by the GEQUAL pipeline that applyPipelineState installs, so the restore depth-write was
+    // GEQUAL-gated against content depth (wrong wherever dest terrain sits in FRONT of the portal plane).
+    // ADDITIVE only: every other consumer of the family (the Row-3/4 stencil-write draw, the Iris shells,
+    // RendererDebug, RendererUsingFrameBuffer) routes through the 3-arg overload -> alwaysPassDepth=false
+    // -> the UNCHANGED GEQUAL pipeline. Only the Row-11/12 restore passes alwaysPassDepth=true.
+    private static final RenderType[] PORTAL_AREA_TYPES = new RenderType[16];
 
     // S12-A: the STENCIL_ONLY screen-triangle pipeline (R5 Row 15, clampStencilValue) — a full-screen
     // core/screenquad draw with the depth test DISABLED (Optional.empty()) and color masked OFF
@@ -129,8 +141,11 @@ public class MyRenderHelper {
     // consumed substrate ones. Registered device-ready on first class-load (S13+); see renderScreenTriangle.
     private static RenderPipeline SCREEN_TRIANGLE_STENCIL_ONLY;
 
-    private static int portalAreaKey(boolean writeColor, boolean writeDepth, boolean doFaceCulling) {
-        return (writeColor ? 4 : 0) | (writeDepth ? 2 : 0) | (doFaceCulling ? 1 : 0);
+    private static int portalAreaKey(
+        boolean writeColor, boolean writeDepth, boolean doFaceCulling, boolean alwaysPassDepth
+    ) {
+        return (alwaysPassDepth ? 8 : 0)
+            | (writeColor ? 4 : 0) | (writeDepth ? 2 : 0) | (doFaceCulling ? 1 : 0);
     }
 
     static {
@@ -142,10 +157,12 @@ public class MyRenderHelper {
                 RenderType.class.getDeclaredMethod("create", String.class, RenderSetup.class);
             createMethod.setAccessible(true);
 
-            for (int key = 0; key < 8; key++) {
+            for (int key = 0; key < 16; key++) {
                 boolean writeColor = (key & 4) != 0;
                 boolean writeDepth = (key & 2) != 0;
                 boolean doFaceCulling = (key & 1) != 0;
+                // S13-H W1: bit 8 = ALWAYS_PASS depth compare (the Row-11/12 restore variant).
+                boolean alwaysPassDepth = (key & 8) != 0;
 
                 RenderPipeline.Builder builder = RenderPipeline.builder()
                     .withLocation("seamlessportals/pipeline/portal_area_" + key)
@@ -156,8 +173,13 @@ public class MyRenderHelper {
                     .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
                     .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                     // 26.2 reversed-Z: GEQUAL depth test (was LEQUAL); write = writeDepth (§3.1).
+                    // S13-H W1: alwaysPassDepth flips the COMPARE to ALWAYS_PASS (IP's op #12
+                    // exact-projected-depth restore under glDepthFunc(GL_ALWAYS)) — the WRITE is still
+                    // writeDepth, so the depth lands unconditionally where the stencil admits it.
                     .withDepthStencilState(
-                        new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, writeDepth))
+                        new DepthStencilState(
+                            alwaysPassDepth ? CompareOp.ALWAYS_PASS : CompareOp.GREATER_THAN_OR_EQUAL,
+                            writeDepth))
                     .withCull(doFaceCulling);
 
                 if (!writeColor) {
@@ -199,7 +221,7 @@ public class MyRenderHelper {
         }
         catch (Exception e) {
             // Robustness parity with PortalRenderTypes' catch: never leave a null RenderType/pipeline.
-            for (int key = 0; key < 8; key++) {
+            for (int key = 0; key < 16; key++) {
                 if (PORTAL_AREA_TYPES[key] == null) {
                     PORTAL_AREA_TYPES[key] = RenderTypes.debugQuads();
                 }
@@ -219,7 +241,24 @@ public class MyRenderHelper {
     public static RenderType getPortalAreaRenderType(
         boolean writeColor, boolean writeDepth, boolean doFaceCulling
     ) {
-        return PORTAL_AREA_TYPES[portalAreaKey(writeColor, writeDepth, doFaceCulling)];
+        return getPortalAreaRenderType(writeColor, writeDepth, doFaceCulling, false);
+    }
+
+    /**
+     * S13-H W1 overload (parent ruling 1 / §4-W1 + §6.2). Same as the 3-arg selector but with the
+     * {@code alwaysPassDepth} bit: when true the returned pipeline's depth COMPARE is
+     * {@link CompareOp#ALWAYS_PASS} instead of GREATER_THAN_OR_EQUAL, so the mesh's projected depth is
+     * written UNCONDITIONALLY within the stencil region. This is IP's op #12 exact-projected-depth
+     * restore under {@code glDepthFunc(GL_ALWAYS)} (Row 11) — the raw GL_ALWAYS is otherwise clobbered by
+     * the GEQUAL pipeline that {@code applyPipelineState} installs. ONLY
+     * {@code RendererUsingStencil.restoreDepthOfPortalViewArea} passes {@code alwaysPassDepth=true};
+     * every other consumer flows through the 3-arg overload (false) and keeps the UNCHANGED GEQUAL
+     * pipeline. See {@code fragments/S11B-viewarea.md} §3.1.
+     */
+    public static RenderType getPortalAreaRenderType(
+        boolean writeColor, boolean writeDepth, boolean doFaceCulling, boolean alwaysPassDepth
+    ) {
+        return PORTAL_AREA_TYPES[portalAreaKey(writeColor, writeDepth, doFaceCulling, alwaysPassDepth)];
     }
 
     // it will remove the light sections that are marked to be removed

@@ -352,17 +352,21 @@ public class RendererUsingStencil extends PortalRenderer {
         // renderPortalArea call with doModifyColor=false, doModifyDepth=true, doClip=true). The mod's LIVE
         // block-era re-expression is a flat NEAR shield (glDepthRange(1,1), StencilPortalRenderer:472/408)
         // — the OPPOSITE direction from the Row-7 FAR clear — but that flat shield is the block-era form,
-        // NOT the IP prescription; the qouteall port keeps IP op #12 verbatim (exact projected depth). S13
-        // WATCH ITEM (S11-B note §8): the GEQUAL mesh pipeline clobbers this raw glDepthFunc(GL_ALWAYS)
-        // bracket, so if the S13 driver-core keeps the exact-projected-depth form it needs an ALWAYS_PASS
-        // pipeline variant (not authored) — recorded, not fixed here (inert until S13).
+        // NOT the IP prescription; the qouteall port keeps IP op #12 verbatim (exact projected depth).
+        // S13-H W1 RESOLVED (parent ruling 1 / S11-B note §8): the raw glDepthFunc(GL_ALWAYS) bracket
+        // (Rows 11/13) was clobbered by the GEQUAL mesh pipeline that applyPipelineState installs, so the
+        // restore depth-write was GEQUAL-gated against content depth (wrong where dest terrain sits in
+        // FRONT of the portal plane). The alwaysPassDepth=true overload routes THIS draw ONLY through the
+        // ALWAYS_PASS depth-compare pipeline variant (MyRenderHelper bit 8) so IP's exact-projected-depth
+        // op #12 lands unconditionally within the stencil region — additive, no other consumer changes.
         ViewAreaRenderer.renderPortalArea(
             portal, Vec3.ZERO,
             modelView,
             getCurrentProjectionMatrix(),
             false, false,
             true,
-            true // important: should clip, otherwise depth will be abnormal when viewing scale box from inside in portal
+            true, // important: should clip, otherwise depth will be abnormal when viewing scale box from inside in portal
+            true  // S13-H W1: ALWAYS_PASS depth-compare pipeline variant (Row-11/12 restore only)
         );
 
         // R5 Row 13 (:246): UNCHANGED. Restore of the queried prior func.
