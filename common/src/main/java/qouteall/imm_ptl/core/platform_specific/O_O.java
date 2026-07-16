@@ -176,8 +176,9 @@ public class O_O {
             return false;
         }
         
+        // SELF-IDENTITY RE-HOST (S13 first-light fix): "iportal" -> the host mod id.
         Version currentVersion = FabricLoader.getInstance()
-            .getModContainer("iportal").get().getMetadata().getVersion();
+            .getModContainer("seamlessportals").orElseThrow().getMetadata().getVersion();
         try {
             Version latestVersion = Version.parse(latestReleaseVersion);
             
