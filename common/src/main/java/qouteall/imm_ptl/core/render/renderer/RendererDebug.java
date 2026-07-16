@@ -23,8 +23,8 @@ import java.util.List;
 //
 // 26.2 RE-EXPRESSIONS (each api-map-sanctioned; no IP LOGIC deviated):
 //   * RenderSystem.getProjectionMatrix()   -> getCurrentProjectionMatrix() (inherited; render-core G27/G19,
-//        the Slice-A PortalRenderer convention). The landed renderPortalArea ignores the projection param
-//        (the pass reads RenderSystem's uploaded projection buffer), so this is API-shape parity.
+//        the Slice-A PortalRenderer convention). renderPortalArea installs the passed projection onto
+//        RenderSystem's projection buffer around its draw (S13-I nested-layer fix; the pass reads that buffer).
 //   * GlStateManager._clearColor(1,0,1,1) + _clearDepth(1) + _clear(COLOR|DEPTH, ON_OSX) — ALL GONE on 26.2
 //        (render-sub G7: no _clearColor/_clearDepth, _clear is 1-arg, ON_OSX moot). Re-expressed as a
 //        device-level clear of the CURRENT main target's textures (the exact idiom GuiPortalRendering.java:94

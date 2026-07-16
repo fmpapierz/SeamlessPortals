@@ -751,3 +751,238 @@ The last inert link is closed. The next action is the LIVE checkpoint: the user 
 `S13-FIRST-LIGHT-TEST.md` Part 1 (flag-ON, same-dim command portals) — the portal window should now show
 the TRANSFORMED DESTINATION, not the player's own view. Carry the C4 A/B clip-switch note (§1.6) forward
 to the entity-through-portal rungs.
+
+---
+---
+
+# S13-I — FIRST PHOTONS (the eye-level black sliver: root cause + black-seam fix + the latent nested-layer deviation)
+
+**Stage S13-I of the entity-portal migration — the FIRST TIME the ported engine drew the destination
+world.** Attempt 7 (flag-ON, run against the S13-H driver core at HEAD `e817b57` / S13.15) is the
+first-photons milestone: after six attempts that each detonated one inert-link landmine (weave S13-C,
+self-identity S13-D, `@Redirect` collision S13.10, render-frame NPE S13.12, in-world crashes S13.13, the
+still-inert invoke pre-S13-H), the portal window finally rendered SOMETHING. It was not right yet — but
+"something instead of the player's own view / instead of a crash" is the command→pixels chain proving
+end-to-end alive for the first time.
+
+**USER SYMPTOM (verbatim):** *"something appeared, but its a very thin tiny line, a couple pixels tall at
+eye level that disappears [at the] horizon if i fly up and only visible if i look at it straight on and its
+just black."* Portal: a 3×3 same-dim command portal ~10-20 blocks away on superflat.
+
+**Two-tracer triage.** Tracer A took the mission's leading hypothesis (the "couple-pixels black sliver at
+eye level = the view-area quad reaching the GPU untransformed → collapse to a screen-center sliver") and
+**REFUTED it for rung 1** (the transform feed is correct, §I.2) — but in doing so found the ONE genuine IP
+deviation of exactly that genre, latent at rung 1 and live at S18 recursion (§I.5). The root-cause tracer
+then **pinned the OBSERVED sliver to a different mechanism entirely**: the R5 Row-16 backdrop fill painting
+the dest horizon seam BLACK (§I.3). Both halves are now fixed (§I.4, §I.5).
+
+**Citation conventions:** as §S13-C/§S13-D/§S13-H — `IP:` = 1.21.3
+(`ImmersivePortalsMod/.../qouteall`); `26.2:` = `mc262-ref` (Mojang mappings); `MOD-qouteall:` = the
+held/registered `qouteall.*` ports (the live driver). Line numbers are the current on-disk files.
+
+---
+
+## I.1 — THE FIRST-PHOTONS MILESTONE (what attempt 7 proved)
+
+Ground truth from the user's run (`fabric/runs/client/logs/debug.log`, `latest.log`):
+
+- **The render chain ran to the dest draw.** 147 `SEAMLESS`-timer lines across the run — the S13-H
+  decomposition (`switchAndRenderTheWorld` → `SecondaryWorldRenderCore.renderDestWorld` → the Step-10 draw
+  sequence) executed each portal frame; no crash, no `PreparedFrame already in use` throw, no per-frame
+  render-thread `LOGGER` spam (I5 discipline held — the core carries zero `LOGGER`, so its execution is
+  visible only through the timer channel, exactly as designed).
+- **The portal is same-dim, shift-20, superflat** (`debug.log:3483`, three invocations logged):
+  `portal make_portal 3 3 minecraft:overworld shift 20` — overworld→overworld, a 3×3 opening whose dest
+  viewpoint is offset 20 blocks. (The `Syntax exception for client-sided command` line is the FABRIC
+  CLIENT command dispatcher declining it and passing through to the server `/portal` handler — normal, not
+  a failure; the server-side command built the portal, which the 147 dest draws confirm.)
+- **Why same-dim makes the symptom a single thin artifact.** With an overworld→overworld shift, the dest
+  view is near-IDENTICAL to the surrounding world (a genuinely SEAMLESS window). Dest sky + dest terrain
+  overpaint essentially the whole 3×3 opening, so the ONLY place any artifact can show is the razor-thin
+  band where dest sky meets dest terrain and neither fully covers the backdrop — i.e. the horizon seam.
+  That is the "couple pixels tall, at eye level, only head-on, gone when you fly the horizon off the small
+  window" the user reported.
+
+This milestone retires the S13-H STATUS ("the window should now show the TRANSFORMED DESTINATION"): it
+DOES render the dest, and the remaining defect is a fill-color bug, not a missing-view bug.
+
+---
+
+## I.2 — TRACER A: the transform feed is CORRECT (the "untransformed-vertices sliver" hypothesis, REFUTED for rung 1)
+
+The mission's interpretation guide named the classic signature (camera-relative/world vertices interpreted
+in clip/NDC space collapse to a tiny sliver at screen center). Tracer A verified the whole feed and found
+the outer portal stencil-write draw receives the CORRECT model-view and projection, and the mesh is a
+valid full 3×3 camera-relative quad. Not assumed — grounded:
+
+- **How the portal-area draw gets its matrices on 26.2.** The `POSITION_COLOR` pipeline the view-area quad
+  uses has NO explicit uniform set (the GONE `portalAreaShader`, G9/G6). Its `ModelViewMat` is snapshotted
+  from `RenderSystem.getModelViewMatrixCopy()` inside `RenderType.prepare()`
+  (`26.2:RenderType.java:64` → the `DynamicTransforms` UBO), and its projection is bound by
+  `PreparedRenderType.drawFromBuffer` (`26.2:PreparedRenderType.java:45-46` →
+  `RenderSystem.getProjectionMatrixBuffer`) — both read the AMBIENT `RenderSystem` state at draw time.
+- **What the ambient state IS at the dispatch.** The flag-ON `AFTER_TRANSLUCENT_TERRAIN` callback fires
+  inside vanilla `LevelRenderer.frame.execute` (`26.2:LevelRenderer.java:239`), which sits INSIDE the
+  `modelViewStack.mul(viewRotationMatrix)` bracket (`26.2:LevelRenderer.java:170-172` push, `:252` pop). So
+  the ambient model-view = the camera `viewRotationMatrix` and the ambient projection = the world
+  reversed-Z projection — precisely the matrices the S13.14 dispatch passes
+  (`modelView = cameraRenderState.viewRotationMatrix`, the Fable-caught P1 fix from `019c52c`).
+- **Proven precedent.** The block-era `PortalShapeRenderer.drawMesh` uses the identical camera-relative +
+  `drawMesh` mechanism on the identical event and renders correct stencil masks. The mechanism is sound;
+  the new outer path inherits it.
+
+**VERDICT (Tracer A):** the sliver is NOT an untransformed outer view-area quad. The outer stencil write is
+a full, correctly-placed 3×3 quad — which is exactly why the dest actually rendered. The first wrong link
+is elsewhere.
+
+---
+
+## I.3 — ROOT CAUSE (pinned): the black sliver is the dest HORIZON SEAM, blackened by the R5 Row-16 backdrop fill
+
+The visible black comes from the **backdrop the opening is sealed with before the dest world draws over
+it**, not from any content:
+
+- **The fill.** `RendererUsingStencil.replaceFrameBufferClearing`
+  (`MOD-qouteall:render/renderer/RendererUsingStencil.java:82-102`) seals the WHOLE stencil opening with
+  `FogRendererContext.getCurrentFogColor.get()` (`:95`), depth-OFF (`COLOR_FILL` →
+  `portalCompositeBlit`), stencil-gated, full-screen, gated on `doRenderSky`. It is the R5 Row-16 step, and
+  the driver core invokes it at **Step 10.3** (`SecondaryWorldRenderCore.java:432`) — BEFORE dest sky
+  (Step 10.4, `:436-438`) and dest opaque terrain (Step 10.6, `:457`) paint over it.
+- **SMOKING GUN.** The S12-B `MixinFogRenderer` stubbed `FogRendererContext.getCurrentFogColor = () ->
+  Vec3.ZERO` (pure black), because 26.2's per-dim fog COLOR statics are GONE (R9) and the S11-A note
+  declared `getCurrentFogColor` "superseded." But that supersession was incomplete: the Row-16 fill is the
+  ONE surviving consumer of `getCurrentFogColor` (grep: sole call site
+  `RendererUsingStencil.java:95`). So the opening's backdrop was literally `(0,0,0)`.
+- **Why it presents as a thin eye-level line.** On the seamless same-dim view, dest sky + dest terrain
+  overpaint the opening almost completely; the black backdrop survives only in the hairline horizon band
+  where dest sky meets dest terrain and neither fully covers → a couple-pixels-tall black line at eye
+  level, visible only near head-on (the plane's grazing profile), gone when flying the horizon off the
+  small 3×3 window. Symptom fully explained.
+- **The IP semantics that were lost.** On 1.21.3 IP had ALREADY set up the DEST fog before the portal dest
+  render, so `getCurrentFogColor` returned the dest ATMOSPHERE color and the Row-16 fill was a genuinely
+  SEAMLESS atmospheric backdrop (any seam blended into the dest sky/fog). The port kept the fill but lost
+  its color source — a half-ported IP call (same lesson-shape as memory
+  `portalview-light-engine-half-port`).
+
+---
+
+## I.4 — THE FIX (black-seam): publish the live dest fog color for the Row-16 fill
+
+Re-express IP's "read the fog color the current world is being drawn with" onto the driver core as the
+authority for the dest fog color (the statics IP read no longer exist). Three coordinated edits, zero IP
+semantic change:
+
+- **`FogRendererContext.java:62-83`** — a live per-layer published color: a `volatile Vec3
+  currentRenderedFogColor` (defaults `Vec3.ZERO`) with `setCurrentRenderedFogColor` /
+  `getCurrentRenderedFogColor`. This is the 26.2 re-expression of IP's `fogRed/fogGreen/fogBlue` statics
+  that `getCurrentFogColor` read on 1.21.3.
+- **`SecondaryWorldRenderCore.java:365-374` (Step 6)** — right after the core computes the per-layer
+  `destFogData`, it PUBLISHES `destFogData.color` (the exact source `getFogColorOf` returns) via
+  `setCurrentRenderedFogColor`. Step 6 runs well before Step 10.3's fill (same `renderDestWorld` body), so
+  the fill always reads a fresh dest color — never the `Vec3.ZERO` default (which is consumed by nothing,
+  since the fill only runs mid-dest-render, after a publish).
+- **`MixinFogRenderer.java:41-48`** — `getCurrentFogColor` re-pointed from the `() -> Vec3.ZERO` stub to
+  `FogRendererContext::getCurrentRenderedFogColor`. The Row-16 fill now seals the opening with the dest
+  atmosphere color = IP's seamless backdrop; the horizon seam blends into it.
+
+**Result:** the fill matches the dest sky/fog it sits behind, so the seam is no longer a black line — it
+disappears into the dest atmosphere exactly as IP intended.
+
+---
+
+## I.5 — THE LATENT NESTED-LAYER DEVIATION (Tracer A's genuine find) — the sliver genre, fixed pre-emptively
+
+The mission's "untransformed-vertices sliver" hypothesis was the RIGHT genre for the WRONG rung. Tracer A
+found the one real IP deviation in the view-area draw:
+
+- **The deviation.** IP's `ViewAreaRenderer.renderPortalArea` set BOTH matrices explicitly per call —
+  `shader.MODEL_VIEW_MATRIX.set(modelViewMatrix)` (`IP:ViewAreaRenderer.java:87`) and
+  `shader.PROJECTION_MATRIX.set(projectionMatrix)` (`IP:ViewAreaRenderer.java:88`) — so the quad
+  rasterized with the PORTAL-PASS matrices REGARDLESS of what the surrounding passes left ambient. The
+  26.2 port (portalAreaShader GONE) had dropped that per-call set and relied on the ambient `RenderSystem`
+  matrices.
+- **Why it is a NO-OP at rung 1** (hence NOT the observed sliver): at the outer layer the ambient already
+  equals the passed matrices — the dispatch reads `cameraRenderState.viewRotationMatrix` (the same value
+  the render pass left on the model-view stack) and `getCurrentProjectionMatrix` returns the ambient main
+  projection (§I.2).
+- **Why it WOULD reproduce the sliver at nesting (>=2):** `SecondaryWorldRenderCore` Step 10.10
+  (`:478`) runs `onBeforeTranslucentRendering(destViewMatrix)` INSIDE
+  `MyGameRenderer.switchAndRenderTheWorld`'s IDENTITY model-view bracket
+  (`MyGameRenderer.java:316-318` — `pushMatrix()` + `identity()`). A nested view-area quad drawn there
+  would snapshot IDENTITY into its `DynamicTransforms` UBO and rasterize untransformed = the eye-level
+  sliver genre, live at S18 recursion. So the mission's hypothesis describes a REAL bug — just one the
+  user could not have seen yet at rung-1 single-portal.
+- **The fix** (`ViewAreaRenderer.java:115-203`) re-expresses `IP:87-88` verbatim: install the PASSED
+  matrices on `RenderSystem` around the draw and restore both after, with RECURSION-SAFE per-call locals
+  (mirroring `MyGameRenderer`'s projection bracket, V2-DEFECT-2). `modelViewStack.pushMatrix()` +
+  `.set(modelViewMatrix)`; `setProjectionMatrix(writeProjectionSlice(projectionMatrix), ambientType)`;
+  draw in `try`; `finally` `popMatrix()` + restore the saved projection slice/type. Only the matrix VALUE
+  is overridden (IP's shader set only the matrix); the ambient `ProjectionType` is kept. A new
+  standalone-UBO writer `writeProjectionSlice` (`ViewAreaRenderer.java:182-201`) mirrors the proven
+  `SecondaryWorldRenderCore.writeProjectionSlice` idiom (64-byte std140 `USAGE_UNIFORM`, fresh core-owned
+  `GpuBuffer` per call, old never closed — GPU may still read it — retained until the next call), kept in
+  ITS OWN static field (`viewAreaProjGpuBuffer`) so a nested draw never disturbs the ambient
+  dest-projection buffer this same draw saves+restores.
+- **Family doc-sync** (comment-only, no logic): the two other `renderPortalArea` family members —
+  `RendererDebug.java` and `RendererUsingFrameBuffer.java` — had comments asserting "renderPortalArea
+  ignores the projection param (the pass reads the uploaded buffer)"; updated to "installs the passed
+  projection onto RenderSystem's projection buffer around its draw (S13-I nested-layer fix)."
+
+**Disposition:** fixed pre-emptively (the fix is inert at rung 1 by construction; its first LIVE exercise
+is S18 recursion, unverified until then — carried §I.7).
+
+---
+
+## I.6 — VERIFICATION TIER + GATE DISCIPLINE
+
+**Tier: dual-tracer triage (Tracer A transform-feed refutation + the root-cause pinning) + fix.** Every
+load-bearing claim in §I.2-§I.5 was re-read this stage against ground truth: the 26.2 draw-time matrix
+snapshot path (`RenderType.java:64`, `PreparedRenderType.java:45-46`), the `AFTER_TRANSLUCENT_TERRAIN`
+model-view bracket (`LevelRenderer.java:170-172,239,252`), the sole `getCurrentFogColor` consumer
+(`RendererUsingStencil.java:95`), the Step 10.3/10.4/10.6/10.10 sequence
+(`SecondaryWorldRenderCore.java:432,436-438,457,478`), the identity bracket
+(`MyGameRenderer.java:316-318`), and IP's per-call shader set (`IP:ViewAreaRenderer.java:87-88`). The
+first-photons evidence is user-run ground truth (`debug.log:3483`, 147 `SEAMLESS` lines).
+
+**Gate discipline (constraints honored):** ZERO IP-semantic deviation — the black-seam fix re-expresses
+the fog COLOR source IP read from its statics; the nested-layer fix re-expresses `IP:87-88` verbatim onto
+26.2 `RenderSystem` mechanics. Flag-OFF surface byte-identical (all six edits are inside held/registered
+`qouteall.*` render files; the live block-era driver is untouched; no `com.warwa` change; no `mixins.json`,
+AW/AT, or build wiring). **This record-append task did NOT run gradle and did NOT commit** (per the S13-I
+task constraint). Build-safety reasoning: every edit is additive or comment-only with NO signature change —
+`FogRendererContext` gains a field + two static methods; `SecondaryWorldRenderCore` gains an import + a
+publish call; `MixinFogRenderer` reassigns a static field target; `ViewAreaRenderer` wraps its existing
+draw + adds a private method/field (`renderPortalArea` signature unchanged); `RendererDebug`/
+`RendererUsingFrameBuffer` are comments only — so the committed `ip_scc_closed=true` green shipping×3 +
+`:common:test` state established at `e817b57` is preserved by construction (a bad import/signature would
+have surfaced when the closure compiled the edited render files).
+
+**Working-tree touch (S13-I):** 6 files, ALL in the qouteall render tree, zero `com.warwa`:
+- `render/context_management/FogRendererContext.java` — live `currentRenderedFogColor` + setter/getter.
+- `render/SecondaryWorldRenderCore.java` — Step-6 publish of `destFogData.color`.
+- `mixin/client/multiworld_awareness/MixinFogRenderer.java` — `getCurrentFogColor` → the live publish.
+- `render/ViewAreaRenderer.java` — per-call MODEL_VIEW/PROJECTION install (`IP:87-88`) + `writeProjectionSlice`.
+- `render/renderer/RendererDebug.java`, `render/renderer/RendererUsingFrameBuffer.java` — doc-sync (comment-only).
+
+---
+
+## I.7 — CARRIED FORWARD
+
+1. **Attempt 8 relaunch (the LIVE confirmation).** The user reruns `S13-FIRST-LIGHT-TEST.md` Part 1
+   (flag-ON, same-dim `/portal make_portal 3 3 minecraft:overworld shift 20`). EXPECTED: a SEAMLESS dest
+   window with NO black horizon seam. If a seam persists, suspect the fog-color publish timing (Step 6 must
+   precede Step 10.3 — it does, same `renderDestWorld` body) or a dest-fog-color mismatch vs the dest sky
+   (an R9 `setupFog` fidelity item, not a fill bug). Map any NEW symptom to the §1.3 R5 sign-flip table in
+   `S13-FIRST-LIGHT-TEST.md`.
+2. **The nested-layer matrix bracket (§I.5) is unverified LIVE.** It is inert at rung-1 single-portal; its
+   first real exercise is S18 recursion (nested portals). Carry it as an S18 watch item: the recursive
+   view-area draw is the first code to depend on the per-call MODEL_VIEW/PROJECTION install, and the
+   sliver genre is exactly what a regression there would look like.
+3. **Same-dim entity gap (§H.6.1) unchanged.** Rung-1 same-dim views render terrain+sky+clouds but no
+   entities; S13-I touched neither the entity path nor that disposition.
+4. **`getCurrentFogColor` is now single-consumer + single-producer.** Any future consumer of
+   `FogRendererContext.getCurrentFogColor` (or a second Row-16-style fill) must ensure a dest-fog publish
+   precedes it, or it reads the `Vec3.ZERO` default — record the invariant so the coupling is not
+   re-severed.
+
+## STATUS: S13-I FIRST PHOTONS — the eye-level black sliver is root-caused (Row-16 backdrop fill blackened by the `getCurrentFogColor` = `Vec3.ZERO` stub) and FIXED (live dest-fog-color publish); the latent nested-layer matrix deviation is fixed pre-emptively. Awaiting the USER attempt-8 relaunch to confirm the seamless dest view.

@@ -56,6 +56,7 @@ import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.ducks.IEWorldRenderer;
 import qouteall.imm_ptl.core.render.renderer.RendererUsingStencil;
+import qouteall.imm_ptl.core.render.context_management.FogRendererContext;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
 import qouteall.imm_ptl.core.render.context_management.RenderStates;
 import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
@@ -361,6 +362,18 @@ public class SecondaryWorldRenderCore {
             );
             destCameraState.fogData = destFogData;
             destCameraState.fogType = FogType.NONE;
+            // S13-I (first-photons black-seam fix): publish the live dest fog color for the R5 Row-16
+            // backdrop fill. RendererUsingStencil.replaceFrameBufferClearing (invoked at Step 10.3 below)
+            // seals the WHOLE stencil opening with FogRendererContext.getCurrentFogColor BEFORE the dest
+            // sky/terrain draw over it — IP's seamless atmospheric backdrop so any horizon seam (dest sky
+            // meeting dest terrain) blends into the dest atmosphere. IP read this from the live fog
+            // statics (the dest color, already set up); the 26.2 statics are GONE (R9), so the driver core
+            // is the authority — publish exactly the color the dest terrain is being fogged with
+            // (destFogData.color, the same source getFogColorOf returns). Without this the fill used the
+            // Vec3.ZERO stub and the seam showed BLACK (the reported thin black line at eye level).
+            FogRendererContext.setCurrentRenderedFogColor(
+                new Vec3(destFogData.color.x, destFogData.color.y, destFogData.color.z)
+            );
             // Write the fog UBO to a CORE-OWNED standalone GpuBuffer (never fr.updateBuffer — that
             // corrupts the main WORLD slot: dark clipping artifacts across the whole world).
             GpuBufferSlice destFogBuffer = writeFogSlice(destFogData);

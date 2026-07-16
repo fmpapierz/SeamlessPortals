@@ -42,8 +42,9 @@ import java.util.List;
 //        FBO — GONE (render-sub G7). Re-expressed as a device-level clear of the SECONDARY target's textures
 //        (CommandEncoder.clearColorAndDepthTextures), the GuiPortalRendering.java:94 idiom.
 //   * RenderSystem.getProjectionMatrix()           -> getCurrentProjectionMatrix() (inherited; render-core
-//        G27/G19). renderPortalArea ignores the projection param on 26.2 (the pass reads the uploaded
-//        projection buffer); drawPortalAreaWithFramebuffer likewise composites via a full-screen pass.
+//        G27/G19). renderPortalArea installs the passed projection onto RenderSystem's projection buffer
+//        around its draw (S13-I nested-layer fix; the pass reads that buffer); drawPortalAreaWithFramebuffer
+//        likewise composites via a full-screen pass.
 //
 // SIGN NOTE (D4.4 / R5, CUTOVER_SPEC §2): the ONLY depth constant here is the secondary-FBO depth CLEAR. IP's
 // _clearDepth(1) = window depth 1.0 = FAR (1.21.3 normal-Z); 26.2 reversed-Z FAR = 0.0, so the clear is

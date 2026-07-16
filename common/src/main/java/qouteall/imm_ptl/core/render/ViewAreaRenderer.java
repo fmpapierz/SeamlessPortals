@@ -1,6 +1,10 @@
 package qouteall.imm_ptl.core.render;
 
 import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.ProjectionType;
+import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
@@ -10,6 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fStack;
 import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
@@ -17,6 +22,8 @@ import qouteall.imm_ptl.core.render.context_management.PortalRendering;
 import qouteall.imm_ptl.core.render.context_management.RenderStates;
 import qouteall.q_misc_util.my_util.TriangleConsumer;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Objects;
 
 /**
@@ -108,20 +115,53 @@ public class ViewAreaRenderer {
         // 26.2 (G9/G6): the GONE portalAreaShader (ShaderInstance) + its MODEL_VIEW/PROJECTION uniform
         // set/apply/clear become a RenderPipeline-backed RenderType carrying the resolved color/depth/
         // cull state. model-view + projection ride RenderSystem for the pass (G9/G27/G28); the passed
-        // matrices are the portal-pass matrices the driver installed (modelViewMatrix still feeds the
-        // clip-plane setup above). The R5 reversed-Z depth constants live inside the pipeline (S12).
+        // matrices are installed on RenderSystem around the draw below (the re-expression of IP's per-call
+        // shader.MODEL_VIEW/PROJECTION.set — see that block; modelViewMatrix still feeds the clip-plane
+        // setup above). The R5 reversed-Z depth constants live inside the pipeline (S12).
         RenderType renderType = MyRenderHelper.getPortalAreaRenderType(
             writeColor, writeDepth, doFaceCulling, alwaysPassDepth);
 
         FrontClipping.updateClippingEquationUniformForCurrentShader(false);
 
-        ViewAreaRenderer.buildPortalViewAreaTrianglesBuffer(
-            fogColor,
-            portal,
-            CHelper.getCurrentCameraPos(),
-            RenderStates.getPartialTick(),
-            renderType
-        );
+        // 26.2 (G9/G6) re-expression of IP's explicit shader.MODEL_VIEW_MATRIX.set /
+        // shader.PROJECTION_MATRIX.set (IP ViewAreaRenderer.java:87-88). The GONE portalAreaShader carried
+        // those two uniforms and set them per call; on 26.2 the POSITION_COLOR pipeline family reads them
+        // from RenderSystem instead — RenderType.prepare() snapshots the AMBIENT model-view
+        // (getModelViewMatrixCopy -> the DynamicTransforms UBO, mc262 RenderType.java:64) and
+        // PreparedRenderType.drawFromBuffer binds the AMBIENT projection (bindDefaultUniforms ->
+        // getProjectionMatrixBuffer, mc262 PreparedRenderType.java:45 / RenderSystem.java:276-280) at draw
+        // time. IP set BOTH explicitly per call so the view-area quad rasterizes with the portal-pass
+        // matrices REGARDLESS of what the surrounding passes (translucent terrain, entities, or a nested
+        // layer's identity model-view bracket) left ambient. Re-express that verbatim: install the PASSED
+        // matrices on RenderSystem around the draw and restore both after (recursion-safe per-call locals,
+        // like MyGameRenderer's projection bracket). This is a NO-OP at the outer (rung-1) site — ambient
+        // already equals the passed matrices (the dispatch reads cameraRenderState.viewRotationMatrix, the
+        // same value the render pass left on the model-view stack, and getCurrentProjectionMatrix returns
+        // the ambient main projection). It is REQUIRED at nested layers (>=2): SecondaryWorldRenderCore
+        // Step 10.10 runs onBeforeTranslucentRendering INSIDE MyGameRenderer.switchAndRenderTheWorld's
+        // identity model-view bracket (MyGameRenderer.java:317-318), so without this the nested view-area
+        // mesh would snapshot IDENTITY and rasterize untransformed (the eye-level sliver genre).
+        Matrix4fStack modelViewStack = RenderSystem.getModelViewStack();
+        GpuBufferSlice savedProjectionBuffer = RenderSystem.getProjectionMatrixBuffer();
+        ProjectionType savedProjectionType = RenderSystem.getProjectionType();
+        modelViewStack.pushMatrix();
+        modelViewStack.set(modelViewMatrix);
+        // Only the matrix VALUE is overridden (IP's shader set only the matrix); keep the ambient
+        // ProjectionType so the projection's non-matrix semantics are untouched.
+        RenderSystem.setProjectionMatrix(writeProjectionSlice(projectionMatrix), savedProjectionType);
+        try {
+            ViewAreaRenderer.buildPortalViewAreaTrianglesBuffer(
+                fogColor,
+                portal,
+                CHelper.getCurrentCameraPos(),
+                RenderStates.getPartialTick(),
+                renderType
+            );
+        }
+        finally {
+            modelViewStack.popMatrix();
+            RenderSystem.setProjectionMatrix(savedProjectionBuffer, savedProjectionType);
+        }
 
         CHelper.disableDepthClamp();
 
@@ -137,6 +177,28 @@ public class ViewAreaRenderer {
         }
 
         CHelper.checkGlError();
+    }
+
+    // S13-I nested-layer fix: standalone projection UBO for the portal-area draw, the 26.2 re-expression
+    // of IP's shader.PROJECTION_MATRIX.set (IP ViewAreaRenderer.java:88). Mirrors the proven
+    // SecondaryWorldRenderCore.writeProjectionSlice idiom (§1 Step 7) VERBATIM: write the Matrix4f into a
+    // 64-byte std140 UNIFORM buffer and hand RenderSystem its slice. A fresh core-owned GpuBuffer per
+    // call, retained in this static ONLY until the next call overwrites it — do NOT close the old one
+    // (the GPU may still be reading it); dropping the last reference lets GC reclaim the native handle.
+    // Kept LOCAL to ViewAreaRenderer (its own field, never SecondaryWorldRenderCore's) so a nested draw
+    // never disturbs the ambient dest-projection buffer this same draw saves + restores.
+    private static GpuBuffer viewAreaProjGpuBuffer;
+
+    private static GpuBufferSlice writeProjectionSlice(Matrix4f matrix) {
+        ByteBuffer buf = ByteBuffer.allocateDirect(64).order(ByteOrder.nativeOrder());
+        matrix.get(buf);
+        buf.position(64);
+        buf.flip();
+        // fresh buffer per call; do NOT close the old one (the GPU may still be reading it).
+        viewAreaProjGpuBuffer = RenderSystem.getDevice().createBuffer(
+            () -> "seamlessportals_viewarea_proj", GpuBuffer.USAGE_UNIFORM, buf
+        );
+        return viewAreaProjGpuBuffer.slice();
     }
 
     public static void buildPortalViewAreaTrianglesBuffer(

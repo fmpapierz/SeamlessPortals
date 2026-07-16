@@ -59,6 +59,28 @@ public class FogRendererContext {
     public static Consumer<FogRendererContext> copyContextToObject;
     public static Supplier<Vec3> getCurrentFogColor;
 
+    // S13-I (first-photons black-seam fix): the live fog color of the world CURRENTLY being rendered.
+    // Re-expresses IP's fog statics (fogRed/fogGreen/fogBlue) that getCurrentFogColor read on 1.21.3:
+    // during a portal dest render IP had already set up the DEST fog, so getCurrentFogColor returned the
+    // dest atmosphere color and RendererUsingStencil.replaceFrameBufferClearing (R5 Row 16) sealed the
+    // portal opening with it — a SEAMLESS backdrop behind the dest sky/terrain. On 26.2 the fog statics
+    // are GONE (R9), so the S12 MixinFogRenderer stubbed getCurrentFogColor to Vec3.ZERO; that made the
+    // Row-16 fill BLACK, and the dest horizon seam (the thin band where dest sky meets dest terrain and
+    // neither fully covers) showed that black at eye level — the reported symptom. The driver core
+    // (SecondaryWorldRenderCore, right after it computes the per-layer FogData) now PUBLISHES the dest
+    // fog color here, and MixinFogRenderer points getCurrentFogColor at getCurrentRenderedFogColor().
+    // Render-thread-only in practice; volatile is defensive, never null (defaults to Vec3.ZERO before the
+    // first dest render, which never consumes it — the fill only runs mid-dest-render, after a publish).
+    private static volatile Vec3 currentRenderedFogColor = Vec3.ZERO;
+
+    public static void setCurrentRenderedFogColor(Vec3 color) {
+        currentRenderedFogColor = color;
+    }
+
+    public static Vec3 getCurrentRenderedFogColor() {
+        return currentRenderedFogColor;
+    }
+
     public static StaticFieldsSwappingManager<FogRendererContext> swappingManager;
 
     public static void init() {

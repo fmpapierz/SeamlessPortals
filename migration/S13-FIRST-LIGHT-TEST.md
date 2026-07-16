@@ -83,6 +83,15 @@ errors. This is the "old system untouched" proof.
   peaceful**, cheats ON. Rung 1 spawns experimental portal entities; keep them off anything you care
   about. Give yourself room and a clear sightline.
 
+### 1.2a ATTEMPT-8 LESSON — make the destination VISIBLE (do this first!)
+
+A **working** same-dim portal on featureless superflat is **invisible by design** (the view through
+it is identical to the world behind it — attempt 7 proved this the hard way: the portal worked and
+nobody could tell). Before `make_portal`, **build a distinctive marker ~20 blocks away in the shift
+direction**: a tall pillar of colored wool (mixed colors, 5+ blocks high) and/or a ring of torches.
+Then the moment of truth is unambiguous: **the window shows the pillar where the pillar isn't.**
+Circle the portal — the pillar's parallax must track as if you were looking from 20 blocks over.
+
 ### 1.2 The rung-1 command sequence + EXPECTED result per step
 
 Use tab-completion — the `/portal` command uses the utility-group syntax (`ducks-api-misc.md §2.3`).

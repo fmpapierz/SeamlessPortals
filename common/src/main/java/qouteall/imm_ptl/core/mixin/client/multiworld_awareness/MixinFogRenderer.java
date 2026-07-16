@@ -1,7 +1,6 @@
 package qouteall.imm_ptl.core.mixin.client.multiworld_awareness;
 
 import net.minecraft.client.renderer.fog.FogRenderer;
-import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import qouteall.imm_ptl.core.render.context_management.FogRendererContext;
 
@@ -35,12 +34,18 @@ public class MixinFogRenderer {
 
     static {
         // 26.2 (R9): no fog statics remain to mirror, so the copy-from/copy-to hooks are no-ops (the swap
-        // machinery calls them but there is nothing to swap for fog); getCurrentFogColor is superseded by
-        // FogRendererContext.getFogColorOf reading FogData.color directly. Hooks kept non-null for the
+        // machinery calls them but there is nothing to swap for fog). Hooks kept non-null for the
         // StaticFieldsSwappingManager contract. The load-bearing action is FogRendererContext.init().
         FogRendererContext.copyContextFromObject = context -> {};
         FogRendererContext.copyContextToObject = context -> {};
-        FogRendererContext.getCurrentFogColor = () -> Vec3.ZERO;
+        // S13-I (first-photons black-seam fix): IP's getCurrentFogColor read the live fog statics — the
+        // DEST fog color during a portal dest render — and RendererUsingStencil.replaceFrameBufferClearing
+        // (R5 Row 16) filled the portal opening with it as a SEAMLESS atmospheric backdrop. The prior
+        // 26.2 stub `() -> Vec3.ZERO` made that backdrop BLACK, so the dest horizon seam (where dest sky
+        // meets dest terrain) showed a thin black line at eye level. Point it at the driver core's live
+        // per-layer publish (FogRendererContext.getCurrentRenderedFogColor / SecondaryWorldRenderCore
+        // Step 6) — the 26.2 re-expression of "read the fog color the current world is being drawn with".
+        FogRendererContext.getCurrentFogColor = FogRendererContext::getCurrentRenderedFogColor;
 
         FogRendererContext.init();
     }
