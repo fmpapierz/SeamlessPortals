@@ -140,8 +140,9 @@ public class O_O {
     }
     
     public static @NotNull ImmPtlNetworkConfig.ModVersion getImmPtlVersion() {
+        // SELF-IDENTITY RE-HOST (S13 first-light fix): "iportal" -> the host mod id.
         Version version = FabricLoader.getInstance()
-            .getModContainer("iportal").orElseThrow()
+            .getModContainer("seamlessportals").orElseThrow()
             .getMetadata().getVersion();
         
         if (!(version instanceof SemanticVersionImpl semanticVersion)) {
@@ -164,8 +165,9 @@ public class O_O {
     }
     
     public static String getImmPtlVersionStr() {
+        // SELF-IDENTITY RE-HOST (S13 first-light fix): "iportal" -> the host mod id.
         return FabricLoader.getInstance()
-            .getModContainer("iportal").orElseThrow()
+            .getModContainer("seamlessportals").orElseThrow()
             .getMetadata().getVersion().toString();
     }
     
