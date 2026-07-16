@@ -74,6 +74,20 @@ errors. This is the "old system untouched" proof.
 > `VisibleSectionDiscovery` → `renderGroup`). So Part 1's windows should show the FAR SIDE, not a copy of
 > where you stand — §1.2 step 1 spells out the expected result and the first-frames compile behavior.
 
+> **FIRST LIGHT CONFIRMED (S13-J, attempt 8 at `9870606`).** The dest view renders with correct parallax
+> through a same-dim portal; **walk-through crossings, live `set_portal_scale`/rotation/destination updates,
+> and break/place THROUGH the window all WORK**, and the S13-I black horizon seam is gone. The full rung-1
+> triage is in `port-notes/S13C-weave-audit.md §S13-J`. Three things below are now KNOWN and pre-answered —
+> read them before you re-run so you don't re-file them as bugs:
+> - **§1.2 step 1 — `make_portal` is ONE-SIDED and ONE-WAY. This is EXPECTED IP behavior, not a bug** (the
+>   IP citation is in step 1). A single portal is visible only from the FRONT and has NO return portal.
+> - **§1.2 step 3 — a `set_portal_scale 2` crossing turns you into a permanent 2× GIANT** (high camera, "can't
+>   go back down" = the giant's eye height, not a stuck position). EXPECTED IP physics; `set_portal_scale 1`
+>   to un-scale. Watch step 3 for the OPEN "white bar" coverage item.
+> - **§1.2 step 3/8 — dest CLOUDS are deliberately OMITTED at rung 1** (S13-J documented deviation-until-S18).
+>   They were causing a deterministic "Cannot wait on a fence for the current submit" crash with multiple
+>   portals; that crash is FIXED by skipping them. No clouds through the window is the accepted rung-1 look.
+
 ### 1.1 Turn the flag ON, in a THROWAWAY world
 
 - **Enable the flag:** edit `fabric/runs/client/config/seamlessportals.properties`, add a line
@@ -113,6 +127,19 @@ Use tab-completion — the `/portal` command uses the utility-group syntax (`duc
      sections that were not already in the player's direct view mesh under the budgeted (**3 ms/frame**)
      compile drain. Give it a moment to settle. Holes that PERSIST after it settles are a §1.3 symptom —
      capture them.
+   - **ONE-SIDED + ONE-WAY is EXPECTED (S13-J verified vs IP — do NOT file as a bug):**
+     - **The window is visible only from the FRONT.** Walk BEHIND the portal and it vanishes; that is
+       correct. The gate is `Portal.isRoughlyVisibleTo` → `RectangularPortalShape.roughTestVisibility`
+       (`IP:…/portal/shape/RectangularPortalShape.java:161`), whose entire body is `return localPos.z() > 0`
+       — a pure front-half-space test. It is NOT an angular cull, so the front view is stable at **all
+       oblique angles**; our port calls the identical `isRoughlyVisibleTo`
+       (`render/renderer/PortalRenderer.java:216`). (If the front view vanishes at a grazing FRONT angle,
+       THAT would be a frustum-cull bug — but a plain half-space dot cannot produce it.)
+     - **`make_portal` creates NO return portal.** It spawns exactly one `Portal` entity
+       (`IP:PortalCommand.placePortalShift:2334` — a single `spawnServerEntity`, no reverse). "No dest portal
+       to walk back through" is the designed one-way state; the return portal comes ONLY from step 4's
+       `complete_bi_way_portal`. To make a portal visible from BOTH sides, use
+       `/portal complete_bi_way_bi_faced_portal` (`IP:PortalManipulation.completeBiFacedPortal:124`).
    - The **§1.3 R5 sign-flip symptom table still applies** to this window — map any wrong-looking result to
      its suspected row/risk.
 2. **Walk through — forward AND backward AND strafing.**
@@ -121,15 +148,53 @@ Use tab-completion — the `/portal` command uses the utility-group syntax (`duc
 3. **`/portal set_portal_scale 2`**, then **`set_portal_rotation …`**, then **`set_portal_destination …`**
    variants; then **`/portal view_portal_data`**.
    EXPECTED: the view updates **live** with each change; the `view_portal_data` NBT dump renders.
-4. **`/portal complete_bi_way_portal`**, then cross back and forth **10×**.
-   EXPECTED: a return portal appears; **no ping-pong** across the 10 crossings (regression item 1).
+   - **SCALE-2 CROSSING MAKES YOU A PERMANENT 2× GIANT — EXPECTED IP physics, NOT a bug (S13-J).** After you
+     CROSS a scale-2 portal you are permanently 2× tall: the camera now sits ~3.24 blocks above your feet
+     (vs the normal ~1.62), so you feel "forced upward / floating / can't get back down." That is the
+     giant's eye height, not a stuck position — you ARE grounded, just tall. The chain
+     (`Portal.transformPoint` scales the eye-offset; `ScaleUtils` applies the 2× `SCALE` attribute) is a
+     faithful IP port and client+server stay consistent (no desync). **To return to normal, run
+     `/portal set_portal_scale 1`** (or cross a scale-1 return portal) — do NOT judge your Y-position until
+     you un-scale.
+   - **RE-TEST WATCH — "white bar" on the enlarged opening (OPEN, §S13-J.3).** On a `set_portal_scale 2`
+     portal, watch the BOTTOM band of the enlarged window for a white/sky-colored bar (dest content not
+     covering the scaled opening). This is an OPEN static diagnosis with **no fix on disk** — if it appears,
+     **capture a screenshot** (it's needed to pin dest-frustum vs discovery-radius vs mesh-extent).
+4. **`/portal complete_bi_way_portal`** (point at the portal first), then cross back and forth **10×**.
+   EXPECTED: a return portal appears; **no ping-pong** across the 10 crossings (regression item 1). This is
+   the ONLY command that gives you the return trip after a bare `make_portal`
+   (`IP:PortalManipulation.completeBiWayPortal:79` → `createReversePortal:88`); the reverse portal is spawned
+   facing back through the pair (S13-J §J.1).
 5. **Break/place a block THROUGH the window** (cross-portal block interaction, `block_manipulation`).
    EXPECTED: the block edit lands on the far side as seen through the window.
-6. **Global portal:** create one (`/portal global …` variants), then **RELOG** (quit to title, reopen the
-   world) and verify it **persisted** — see §1.4.
+6. **Global portal:** create one, then **RELOG** (quit to title, reopen the world) and verify it
+   **persisted** — see §1.4. **Exact syntax (S13-J, `IP:PortalCommand.registerGlobalPortalCommands:159`):**
+   the global subcommands live under `/portal global …`:
+   - **Simplest for this test —** make a normal portal (`make_portal`, step 1), point at it, then
+     **`/portal global convert_normal_portal_to_global_portal`** (points-at the portal you're looking at;
+     `IP:PortalCommand.java:343`). This writes a `GlobalPortalStorage` entry — exactly what the §1.4 RELOG
+     check exercises. Reverse it with `/portal global convert_global_portal_to_normal_portal`.
+   - **Vertical connecting global portal:** **`/portal global connect_floor <from_dim> <to_dim>`** or
+     **`connect_ceil <from_dim> <to_dim>`** (`:250/:275`).
+   - **World-wrapping global portal:** **`/portal global create_inward_wrapping <p1> <p2>`** or
+     **`create_outward_wrapping <p1> <p2>`** (ColumnPos args, `:162/:180`).
+   - **Inspect / clean up:** **`/portal global view_global_portals`** (`:332`),
+     **`/portal global delete_global_portal`** (point at it, `:385`).
 7. **renderMode smoke:** toggle the debug renderer on/off (the A1 debug-render family is present).
    EXPECTED: debug overlay appears/clears without crashing.
 8. **Console watch:** no per-frame render-thread logging (regression item 11), no packet floods.
+   - **MULTI-PORTAL STABILITY RE-TEST (S13-J §J.4 — the clouds fence crash is FIXED).** Spawn/have
+     **multiple portals in view at once** and confirm there is NO crash. The prior deterministic
+     `IllegalStateException: Cannot wait on a fence for the current submit` (`CloudRenderer.render` ←
+     `MappableRingBuffer.currentBuffer`, `crash-2026-07-16_11.50.22`/`_11.58.54`) came from drawing DEST
+     clouds mid-submit into the shared main-renderer ring buffer; it multiplied with each portal. Dest
+     clouds are now **deliberately skipped** (documented deviation-until-S18), so multiple portals must be
+     crash-free and simply show **no clouds through the windows** (accepted rung-1 look; sky is unaffected).
+   - **Known non-fatal spam (already censused, S13-J §J.5):** a HIGH-severity
+     `GL_INVALID_OPERATION … 'Framebuffer name must be generated before being bound.'` from
+     `RendererUsingStencil.prepareRendering:173` may appear ~100×/session in `latest.log`. It is the driver
+     core's own deferred runtime-verify item (the `:170-171` note) and did not block first light — do not
+     re-file it, but note if it changes.
 
 Regression items exercised (flag-ON): 1, 2 (same-dim form), 7 (partial — `CrossPortalEntityRenderer`
 absence is status quo; completes S18), 10 (partial — large portal by command), 11, 12.

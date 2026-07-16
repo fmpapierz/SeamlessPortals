@@ -477,8 +477,25 @@ public class SecondaryWorldRenderCore {
                     // is true, so the post-pass branch runs setStencilStateForWorldRendering (§5).
                     IPCGlobal.renderer.onBeforeTranslucentRendering(destViewMatrix);
 
-                    // 10.11 dest clouds (in front of terrain, depth-sorted).
-                    renderPortalClouds(destRenderer, destLRS, destCameraState, destViewMatrix, partialTick);
+                    // 10.11 dest clouds — DELIBERATELY SKIPPED (S13-J DOCUMENTED DEVIATION, restore at
+                    // S18). The re-expression is preserved (renderPortalClouds below) but NOT called: on
+                    // 26.2 a same-dim portal has destRenderer == mc.levelRenderer, so
+                    // destRenderer.cloudRenderer() is the SAME CloudRenderer whose utb/ubo
+                    // MappableRingBuffers the MAIN pass's LevelRenderer.addCloudsPass draws into LATER in
+                    // the same framegraph submit. Drawing dest clouds here mid-submit rotates/fences those
+                    // ring-buffer slots inside the current submit, so the main pass's currentBuffer()
+                    // awaitCompletion sees a fence for the in-flight submit and throws
+                    // "Cannot wait on a fence for the current submit" (GlCommandEncoder.awaitSubmit) —
+                    // the deterministic crash-2026-07-16_11.50/11.58 (multiple portals multiply the
+                    // mid-frame rotations, making it fire). This is the SAME shared-WORLD-ring-buffer
+                    // hazard CUTOVER_SPEC §3.2 warned about for FOG (solved there with a core-owned
+                    // standalone buffer) manifesting in CLOUDS. IP isolates per-dim cloud geometry via
+                    // CloudContext, but that class's own header defers reconciling its per-dim cache
+                    // against 26.2's single CloudRenderer ring buffer to U10/S12 (still inert) — building
+                    // that isolation now is disproportionate at rung-1 triage, so dest clouds are OMITTED
+                    // exactly like the already-accepted weather + world-border omission (S13H design §6.3),
+                    // deviation-until-S18. Sky (Step 10.4) is unaffected: it uses the core-owned
+                    // portalSkyRenderer, not the shared main renderer's buffers.
                 } finally {
                     FrontClipping.disableClipping();
                     if (PortalRendering.isRenderingOddNumberOfMirrors()) {
@@ -599,6 +616,12 @@ public class SecondaryWorldRenderCore {
     }
 
     // ===== §1 Step 10.11 — dest clouds (re-expresses renderPortalClouds:947) =====================
+    // INTENTIONALLY NOT CALLED (S13-J documented deviation — see the Step 10.11 skip note above). This
+    // faithful re-expression is retained ONLY as the S18 restoration reference; wiring it back requires
+    // per-dim cloud-buffer isolation first (CloudContext reconciled against 26.2's single CloudRenderer
+    // ring buffer), or it re-introduces the "Cannot wait on a fence for the current submit" crash. Do
+    // NOT re-add the call at rung 1.
+    @SuppressWarnings("unused")
     private static void renderPortalClouds(
         LevelRenderer destRenderer, LevelRenderState destLRS,
         CameraRenderState destCameraState, Matrix4f destViewMatrix, float partialTick

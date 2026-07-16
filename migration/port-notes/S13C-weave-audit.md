@@ -986,3 +986,257 @@ have surfaced when the closure compiled the edited render files).
    re-severed.
 
 ## STATUS: S13-I FIRST PHOTONS — the eye-level black sliver is root-caused (Row-16 backdrop fill blackened by the `getCurrentFogColor` = `Vec3.ZERO` stub) and FIXED (live dest-fog-color publish); the latent nested-layer matrix deviation is fixed pre-emptively. Awaiting the USER attempt-8 relaunch to confirm the seamless dest view.
+
+---
+
+# S13-J — FIRST LIGHT CONFIRMED + rung-1 live-test triage (attempt 8: the working portal, the scaled-crossing physics verdict, the clouds fence-crash skip)
+
+**Stage S13-J of the entity-portal migration — FIRST LIGHT IS CONFIRMED.** Attempt 8 (flag-ON at HEAD
+`9870606` / S13.16, with the S13-I black-seam + nested-layer fixes) is the milestone the whole S13 arc was
+built toward: **the user sees the destination view with correct parallax through a same-dim portal, and
+the core interactions work.** The rung-1 checklist (`S13-FIRST-LIGHT-TEST.md` §1.2) passed on its load-
+bearing steps, and the remaining findings are a triage list, not a broken engine.
+
+**USER RESULT (verbatim, the passes):** the 3×3 same-dim window shows the transformed dest with correct
+parallax from the front; **walk-through crossings WORK**; **live `set_portal_scale` / rotation / destination
+updates WORK** (the view re-renders per change); **break/place THROUGH the window WORKS**. The S13-I black
+horizon seam is **gone** (the dest-fog-color publish landed as designed — no black sliver reported).
+
+This retires the S13-I STATUS ("awaiting the attempt-8 relaunch to confirm the seamless dest view"): it is
+confirmed seamless. What follows is the rung-1 findings census (the checklist's remaining rows), each with
+its verdict, and the two code fixes this stage put on disk.
+
+**Citation conventions:** as §S13-C…§S13-I — `IP:` = 1.21.3 (`ImmersivePortalsMod/.../qouteall`); `26.2:` =
+`mc262-ref` (Mojang mappings); `MOD-qouteall:` = the held/registered `qouteall.*` ports. Line numbers are
+the current on-disk files. Run ground truth: `fabric/runs/client/logs/{latest,debug}.log` +
+`fabric/runs/client/crash-reports/crash-2026-07-16_11.50.22-client.txt` and `…_11.58.54-client.txt`.
+
+---
+
+## J.0 — THE RUNG-1 FINDINGS CENSUS (map)
+
+| # | Finding (user symptom) | Verdict | Disposition |
+|---|---|---|---|
+| — | Dest view + parallax + walk-through + live scale/rot/dest + break/place | **PASS** | FIRST LIGHT CONFIRMED |
+| 1+2 | "circle portal doesn't work, only front view works"; "no dest portal to walk back through" | **EXPECTED IP behavior** (§J.1) | verified vs IP, documented in the test script |
+| 3a | scale-2 crossing "forced me upwards, cannot return down, floating in air" | **NO CODE DEFECT — faithful IP scale-crossing physics** (§J.2) | documented; re-test after `set_portal_scale 1` un-scale |
+| 3b | "white bar on bottom of the scaled portal" | **OPEN static diagnosis — NO fix on disk** (§J.3) | dest-content-coverage-vs-scaled-opening; not-live-confirmed |
+| 6 | deterministic crash ×2: "Cannot wait on a fence for the current submit" (clouds) | **FIXED — dest clouds skipped** (§J.4) | documented deviation-until-S18 (weather/world-border precedent) |
+| 7 | full log sweep for unreported ERROR/WARN/exception | **1 new item censused** (§J.5) | GL_INVALID_OPERATION at the stencil-FBO bind (the code's own deferred runtime-verify item) |
+
+Two files changed on disk this stage: `render/SecondaryWorldRenderCore.java` (the §J.4 clouds skip) and a
+U1 blockstate asset (`common/src/main/resources/assets/immersive_portals/blockstates/`, untracked) that
+silences the §J.5 `Missing model for variant: immersive_portals:nether_portal_block` warnings. **No gradle
+run, no commit** (per the S13-J task constraint).
+
+---
+
+## J.1 — FINDINGS 1+2: one-sided + one-way is EXPECTED (`make_portal` semantics, verified vs IP)
+
+Both reports are the CORRECT behavior of a single `make_portal` portal; neither is a defect.
+
+- **One-WAY (no return portal): CONFIRMED vs IP.** `/portal make_portal … shift 20` routes to
+  `IP:PortalCommand.placePortalShift` (`PortalCommand.java:2317`) → `PortalManipulation.placePortal(width,
+  height, player)` then a **single** `McHelper.spawnServerEntity(portal)` (`:2334`). Exactly ONE `Portal`
+  entity is created; NO reverse portal. The absolute-dest form (`placePortalAbsolute`, `:2288`) is
+  identical. The return portal is created ONLY by `/portal complete_bi_way_portal`
+  (`IP:PortalCommand.java:530` → `PortalManipulation.completeBiWayPortal`, `PortalManipulation.java:79` →
+  `createReversePortal`, `:88`). So "no destination portal to walk back through" after a bare `make_portal`
+  is the designed one-way state.
+- **One-SIDED (front-visible only): CONFIRMED vs IP, and OUR port matches exactly.** A flat portal is
+  visible/renderable only from its front half-space. The gate is `Portal.isRoughlyVisibleTo(cameraPos)`
+  (`IP:Portal.java:1379`) → `RectangularPortalShape.roughTestVisibility` (`IP:…/shape/RectangularPortalShape
+  .java:161`), whose whole body is **`return localPos.z() > 0`** — a pure front-half-space test. Our port
+  calls the identical `portal.isRoughlyVisibleTo(cameraPos)` in the render cull
+  (`MOD-qouteall:render/renderer/PortalRenderer.java:216`). **Critically, this is NOT an angular/frustum
+  cull:** any camera in the +z (front) half-space passes, at ANY oblique angle. So "only front view works"
+  = invisible from BEHIND (correct), and there is **no oblique-front bug** — the mission's frustum-cull
+  hypothesis (`earlyFrustumCullingPortal` over-culling grazing front views) is REFUTED: `roughTestVisibility`
+  is a half-space dot, not a view-cone test, and `earlyFrustumCullingPortal` only culls on the portal's own
+  thin bounding box (`PortalRenderer.java:233-240`), which a front-facing camera looking at the portal never
+  fails. To see a portal from BOTH sides you use `/portal complete_bi_way_bi_faced_portal`
+  (`IP:PortalCommand.java:548` → `completeBiFacedPortal`, `PortalManipulation.java:124`).
+
+**Disposition:** no code change. Documented as EXPECTED in `S13-FIRST-LIGHT-TEST.md` (this stage's §2
+amendment) with the IP citations, plus the `complete_bi_way_portal` return-trip step and the exact
+`/portal global …` persistence syntax.
+
+---
+
+## J.2 — FINDING 3a: the scale-2 crossing is FAITHFUL IP PHYSICS, not a defect (dual-tracer verdict)
+
+**PINNED (both tracers): NO PORT DIVERGENCE, NO CODE DEFECT in the scale-crossing chain.** The entire chain
+was re-read 1:1 against IP this stage — `Portal.transformPoint` (scales the eye-offset-from-portal),
+`ScaleUtils.onServerEntityTeleported`/`onClientEntityTeleported` (applies the PERMANENT 2× `SCALE` attribute,
+drops the feet, scales the camera), `ServerTeleportationManager.onPlayerTeleportedInClient`,
+`ClientTeleportationManager.teleportPlayer`, and the `McHelper` eye/bbox helpers — is a faithful port, and
+26.2's `LivingEntity.getDimensions` correctly scales eye-height by the `SCALE` attribute, so the feet math
+is right on both sides.
+
+**The reported symptom IS the IP-correct result of a scale-2 crossing:**
+- **(a) transformPoint scales the eye-offset.** IP's `transformPoint` scales the player's eye-offset-from-
+  portal by the portal scale (2×). Crossing while flying ~1.3 blocks off the portal centre flings the eye up
+  ~1.3 blocks — the "forced me upwards" jump.
+- **(b) the player is now permanently a 2× giant.** The crossing correctly applies a permanent 2× `SCALE`
+  attribute, so the camera now sits **~3.24 blocks** above the feet (vs the normal ~1.62). Even standing
+  flat on the ground the camera is ~1.62 blocks higher than a normal player, and **nothing lowers it short
+  of un-scaling**. "Cannot return back down / stay on a higher Y / floating in air" is the giant's eye
+  height, not a stuck position: the player IS on/near the ground as a 2× entity; "descend" would only lower
+  the camera to its permanent giant height.
+
+**STATE IS BOTH-SIDES-CONSISTENT, NOT A DESYNC (§3a suspect iii REFUTED).** Client and server both applied
+the 2× scale to the SAME transformed eye position — this is NOT the R12 anticheat/`moveTo` re-derivation
+snapping the client, nor an R8 position-stamp mismatch, nor an R13 gravity/flying/noGravity flag corruption.
+Proof: the client "Client Teleported Statically" line (`latest.log:4550`) is logged AFTER
+`ScaleUtils.onClientPlayerTeleported` runs (the scale is applied client-side within the same crossing, so
+the client's own downward-move rejections are just the giant already being grounded). Suspect (iv) (a scaled
+`PortalCollisionHandler` box acting as an invisible floor) is also not implicated — the symptom is fully
+explained by (a)+(b), and no collision-wall report accompanied it.
+
+**Disposition:** NO code change (any "fix" would be an IP deviation — scaling portals are SUPPOSED to make
+you a giant). This is a **UX-surprise, not a bug**. Re-test note added to the script: run
+`/portal set_portal_scale 1` (or cross a scale-1 return portal) to un-scale; the giant eye height is the
+expected state of a scale-2 crossing until then.
+
+---
+
+## J.3 — FINDING 3b: the "white bar on the scaled portal" — OPEN static diagnosis, NO fix on disk
+
+After `set_portal_scale 2`, the user saw a white band at the bottom of the ENLARGED opening. With the S13-I
+fix the opening backdrop is now the dest SKY/fog colour (white-ish on a superflat day), so a white band =
+the **dest CONTENT failing to cover the bottom of the scaled opening**, with the S13-I atmosphere backdrop
+showing through where it isn't covered.
+
+**Static diagnosis (leading suspect):** the `ViewAreaRenderer` mesh scales WITH the portal (so the stencil
+opening correctly enlarges to 2×), but the dest-view frustum / terrain discovery does NOT account for the
+scaled opening extent — either `SecondaryWorldRenderCore`'s dest-view `CullingProjection`/frustum or the
+`VisibleSectionDiscovery` radius seeded from the portal under-covers the enlarged opening's bottom band, so
+the enlarged opening out-runs the dest content drawn behind it.
+
+**IMPORTANT — this has NO FIX ON DISK.** The working tree contains ONLY the §J.4 clouds skip and the U1
+blockstate asset; there is no white-bar change to re-derive. This remains an **OPEN, not-live-confirmed
+static diagnosis**, carried to the re-test list (§J.7). It is lower-severity than 3a/6 (cosmetic, only on
+scaled portals) and is deferred pending a live repro that pins mesh-extent vs frustum-extent vs discovery-
+radius as the covering gap.
+
+---
+
+## J.4 — FINDING 6: the clouds fence crash — FIXED (dest clouds skipped; documented deviation-until-S18)
+
+**Deterministic crash ×2, verbatim identical, FIXED on disk.** Both crash reports are the same stack:
+`IllegalStateException: Cannot wait on a fence for the current submit` at
+`GlCommandEncoder.awaitSubmit` ← `GlFence.awaitCompletion` ← `MappableRingBuffer.currentBuffer` ←
+`CloudRenderer.render` ← `LevelRenderer.lambda$addCloudsPass$0` ← the MAIN frame `LevelRenderer.render:240`
+(verified: `crash-2026-07-16_11.50.22-client.txt:7-14` and `…_11.58.54-client.txt`, the latter also a
+`ReportedException: Render Frame` at `latest.log 11:58:54`). Both runs are same-dim overworld (Player315/468).
+
+**Mechanism (confirmed from the crash frames + `mc262-ref`).** `MappableRingBuffer.currentBuffer()`
+(`crash frame :42`) `awaitCompletion`s a `GlFence` tied to the IN-FLIGHT submit, and `rotate()` advances the
+slot. On a **same-dim** portal `destRenderer == mc.levelRenderer`, so `destRenderer.cloudRenderer()` is the
+**SAME `CloudRenderer`** whose `utb`/`ubo` `MappableRingBuffer`s the MAIN pass's `LevelRenderer.addCloudsPass`
+draws into LATER **in the same framegraph submit**. Drawing dest clouds mid-submit (old Step 10.11) rotates/
+fences those ring-buffer slots inside the current submit, so the main pass's `currentBuffer()`
+`awaitCompletion` sees a fence for the in-flight submit → the throw. **This is the same shared-WORLD-ring-
+buffer hazard `CUTOVER_SPEC §3.2` warned about for FOG** (solved there with a core-owned standalone buffer),
+now manifesting in CLOUDS. Multiple portals multiply the mid-frame rotations — matching the user's "crash
+correlates with multiple portals."
+
+**The fix (on disk, `SecondaryWorldRenderCore.java`).** Step 10.11 **no longer calls `renderPortalClouds`**;
+it is replaced with a loud, cited skip note (`:480-497`). The faithful re-expression method is RETAINED as
+the S18 restoration reference — marked "INTENTIONALLY NOT CALLED (S13-J documented deviation)" +
+`@SuppressWarnings("unused")` with a do-NOT-re-add-at-rung-1 warning (`:619-625`).
+
+**Why SKIP is the right rung-1 disposition (fidelity order honored).** IP isolates per-dim cloud geometry
+via `CloudContext` (ported at S11-A), but that class's own header defers reconciling its per-dim cache
+against 26.2's single-`CloudRenderer` ring buffer to U10/S12 (still inert). Building that isolation now — the
+IP-faithful option (1) — is disproportionate at rung-1 triage. So dest clouds are OMITTED **exactly like the
+already-accepted weather + world-border omission** (`S13H-driver-core-design.md §6.3`), a documented
+**deviation-until-S18**. The crash was UNACCEPTABLE either way; SKIP removes it with zero risk to the proven
+first-light path. **Sky (Step 10.4) is unaffected** — it uses the core-owned `portalSkyRenderer`, not the
+shared main renderer's ring buffers.
+
+---
+
+## J.5 — FINDING 7: full log sweep — one new item censused (the stencil-FBO GL_INVALID_OPERATION)
+
+Swept `latest.log` (714 KB) + `debug.log` (1.7 MB) across the attempt-8 runs for every ERROR/WARN/exception,
+excluding the known-benign set (`[-3,0]`/`[-2,1]` `ImmPtlChunkTickets` chunk-loading-failure noise, Realms/
+`401 profile key pair`/`fetch user properties` offline-dev auth, modmenu icon). Census:
+
+- **NEW (open, non-fatal): a HIGH-severity `GL_INVALID_OPERATION` at the stencil-FBO bind, ~100×/session.**
+  `OpenGL debug message: … 'Framebuffer name must be generated before being bound.'` fired from
+  `GL30.glBindFramebuffer` at `RendererUsingStencil.prepareRendering` (`RendererUsingStencil.java:173`,
+  `latest.log:698-705` + ~94 repeats). Line 173 binds `StencilState.gameFboId` (guarded non-zero), and the
+  GL error means that ID is not a validly-generated framebuffer NAME in this context. **This is the code's
+  OWN deferred item surfacing:** the `:170-171` comment already flags "the precise render-time active-FBO
+  selection … is an S13 rung-1 driver-core runtime-verify item; inert until then." It is now LIVE and
+  under-verified. It is **non-fatal** (GL debug-callback log only; first light rendered correctly over it),
+  but it is a real render-substrate item: the stencil ops should target the render-time active FBO (the live
+  `StencilPortalRenderer` discovers it via `StencilState.lastBoundFbo`, per `:170`), not a cached
+  `gameFboId` that GL does not recognize. Carried to §J.7 as an S13 rung-1 substrate follow-up.
+- **`Missing model for variant: immersive_portals:nether_portal_block[axis=x/y/z]`** (`latest.log 11:50:52`,
+  3×). Addressed on disk this stage by the untracked **U1 blockstate asset**
+  (`common/src/main/resources/assets/immersive_portals/blockstates/`) — a resource-only add; no behavior
+  change. (The block-era portal block's blockstate JSON was absent under the `immersive_portals` namespace.)
+- **Everything else = known-benign** (auth 401s offline, Realms unreachable, `ImmPtlChunkTickets` chunk
+  `[-2,1]`/`[-3,0]` load-failure noise). No new packet floods, no per-frame render-thread `LOGGER` spam
+  (I5 discipline held), no `PreparedFrame already in use`, no R11 saved-data signatures.
+
+---
+
+## J.6 — VERIFICATION TIER + GATE DISCIPLINE
+
+**Tier: live-test triage over user ground truth + dual-tracer physics verdict + one code fix.** The §J.2
+scale verdict re-read the full crossing chain 1:1 vs IP (`Portal.transformPoint`, `ScaleUtils`, the two
+`TeleportationManager`s, `McHelper`) and grounded the both-sides-consistency on `latest.log:4550`. The §J.1
+one-sided/one-way verdict is grounded on the exact IP call sites (`PortalCommand.java:2317/2334/530`,
+`PortalManipulation.java:79/88/124`, `RectangularPortalShape.java:161 = return localPos.z() > 0`) matched to
+our identical `PortalRenderer.java:216` cull. The §J.4 clouds mechanism is grounded on both crash reports'
+frames (`MappableRingBuffer.currentBuffer:42` → `CloudRenderer.render` → `addCloudsPass`) + `CUTOVER_SPEC
+§3.2` + the `CloudContext` header's own U10/S12 defer. The §J.5 GL item is grounded on `latest.log:698-705`
++ the `RendererUsingStencil.java:170-173` self-flag.
+
+**Gate discipline (constraints honored):** the ONE code fix is a documented deviation (dest clouds skipped,
+weather/world-border precedent) — zero IP-SEMANTIC change to any live path; the faithful re-expression is
+retained for the S18 restore. Flag-OFF surface byte-identical (the edit is inside the held/registered
+`qouteall.*` render core; the live block-era driver is untouched; no `com.warwa` change; no `mixins.json`,
+AW/AT, or build wiring). **This stage did NOT run gradle and did NOT commit** (per the S13-J task
+constraint). Build-safety reasoning: the `SecondaryWorldRenderCore` edit deletes one method CALL and adds
+comments + a `@SuppressWarnings` (no signature change — `renderPortalClouds` is now unused-but-present, which
+the annotation silences); the U1 asset is resource-only. So the committed `ip_scc_closed=true` shipping×3 +
+`:common:test` green state at `9870606` is preserved by construction.
+
+**Working-tree touch (S13-J):** 1 tracked source + 1 untracked asset dir, zero `com.warwa`:
+- `render/SecondaryWorldRenderCore.java` — Step 10.11 dest-clouds call removed (documented deviation);
+  `renderPortalClouds` retained as the S18 restore reference (`@SuppressWarnings("unused")` + do-not-re-add
+  note).
+- `common/src/main/resources/assets/immersive_portals/blockstates/` (untracked, U1) — nether_portal_block
+  blockstate asset; silences the §J.5 missing-model warnings.
+
+---
+
+## J.7 — CARRIED FORWARD
+
+1. **Re-test list for the user (added to `S13-FIRST-LIGHT-TEST.md`):**
+   - **Scale crossing (3a):** after a scale-2 crossing you ARE a 2× giant — run `/portal set_portal_scale 1`
+     (or cross a scale-1 return portal) to un-scale before judging Y-position. The high camera is EXPECTED.
+   - **Multi-portal stability (6):** re-run with MULTIPLE portals in view — the clouds fence crash must be
+     GONE (no dest clouds is the accepted rung-1 look; clouds return at S18).
+   - **Scaled-portal coverage (3b):** on a `set_portal_scale 2` portal, watch the BOTTOM band of the enlarged
+     opening for the white bar — capture a screenshot if it persists (needed to pin mesh-extent vs frustum vs
+     discovery-radius; §J.3).
+2. **3b (white bar) is an OPEN static diagnosis with NO fix on disk.** First live repro + screenshot pins the
+   covering gap; then decide the fix (dest frustum/discovery extent vs the scaled opening). Do not assume it
+   is fixed.
+3. **The stencil-FBO `GL_INVALID_OPERATION` (§J.5) is an S13 rung-1 substrate follow-up.** `RendererUsing
+   StencilState.gameFboId` binds a name GL does not recognize (~100×/session, non-fatal). Resolve per the
+   code's own `:170` note — target the render-time active FBO (`StencilState.lastBoundFbo`) rather than a
+   cached `gameFboId`. It did not block first light but should not persist.
+4. **Dest clouds are a documented deviation-until-S18** (§J.4), joining the weather + world-border omissions.
+   The S18 restore requires per-dim `CloudContext` cloud-buffer isolation reconciled against 26.2's single
+   `CloudRenderer` ring buffer (U10/S12 defer) — the retained `renderPortalClouds` is the reference; do NOT
+   re-add the call at rung 1.
+5. **Same-dim entity gap (§H.6.1) unchanged**, and the S13-I nested-layer matrix bracket (§I.5) remains
+   unverified-LIVE until S18 recursion — S13-J touched neither.
+
+## STATUS: S13-J FIRST LIGHT CONFIRMED — attempt 8 shows the transformed dest view with correct parallax through a same-dim portal; walk-through, live scale/rotation/destination updates, and break/place-through-the-window all WORK, and the S13-I black seam is gone. Rung-1 census: Findings 1+2 (one-sided/one-way) = EXPECTED IP behavior (documented); 3a (scale-2 "floating") = faithful IP giant-scale physics, NO defect (documented); 6 (clouds "Cannot wait on a fence" crash ×2) = FIXED by skipping dest clouds (documented deviation-until-S18); 7 sweep = 1 new non-fatal item (stencil-FBO GL_INVALID_OPERATION, the code's own deferred runtime-verify item). OPEN with no fix on disk: 3b (white bar on scaled portals — static diagnosis, awaiting live repro). No gradle, no commit.
