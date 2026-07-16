@@ -43,6 +43,21 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         "com.warwa.seamlessportals.mixin.client.LevelRendererCullTerrainMixin"
     );
 
+    /**
+     * WEAVE-LEVEL EXCLUSIVITY (D3 extension, S13 first-light attempt 3): block-era mixins that
+     * COLLIDE at the bytecode level with a registered IP mixin on the same injection site
+     * (two {@code @Redirect}s on one instruction = Mixin skips the second and its
+     * {@code require} check kills the boot). Runtime {@code !entityPortals} gates cannot help
+     * here — the collision happens at transform time. These are skipped when the flag is ON;
+     * their function is superseded by the IP counterpart (each entry documents by what).
+     */
+    private static final Set<String> ENTITY_PORTALS_SUPERSEDED_MIXINS = Set.of(
+        // superseded by qouteall...client.sync.MixinClientPacketListener redirectGetEntityById
+        // (IP resolves entities across per-dim client worlds — strict superset of the
+        // local-player fallback; see the block-era mixin's own IP-parity javadoc note)
+        "com.warwa.seamlessportals.mixin.client.ClientPacketListenerLocalPlayerFallbackMixin"
+    );
+
     private static volatile Boolean sodiumLoaded = null;
 
     private static boolean isSodiumPresent() {
@@ -105,6 +120,13 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
             if (!EntityPortalsFlag.isOn()) {
                 return false;
             }
+        }
+        // The mirror half: flag ON suppresses block-era mixins whose injection sites collide
+        // with a registered IP mixin (weave-level exclusivity; see the set's javadoc).
+        if (EntityPortalsFlag.isOn() && ENTITY_PORTALS_SUPERSEDED_MIXINS.contains(mixinClassName)) {
+            System.out.println("[SEAMLESS EXCLUSIVITY] Skipping block-era mixin " + mixinClassName
+                + " (superseded by the IP set while entityPortals is ON)");
+            return false;
         }
         if (isSodiumPresent() && SODIUM_INCOMPATIBLE_MIXINS.contains(mixinClassName)) {
             System.out.println("[SEAMLESS COMPAT] Skipping mixin " + mixinClassName
