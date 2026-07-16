@@ -475,3 +475,150 @@ S13-E. No gradle run (nothing recompiles; the plugin/mixin JSON are byte-identic
 no `git commit`, game not run. Deliverables: `EXCLUSIVITY_LEDGER.md §7` (suppression set W1 + per-entry
 superseder/coverage + the full 18-class shared-target census + the `@Overwrite`/13-driver/KEEP sub-audits)
 + this record.
+
+## 14. S13-F — FIRST IN-WORLD CROSSER FIXES (attempt-4 live-world defects + duck/registry one-pass sweep)
+
+The boot-time landmines fixed by the intervening committed stages (S13-C weave anchors → attempt-1;
+S13.8 self-identity → attempt-2; S13-E `@Redirect` collision → attempt-3; S13.12 `MixinFrustum` null
+guard → render-frame NPE) got first-light **attempt 4** all the way to **a LIVE, TICKING WORLD** — player
+logged in, the IP login protocol + sea-level sync + the `ImmPtlClientChunkMap` all working. Attempt 4 then
+detonated the **first two IN-WORLD (post-login, per-tick) defects** — one server-tick, one client-tick.
+Both share a single root SHAPE: **an IP consumer whose IMPLEMENTOR/ASSIGNMENT half was landed decoupled
+from the consumer** (a duck cast with no registered implementor; a registry-static declared but never
+registered). S13-F fixes both AND runs the two exhaustive one-pass censuses that shape mandates, so
+attempt 5 cannot detonate on a sibling of either class.
+
+### 14.1 CRASH 1 (server tick) — `TICKET_TYPE` declared but never registered (registry-phase static)
+
+`NullPointerException` in `net.minecraft.server.level.Ticket.<init>` ("type" is null), via
+`ImmPtlChunkTickets.addTicket` (`:249-251`) → `((IEDistanceManager) dm).ip_getTicketStorage()
+.addTicketWithRadius(TICKET_TYPE, …)`, driven from the `DistanceManager.runAllUpdates` mixin
+(`flushThrottling`). **Root:** `ImmPtlChunkTickets.TICKET_TYPE` (`:69`) is `public static TicketType`,
+DECLARED but never assigned at runtime. On 1.21.3 IP static-inited it with `TicketType.create(…)`; on 26.2
+that API is GONE (api-map chunk-loading #23 — `TicketType` is now a `BuiltInRegistries.TICKET_TYPE`-registered
+`record(long timeout, int flags)` and `register(...)` is PRIVATE), so a bare unregistered instance NPEs the
+moment `TicketStorage` builds a `Ticket` from it. Its own javadoc (`:56-67`, R10(i)) already mandated the
+registration run at REGISTRY PHASE through the KEEP'd `com.warwa.seamlessportals.mixin.TicketTypeInvoker` —
+that wiring was simply never landed.
+
+**Fix (crash-1).** `fabric: SeamlessPortalsModFabric.onInitialize:66-79` assigns
+`ImmPtlChunkTickets.TICKET_TYPE = TicketTypeInvoker.seamlessportals$invokeRegister("imm_ptl",
+TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION)` — **UNCONDITIONAL** (above the
+`if (isEntityPortals())` branch, D3 registries-unconditional). Shape `FLAG_LOADING|FLAG_SIMULATION` (=6),
+`NO_TIMEOUT`, no persist = the exact 26.2 translation of IP's load+entity-tick ticket (vanilla `DRAGON`'s
+shape). **Correct phase — proven by the block-era pattern:** 26.2 `TicketType.register` = `Registry.register(
+BuiltInRegistries.TICKET_TYPE, name, new TicketType(…))`, and the shipping block-era mod already registers
+THREE of its own ticket types through the SAME `TicketTypeInvoker` at the mod-init window (`PortalChunkTracker
+:268` `seamlessportals_chunk_residency`, `PortalEntityTracker:198/:225` `seamlessportals_mirror_view`/
+`_portal_prewarm`) — those trackers are instantiated as fields of `SeamlessPortalsModFabric` (`:30-31`), so
+their class-init registration fires at mod-object construction, the same window this assignment runs in. If
+the block-era registration ships working at that phase, this one does too. Registered in both flag states
+(harmless — ticket types are a code registry, never world-saved; `addTicket` only runs flag-ON) and the id
+`imm_ptl` cannot collide with the block-era `seamlessportals_*` names. Files: `SeamlessPortalsModFabric.java`
+(the unconditional assignment); `TicketTypeInvoker` (KEEP, already registered in `seamlessportals-common
+.mixins.json:77`) forwards the private `register`.
+
+### 14.2 CRASH 2 (client tick, fatal) — `IEWorldRenderer` duck cast with no registered implementor
+
+`ClassCastException: LevelRenderer cannot be cast to qouteall.imm_ptl.core.ducks.IEWorldRenderer` at
+`ImmPtlViewArea.lambda$init$1` (`:122`) — the `POST_CLIENT_TICK_EVENT` handler casting each of
+`ClientWorldLoader`'s `LevelRenderer`s to `IEWorldRenderer` to call `ip_getBuiltChunkStorage()`. **Root:** the
+duck interface EXISTS and has live consumers (`ImmPtlViewArea.init` ×2, `MyGameRenderer`, `ClientWorldLoader`,
+`ClientDebugCommand`) but **NO registered mixin implemented it on 26.2's `LevelRenderer`.** IP's monolithic
+`MixinWorldRenderer implements IEWorldRenderer` was split across 26.2 slices during the render port and the
+**duck-implement half was never landed** — only the injection halves (R3 clip, R4 install) made it across.
+
+**Fix (crash-2).** The registered R4-install mixin `qouteall…mixin/client/render/MixinLevelRenderer` (already
+`@Mixin(LevelRenderer.class)`, already in `seamlessportals-ip-client.mixins.json`) now
+`implements IEWorldRenderer` and lands **every SURVIVING member 1:1** with IP's original
+(`IP:MixinLevelRenderer:520-578`), by plain `@Shadow` of the private 26.2 `LevelRenderer` fields — verified
+against `26.2:LevelRenderer.java`: `entityRenderDispatcher`:103 (`private final` → `@Shadow @Final`),
+`renderBuffers`:105 (`private final` → `@Shadow @Final @Mutable`), `visibleSections`:119 (`private final` →
+`@Shadow @Final @Mutable`), `viewArea`:121 (`private`, non-final → `@Shadow`). **Plain `@Shadow` resolves
+private target fields natively — no AW+AT needed** (the verbatim IP pattern). Two members diverge by 26.2
+necessity, both documented: `ip_myRenderEntity` stays RETIRED (its `MultiBufferSource` param type is GONE,
+S11-C — the duck already dropped it); and `cullingFrustum` is GONE on 26.2 (the culling frustum is a
+per-render-pass local, no `LevelRenderer` field), so `portal_getFrustum`/`portal_setFrustum` back onto a
+mixin-owned `@Unique Frustum ip_cullingFrustum` — the same "mixin owns the storage the removed vanilla field
+supplied" idiom `ImmPtlViewArea` uses for its G25 grid fields; harmless because nothing external mutates a
+26.2 `LevelRenderer` frustum, so `MyGameRenderer`'s save/restore round-trips. File:
+`MixinLevelRenderer.java`. **Class-shape note:** IP's was `public abstract class` (for the abstract
+`@Shadow renderEntity`); with that member retired the port is a `public class` (no abstract shadow), legal.
+
+### 14.3 THE ONE-PASS SWEEP — census (A) DUCK-IMPLEMENTORS + census (B) REGISTRY-PHASE STATICS
+
+Because BOTH crashers are "the second half of a two-part landing was dropped," the shape mandates sweeping
+BOTH classes exhaustively so attempt 5 cannot hit a sibling. **Result: exactly ONE additional latent crasher
+of the duck class (`IEFrameBuffer`), fixed here; zero of the registry class beyond `TICKET_TYPE`.**
+
+**(A) DUCK-IMPLEMENTOR CENSUS.** Every interface under `qouteall/imm_ptl/core/ducks/**`,
+`qouteall/q_misc_util/**/ducks`, and every `IE*` in mixin/compat/peripheral packages — for each, (i) its
+consumers (casts/invocations) and (ii) its implementor (a REGISTERED mixin). A reachable-flag-ON consumer
+with no registered implementor = crasher.
+
+| Class | Count | Implementor / verdict | Crash? |
+|---|---|---|---|
+| `ducks/**` implemented by a SEPARATE `implements IEXxx` mixin | 34 | all 34 implementors registered in `ip-core-common`/`ip-client`/`ip-qmisc` (`IEChunkMap` on both `MixinChunkMap_C`+`_E`); incl. the 2 S13-F fixes | **CLEAR** |
+| `ducks/**` with NO implementor AND NO consumers (dead) | 5 | `IEPlayerEntity`, `IEPlayerListEntry`, `IEShader`, `IESimpleRegistry`, `IEWorldChunk` — zero casts/imports repo-wide | CLEAR (inert) |
+| `@Accessor`/`@Invoker` `IE*` in mixin packages (self-implementing) | 19 | all registered (`ip-client`/`ip-core-common`/`ip-qmisc`) | CLEAR |
+| `@Accessor`/`@Invoker` `IE*` UNREGISTERED — deferred sets | 8 | Iris(2)+Sodium(2)+peripheral alt-dim(4); consumers only in `iris_/sodium_compatibility` (compat-gated OFF in vanilla) + `NormalSkylandGenerator` (C1/S19-gated) → **no reachable vanilla flag-ON consumer** | CLEAR (deferred) |
+
+The two duck-class fixes:
+- **`IEWorldRenderer` → `MixinLevelRenderer`** (crash-2, §14.2). Consumer reachable per-tick.
+- **`IEFrameBuffer` → NEW `MixinRenderTarget`** (the sweep's one latent sibling). Consumer
+  `IPPortingLibCompat.getIsStencilEnabled/setIsStencilEnabled` (`:40,:63`), driven by
+  `RendererUsingStencil.prepareRendering` / `RendererUsingFrameBuffer.finishRendering` — reachable flag-ON
+  **the instant a portal renders** (first-light rung 1 = same-dim command portals, so it WOULD have fired).
+  IP implemented it on `framebuffer.MixinRenderTarget` via an `isStencilBufferEnabled` field + a
+  `createBuffers` `@ModifyArgs` stencil-format inject; that whole FBO-creation model is GONE on 26.2 (S13B §3,
+  the mixin was RETIRED). **26.2 re-expression (documented disposition, not a 1:1 field port):** the mod
+  substrate (`com.warwa…stencil.RenderTargetMixin` on `FrameBufferCache` + `GlConstMixin`) makes every render
+  FBO stencil-capable UNCONDITIONALLY, so `ip_getIsStencilBufferEnabled()` → `true` (correctly skips
+  `IPPortingLibCompat`'s "if not enabled, enable+reload" body) and `ip_setIsStencilBufferEnabledAndReload()` →
+  no-op (no per-target stencil field, no reload — the buffer exists regardless). `@Mixin(RenderTarget.class)`
+  propagates to `MainTarget`/`TextureTarget` (main + secondary FBOs). Pure interface-impl mixin (no
+  injectors → no injection-point collision); it is the SOLE mixin on `RenderTarget.class`, and the block-era
+  `stencil/RenderTargetMixin` targets `FrameBufferCache` (a different class) — no weave contact. Registered
+  flag-ON in `ip-client.mixins.json`, skipped flag-OFF by the plugin. File: NEW
+  `qouteall/imm_ptl/core/mixin/client/render/MixinRenderTarget.java`.
+
+**(B) REGISTRY-PHASE INIT CENSUS.** Every ported static assigned via a registration/bootstrap call — verify a
+live assignment site is wired in the S13 init order; unassigned-with-reachable-consumer = fix. (No
+`AttachmentType` statics exist in the ported tree; the only `TicketType` static is `TICKET_TYPE`.)
+
+| Static | Assignment site | Phase / reachability | Verdict |
+|---|---|---|---|
+| `ImmPtlChunkTickets.TICKET_TYPE` | `SeamlessPortalsModFabric:78` (UNCOND) | mod-init, registry-phase | **FIXED (crash-1)** — was unassigned |
+| `IPCGlobal.renderer` / `rendererUsingStencil` / `rendererUsingFrameBuffer` | `IPModMainClient:81-84` | client init flag-ON (via `SeamlessPortalsClientFabric:55`); reached when a portal renders | WIRED ✓ |
+| `FogRendererContext.swappingManager` / `copyContext*` | `FogRendererContext.init()` ← registered `MixinFogRenderer` (`ip-client:26`) | client render, fog pass | WIRED ✓ |
+| `ImmPtlViewArea.init()` (POST_CLIENT_TICK + unload-signal registration) | `IPModMainClient:119` | client init flag-ON | WIRED ✓ (its cast now safe via §14.2) |
+| `IPGlobal.configHolder` | `AutoConfig.register` in `loadConfig()` (S13B §7 P1) | flag-ON `IPModMain.init` | WIRED ✓ |
+| `ImmPtlNetworkConfig.immPtlVersion` | `ImmPtlNetworkConfig:212` | flag-ON init | WIRED ✓ |
+| `DimensionIntId.clientRecord` | `MiscNetworking:117` (on `DimIdSyncPacket`) | client, post-join sync | WIRED ✓ |
+| entity types / placeholder block / arg types / IP payloads | `SeamlessPortalsModFabric` WIRE-2 (§6) | mod-init, UNCOND (D3) | WIRED ✓ |
+
+### 14.4 LESSON — a duck/registry consumer and its landing must ship together
+
+**A duck interface needs its implementor landed WITH it; a registry-phase static needs its registration
+wired WITH the declaration.** Both attempt-4 crashers were the same structural failure: the second half of a
+two-part landing was decoupled from the first and dropped. `IEWorldRenderer` shipped its consumers (and its
+whole `ducks/` declaration) but not the `implements` mixin; `TICKET_TYPE` shipped its declaration and its
+`addTicket` consumer but not the `register` call. Neither is visible to `javac` or to `:common:test` — a duck
+cast type-checks against the interface, and a `public static` field reads as assigned — so both survive every
+green build and only detonate at the runtime cast/deref. **Rule going forward: when an IP mixin is split or a
+member retired during the port, the duck-implement half must be re-homed onto a REGISTERED mixin in the same
+change (or, if the implementor is deferred, its consumers must be deferred too and proven unreachable
+flag-ON). When a registry-static's `create/register` API changes, its assignment must be re-wired at the
+correct registry phase in the same change.** The one-pass sweep is the standing guard: any `(IEXxx)` cast
+must resolve to a registered implementor, and any bootstrap-assigned static must have a live wired assignment
+site — verified by census, because neither can be caught by the compiler.
+
+**Discipline.** ZERO IP-logic deviation (the two `@Shadow`/`@Unique` re-expressions and the `MixinRenderTarget`
+substrate disposition are forced 26.2 adaptations, each documented in-line + here). AW+AT PAIRED where needed
+(none needed — plain `@Shadow` resolves the private `LevelRenderer` fields). Registrations UNCONDITIONAL (D3
+— `TICKET_TYPE`); duck-implement behavior flag-gated (the two new/edited mixins live in `ip-client.mixins.json`,
+skipped flag-OFF by `SeamlessMixinConfigPlugin`; flag-OFF byte-inert). Files touched:
+`fabric: SeamlessPortalsModFabric.java` (crash-1), `qouteall…MixinLevelRenderer.java` (crash-2), NEW
+`qouteall…MixinRenderTarget.java` + `seamlessportals-ip-client.mixins.json` (`IEFrameBuffer` sibling). Sweeps
+**2/2**. Per the S13-F task directive: **no gradle run, no `git commit`, game not run** — the orchestrator
+ships `:common`/`:fabric`/`:neoforge` + `:common:test` and commits.

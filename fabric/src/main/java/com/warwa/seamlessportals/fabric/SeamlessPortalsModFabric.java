@@ -5,6 +5,7 @@ import com.warwa.seamlessportals.chunk.PortalChunkTracker;
 import com.warwa.seamlessportals.chunk.PortalEntityTracker;
 import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.fabric.network.FabricPlatformHelper;
+import com.warwa.seamlessportals.mixin.TicketTypeInvoker;
 import com.warwa.seamlessportals.network.ModPayloads;
 import com.warwa.seamlessportals.portal.PortalManager;
 import net.fabricmc.api.ModInitializer;
@@ -13,7 +14,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.TicketType;
 import qouteall.imm_ptl.core.IPModMain;
+import qouteall.imm_ptl.core.chunk_loading.ImmPtlChunkTickets;
 import qouteall.imm_ptl.core.commands.AxisArgumentType;
 import qouteall.imm_ptl.core.commands.SubCommandArgumentType;
 import qouteall.imm_ptl.core.commands.TimingFunctionArgumentType;
@@ -59,6 +62,21 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         helper.registerEntityTypes(IPModMain::registerEntityTypes);
         IPModMain.registerBlocks(
             (id, block) -> Registry.register(BuiltInRegistries.BLOCK, id, block));
+
+        // ===== S13-F (crash-1 fix): imm_ptl chunk-ticket TYPE registration — UNCONDITIONAL =====
+        // 26.2 TicketType is a BuiltInRegistries.TICKET_TYPE-registered record (api-map chunk-loading
+        // #23); the 1.21.3 TicketType.create is GONE and a bare unregistered instance throws when handed
+        // to TicketStorage (the crash: NPE in Ticket.<init>, "type" null, via addTicketWithRadius). IP's
+        // ImmPtlChunkTickets.TICKET_TYPE was a static-init TicketType.create; on 26.2 that becomes a real
+        // registry op that must run at REGISTRY PHASE. It is assigned HERE by mod-owned glue (D2 —
+        // qouteall.* holds no loader code), through the KEEP'd TicketTypeInvoker (register() is private on
+        // 26.2), UNCONDITIONAL in both flag states (D3 registries-unconditional). Shape = FLAG_LOADING |
+        // FLAG_SIMULATION, NO_TIMEOUT — the exact 26.2 translation of IP's load+entity-tick ticket
+        // (vanilla DRAGON's shape). Registered in both states but only EXERCISED flag-ON (addTicket runs
+        // only on the IP chunk-loading path); the name "imm_ptl" is IP's own registry id and cannot
+        // collide with the block-era "seamlessportals_chunk_residency".
+        ImmPtlChunkTickets.TICKET_TYPE = TicketTypeInvoker.seamlessportals$invokeRegister(
+            "imm_ptl", TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION);
 
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) server/common init — S13 step 4 ==============

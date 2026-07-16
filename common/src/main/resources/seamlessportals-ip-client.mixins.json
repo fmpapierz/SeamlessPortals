@@ -45,6 +45,7 @@
     "client.render.MixinPreparedFrame",
     "client.render.MixinRenderSection",
     "client.render.MixinRenderSystem_Fog",
+    "client.render.MixinRenderTarget",
     "client.render.MixinScreenEffectRenderer",
     "client.render.MixinSectionRenderDispatcher",
     "client.render.optimization.IEChunkCompileTask",
