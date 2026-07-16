@@ -11,7 +11,6 @@ import net.minecraft.server.level.ServerPlayerGameMode;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.context.UseOnContext;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.BlockHitResult;
 import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Final;
@@ -72,6 +71,15 @@ public class MixinServerPlayerGameMode {
     }
 
     // use the actual dimension
+    //
+    // S13-C weave fix: 26.2 ServerPlayer declares a COVARIANT override `public ServerLevel level()`
+    // (descriptor ()Lnet/minecraft/server/level/ServerLevel;) alongside the synthetic ()Level bridge.
+    // javac binds every receiver-typed-ServerPlayer `this.player.level()` to the covariant, so
+    // incrementDestroyProgress/handleBlockBreakAction contain ONLY the ()ServerLevel invoke
+    // (javap-confirmed against the named dev jar) — the IP-era ()Level target matched 0 points => fatal
+    // InvalidInjectionException at weave (require:1). Re-anchored the @At target to ()ServerLevel and the
+    // handler return type Level -> ServerLevel (a @Redirect handler must return the redirected call's
+    // type; ip_getActualWorld() already returns ServerLevel). IP semantics unchanged.
     @Redirect(
         method = {
             "incrementDestroyProgress",
@@ -79,10 +87,10 @@ public class MixinServerPlayerGameMode {
         },
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/server/level/ServerPlayer;level()Lnet/minecraft/world/level/Level;"
+            target = "Lnet/minecraft/server/level/ServerPlayer;level()Lnet/minecraft/server/level/ServerLevel;"
         )
     )
-    private Level redirectGetLevel(ServerPlayer instance) {
+    private ServerLevel redirectGetLevel(ServerPlayer instance) {
         return ip_getActualWorld();
     }
 

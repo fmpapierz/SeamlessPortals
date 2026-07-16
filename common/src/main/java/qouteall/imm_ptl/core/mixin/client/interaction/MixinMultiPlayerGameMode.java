@@ -35,12 +35,13 @@ import qouteall.q_misc_util.api.McRemoteProcedureCall;
  *
  * <p><b>26.2 retargets:</b>
  * <ul>
- *   <li><b>⚠L {@code redirectPlayerLevel1}:</b> the {@code LocalPlayer.level()} call this @Redirect targets
- *       lives inside a SYNTHETIC LAMBDA of {@code startDestroyBlock} (the second {@code startPrediction}
- *       lambda, {@code 26.2:MultiPlayerGameMode.java:188->194}; IP's {@code method_41930} is a dead 1.21.3
- *       name). <b>S13:</b> the lambda's synthetic name must be re-derived from the COMPILED 26.2 jar (R13c)
- *       and substituted for {@code "startDestroyBlock"} in {@code method=}; the annotation compiles as-is
- *       but will not resolve the inner-lambda invoke until re-anchored at registration.</li>
+ *   <li><b>{@code redirectPlayerLevel1} (S13-C RESOLVED):</b> the {@code LocalPlayer.level()} call this
+ *       @Redirect targets lives inside a SYNTHETIC LAMBDA of {@code startDestroyBlock} (IP's
+ *       {@code method_41930} is a dead 1.21.3 name); {@code startDestroyBlock}'s own body has NO
+ *       {@code level()} invoke, so targeting {@code "startDestroyBlock"} matched 0 points and crashed at
+ *       weave. Re-derived the lambda's synthetic name from the COMPILED named 26.2 jar (R13c:
+ *       {@code lambda$startDestroyBlock$1(BlockState,BlockPos,Direction,int)Packet}) and substituted it
+ *       for the {@code method=} selector; the @At INVOKE target string was already correct.</li>
  *   <li><b>{@code redirectPlayerLevel2}:</b> the surviving {@code player.level()} in
  *       {@code continueDestroyBlock} is DIRECT (not in a lambda, {@code :256}); the @Redirect resolves
  *       normally.</li>
@@ -67,10 +68,15 @@ public abstract class MixinMultiPlayerGameMode implements IEClientPlayerInteract
     private Minecraft minecraft;
 
     // the player level field is not being switched now
-    // ⚠L: on 26.2 this LocalPlayer.level() invoke is inside a synthetic lambda of startDestroyBlock
-    // (IP's method_41930 is dead). S13: re-derive the lambda name from the compiled jar (R13c).
+    // S13-C weave fix: on 26.2 the ONLY LocalPlayer.level() invoke reachable from startDestroyBlock lives
+    // inside the SYNTHETIC lambda `lambda$startDestroyBlock$1` (offset 67; IP's method_41930 is a dead
+    // 1.21.3 name). startDestroyBlock's own body has ZERO level() invokes, so the IP-era selector matched
+    // 0 points => fatal InvalidInjectionException at weave (require:1). Re-derived the lambda name from the
+    // compiled named dev jar (R13c: `lambda$startDestroyBlock$1(BlockState,BlockPos,Direction,int)Packet`,
+    // ordinal $1 compiler-assigned) and substituted it for the method selector; the @At INVOKE target
+    // string is unchanged (bytecode owner is literally LocalPlayer.level). IP semantics identical.
     @Redirect(
-        method = "startDestroyBlock",
+        method = "lambda$startDestroyBlock$1",
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/client/player/LocalPlayer;level()Lnet/minecraft/world/level/Level;"

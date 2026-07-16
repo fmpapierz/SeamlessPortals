@@ -64,8 +64,12 @@ public abstract class MixinCamera implements IECamera {
     @Shadow
     protected abstract void setPosition(Vec3 vec3d_1);
 
-    @Shadow
-    public abstract Entity getEntity();
+    // S13-C weave fix: dropped the orphaned `@Shadow public abstract Entity getEntity();`. 26.2 renamed
+    // the getter to `Camera.entity()` (Camera.java:407); `getEntity()` no longer exists on Camera (nor is
+    // it inherited — Camera extends Object), so the abstract @Shadow failed apply-time validation
+    // ("@Shadow method getEntity ... NOT located in ... Camera"). The member was DEAD — nothing in the mod
+    // consumes it and IECamera never declared it (the focused-entity field is reached via the @Shadow
+    // `entity` field + portal_setFocusedEntity), so it is removed rather than re-anchored.
 
     // IP injected at setup(...) RETURN; 26.2 re-anchors onto update(DeltaTracker) right AFTER
     // alignWithEntity and BEFORE prepareCullFrustum snapshots this.position (mixin-client.md §7 ①).

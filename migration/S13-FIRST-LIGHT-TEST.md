@@ -55,6 +55,15 @@ errors. This is the "old system untouched" proof.
 
 ## PART 1 — flag-ON rung 1 (same-dimension command portals)
 
+> **Weave audit passed (S13-C).** The first flag-ON launch crashed at mixin-weave time; the emergency
+> S13-C audit (`port-notes/S13C-weave-audit.md`) swept **all 137 registered IP mixins across the 5 `ip-*`
+> configs** against the loom **named** dev bytecode, re-anchored/neutralized the 5 weave-broken mixins
+> zero-deviation, and left 0 unaudited — the registered set is now weave-clean and Part 1 can be relaunched.
+> **If it still crashes at load:** because `required=true` logs **every** failed mixin apply before it
+> aborts, one run surfaces the complete set — report the FULL set of any remaining
+> `Mixin apply ... failed` (and `InvalidInjectionException` / `@Shadow ... NOT located`) lines from
+> `latest.log`, not just the first, since they are all logged before the crash.
+
 ### 1.1 Turn the flag ON, in a THROWAWAY world
 
 - **Enable the flag:** edit `fabric/runs/client/config/seamlessportals.properties`, add a line

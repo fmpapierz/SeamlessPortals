@@ -156,8 +156,15 @@ public abstract class MixinMinecraft implements IEMinecraftClient {
         Profiler.get().pop();
     }
 
+    // S13-C weave fix: IP hooked the once-per-second `fps = frames` write. In 26.2 that write moved OFF
+    // runTick(Z) into renderFrame(Z) — the SOLE `putstatic fps:I` in the class (offset 870, inside the
+    // `Util.getMillis - lastTime >= 1000ms` block; javap-confirmed against the named dev jar). runTick(Z)
+    // no longer touches fps, so the IP-era method selector matched 0 FIELD points => fatal
+    // InvalidInjectionException at weave (require:1). Re-anchored to renderFrame(Z): it also takes a single
+    // boolean so the (boolean tick, CallbackInfo) handler sig is unchanged, the FIELD target fps:I matches
+    // exactly 1 point there, and shift=AFTER still reads the freshly-set fps. IP semantics identical.
     @Inject(
-        method = "Lnet/minecraft/client/Minecraft;runTick(Z)V",
+        method = "Lnet/minecraft/client/Minecraft;renderFrame(Z)V",
         at = @At(
             value = "FIELD",
             target = "Lnet/minecraft/client/Minecraft;fps:I",

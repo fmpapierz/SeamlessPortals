@@ -31,6 +31,7 @@ import qouteall.imm_ptl.core.api.PortalAPI;
 import qouteall.imm_ptl.core.collision.CollisionHelper;
 import qouteall.imm_ptl.core.collision.PortalCollisionHandler;
 import qouteall.imm_ptl.core.compat.GravityChangerInterface;
+import qouteall.imm_ptl.core.ducks.IEAbstractClientPlayer;
 import qouteall.imm_ptl.core.ducks.IEClientPlayNetworkHandler;
 import qouteall.imm_ptl.core.ducks.IEEntity;
 import qouteall.imm_ptl.core.ducks.IEGameRenderer;
@@ -480,7 +481,17 @@ public class ClientTeleportationManager {
         ((IEEntity) player).ip_unsetRemoved();
         
         toWorld.addEntity(player);
-        
+
+        // IP 1.21.3 (ClientTeleportationManager:483): re-point the client player's level via
+        // ((IEAbstractClientPlayer) player).ip_setClientLevel(toWorld), preserved verbatim in call order.
+        // 26.2 two-field->one-field collapse: IP wrote AbstractClientPlayer.clientLevel here, a field DISTINCT
+        // from Entity.level (written by ip_setWorld at the top of this method). On 26.2 AbstractClientPlayer
+        // has no clientLevel; ip_setClientLevel re-sites onto Entity.level (MixinAbstractClientPlayer routes it
+        // through ip_setWorld == `this.level = level;`), so this is now a harmless duplicate write of the same
+        // pointer already set above. Kept (not dropped) so the IEAbstractClientPlayer duck stays IP-faithful
+        // and non-caller-less, and IP's exact write sequence is preserved.
+        ((IEAbstractClientPlayer) player).ip_setClientLevel(toWorld);
+
         IEGameRenderer gameRenderer = (IEGameRenderer) Minecraft.getInstance().gameRenderer;
         gameRenderer.ip_setLightmapTextureManager(ClientWorldLoader
             .getDimensionRenderHelper(toDimension).lightmapTexture);
