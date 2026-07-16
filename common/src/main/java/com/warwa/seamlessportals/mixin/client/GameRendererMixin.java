@@ -47,6 +47,16 @@ public abstract class GameRendererMixin {
         com.warwa.seamlessportals.client.PortalWorldManager.lateUpdateSecondaryLight();
         com.warwa.seamlessportals.client.PortalWorldManager.endSecondaryRenderFrames();
         com.warwa.seamlessportals.render.PortalRenderBuffersPool.endFramePooled();
+        // Flag-ON counterpart: drain IP's own secondary RenderBuffers pool
+        // (MyGameRenderer.secondaryRenderBuffers, cycled by switchAndRenderTheWorld when
+        // IPGlobal.useSecondaryEntityVertexConsumer=true). The block-era PortalRenderBuffersPool drain above
+        // does NOT touch this pool. ADDITIVE 26.2-required per carriage flag B6 (MyGameRenderer
+        // .endFramePooled javadoc mandates wiring "from GameRenderer.render TAIL at S12/S13"); without it
+        // every portal frame leaks GPU buffers (memory gpu-buffer-leak-endframe). Flag-gated: the IP pool is
+        // idle flag-OFF (switchAndRenderTheWorld never runs), so flag-OFF this is byte-inert.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            qouteall.imm_ptl.core.render.MyGameRenderer.endFramePooled();
+        }
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }

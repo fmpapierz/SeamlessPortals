@@ -54,11 +54,16 @@ public abstract class MinecraftFramePumpMixin {
         // Mod code dispatches on the load-time entityPortals master switch; the ported IP body lives in
         // its OWN branch and is never flag-polluted (the D3 shared-host rule). Flag OFF (the shipping
         // default) → the block-era pump below runs, byte-for-byte unchanged. Flag ON → IP's pre-render
-        // chain, which is IP MixinGameRenderer.onFarBeforeRendering:86-96 relocated onto this
+        // chain, which is IP MixinGameRenderer.onFarBeforeRendering:76-99 relocated onto this
         // renderFrame anchor (S03-frame-anchor.md §6): it must run before the frame's camera is
         // positioned so a render-time teleport renders the crossing frame from the DESTINATION.
         if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
             Minecraft mc = Minecraft.getInstance();
+            // IP MixinGameRenderer:76 — PRE_TOTAL_RENDER_TASK_LIST.processTasks() runs at render HEAD BEFORE
+            // the level==null guard (IP :78), so the GC-cleaner disposal one-shot tasks PortalRenderInfo
+            // queues (PortalRenderInfo.java:135) are always drained; without it they accumulate unboundedly.
+            // Placed above the level guard to match IP's ordering exactly.
+            qouteall.imm_ptl.core.IPGlobal.PRE_TOTAL_RENDER_TASK_LIST.processTasks();
             if (mc.level == null) {
                 return;
             }
@@ -74,6 +79,11 @@ public abstract class MinecraftFramePumpMixin {
             if (qouteall.imm_ptl.core.IPCGlobal.earlyRemoteUpload) {
                 qouteall.imm_ptl.core.render.MyRenderHelper.earlyRemoteUpload();
             }
+            // IP MixinGameRenderer:99 — frameIndex++ closes the pre-render handler (AFTER the pre-render
+            // block, guarded by level!=null, exactly as IP). It rotates PortalRenderInfo.updateQuerySet's
+            // occlusion-query buffers (PortalRenderInfo.java:155); without it every portal render takes the
+            // synchronous fetchQueryResult stall path and the infoMap is never pruned.
+            qouteall.imm_ptl.core.render.context_management.RenderStates.frameIndex++;
             return;
         }
 

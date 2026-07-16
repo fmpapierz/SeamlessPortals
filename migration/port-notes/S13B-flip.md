@@ -622,3 +622,157 @@ skipped flag-OFF by `SeamlessMixinConfigPlugin`; flag-OFF byte-inert). Files tou
 `qouteall…MixinRenderTarget.java` + `seamlessportals-ip-client.mixins.json` (`IEFrameBuffer` sibling). Sweeps
 **2/2**. Per the S13-F task directive: **no gradle run, no `git commit`, game not run** — the orchestrator
 ships `:common`/`:fabric`/`:neoforge` + `:common:test` and commits.
+
+## 15. S13-G — FIRST LIGHT: THE INVISIBILITY BLOCKER (render-DISPATCH) + chunk-ticket verdict + concurrent-build lesson
+
+First-light **attempt 6 was the breakthrough run**: with every prior boot-time landmine cleared (S13-C
+weave anchors, S13.8 self-identity, S13-E `@Redirect` collision, S13.12 `MixinFrustum` guard, S13-F duck/
+registry landings), the world ran **STABLE ~2 minutes flag-ON** and **three portals were created
+server-side** — the log shows `Created 3.0x3.0 portal minecraft:overworld(16.5,-58.5,13.5) -> (16.5,-58.5,
+-6.5)` etc, with `/portal make_portal` + `complete_bi_way_portal` all executing and server-side proximity
+working (collision-notify fired). **BUT the user NEVER SAW any portal client-side** — standing 3 blocks
+from one, nothing rendered, no window, **no errors in the client log**. Zero-error invisibility. Entity
+type **F14 is EXONERATED**: `Portal.createPortalEntityType` correctly sets `clientTrackingRange(6)` = 96
+blocks + `updateInterval(20)` (`Portal.java:110-127`), so tracking is not the gap.
+
+Two tracers split DEFECT 1 (the invisibility) across the two candidate halves — spawn/sync (1a) and render
+dispatch (1b). **The first-broken-link is entirely in the render half.** (Full tracer logs:
+`scratchpad/S13G-tracerA-spawn-sync.log`, `scratchpad/S13G-tracerC-chunkticket.log`.)
+
+### 15.1 DEFECT 1(a) — SPAWN/SYNC: **NO broken link** (proven LIVE, no fix)
+
+The client Portal entity IS created with a valid 3×3 shape/dest and added to the main client level
+(`mc.level`). Each of the three `/portal make_portal` commands produced an `imm_ptl:spawn_portal`
+(`PortalSyncPacket`) that **arrived at the client** (`debug.log:3528/3573/3581`, `[Render thread]`
+"Handling inbound packet from channel … `imm_ptl:spawn_portal`"), was dispatched to the **flag-ON-registered
+receiver**, and `PortalSyncPacket.handle()` completed with **zero errors** (no `Failed to read portal data`,
+no Fabric receiver error). `IPModMainClient.init` ran flag-ON (`latest.log:89` "entity-portal engine
+initialized (client)"), so `ImmPtlNetworking.initClient()` registered the receiver. The mission's
+zero-size / receiver-not-registered / TYPE-only-mirror / S13-B wire2 else-branch theories are all
+**DISPROVEN**: the receiver is live, the packet arrived on the correct channel **unredirected** (correct for
+same-dim — `PacketRedirection.sendRedirectedPacket` force-redirects dim==entity-dim to an unredirected
+send), and the NBT round-trip is symmetric (`putDouble`/`getDoubleOr` width=3, height=3). Verified chain
+(all faithful to IP 1.21.3 modulo sanctioned 26.2 renames — 2-arg `create(world,EntitySpawnReason.LOAD)`
+C11, `moveTo→snapTo` C12, `new ClientboundCustomPayloadPacket` F3): `Portal.getAddEntityPacket:944-949` →
+`createSyncPacket:951-968` → `addAdditionalSaveData:390-450` (SEND); `ImmPtlNetworking.init:237-254` →
+`FabricPlatformHelper.registerClientboundPayload:48-53` (WIRE); `ImmPtlNetworking.initClient:256-266` →
+`ClientPlayNetworking.registerGlobalReceiver` → `PortalSyncPacket.handle:179-229` (`getWorld(dim)→mc.level`;
+`readPortalDataFromNbt`; `world.addEntity`; `CLIENT_PORTAL_SPAWN_EVENT`) (CLIENT APPLY). **IP-faithful fix
+for 1(a): NONE — spawn/sync is a correct, faithful port.**
+
+### 15.2 DEFECT 1(b) — RENDER DISPATCH: the ORPHANED renderer (the first-light blocker)
+
+Because the client Portal entity exists with valid data, the invisibility is purely render dispatch.
+Corroboration: a grep of `debug.log` for `renderPortals`/`RendererUsingStencil`/`invokeWorldRendering`/
+`IPCGlobal.renderer` returns **ZERO hits** — the ported renderer never ran. `IPModMainClient.init`
+constructs the renderer and assigns `IPCGlobal.renderer = rendererUsingStencil` (§14.3 census row, WIRED
+✓), but **nothing ever drove its per-frame lifecycle**. IP drove that lifecycle from client `GameRenderer`/
+`LevelRenderer` MIXINS that this port **RE-HOMED, not re-ported** (ported `MixinGameRenderer.java:40-53`
+documents the re-home explicitly): IP's `onBeforeRenderingCenter` (→ `switchToCorrectRenderer` +
+`prepareRendering`), `onMyBeforeTranslucentRendering` (→ `onBeforeTranslucentRendering(modelView)`), and
+`onAfterRenderingCenter` (→ `finishRendering`). Their promised 26.2 REPLACE-BY is a Fabric
+`LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN` callback (EXCLUSIVITY_LEDGER **rows 14/15**:
+`StencilPortalRenderer.renderPortals()` REPLACE-BY `PortalRenderer`+`RendererUsingStencil`+`MyGameRenderer`;
+CUTOVER_SPEC **§6.2 item 2**) — but at attempt 6 that flag-ON callback **was never registered**: only the
+block-era `else`-branch (`StencilPortalRenderer.renderPortals()`) had one. **An inert render dispatch = a
+valid client Portal with no window and zero errors = exactly the observed symptom.** This is the strict
+first-missing link.
+
+### 15.3 THE FIX (DEFECT 1) — flag-ON render dispatch + recursion guard + camera view-rotation
+
+In `SeamlessPortalsClientFabric.onInitializeClient()` **flag-ON branch** (after `IPModMainClient.init`,
+`:103-115`), registered the `LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN` callback that drives the orphaned
+renderer lifecycle, mirroring the block-era `else`-branch's `renderPortals()`:
+
+```
+if (PortalRendering.isRendering()) return;                       // recursion guard (see below)
+Matrix4f modelView = new Matrix4f(                               // IP's onBeforeTranslucentRendering arg
+    client.gameRenderer.gameRenderState().levelRenderState.cameraRenderState.viewRotationMatrix);
+PortalRenderer.switchToCorrectRenderer();                        // IP onBeforeRenderingCenter
+IPCGlobal.renderer.prepareRendering();
+IPCGlobal.renderer.onBeforeTranslucentRendering(modelView);      // IP onMyBeforeTranslucentRendering
+IPCGlobal.renderer.finishRendering();                            // IP onAfterRenderingCenter
+```
+
+- **Recursion guard (`PortalRendering.isRendering()`, added — the initial tracer snippet omitted it).**
+  `renderPortalContent` recursively calls `renderLevel` on the destination, which **re-fires this same
+  event**; re-running `prepareRendering()` there would clear the OUTER portal's stencil mid-render. IP was
+  structurally immune (its `prepareRendering` fired once per frame at `GameRenderer.render`, not on the
+  recursive `renderLevel`; only `onBeforeTranslucentRendering` re-fired per nested pass). The mod's single
+  per-`renderLevel` seam reproduces the once-per-frame guarantee by early-returning when already rendering —
+  mirroring the block-era `renderPortals()` `if (isRenderingPortal) return;`.
+
+- **THE P1 MAJOR DEFECT in the first cut of the fix, and the final resolution.** The first cut passed
+  `modelView = new Matrix4f(context.poseStack().last().pose())`, which is the **IDENTITY matrix, not the
+  camera view-rotation**. Proof: Fabric's `LevelRenderContext.poseStack()` is the fresh `new PoseStack()`
+  created in `LevelRenderer.submitFeatures` (`26.2:LevelRenderer.java:280`) and **balance-asserted to
+  identity** by `checkPoseStack` (`:301`). Feeding identity to `getPortalsToRender` /
+  `FrontClipping.updateInnerClipping` means the early frustum cull
+  (`IPCGlobal.earlyFrustumCullingPortal`, `PortalRenderer.java:233`) faces world −Z **regardless of where
+  the camera looks** and wrongly culls visible portals — the invisibility would have **persisted**. The
+  **final fix** reads the real view-rotation: on 26.2 IP's `renderLevel` `modelView` local moved into
+  `CameraRenderState.viewRotationMatrix` (`26.2:CameraRenderState.java:30`), which already carries the R13k
+  `processTransformation` post-process (ported `MixinGameRenderer.onExtractEnded:156`) — the exact idiom the
+  live substrate proves (`StencilPortalRenderer.buildMainFrustum:66-70`). Copied defensively (it feeds the
+  frustum + `FrontClipping` + `ViewAreaRenderer`, none of which may mutate it).
+
+**DEFERRED to the S13 DRIVER-CORE pass (this dispatch makes the renderer RUN; two nested/driver-core links
+remain, to be landed against the LIVE observation this dispatch first enables — no game run was available
+to this stage):** (a) `MyGameRenderer.switchAndRenderTheWorld`'s `invokeWrapper` never re-points extraction
+to the dest world (dest `LevelExtractor.extract` + `compileSections` drain + `LevelRenderState` re-point —
+CUTOVER_SPEC §6.2 item 2 / §5.1; `MyGameRenderer.java` SCOPE LINE :50-63), so **the window will show the
+MAIN-world extract until it lands** (this was the deferred S11-B render DRIVER CORE, `S11B-render-drivers.md
+§1.1`); (b) `VisibleSectionDiscovery.armCompileScheduling` at the `renderPortalContent` dest-pass seam
+(`PortalRenderer.java:287-303` / §5.1) — needs the (a) state; and the two-nested-portal-layer case behind
+the once-per-frame guard. These are the render DRIVER CORE, distinct from the DISPATCH landed here.
+
+### 15.4 DEFECT 2 — chunk `[-3, 0]` loading failure: BENIGN, IP-faithful, **no fix** (the chunk-ticket verdict)
+
+`Chunk loading failure ServerWorld minecraft:overworld [-3, 0]` fired both runs, same chunk, right after
+login, non-fatal (`latest.log:584`). Call site: `ImmPtlChunkTickets.flushThrottling()` poll
+(port `:196-217`, error log `:209-214`), **BYTE-IDENTICAL** to IP `:188-209` modulo the one R10 rename
+(`new ChunkPos(chunkPos)` → `ChunkPos.unpack(chunkPos)`, #42). **Mechanism (verified against 26.2):** the
+poll reads `chunkHolder.getEntityTickingChunkFuture().getNow(null)` off the **VISIBLE** holder map
+(`MixinChunkMap_C.ip_getChunkHolder` → `getVisibleChunkIfPresent`), which **LAGS the updating map by one
+`runAllUpdates` swap**. A chunk whose radius-2 ticket was just added (Step B) but whose level-drop + visible
+swap hasn't happened yet still carries the **default pre-completed `UNLOADED_LEVEL_CHUNK_FUTURE` failure**
+(`ChunkHolder.java:38`), so `getNow` returns a non-null failed result → the LOG fires and it is removed from
+`waitingForLoading` — **but the TICKET REMAINS** in `chunkPosToTicketInfo`, so the chunk keeps loading and
+reaches entity-ticking the next cycle. **No loading loss.** R10 arithmetic proven identical: `getLoadingRadius()`
+= 2 (`activeLoading` default true) → ticket level `ChunkLevel.byStatus(FULL)=33 − radius = 31 =
+ENTITY_TICKING`; `addTicketWithRadius(TICKET_TYPE,pos,radius)` == IP's `addRegionTicket(...,radius,...)`
+(both `33 − radius`) — **no off-by-one**. `[-3,0]` is deterministic because single-player fixed spawn +
+fixed render distance + throttle-batching (cap 4) + `generationCounter` ordering land the same batch-boundary
+edge chunk in the poll-before-visible-swap window each run. **SEVERITY: BENIGN** — noisy log only, no unload,
+run stable ~2 min, single chunk; **this error occurs in STOCK IP under the same conditions** (IP ships it
+with `@SuppressWarnings` + a documenting `flushThrottling` javadoc that names exactly this transient).
+**UNRELATED to DEFECT 1** (server-side chunk throttling only). **FIX: NONE required** — real loss refuted;
+under ZERO-DEVIATION the port stays verbatim-IP. (A cosmetic `LOGGER.error → debug` downgrade would be a
+recorded deviation from IP and was deliberately NOT done.)
+
+### 15.5 LESSON — the CONCURRENT-BUILD hazard (never run the game while agent builds may rewrite build outputs)
+
+The run's **final `NoClassDefFoundError`/`ClassNotFoundException`** (`debug.log:3630`, `PortalCollisionHandler`
+@ 23:08:16) was **NOT a code defect**: a background agent build rewrote `build/classes` **while the live
+game lazy-loaded a class**, so the on-disk `.class` the JVM went to load was mid-rewrite/absent. It is a
+build-timing artifact, not a runtime bug, and must be **ignored** when a concurrent build is proven.
+**RULE: never launch the game while agent builds may rewrite build outputs.** The orchestrator now **gates
+user launches on workflow idleness** — no compile/ship task may be in flight before or during a `runClient`;
+if such an error appears, confirm build-quiescence and re-run rather than diagnosing it as a game crash.
+(This is the render-thread analog of the general "measure under a quiet system" discipline: a live JVM and a
+`build/classes` rewrite must never overlap.)
+
+### 15.6 Discipline + files touched
+
+**ZERO IP-logic deviation.** The dispatch is the sanctioned **RE-HOME** of IP's frame-lifecycle hooks onto
+the mod's proven Fabric `AFTER_TRANSLUCENT_TERRAIN` seam (ported `MixinGameRenderer.java:40-53` +
+EXCLUSIVITY_LEDGER rows 14/15 + CUTOVER_SPEC §6.2 item 2 authorize it in place of a re-port that would
+DOUBLE-drive the renderer); the `viewRotationMatrix` read is the mandated 26.2 `CameraRenderState` idiom
+(the R13k-processed camera rotation), not an invented value. **Flag-gated:** the dispatch lives entirely in
+the `if (isEntityPortals())` branch; **flag-OFF is byte-inert** — the block-era `else`-branch
+`StencilPortalRenderer.renderPortals()` registration is unchanged (EXCLUSIVITY_LEDGER row 14 GATED). DEFECT
+2 required **no source change** (verified verbatim-IP). Per the S13-G task directive: **no gradle run by
+this record's authoring, no `git commit`, game NOT run** — the orchestrator ships `:common`/`:fabric`/
+`:neoforge` + `:common:test` and commits. **File touched (DEFECT 1 fix):**
+`fabric/…/SeamlessPortalsClientFabric.java` (the flag-ON `AFTER_TRANSLUCENT_TERRAIN` dispatch +
+`PortalRendering.isRendering()` recursion guard + `cameraRenderState.viewRotationMatrix` `modelView`).

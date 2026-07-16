@@ -8,8 +8,11 @@ import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.world.entity.EntityType;
+import org.joml.Matrix4f;
+import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.portal.BreakableMirror;
 import qouteall.imm_ptl.core.portal.EndPortalEntity;
 import qouteall.imm_ptl.core.portal.LoadingIndicatorEntity;
@@ -22,6 +25,8 @@ import qouteall.imm_ptl.core.portal.nether_portal.GeneralBreakablePortal;
 import qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity;
 import qouteall.imm_ptl.core.render.LoadingIndicatorRenderer;
 import qouteall.imm_ptl.core.render.PortalEntityRenderer;
+import qouteall.imm_ptl.core.render.context_management.PortalRendering;
+import qouteall.imm_ptl.core.render.renderer.PortalRenderer;
 
 public class SeamlessPortalsClientFabric implements ClientModInitializer {
 
@@ -53,8 +58,65 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             qouteall.q_misc_util.ImplRemoteProcedureCall.initClient();
             qouteall.q_misc_util.MiscNetworking.initClient();
             qouteall.imm_ptl.core.IPModMainClient.init();
+
+            // ===== WIRE 3 (S13-G): flag-ON render-DISPATCH — the REPLACE-BY of the block-era driver =====
+            // CUTOVER_SPEC §6.2 item 2 / EXCLUSIVITY_LEDGER rows 14/15 / ported MixinGameRenderer.java:
+            // 40-53. First-light attempt 6 spawned + synced the client Portal entities correctly but drew
+            // NO window (zero-error invisibility): IPModMainClient.init constructs the ported renderer and
+            // assigns IPCGlobal.renderer = rendererUsingStencil, but NOTHING ever drove its per-frame
+            // lifecycle. IP drove it from client MIXINS that were RE-HOMED, not re-ported —
+            //   MixinGameRenderer.onBeforeRenderingCenter  -> switchToCorrectRenderer() + prepareRendering()
+            //   MixinLevelRenderer.onMyBeforeTranslucentRendering -> onBeforeTranslucentRendering(modelView)
+            //   MixinGameRenderer.onAfterRenderingCenter   -> finishRendering()
+            // whose promised 26.2 REPLACE-BY (ported MixinGameRenderer.java:44-47) is exactly this Fabric
+            // LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN registration, wired flag-ON in place of the
+            // block-era StencilPortalRenderer.renderPortals() (the else-branch below). This is the strict
+            // first-missing link and the direct cause of the invisibility; it makes the renderer RUN.
+            //
+            // Recursion guard: renderPortalContent recursively calls renderLevel on the destination, which
+            // re-fires this event; re-running prepareRendering() there would clear the OUTER portal's
+            // stencil mid-render. IP was structurally immune (prepareRendering fired once per frame at
+            // GameRenderer.render, not on the recursive renderLevel; onBeforeTranslucentRendering re-fired
+            // per pass for nested portals). The mod's single per-renderLevel seam reproduces the essential
+            // once-per-frame guarantee by early-returning when PortalRendering.isRendering() — mirroring
+            // the block-era renderPortals() `if (isRenderingPortal) return;`. This drives rung-1 (single)
+            // portals. Two nested layers remain deferred to the S13 DRIVER-CORE pass, to be landed against
+            // the live observation THIS dispatch first enables (NOT wired here — no game run available):
+            //   (a) MyGameRenderer.switchAndRenderTheWorld's invokeWrapper never re-points extraction to
+            //       the dest world (dest LevelExtractor.extract + compileSections drain + LevelRenderState
+            //       re-point — CUTOVER_SPEC §6.2 item 2 / §5.1; MyGameRenderer.java SCOPE LINE :50-63), so
+            //       the window will show the main-world extract until it lands.
+            //   (b) VisibleSectionDiscovery.armCompileScheduling at the renderPortalContent dest-pass seam
+            //       (PortalRenderer.java:287-303 / CUTOVER_SPEC §5.1) — needs the (a) driver-core state.
+            // modelView is IP's onBeforeTranslucentRendering argument (IP MixinLevelRenderer.java:148 passed
+            // renderLevel's `modelView` local, i.e. the camera VIEW-ROTATION matrix — NOT the pose stack).
+            // The Fabric LevelRenderContext.poseStack() is the fresh `new PoseStack()` created in
+            // LevelRenderer.submitFeatures and balance-asserted to IDENTITY before the main pass; reading its
+            // top pose here fed FrontClipping/getPortalsToRender an identity matrix, so the early frustum cull
+            // (IPCGlobal.earlyFrustumCullingPortal, PortalRenderer.java:233) faced world -Z regardless of the
+            // camera and wrongly culled visible portals (the first-light invisibility). On 26.2 IP's
+            // renderLevel view-rotation moved into CameraRenderState.viewRotationMatrix (CameraRenderState
+            // .java:30), already carrying the R13k processTransformation post-process (ported
+            // MixinGameRenderer.onExtractEnded:156). Read it — the exact idiom the live substrate proves
+            // (StencilPortalRenderer.buildMainFrustum:66-70). Copied defensively: it feeds getPortalsToRender's
+            // frustum + FrontClipping.updateInnerClipping + ViewAreaRenderer, none of which may mutate it.
+            LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
+                if (PortalRendering.isRendering()) {
+                    return;
+                }
+                Minecraft client = Minecraft.getInstance();
+                Matrix4f modelView = new Matrix4f(
+                    client.gameRenderer.gameRenderState().levelRenderState
+                        .cameraRenderState.viewRotationMatrix);
+                PortalRenderer.switchToCorrectRenderer();
+                IPCGlobal.renderer.prepareRendering();
+                IPCGlobal.renderer.onBeforeTranslucentRendering(modelView);
+                IPCGlobal.renderer.finishRendering();
+            });
+
             SeamlessPortalsConstants.LOGGER.info(
-                "Seamless Portals: entity-portal engine initialized (client)");
+                "Seamless Portals: entity-portal engine initialized (client); "
+                    + "flag-ON render dispatch registered (AFTER_TRANSLUCENT_TERRAIN)");
         } else {
             // ===== BLOCK-ERA client driver set (flag-OFF, the shipping baseline — UNCHANGED) =======
             FabricPlatformHelper.registerClientHandlers();
