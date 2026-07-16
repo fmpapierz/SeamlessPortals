@@ -266,3 +266,95 @@ The concrete-renderer-family mixins (S12-A renderer slices: `PortalRenderer` / `
 `RendererUsingFrameBuffer` drivers + the multiworld + render mixin halves, `api-map/mixin-client.md`) land
 held-UNREGISTERED across the S12 commits and register in the same S13 step. §6.1 is the render-install +
 R3 anchor for the §5.1 "the IP mixin set" registration; `mixin-client.md` is the full enumeration.
+
+## 7. WEAVE-LEVEL EXCLUSIVITY — the load-time half of the one-driver contract (S13-E)
+
+§1's `!entityPortals` runtime gates make block-era driver BODIES inert flag-ON, but a runtime gate runs
+AFTER the class is transformed. Two mixins that both attach a redirect-family injector
+(`@Redirect`/`@ModifyConstant`/`@ModifyArg`/`@ModifyVariable`/`@WrapOperation`) to the **same bytecode
+instruction** at equal priority collide at WEAVE time: Mixin applies the first and SKIPS the second, whose
+`require = 1` (the config `injectors.defaultRequire`) then throws `InvalidInjectionException` and kills
+boot — long before any runtime gate can evaluate. The exclusivity contract therefore has a **weave-layer
+half**: wherever the always-on `com.warwa` set and the flag-ON IP set touch one injection site with
+incompatible injector types, the block-era half must be suppressed at MIXIN-PLUGIN time.
+
+**Mechanism.** `SeamlessMixinConfigPlugin.ENTITY_PORTALS_SUPERSEDED_MIXINS` — a set of block-era mixin
+FQNs that `shouldApplyMixin` returns `false` for **when `entityPortals` is ON** (the mirror of the
+`qouteall.*`-skip that runs flag-OFF). Each entry is a block-era mixin whose function flag-ON is a strict
+subset of a registered IP mixin's, so suppressing it loses nothing flag-ON. This is enforced at the same
+load-time seam as the IP-set gate (§4 `SeamlessMixinConfigPlugin` row) and is byte-inert flag-OFF (the set
+is only consulted when the flag is ON).
+
+### 7.1 The suppression set (weave-layer suppressions)
+
+| # | Suppressed block-era mixin | Shared target · site | Collision | IP superseder | Coverage verdict | Landed |
+|---|---|---|---|---|---|---|
+| W1 | `mixin.client.ClientPacketListenerLocalPlayerFallbackMixin` | `ClientPacketListener.handleSetEntityData` → the `ClientLevel.getEntity(int)` call | **FATAL** — both `@Redirect` the SAME `getEntity` INVOKE at equal priority; second skipped → `require:1` boot kill (first-light attempt 3) | `qouteall…client.sync.MixinClientPacketListener` `redirectGetEntityById` (`@Redirect` line 171-173, same call) | **COVERED** — IP resolves entities across the per-dim client worlds (`ClientWorldLoader`), a strict superset of the block-era single-`ClientLevel` local-player fallback. The block-era mixin's own IP-parity javadoc names this counterpart. | commit `855fad5` |
+
+**No other entry is required.** The S13-E cross-product sweep (§7.2) found this to be the ONLY fatal (or
+`@Overwrite`-class) weave collision in the entire LEFT×RIGHT product; every other shared-target overlap is
+`@Inject`-family that composes or is guard-inert flag-ON.
+
+### 7.2 The full shared-target census (LEFT × RIGHT, S13-E)
+
+LEFT = the registered `com.warwa` set (`seamlessportals-common.mixins.json`, 51 `client` + 16 `mixins`).
+RIGHT = the registered flag-ON IP set (`ip-core-common` 73 + `ip-client` 57 + `ip-qmisc` 5 + `ip-fabric`
+2; `ip-peripheral` empty; `MixinGameRenderer_Isometric` unregistered). Accessor/invoker-only mixins
+(`@Accessor`/`@Invoker`) attach no method-body injector and cannot collide — they are folded into the rows
+below only where they share a target. **18 vanilla classes are touched by both sets.** For each, the
+collision verdict per Mixin weave semantics:
+
+| # | Shared target | Both-side injection sites (cw = com.warwa, ip = IP) | Verdict |
+|---|---|---|---|
+| 1 | `ClientLevel` | cw `doAddParticle`@Redirect + `onChunkLoaded`/`disconnect`@Inject · ip `<init>`/`addEntity`/`hasChunk`/`toString`/`tickNonPassenger`/`playSound`@Inject | **SAFE** — disjoint methods |
+| 2 | `LocalPlayer` | cw `tick`@Inject×2 · ip `suffocatesAt`@Inject | **SAFE** — disjoint |
+| 3 | `ClientPacketListener` | cw 10 mixins (`handleSetEntityData`@Redirect *= W1*, `handleLevelChunkWithLight`@ModifyArg, `handleMovePlayer`@Redirect, `handleAddEntity`/`handleForgetLevelChunk`@Inject cancellable, `handleRespawn`@Inject+@Redirect, `applyLightData`/`updateLevelChunk`@Inject/@Redirect) · ip `MixinClientPacketListener` (`handleSetEntityData`@Redirect, `handleBlockChangedAck`@Redirect, `handleMovePlayer`/`handleSetEntityPassengersPacket`/`handleAddEntity`/`handleLevelChunkWithLight`/`handleForgetLevelChunk`/`handleSetTime`@Inject), `_Debug`(commented-inert), qmisc `IEClientPacketListener_Misc`(@Accessor) | **1 FATAL → W1 (FIXED)**; all other overlaps are `@ModifyArg`/`@Redirect` vs `@Inject` (different categories compose) or `@Inject`+`@Inject`; `handleRespawn` has NO IP side (B4 no-gate confirmed) |
+| 4 | `Minecraft` | cw `renderFrame`@Inject(INVOKE pump), `updateLevelInEngines`/`close`@Inject · ip `renderFrame`@Inject(FIELD `fps`), `updateLevelInEngines`@Inject(HEAD), `tick`@Inject, `run`@WrapOperation, `handleKeybinds`@WrapOperation, `pick`/`shouldEntityAppearGlowing`/`wrapRunnable`@Inject | **SAFE** — `renderFrame` (different anchors) + `updateLevelInEngines` (both @Inject HEAD; IP javadoc explicitly acknowledges the mod hook; mod body operates on empty block-era state flag-ON) both compose |
+| 5 | `MultiPlayerGameMode` | cw `startDestroyBlock`/`continueDestroyBlock`@Inject HEAD cancellable (B7) · ip `lambda$startDestroyBlock$1`/`continueDestroyBlock`/`performUseItemOn`@Redirect, `startPrediction`/`startDestroyBlock`/`stopDestroyBlock`@ModifyArg | **SAFE** — `@Inject` HEAD-cancel vs `@Redirect`/`@ModifyArg` are different categories → compose |
+| 6 | `ParticleEngine` | cw `extract`@Inject HEAD cancellable (**KEEP** `ParticleEnginePortalSkipMixin`) · ip `extract`@Inject HEAD cancellable (`MixinParticleEngine`) | **SAFE** — `@Inject`+`@Inject` coexist; cw guard `PortalContextSwitch.isRenderingPortal` is false flag-ON (row 15) so the KEEP body never fires flag-ON — no breach |
+| 7 | `Camera` | cw `CameraInvokerMixin`=@Invoker only · ip `update`/`getFluidInCamera`/`isDetached`@Inject | **SAFE** — invoker adds no injector |
+| 8 | `GlStateManager` | cw `_glBindFramebuffer`@Inject (**KEEP** stencil) · ip `_enableCull`/`_glGenBuffers`/`_glGenVertexArrays`@Inject | **SAFE** — disjoint methods; KEEP substrate intact |
+| 9 | `LevelExtractor` | cw `extract`@Inject/@Redirect + `applyFrustum`@Inject (**KEEP**) · ip `extractVisibleEntities`@WrapOperation | **SAFE** — disjoint (`extract` ≠ `extractVisibleEntities`) |
+| 10 | `LevelRenderer` | cw `compileSections`@Redirect(FIELD `GETFIELD sectionUpdateRenderStates`), `submitBlockOutline`@ModifyArg, `isSectionCompiledAndVisible`@Inject, `cullTerrain`@Inject(sodium-gated) · ip `invalidateCompiledGeometry`@Redirect(NEW), `submitEntities`@Inject/@WrapOperation, `compileSections`@ModifyVariable(STORE `rebuildSync`), `_Optional`/`_Clouds`=empty no-op | **SAFE** — the one shared method `compileSections` has two redirect-family injectors but on DIFFERENT instructions (a `GETFIELD` node vs a local-variable `STORE`) → both weave |
+| 11 | `GameRenderer` | cw `render`@Inject, `lightmap`@Inject, `renderLevel`@Inject(PortalPrepare)+@Redirect(MainProjectionBob→`bobView` call, A7), `renderItemInHand`@ModifyArg(HandLight), `sodium$getFogParameters`@Inject · ip `renderItemInHand`@Inject, `extract`@Inject, `bobView`@ModifyArg×3, `_Shaders`(commented-inert) | **SAFE** — `renderItemInHand` (@ModifyArg vs @Inject) composes; A7 (bob) resolved by design (cw @Redirect calls the real `bobView`, ip @ModifyArg scales inside it — different methods/instructions) |
+| 12 | `ChunkMap` | cw `markChunkPendingToSend`@Inject (B5) · ip `applyChunkTrackingView`@Inject + `onChunkReadyToSend`**@Overwrite**; `addEntity`@Redirect/`removeEntity`/`tick`@Inject | **SAFE** — the `@Overwrite` lands on `onChunkReadyToSend`, which no cw mixin injects; methods disjoint |
+| 13 | `Entity` | cw `tick`/`handlePortal`@Inject · ip `move`/`checkInsideBlocks`@Redirect + `fireImmune`/`isInWall`/`setPosRaw`/`getInBlockState`@Inject; `_U` `setPosRaw`/`setRemoved`@Inject | **SAFE** — disjoint |
+| 14 | `Projectile` | cw `tick`@Inject HEAD cancellable · ip `MixinProjectile` = ALL injectors commented (inert) | **SAFE** — IP side inert |
+| 15 | `ThrownEnderpearl` | cw `tick`@Inject · ip `onHit`@Inject | **SAFE** — disjoint |
+| 16 | `LivingEntity` | cw `setSprinting`@Inject (B10 diag) · ip `tick`@Inject | **SAFE** — disjoint |
+| 17 | `ServerLevel` | cw `sendBlockUpdated`/`canSpreadFireAround`@Inject · ip `tick`@Redirect + `toString`/`tickNonPassenger`@Inject; `_Debug` `addEntity`@Inject | **SAFE** — disjoint |
+| 18 | `ServerPlayer` | cw `ServerPlayerMixin` = EMPTY (B11 dormant) · ip `MixinServerPlayer`/`MixinServerPlayerEntity_MA`@Inject | **SAFE** — cw side has no injector |
+
+**Redirect-family-vs-redirect-family on a shared method** (the only fatal-capable pattern) occurs at
+EXACTLY TWO sites in the whole product: `ClientPacketListener.handleSetEntityData` (both `@Redirect` the
+same `getEntity` call → **FATAL → W1, fixed**) and `LevelRenderer.compileSections` (cw `@Redirect` a
+`GETFIELD` vs ip `@ModifyVariable` a local `STORE` → **different instructions, safe**). No third exists.
+
+**`@Overwrite` audit (IP set):** `Frustum.offsetToFullyIncludeCameraCube`, `ChunkMap.onChunkReadyToSend`,
+`PlayerChunkSender`×4, `Player`(collision), `TrackedEntity`×2, `PlayerList`, `ServerGamePacketListenerImpl`
+— **none** lands on a method any registered `com.warwa` mixin injects (the closest, `ChunkMap`, is a
+different method than the block-era `markChunkPendingToSend`). The `com.warwa` set contains ZERO
+`@Overwrite`/`@WrapMethod`, so the reverse direction is vacuous.
+
+### 7.3 The 13 gated block-era driver mixins — weave re-check
+
+The §4c runtime-gated drivers make their BODIES inert flag-ON, but the mission's rule is that a runtime
+gate does NOT prevent a weave-time collision — the injector TYPE must also not collide. All 13 were
+re-checked at the weave layer flag-ON and are **clear** (their targets either are not touched by any IP
+mixin, or the two sets touch disjoint methods/instructions): `LocalPlayerMixin`·`LocalPlayer`,
+`EntityMixin`·`Entity`, `ProjectileMixin`·`Projectile` (IP inert), `ThrownEnderpearlMixin`·`ThrownEnderpearl`,
+`GameRendererMixin`+`GameRendererPortalPrepareMixin`+`MainProjectionBobMixin`·`GameRenderer` (A7 resolved),
+`ClientLevelMixin`·`ClientLevel`, `ServerLevelBlockUpdateMixin`·`ServerLevel`, and the four whose targets
+IP never touches: `PortalShapeFormMixin`·`PortalShape`, `NetherPortalBlockMixin`·`NetherPortalBlock`,
+`LevelChunkSetBlockStateMixin`·`LevelChunk`, `QuadParticleGroupMixin`·`QuadParticleGroup`. None needs a
+suppression-set entry; the runtime gate is sufficient because there is no weave conflict to begin with.
+
+### 7.4 Substrate (KEEP) shared-target contact — DESIGN-BREACH check
+
+The always-on KEEP substrate is designed to serve BOTH drivers; a KEEP mixin genuinely colliding with an
+IP mixin would be a design breach (not an auto-suppress). Three KEEP mixins share a target with the IP set;
+**none breaches**: `GlStateManagerMixin`·`GlStateManager` (disjoint methods), `LevelExtractor*`·
+`LevelExtractor` (disjoint methods), and `ParticleEnginePortalSkipMixin`·`ParticleEngine` (same method
+`extract` + same `@At("HEAD")`, but both `@Inject` so they COEXIST, and the KEEP body is guard-inert
+flag-ON). The substrate is intact — no KEEP mixin needs weaving changes.
+

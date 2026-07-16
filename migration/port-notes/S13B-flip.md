@@ -417,3 +417,61 @@ through portals (S13/S15/S17/S18). Known deferrals carried past this stage:
 dimension runtime (S19), `PeripheralModEntry`/`…Client` init cargo (S16 registry / S19 GUI, S13-A §7.2),
 the FORCED render shells (S19 redesigns). Next stage after first light: S14 (cross-dimension portals,
 rung 2).
+
+## 13. S13-E — WEAVE-LEVEL COLLISION SWEEP (first-light attempt-3 fix + exhaustive one-pass audit)
+
+First-light **attempt 3** crashed at boot, not at runtime: a WEAVE-LEVEL driver collision. The always-on
+block-era mixin `ClientPacketListenerLocalPlayerFallbackMixin` and IP's `client.sync.MixinClientPacketListener`
+both `@Redirect` the SAME `ClientLevel.getEntity(int)` call inside `ClientPacketListener.handleSetEntityData`.
+Mixin applies the first `@Redirect` and SKIPS the second at equal priority; the skipped injector's
+`require:1` (config `injectors.defaultRequire`) then throws `InvalidInjectionException` and kills boot —
+BEFORE any `!entityPortals` runtime gate can run. The §1 runtime gates are a runtime-BODY mechanism; they
+cannot prevent a transform-time weave conflict.
+
+**Fix (commit `855fad5`).** A new `ENTITY_PORTALS_SUPERSEDED_MIXINS` set in `SeamlessMixinConfigPlugin` —
+the mirror of the existing `qouteall.*`-skip — makes `shouldApplyMixin` return `false` for the block-era
+half **when `entityPortals` is ON**. This is the load-time (weave-layer) half of the one-driver contract,
+enforced at the same seam that gates the IP set. Byte-inert flag-OFF (the set is only consulted flag-ON).
+The single entry `ClientPacketListenerLocalPlayerFallbackMixin` is superseded by IP's `MixinClientPacketListener`
+`redirectGetEntityById` (IP resolves entities across the per-dim `ClientWorldLoader` client worlds — a
+strict superset of the block-era single-`ClientLevel` local-player fallback; the block-era mixin's own
+IP-parity javadoc names this counterpart). Ledger row **W1** (`EXCLUSIVITY_LEDGER.md §7.1`).
+
+**The exhaustive one-pass sweep.** Because a runtime `!entityPortals` gate does NOT prevent a weave
+collision, every site where the two mixin SETS touch one injection point had to be audited. LEFT = the
+registered `com.warwa` set (`seamlessportals-common.mixins.json`, 51 `client` + 16 `mixins`); RIGHT = the
+registered flag-ON IP set (`ip-core-common` 73 + `ip-client` 57 + `ip-qmisc` 5 + `ip-fabric` 2;
+`ip-peripheral` empty; `MixinGameRenderer_Isometric` unregistered). Every mixin's `@Mixin` target was
+extracted on both sides; the intersection is **18 shared vanilla target classes**; for each, the
+per-instruction injection sites were compared under Mixin weave semantics (two redirect-family injectors on
+one instruction = FATAL; `@Overwrite` vs anything = semantic; `@Inject`-family = composes). Full row-by-row
+census + verdicts: `EXCLUSIVITY_LEDGER.md §7.2`; findings log `scratchpad/s13e-weave-collision-sweep.log`.
+
+**Result — ZERO additional collisions.** The `handleSetEntityData` collision (row W1) is the ONLY fatal
+(or `@Overwrite`-class) weave collision in the entire LEFT×RIGHT product, and it is the one already fixed
+by `855fad5`. Redirect-family-vs-redirect-family on a shared method occurs at exactly two sites: W1
+(fatal, fixed) and `LevelRenderer.compileSections` (cw `@Redirect` on a `GETFIELD` vs IP `@ModifyVariable`
+on a local `STORE` — different instructions, both weave; **safe**). No `@Overwrite` in the IP set lands on
+any method a `com.warwa` mixin injects (`ChunkMap.onChunkReadyToSend` ≠ the block-era `markChunkPendingToSend`);
+`com.warwa` has zero `@Overwrite`/`@WrapMethod`. Every other shared-target overlap is `@Inject`-family that
+composes or is guard-inert flag-ON:
+- `Minecraft.updateLevelInEngines` — KEEP `MinecraftMixin` + IP `MixinMinecraft`, both `@Inject` HEAD;
+  IP's own javadoc explicitly acknowledges the mod hook; mod body operates on empty block-era state flag-ON.
+- `ParticleEngine.extract` — KEEP `ParticleEnginePortalSkipMixin` + IP `MixinParticleEngine`, both `@Inject`
+  HEAD cancellable; cw guard `PortalContextSwitch.isRenderingPortal` is false flag-ON (§1 row 15) → inert.
+- `MultiPlayerGameMode` (B7), `ClientPacketListener.handleMovePlayer`/`handleForgetLevelChunk` (B6 inert
+  flag-ON), `handleLevelChunkWithLight` (`@ModifyArg` vs `@Inject`), `handleAddEntity`
+  (`@Inject`+`@Inject`), `GameRenderer.renderItemInHand` (`@ModifyArg` vs `@Inject`), A7 bob (resolved).
+
+**The 13 gated block-era drivers** (§1 §4c) were re-checked at the weave layer flag-ON and are all clear —
+their targets are either untouched by IP or the two sets touch disjoint methods/instructions; none needs a
+suppression-set entry (`EXCLUSIVITY_LEDGER.md §7.3`). **The KEEP substrate** contacts the IP set at three
+targets (`GlStateManager`, `LevelExtractor`, `ParticleEngine`) and **none breaches** — all disjoint or
+`@Inject`-coexist (`§7.4`).
+
+**Discipline.** Docs-only stage: the sweep produced NO new suppression-set entries (the `855fad5` set is
+complete), hence NO code change beyond that prior commit — `SeamlessMixinConfigPlugin` is untouched by
+S13-E. No gradle run (nothing recompiles; the plugin/mixin JSON are byte-identical to the `855fad5` tree),
+no `git commit`, game not run. Deliverables: `EXCLUSIVITY_LEDGER.md §7` (suppression set W1 + per-entry
+superseder/coverage + the full 18-class shared-target census + the `@Overwrite`/13-driver/KEEP sub-audits)
++ this record.
