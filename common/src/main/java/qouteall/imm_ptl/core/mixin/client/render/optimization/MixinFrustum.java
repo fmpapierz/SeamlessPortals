@@ -129,6 +129,14 @@ public class MixinFrustum implements IEFrustum {
     public boolean ip_canDetermineInvisibleWithCamCoord(
         float minX, float minY, float minZ, float maxX, float maxY, float maxZ
     ) {
+        // FORCED 26.2 ADAPTATION (S13 first-light attempt 5): on 1.21.3 prepare(DDD) always ran
+        // before any visibility check, so IP's unguarded dereference could never see null. 26.2's
+        // SectionOcclusionGraph calls isVisible on frustum instances that never pass through
+        // prepare(DDD) (the lazy-init site), so an un-prepared frustum must answer "cannot
+        // determine invisible" — semantically identical to IP (no portal cull context = no cull).
+        if (portal_frustumCuller == null) {
+            return false;
+        }
         return portal_frustumCuller.canDetermineInvisibleWithCameraCoord(
             minX, minY, minZ, maxX, maxY, maxZ
         );
