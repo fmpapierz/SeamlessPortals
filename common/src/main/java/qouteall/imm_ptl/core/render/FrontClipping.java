@@ -4,7 +4,9 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Matrix3f;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.joml.Vector4f;
 import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPCGlobal;
@@ -47,8 +49,29 @@ import qouteall.q_misc_util.my_util.Plane;
 // Matrix4f.transform semantics; do NOT "fix" to mulTranspose — that yields the inverse rotation and a
 // sign-flipped clip plane; the IP_DEVIATIONS_ANALYSIS "row-vector" note is WRONG). The w=0 normal makes
 // the modelView translation column drop out, so passing the full model-view (as IP does) rotates the
-// normal correctly; the scaling-portal edge (modelView carries scale → nView non-unit) is a driver-core
-// refinement the mod handles with a rotation-only viewRotation and is flagged for S13, not "fixed" here.
+// normal correctly for the UNSCALED common case (R orthonormal ⇒ R = R⁻ᵀ ⇒ the forward rotate M·n IS
+// the covector transform — bit-identical to the proven first-light render).
+//
+// S13-L SCALED-PORTAL REFINEMENT (the deferred edge, now DUE with a live conviction). The scaling-portal
+// edge flagged above is now implemented. A fuse-view scaling portal installs a UNIFORM scale k=1/s on the
+// camera model-view (PortalRenderer.getPortalScaleMatrix = scale(1/s); shouldApplyScaleToModelView =
+// hasScaling && isFuseView), so the SAME destViewMatrix that (a) transforms the dest TERRAIN vertices
+// (prepareChunkRenders) and (b) feeds this clip bridge carries scale: M = R·kI. The mod's 26.2 clip
+// shader (com.warwa ShaderCodeTransformation) evaluates in EYE space —
+// gl_ClipDistance[0] = dot(ModelViewMat·pos, planeXYZ) + planeW — so with the forward rotate
+// planeXYZ = M·n = k·R·n the shader computes dot(k·R·p_rel, k·R·n) + c = k²(n·p_rel) + c: the kept
+// half-space plane is DISPLACED by k² (S13-L "white bar": scaled-dest terrain clipped where it must not
+// be; the user's enableClippingMechanism=false A/B convicted exactly this). IP is scale-INVARIANT here
+// because its vanilla terrain shader evaluates the clip in WORLD space (Position.xyz + ChunkOffset dotted
+// with the raw {n,c}, shader_transformation.yaml:17) — the model-view scale never touches the clip. To
+// reproduce IP's true-world-plane half-space from our EYE-space shader EXACTLY, the clip NORMAL (a
+// COVECTOR) must transform by the INVERSE-TRANSPOSE of the model-view's linear block, planeXYZ = M⁻ᵀ·n
+// = (1/k)·R·n — precisely IP's own transformClipEquation (the after-model-view equation) restricted to
+// the translation-free part, so planeW = c is unchanged. Then dot(k·R·p_rel, (1/k)R·n) + c = n·p_rel + c,
+// EXACT for k>1 and k<1 alike. This lives in rotateClipNormalToViewSpace below, behind a det≈1 fast path
+// that keeps the unscaled/non-fuse path BIT-IDENTICAL. The nested-matrix install (S13-I) that now honors
+// the passed matrices around drawMesh keeps the shader's ModelViewMat == the fed destViewMatrix, so the
+// covector transform inverts exactly what the shader applies.
 // The IP double[] before/after-modelView equations are still computed for the held IP-contract getters
 // (getActiveClipPlaneEquation{Before,After}ModelView) but they are VESTIGIAL on 26.2 — the live GL feed
 // is the view-space store, not these equations (they backed the dead GL_CLIP_PLANE0 path).
@@ -70,6 +93,12 @@ public class FrontClipping {
     public static boolean isClippingEnabled = false;
 
     public static final double ADJUSTMENT = 0.01;
+
+    // S13-L: |det(3x3) − 1| threshold below which the model-view is treated as a rigid rotation (no scale)
+    // and the proven forward-rotate fast path is taken (bit-identical unscaled render). A pure-rotation
+    // product accumulates only ~1e-6 float error in its determinant, while any real portal scale k=1/s
+    // moves det=k³ by ≥~3% for s≳1.01 — so 1e-3 cleanly separates "unscaled" from "scaled".
+    private static final float SCALE_DETECT_EPSILON = 1.0e-3f;
 
     public static void disableClipping() {
         if (IPGlobal.enableClippingMechanism) {
@@ -127,9 +156,10 @@ public class FrontClipping {
      * BRIDGE feed + enable (26.2 replacement for IP's {@code enableClipping()}). Takes IP's
      * before-model-view equation {nx,ny,nz,c} (camera-relative world space, kept half-space
      * n·p_rel + c > 0) and writes it into the single com.warwa view-space plane store that
-     * GlCommandEncoderClipMixin uploads to gl_ClipDistance[0]: planeXYZ = R·n (column-form rotate the
-     * world-space normal into view space; the w=0 makes translation drop out), planeW = c. Kept
-     * half-space is preserved exactly (see class SIGN NOTE). Gated by
+     * GlCommandEncoderClipMixin uploads to gl_ClipDistance[0]: planeXYZ = the clip normal carried to eye
+     * space by {@link #rotateClipNormalToViewSpace} (R·n for the unscaled common case, the covector
+     * inverse-transpose M⁻ᵀ·n under a scaling model-view — S13-L), planeW = c. Kept half-space is preserved
+     * exactly (see class SIGN NOTE). Gated by
      * {@code IPGlobal.enableClippingMechanism}, mirroring IP's enableClipping() guard; isClippingEnabled
      * is set in lockstep with the com.warwa gl_ClipDistance enable that restore(...,true) performs.
      */
@@ -137,16 +167,59 @@ public class FrontClipping {
         if (!IPGlobal.enableClippingMechanism) {
             return;
         }
-        Vector4f nView = new Vector4f(
-            (float) beforeModelView[0], (float) beforeModelView[1], (float) beforeModelView[2], 0f
-        );
-        nView.mul(modelView); // COLUMN FORM M·v (anti-fix guard: never mulTranspose)
+        Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, modelView);
         com.warwa.seamlessportals.render.FrontClipping.restore(
             new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
                 nView.x, nView.y, nView.z, (float) beforeModelView[3], true
             )
         );
         isClippingEnabled = true;
+    }
+
+    /**
+     * The single place IP's world-space clip NORMAL {@code n = beforeModelView[0..2]} is turned into the
+     * mod's EYE-space plane store (planeXYZ). {@code planeW = c = beforeModelView[3]} is written unchanged
+     * by the callers (the S11-B/D4.4 SIGN NOTE convention). See the class SIGN NOTE (S13-L) for the full
+     * derivation; in brief:
+     *
+     * <ul>
+     *   <li>The 26.2 clip shader evaluates in EYE space:
+     *       {@code gl_ClipDistance[0] = dot(ModelViewMat·pos, planeXYZ) + planeW}. Exactness of the kept
+     *       half-space {@code n·p_rel + c > 0} (in true dest-world units) therefore requires
+     *       {@code Mᵀ·planeXYZ = n}, i.e. {@code planeXYZ = M⁻ᵀ·n} — the INVERSE-TRANSPOSE of the
+     *       model-view's linear block, because a clip normal is a COVECTOR.</li>
+     *   <li>For a pure rotation {@code R} (unscaled / non-fuse-view scaling portal, the proven first-light
+     *       common case) {@code R⁻ᵀ = R}, so the forward column-form rotate {@code M·n} already equals the
+     *       covector transform. That path is kept BIT-IDENTICAL — no invert, no float drift.</li>
+     *   <li>Only a fuse-view scaling portal's model-view carries a uniform scale {@code k=1/s}
+     *       ({@code det = k³ ≠ 1}); there {@code M·n = k·R·n} and the shader's own {@code k·p_rel}
+     *       compounds it to {@code k²(n·p_rel)+c} (the S13-L white-bar defect). {@code M⁻ᵀ·n = (1/k)R·n}
+     *       cancels it exactly: {@code dot(k·R·p_rel, (1/k)R·n) = p_rel·n}. Sign-preserving on both the
+     *       {@code k>1} and {@code k<1} sides.</li>
+     * </ul>
+     */
+    private static Vector3f rotateClipNormalToViewSpace(double[] beforeModelView, Matrix4f modelView) {
+        float nx = (float) beforeModelView[0];
+        float ny = (float) beforeModelView[1];
+        float nz = (float) beforeModelView[2];
+
+        // The linear (rotation·scale) 3x3 block; translation is dropped exactly as the w=0 forward idiom
+        // did. Portals apply ONLY rotation + UNIFORM scale to the view matrix (getPortalRotationMatrix +
+        // getPortalScaleMatrix; no shear), so det = k³ where k is the model-view scale.
+        Matrix3f linear = new Matrix3f(modelView);
+        float det = linear.determinant();
+
+        if (!Float.isFinite(det) || Math.abs(det - 1.0f) <= SCALE_DETECT_EPSILON) {
+            // UNSCALED (rigid rotation): R⁻ᵀ == R ⇒ the forward rotate IS the covector transform. Keep the
+            // PROVEN first-light path bit-identical. COLUMN FORM M·v (anti-fix guard: never mulTranspose).
+            Vector4f nView = new Vector4f(nx, ny, nz, 0f);
+            nView.mul(modelView);
+            return new Vector3f(nView.x, nView.y, nView.z);
+        }
+
+        // SCALING model-view (k != 1): transform the covector by the INVERSE-TRANSPOSE of the linear block
+        // (== IP's transformClipEquation on the translation-free part). in-place: linear becomes M⁻ᵀ.
+        return linear.invert().transpose().transform(new Vector3f(nx, ny, nz));
     }
 
     private static double[] transformClipEquation(
@@ -236,8 +309,9 @@ public class FrontClipping {
     // entity's own submit-order draw (Mechanism A executePhase bracket) or its isolated-storage draw
     // (Mechanism B), NOT written into the ambient store at submit time. These capture-only variants
     // reuse the EXACT IP plane SOURCE + kept-half-space math of setupOuterClipping/setupInnerClipping
-    // and the EXACT column-form view-space rotation of feedViewSpacePlane (see the class SIGN NOTE) —
-    // they just return the Snapshot instead of feeding the single com.warwa store. Zero live edits.
+    // and the EXACT eye-space covector transform of feedViewSpacePlane (rotateClipNormalToViewSpace: the
+    // S13-L rotation-only/inverse-transpose form, see the class SIGN NOTE) — they just return the Snapshot
+    // instead of feeding the single com.warwa store. Zero live edits.
     // ------------------------------------------------------------------------------------------------
 
     /**
@@ -283,18 +357,19 @@ public class FrontClipping {
     /**
      * The shared IP-before-model-view {@code {nx,ny,nz,c}} → com.warwa view-space Snapshot conversion —
      * the EXACT math of {@link #feedViewSpacePlane} but returning the Snapshot instead of writing the live
-     * store. {@code planeXYZ = R·n} (column-form {@code Vector4f(n,0).mul(viewRotation)} = M·v; do NOT
-     * "fix" to {@code mulTranspose} — S11-A anti-fix guard), {@code planeW = c}, {@code enabled = true}.
-     * {@code viewRotation} is the world→view rotation (the model-view the 26.2 draw applies to the
-     * camera-relative submit poses); the {@code w=0} normal makes any translation column drop out.
+     * store. {@code planeXYZ} is the clip normal carried to eye space by {@link #rotateClipNormalToViewSpace}
+     * — the forward column-form rotate {@code R·n} for the unscaled common case (bit-identical; do NOT "fix"
+     * to {@code mulTranspose} — S11-A anti-fix guard), the covector inverse-transpose {@code M⁻ᵀ·n} under a
+     * scaling model-view (S13-L). {@code planeW = c}, {@code enabled = true}. {@code viewRotation} is the
+     * world→view model-view the 26.2 draw applies to the camera-relative submit poses; its translation
+     * column is dropped (only the 3x3 linear block is used).
      */
     private static com.warwa.seamlessportals.render.FrontClipping.Snapshot toViewSpaceSnapshot(
         double[] beforeModelView, Matrix4f viewRotation
     ) {
-        Vector4f nView = new Vector4f(
-            (float) beforeModelView[0], (float) beforeModelView[1], (float) beforeModelView[2], 0f
-        );
-        nView.mul(viewRotation); // COLUMN FORM M·v (anti-fix guard: never mulTranspose)
+        // Same eye-space covector transform as feedViewSpacePlane (S13-L): rotation-only for the unscaled
+        // common case (bit-identical), inverse-transpose under a scaling model-view. planeW = c unchanged.
+        Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, viewRotation);
         return new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
             nView.x, nView.y, nView.z, (float) beforeModelView[3], true
         );

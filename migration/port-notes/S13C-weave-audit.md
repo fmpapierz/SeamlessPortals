@@ -1262,3 +1262,22 @@ blind-patched (3 unlocalized suspects, regression risk to the working multi-port
 
 **Minor fidelity glance queued:** reciprocal entity portal's `reversePortalId` left undefined after global
 conversion (bookkeeping only; persistence/teleport intact).
+
+## S13-L — the scaled-portal clip fix + camera verdict (2026-07-16)
+
+**The A/B conviction landed its fix:** the S11-B-deferred scaled-portal FrontClipping refinement is
+implemented (qouteall FrontClipping.java, +94/−19): the clip NORMAL now transforms via the proper
+inverse-transpose under det≠1 model-views (`rotateClipNormalToViewSpace`), derived on paper from IP's
+world-space half-space `n·p_rel + c > 0` (scale-invariant ground truth). Unscaled path bit-identical
+(Fable-verified term-by-term); flag-OFF com.warwa FrontClipping untouched; 3-loader + test gate green.
+
+**Camera-scale audit: NO DIVERGENCE** — the dest-camera chain (transformPoint/transformLocalVec/
+getRenderingCameraPos → the 26.2 decomposition → SecondaryWorldRenderCore consumption) is byte-identical
+IP, scaled and unscaled. The user-observed "camera moves away" = correct IP window parallax (scale-2 moves
+the dest camera at 2× the player rate). The block-era swimming-bug transform is intact.
+
+**RETEST CAVEAT (Fable):** the fed model-view carries scale only when `hasScaling && isFuseView`
+(PortalRenderer:395-397, byte-identical IP). If the user's scaled pair is NOT fuse-view, this fix is
+provably inert for it and the (certain) clip-side culprit has a different entry point — the closeout run
+discriminates: bar gone = fixed; bar persists = next diagnosis is already narrowed to the non-modelView
+clip path.
