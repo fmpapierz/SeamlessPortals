@@ -1240,3 +1240,25 @@ the annotation silences); the U1 asset is resource-only. So the committed `ip_sc
    unverified-LIVE until S18 recursion — S13-J touched neither.
 
 ## STATUS: S13-J FIRST LIGHT CONFIRMED — attempt 8 shows the transformed dest view with correct parallax through a same-dim portal; walk-through, live scale/rotation/destination updates, and break/place-through-the-window all WORK, and the S13-I black seam is gone. Rung-1 census: Findings 1+2 (one-sided/one-way) = EXPECTED IP behavior (documented); 3a (scale-2 "floating") = faithful IP giant-scale physics, NO defect (documented); 6 (clouds "Cannot wait on a fence" crash ×2) = FIXED by skipping dest clouds (documented deviation-until-S18); 7 sweep = 1 new non-fatal item (stencil-FBO GL_INVALID_OPERATION, the code's own deferred runtime-verify item). OPEN with no fix on disk: 3b (white bar on scaled portals — static diagnosis, awaiting live repro). No gradle, no commit.
+
+## S13-K — re-test triage record (2026-07-16, no code changes; tree = 9870606/a50e87e)
+
+**Round results:** multi-portal stability PASS (clouds fix live-confirmed); bi-way scale grow/shrink PASS;
+R11 persistence PASS at save-file level (exactly one portal converted → `data/minecraft/global_portal.dat`
+619B/1 portal in overworld, empty baselines nether/end; 5 entity portals via `entities/*.mca`; relog reload
+confirmed in logs). Verdicts: **set_portal_scale geometry = byte-identical IP** (scaling transforms the view
++ crossing-scale only; grows NEITHER rectangle — the "buried portal" perception was real source-side grass in
+front of the bottom band: same blocks = jump-over + render occlusion). **Giant speed = IP-faithful** (only
+`minecraft:scale` applied; `computeMotionScale()` dead code in IP too). **Silent convert = IP-designed**
+(no sendSuccess in IP; user-approved chat-feedback enhancement queued for S19/S20 polish).
+
+**OPEN (the one rung-1 survivor): the white bar at scaling>1** — a stencil-direct dest-render depth/fill
+artifact: the Row-16 backdrop fill survives in the bottom band where scaled dest terrain loses the reversed-Z
+GEQUAL depth competition against residual source depth (user break-test: removing the source blocks removed
+the bar). Three candidate causes (runtime stencil-write band rejection / FrontClipping clipping dest terrain
+under scaling / DEPTH_CLEAR-vs-fill coverage mismatch) — **localization protocol = live A/B with
+`enableClippingMechanism=false`** (tests the FrontClipping suspect directly) + screenshots. Deliberately NOT
+blind-patched (3 unlocalized suspects, regression risk to the working multi-portal render).
+
+**Minor fidelity glance queued:** reciprocal entity portal's `reversePortalId` left undefined after global
+conversion (bookkeeping only; persistence/teleport intact).
