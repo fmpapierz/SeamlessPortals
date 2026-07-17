@@ -134,6 +134,45 @@ over the whole diff, test-script finalization (incl. the critic's script amendme
 mechanism named, death-respawn pre-answer, dest-fog-radius backdrop pre-answer, PENDING-6 closed),
 push, READY.
 
+## The fix-verify round (post-implementation, 8 Fable agents — commits S14.6 + S14.7)
+
+The adversarial verification of S14.1–S14.5 (per-commit verifiers + weave audit + return-crossing
+gap audit + integration critic; full census in the workflow journal `wf_b30f6c28-27a`, summarized
+here) caught **1 BLOCKER + 2 MAJORs in the fix series itself**, corrected in S14.6/S14.7:
+
+- **BLOCKER (S14.6):** FIX-3's added `pollLightUpdates()` at frame end was WRONG — the 26.2 queued
+  light lambdas resolve `this.level` through the LISTENER at execution time; a bare poll outside
+  the swap applies dest nibbles to the MAIN engine and loses them to the dest. lateUpdateLight is
+  back to IP's RUN-ONLY body (poll stays tick-side inside the full context swap). **Lesson
+  recorded: the one deliberate step beyond IP's exact body in the whole fix series was the one
+  blocker.** `ChunkLightLambdaGuardMixin` is load-bearing for the chunk-with-light path — S20 must
+  not delete it without securing drain context.
+- **MAJOR (S14.7):** cold promote (never-extracted dest renderer) would NPE — fixed with the
+  cold branch (fresh tracker + direct `shouldInvalidateCompiledGeometry` write, deliberately NOT
+  `allChanged()` which would TAIL-fire the S14.5 reload cascade mid-crossing).
+- **MAJOR (S14.7):** `vanillaTerrainSetupOverride` was WRITE-ONLY on 26.2 (IP's setupRender
+  consumer never re-sited) — re-sited as `MixinLevelExtractor_TerrainSetupOverride` at
+  `applyFrustum` RETURN (inside extract, before the visibleSections consumption loop, so discovery
+  feeds both compile queue and draw; conventional-Z cull frustum, I7-safe; IP gates preserved).
+- **Hardenings (S14.6):** `isClientRemoteTicking` try/finally (the flag became load-bearing;
+  documented 1-line deviation, block-era-proven form); Step-9 `viewArea` re-read (same §2.1
+  identity class as FIX-10; FIX-9 widened its trigger to any reload with a portal visible).
+- **Return-crossing gap CLOSED (PASS):** `complete_bi_way_portal` cross-dim leg is IP-identical
+  end-to-end (reverse portal into the correct dest ServerLevel, dim-keyed watcher sync,
+  self-routing PortalSyncPacket); `goback` works via the full cutover but is a designed
+  position-snap escape hatch. Test script now names the canonical return path.
+- **Truth-ups:** FIX-2b's seed scope corrected (the IP-verbatim `onSetTime` fan-out re-syncs
+  secondaries every ~20 ticks; the seed covers the creation window — the audit digest's "never
+  synced" line was too strong); FIX-5's "RD-change mid-pass recreates the dispatcher" accepted
+  corner is mechanically impossible (recreation needs `shouldResetLevelRenderData`, set only by
+  `setLevel`) — the guard is complete.
+- The integration critic PASSED the five-commit union: FIX-1+FIX-4 lifecycle safe (idle endFrame
+  no-op, close() scoped per-instance), no observable WORLD_EXTRACTOR_MAP incoherence window, the
+  FIX-2 seed actively protects crossing clock continuity, FIX-7 lightmap identities can never
+  alias mid-frame, the F3+A-after-crossing cascade chain is identity-correct, and the union is
+  flag-OFF byte-inert (all surfaces plugin-gated `qouteall.*`; zero `com.warwa` files touched
+  except the always-inert accessor row).
+
 ## Backlog entries this audit adds (→ ledger / task #9 / S15+)
 
 - debugSynchronizers entity replay in `ip_updateEntityTrackingStatus` (MINOR, debug-only) — S15 or ledger.
@@ -147,3 +186,26 @@ push, READY.
 - Dest-fog-radius vs graduated loading backdrop = authentic IP (block-era smoothed-radius polish is a
   candidate approved-deviation for task #9 if the user prefers the old look).
 - `DimIntIdMap.removeUnused` iterate-while-mutate (IP-verbatim latent, dead until DimLib) — S19/S20 glance.
+
+Fix-verify round additions:
+- Nested-layer (≥3-dim) FIRST creation captures the outer pooled RenderBuffers as construction
+  buffers — IP-inherited byte-identically, unreachable at rung 2; S18 candidate (capture the true
+  main RenderBuffers in initializeIfNeeded and re-point at creation under an active swap).
+- `createSecondaryClientWorld` throw-path leak of the feature pipeline (crash-path only) — S20.
+- Demote drops the outgoing dim's pending-but-uncompiled dirty marks (design-conformant,
+  self-heals) — adopt-outgoing-tracker variant if live look-back shows stale meshes.
+- FIX-6 per-dim rain-fog smoothing restarts at 0 per role flip (sub-second transient) — task #9 if
+  exact IP smoothing continuity wanted.
+- `isReloadingOtherWorldRenderers` latch (IP-verbatim, a throw mid-cascade disables cascades until
+  relog) — S20 robustness glance, first-observable now that the cascade has a caller.
+- Demote-created extractor not reload-registered (stale re-promoted SkyRenderer after F3+T while
+  crossed) — fold into the reload-listener unregister backlog item.
+- First promote of a never-main mod-created renderer draws one frame with NO sky pass — invisible
+  at rung 2 (nether skybox NONE; boot renderer has sky); add a pre-answer to the S16/END script.
+- PreparedFrame latch playbook line added to the S14 test script (swallowed prepare error =
+  silent permanent entity loss for one dim with the pre-FIX-4 signature; relog clears).
+- Crossed+death-respawn+F3-T chain drives a CLOSED boot cloudRenderer via the vanilla reload
+  registration — fold into the reload-listener backlog + the respawn-residual chip.
+- s14.2 verifier's flag-OFF premise (MixinClientLevel weaving flag-OFF) was WRONG — corrected by
+  the integration critic (plugin skips all qouteall.* flag-OFF); the S17 flip audit must not
+  inherit that premise.

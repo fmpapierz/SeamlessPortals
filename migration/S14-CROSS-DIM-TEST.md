@@ -81,7 +81,13 @@ lessons in `S13-FIRST-LIGHT-TEST.md`.
 
 Run in order; one-line PASS/FAIL per step at the end.
 
-1. **`/portal make_portal 4 4 minecraft:the_nether 0 70 0`**
+1. **`/portal make_portal 4 4 minecraft:the_nether 0 70 0`**, then — BEFORE crossing — aim at the
+   portal window and run **`/portal complete_bi_way_portal`** (must be run from the overworld
+   side: the command targets only portals in your current dimension; the nether side has no
+   portal entity until it runs). EXPECTED: chat `Added Portal[...]`, and after you cross, a
+   matching return window right behind you — **that pair is the return path for steps 2–3 and 7**
+   (audit-verified IP-identical cross-dim: reverse portal spawns into the NETHER ServerLevel and
+   syncs to you through the watched dest chunk).
    EXPECTED: a 4×4 window that **fades in to a nether view over a few seconds** as dest chunks
    arrive (pre-answer 1); **portal-view lighting correct BEFORE any crossing** — lava glow/flames lit,
    not dark/stale (the lateUpdateLight regression, item 8); **nether fog + sky inside the window,
@@ -104,6 +110,12 @@ Run in order; one-line PASS/FAIL per step at the end.
    portal: `/portal make_portal 4 4 minecraft:the_nether -128 70 -128`. Cross both.**
    EXPECTED: both build, render, and cross clean (regression item 10 — the old negative-coord
    off-by-one class is server-side history, but this is its cross-dim re-check).
+   Run `/portal complete_bi_way_portal` on each BEFORE crossing, or return with
+   **`/portal goback`** — goback is the ESCAPE HATCH: a **forced teleport whose position snap +
+   motion reset are EXPECTED** and not a step-2-style failure. Two goback pre-answers:
+   (a) after dying it says "You haven't teleported" (its stored position is per-player-instance;
+   death recreates the player) — expected; (b) its snap-back lands you at your exact pre-crossing
+   spot in FRONT of the portal and will not re-teleport you (plane-crossing needs movement).
 5. **`/portal debug report_chunk_loaders`** (and the per-player loading report if offered).
    EXPECTED: loader radii sane (default chain ~8, config-scaled, clamp 1..32); after walking >64
    blocks away from a portal and waiting ~1 min, the report shows the loaders COLLAPSED (R10 ticket
@@ -142,6 +154,8 @@ Run in order; one-line PASS/FAIL per step at the end.
 | Respawn screen flash / camera snap / velocity zeroed at crossing | Cross-dim teleport routing through vanilla respawn handling IP replaces |
 | Portal's own chunk unloaded until relog | **C8** — file it, it is a real bug now |
 | Crash on the second+ portal or on crossing back | PassState eviction / secondary-renderer churn (S13 §1.5 item 3 — first exercised HERE) |
+| Portal-view entities present, then PERMANENTLY gone for one dim (terrain+sky fine) | Latched isolated `PreparedFrame` from a swallowed prepare error — check the log for ONE earlier throw; relog clears (fix-verify playbook note) |
+| Blank-terrain flash on the FIRST entry into a dim | Should NOT happen (S14.7 re-sited IP's first-frame discovery) — capture it; that would be a failed S14.7 |
 
 ## 3. What to capture and hand back
 
