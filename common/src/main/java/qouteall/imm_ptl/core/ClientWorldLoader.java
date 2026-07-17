@@ -200,6 +200,14 @@ public class ClientWorldLoader {
         withSwitchedWorld(newWorld, () -> {
             try {
                 newWorld.tickEntities();
+                // S14-A FIX-8 (M8, ticklight): 26.2 HOISTED the block-entity tick out of
+                // tickEntities (mc262 Minecraft.tick:1797-1799 calls tickEntities() and
+                // tickBlockEntities() as SEPARATE siblings; 1.21.3 tickEntities tail-called it).
+                // IP's verbatim pair therefore lost client block-entity ticking for secondaries
+                // (frozen campfire smoke/spawner spin/chest lids through the window, and
+                // pendingBlockEntityTickers never drains). Required 26.2 re-expression of IP's
+                // tickEntities semantics, mirroring vanilla's entities->blockEntities pairing.
+                newWorld.tickBlockEntities();
                 newWorld.tick(() -> true);
 
                 if (!CLIENT.isPaused()) {
@@ -615,6 +623,15 @@ public class ClientWorldLoader {
 
             // all worlds share the same tick rate manager
             ((IEClientWorld) newWorld).ip_setTickRateManager(CLIENT.level.tickRateManager());
+
+            // S14-A FIX-2b (B2 part b, ticklight): seed the fresh ClientLevelData's ABSOLUTE
+            // gameTime from the current level. IP kept remote gameTime correct via the redirected
+            // per-dim ClientboundSetTimePacket, which the F1 weather-only WorldInfoSender deviation
+            // deleted; without the seed every dest-world gameTime consumer (portal-animation
+            // timing, %20 expiry windows, animateTick %2) runs 0-based. Stays in lockstep
+            // afterwards (+1/tick via the remote tick under the shared TickRateManager; the
+            // MixinClientLevel tickTime HEAD-cancel keeps the shared connection clock excluded).
+            newWorld.setTimeFromServer(CLIENT.level.getGameTime());
 
             // 26.2: setLevel moved LevelRenderer → LevelExtractor. Wires the level and builds the
             // chunk infrastructure via allChanged → invalidateCompiledGeometry.

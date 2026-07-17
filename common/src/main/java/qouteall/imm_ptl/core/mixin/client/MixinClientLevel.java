@@ -87,6 +87,10 @@ public abstract class MixinClientLevel implements IEClientWorld {
     @Mutable
     private TickRateManager tickRateManager;
 
+    @Shadow
+    @Final
+    private ClientLevel.ClientLevelData clientLevelData;
+
     @Override
     public List<Portal> ip_getGlobalPortals() {
         return portal_globalPortals;
@@ -117,6 +121,28 @@ public abstract class MixinClientLevel implements IEClientWorld {
         ClientChunkCache myClientChunkManager =
             O_O.createMyClientChunkManager(clientWorld, loadDistance);
         chunkSource = myClientChunkManager;
+    }
+
+    /**
+     * S14-A FIX-2 (B2, audit links clientworld+ticklight): on 26.2, {@code tickTime()} gained a
+     * cross-world side effect — {@code clockManager().tick(gameTime)} writes the CONNECTION-scoped
+     * {@link net.minecraft.client.ClientClockManager} shared by ALL client levels, and its tick is
+     * DELTA-based (every clock += fedGameTime - lastTickGameTime). A remote-ticked secondary feeds
+     * its OWN gameTime into that shared telescope, so alternating main/secondary feeds snap every
+     * render-visible clock (overworld sun/moon/sky time) to authoritative-(M-S) the moment the
+     * first cross-dim secondary ticks. IP 1.21.3's {@code tickTime} wrote ONLY per-level fields —
+     * no shared object existed — so IP's verbatim {@code newWorld.tick(() -> true)} was cross-level
+     * inert. This restores exactly those semantics for the remote loop: advance the level's own
+     * gameTime, skip the shared clock. {@code isClientRemoteTicking} brackets precisely
+     * {@link ClientWorldLoader#tick()}'s remote loop (main-level ticking and vanilla
+     * {@code handleSetTime} are untouched).
+     */
+    @Inject(method = "tickTime", at = @At("HEAD"), cancellable = true)
+    private void onTickTime(CallbackInfo ci) {
+        if (ClientWorldLoader.isClientRemoteTicking) {
+            clientLevelData.setGameTime(clientLevelData.getGameTime() + 1L);
+            ci.cancel();
+        }
     }
 
     // avoid entity duplicate when an entity travels
