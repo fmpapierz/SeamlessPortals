@@ -125,7 +125,13 @@ public class IPGlobal {
     public static boolean allowClientEntityPosInterpolation = true;
     
     public static boolean alwaysOverrideTerrainSetup = false;
-    
+
+    // S14.22/S14.24 diagnosis levers (default OFF; ClientDebugCommand switches; S20-removal-ledgered).
+    public static boolean debugGlStateAssert = false;
+    public static boolean debugDyePortalFill = false;
+    public static boolean debugSkipPortalSky = false;
+    public static boolean debugSkipPortalTerrain = false;
+
     public static boolean viewBobbingReduce = true;
     
     public static boolean enableClientPerformanceAdjustment = true;

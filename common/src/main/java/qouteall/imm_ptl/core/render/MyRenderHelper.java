@@ -725,16 +725,21 @@ public class MyRenderHelper {
             pipeline = SCREEN_TRIANGLE_STENCIL_ONLY;
         }
 
-        // Raw-GL backstops for the applyPipelineState short-circuit (skips state re-apply when lastPipeline is
-        // unchanged) — the exact discipline StencilPortalRenderer's stencil-gated draws use. They AGREE with
-        // the selected pipeline (DEPTH_CLEAR needs the depth test ENABLED for its write; the depth-off purposes
-        // need it DISABLED), which is the only case a raw backstop is sound (it never contradicts the pipeline).
-        GL11.glDisable(GL11.GL_BLEND);
+        // S14.22 (live-defect hunt, SYMPTOM A principal): these backstops MUST be the CACHED
+        // GlStateManager forms, never raw GL11. 26.2 routes all pipeline state through
+        // GlStateManager's caches and applyPipelineState SKIPS the GL call when the cache matches —
+        // a raw toggle desyncs cache!=real, and every later pipeline that trusts the cache then
+        // draws with the REAL leftover state (no-blend pipelines drawing WITH blending = the
+        // cyan/lavender/orange sky wash; null-depth pipelines with the real GEQUAL test ON = the
+        // distant-only shaping of the nether-side blue patches). The backstops still AGREE with the
+        // selected pipeline (DEPTH_CLEAR needs the depth test ENABLED; the depth-off purposes need
+        // it DISABLED) — now cache-coherently.
+        GlStateManager._disableBlend(0);
         if (purpose == ScreenTrianglePurpose.DEPTH_CLEAR) {
-            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GlStateManager._enableDepthTest();
         }
         else {
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GlStateManager._disableDepthTest();
         }
 
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
@@ -754,7 +759,10 @@ public class MyRenderHelper {
             pass.draw(3, 1, 0, 0);
         }
 
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        // S14.22: the unconditional raw tail restores (glEnable BLEND + DEPTH_TEST) are DELETED —
+        // they were the worst desync source: every screen triangle left real BLEND=on/cache=off and
+        // real DEPTH_TEST=on/cache=off for the rest of the frame AND the next frame's early passes.
+        // IP's renderScreenTriangle has no such restores; the next applyPipelineState re-establishes
+        // everything through a now-truthful cache.
     }
 }

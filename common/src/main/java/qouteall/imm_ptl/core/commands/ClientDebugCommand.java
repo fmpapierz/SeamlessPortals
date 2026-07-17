@@ -595,6 +595,27 @@ public class ClientDebugCommand {
             "offset_occlusion_query",
             cond -> IPGlobal.offsetOcclusionQuery = cond
         );
+        // S14.22/S14.24 rung-2 diagnosis levers (default OFF; S20-removal-ledgered).
+        registerSwitchCommand(
+            builder,
+            "debug_gl_state_assert",
+            cond -> IPGlobal.debugGlStateAssert = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_dye_portal_fill",
+            cond -> IPGlobal.debugDyePortalFill = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_portal_sky",
+            cond -> IPGlobal.debugSkipPortalSky = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_portal_terrain",
+            cond -> IPGlobal.debugSkipPortalTerrain = cond
+        );
         registerSwitchCommand(
             builder,
             "cloud_optimization",

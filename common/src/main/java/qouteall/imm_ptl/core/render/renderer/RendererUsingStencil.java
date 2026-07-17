@@ -84,6 +84,9 @@ public class RendererUsingStencil extends PortalRenderer {
     // S14.21: the last FBO id the prepareRendering stencil clear resolved — value-change log gate only.
     private static int lastResolvedMainFbo = -1;
 
+    // S14.22 lever (default OFF): 1Hz raw-GL state observation for desync diagnosis.
+    private static long lastGlStateAssertMs = 0;
+
     @Override
     public boolean replaceFrameBufferClearing() {
         boolean skipClearing = WorldRenderInfo.isRendering();
@@ -150,6 +153,18 @@ public class RendererUsingStencil extends PortalRenderer {
 
     @Override
     public void prepareRendering() {
+        // S14.22 lever (debug_gl_state_assert, default OFF): 1Hz raw-GL observation — post-fix
+        // invariant is cache==real at all times on the flag-ON path; this surfaces residue drift.
+        if (qouteall.imm_ptl.core.IPGlobal.debugGlStateAssert) {
+            long now = System.currentTimeMillis();
+            if (now - lastGlStateAssertMs > 1000) {
+                lastGlStateAssertMs = now;
+                Helper.log("[GL-state] blend=" + GL11.glGetBoolean(GL11.GL_BLEND)
+                    + " depthTest=" + GL11.glGetBoolean(GL11.GL_DEPTH_TEST)
+                    + " depthMask=" + GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK)
+                    + " depthFunc=" + GL11.glGetInteger(GL_DEPTH_FUNC));
+            }
+        }
         // 26.2 G14: Minecraft.getMainRenderTarget() is GONE -> gameRenderer.mainRenderTarget(). On 26.2
         // the substrate (RenderTargetMixin/GlConstMixin) makes the main FBO stencil-capable
         // (DEPTH24_STENCIL8) UNCONDITIONALLY, so IPPortingLibCompat's non-porting-lib branch (the 26.2
@@ -338,14 +353,14 @@ public class RendererUsingStencil extends PortalRenderer {
         setStencilStateForWorldRendering();
 
         //do not manipulate color buffer
-        GL11.glColorMask(false, false, false, false);
+        GlStateManager._colorMask(0); // S14.22 cache-coherent (was raw glColorMask)
 
         //save the state
         int originalDepthFunc = GL11.glGetInteger(GL_DEPTH_FUNC);
 
         //always passes depth test
         // R5 Row 6 (:214): UNCHANGED (ALWAYS). GL_ALWAYS passes regardless of depth direction.
-        GL11.glDepthFunc(GL_ALWAYS);
+        GlStateManager._depthFunc(GL_ALWAYS); // S14.22 cache-coherent (was raw glDepthFunc)
 
         // R5 Row 7 (:217) — THE flip that lands as a raw constant in this class. IP wrote window depth
         // 1.0 = FAR (1.21.3). 26.2 reversed-Z FAR = 0.0, so FLIP glDepthRange(1,1) -> glDepthRange(0,0).
@@ -363,9 +378,9 @@ public class RendererUsingStencil extends PortalRenderer {
         MyRenderHelper.renderScreenTriangle(MyRenderHelper.ScreenTrianglePurpose.DEPTH_CLEAR);
 
         //retrieve the state
-        GL11.glColorMask(true, true, true, true);
+        GlStateManager._colorMask(15); // S14.22 cache-coherent (was raw glColorMask)
         // R5 Row 8 (:223): UNCHANGED. Save/restore of the queried prior func.
-        GL11.glDepthFunc(originalDepthFunc);
+        GlStateManager._depthFunc(originalDepthFunc); // S14.22 cache-coherent (was raw glDepthFunc)
         // R5 Row 9 (:224): UNCHANGED. Returns the default full NDC->window mapping (0,1); direction-
         // independent. Proven: MOD:StencilPortalRenderer.java:403 restores glDepthRange(0,1) (NOT (0,0)).
         GL11.glDepthRange(0, 1);
@@ -381,7 +396,7 @@ public class RendererUsingStencil extends PortalRenderer {
         int originalDepthFunc = GL11.glGetInteger(GL_DEPTH_FUNC);
 
         // R5 Row 11 (:235): UNCHANGED (ALWAYS).
-        GL11.glDepthFunc(GL_ALWAYS);
+        GlStateManager._depthFunc(GL_ALWAYS); // S14.22 cache-coherent (was raw glDepthFunc)
 
         // R5 Row 12 (:237-244): IP has NO explicit depth constant here — it RE-RENDERS the view-area mesh
         // at its REAL projected depth (already reversed-Z, from the projection). Ported VERBATIM (the
@@ -406,7 +421,7 @@ public class RendererUsingStencil extends PortalRenderer {
         );
 
         // R5 Row 13 (:246): UNCHANGED. Restore of the queried prior func.
-        GL11.glDepthFunc(originalDepthFunc);
+        GlStateManager._depthFunc(originalDepthFunc); // S14.22 cache-coherent (was raw glDepthFunc)
     }
 
     public static void clampStencilValue(
@@ -429,10 +444,10 @@ public class RendererUsingStencil extends PortalRenderer {
         //do not manipulate the depth buffer
         // R5 Row 15 (:264-277): UNCHANGED. Stencil-only pass — depth is masked off and the test disabled,
         // so there is no depth comparison to flip.
-        GL11.glDepthMask(false);
+        GlStateManager._depthMask(false); // S14.22 cache-coherent (was raw glDepthMask)
 
         //do not manipulate the color buffer
-        GL11.glColorMask(false, false, false, false);
+        GlStateManager._colorMask(0); // S14.22 cache-coherent (was raw glColorMask)
 
         GlStateManager._disableDepthTest();
 
@@ -442,9 +457,9 @@ public class RendererUsingStencil extends PortalRenderer {
         // pass REPLACEs the clamped stencil values — no depth compare to reversed-Z flip, no color splat.
         MyRenderHelper.renderScreenTriangle(MyRenderHelper.ScreenTrianglePurpose.STENCIL_ONLY);
 
-        GL11.glDepthMask(true);
+        GlStateManager._depthMask(true); // S14.22 cache-coherent (was raw glDepthMask)
 
-        GL11.glColorMask(true, true, true, true);
+        GlStateManager._colorMask(15); // S14.22 cache-coherent (was raw glColorMask)
 
         GlStateManager._enableDepthTest();
     }
