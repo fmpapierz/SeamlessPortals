@@ -801,7 +801,9 @@ public class ClientWorldLoader {
      * .changePlayerDimension, immediately after the {@code client.level}/{@code levelRenderer}
      * swap. IP's {@code vanillaTerrainSetupOverride = 1} (set by both teleport callers after this
      * returns) covers the first frame's terrain setup with IP's non-multithreaded discovery while
-     * the SOG rebuild lands.
+     * the SOG rebuild lands — via the S14.7-re-sited consumer
+     * (MixinLevelExtractor_TerrainSetupOverride at applyFrustum RETURN; the flag was WRITE-ONLY
+     * on 26.2 before that, fix-verify MAJOR), triggered by the needsFrustumUpdate force below.
      */
     public static void promoteAndDemoteOnPlayerDimensionChange(
         ClientLevel fromWorld, ClientLevel toWorld
@@ -823,9 +825,29 @@ public class ClientWorldLoader {
         // Sync lastViewDistance so the FIRST post-promote extract() doesn't trip its
         // getEffectiveRenderDistance() != lastViewDistance guard -> allChanged -> mesh wipe.
         mainExt.seamlessportals$setLastViewDistance(CLIENT.options.getEffectiveRenderDistance());
-        if (toDimPerDimExtractor != null && toDimPerDimExtractor != CLIENT.levelExtractor) {
-            // Adopt the per-dim extractor's CURRENT tracker — the object toWorld's dirty-marks
-            // have been landing on while it was a secondary (writer/reader stay one object).
+        // S14.7 (fix-verify MAJOR, cold promote): 26.2 defers dispatcher/viewArea/graph creation
+        // into the first EXTRACT — a dest renderer that never extracted (its portal never in the
+        // view frustum; forced teleport into a never-viewed dim) has none of them, and the warm
+        // path's mesh-preserving re-points would leave the first post-promote frame to NPE
+        // (applyFrustum on a never-reset SOG / render() on a null viewArea). IP was immune
+        // (creation-time setLevel->allChanged built everything eagerly); re-express that here:
+        // fresh toWorld-bound tracker + the invalidate one-shot, so the first extract runs
+        // invalidateCompiledGeometry (creates dispatcher+viewArea+resets the SOG) BEFORE render().
+        // Done via direct flag+tracker writes, NOT allChanged() — the S14.5 reload-cascade mixin
+        // TAIL-fires on mc.levelExtractor.allChanged and must not sweep other dims mid-crossing.
+        // There are no meshes to preserve on this branch by definition.
+        boolean coldPromote = promotedRenderer.sectionRenderDispatcher() == null;
+        if (coldPromote) {
+            mainExt.seamlessportals$setSectionUpdateTracker(
+                new net.minecraft.client.SectionUpdateTracker(
+                    toWorld, CLIENT.options.getEffectiveRenderDistance())
+            );
+            mainExt.seamlessportals$setShouldInvalidateCompiledGeometry(true);
+        }
+        else if (toDimPerDimExtractor != null && toDimPerDimExtractor != CLIENT.levelExtractor) {
+            // WARM path: adopt the per-dim extractor's CURRENT tracker — the object toWorld's
+            // dirty-marks have been landing on while it was a secondary (writer/reader stay one
+            // object).
             mainExt.seamlessportals$setSectionUpdateTracker(
                 ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) toDimPerDimExtractor)
                     .seamlessportals$getSectionUpdateTracker()
@@ -853,7 +875,9 @@ public class ClientWorldLoader {
         // nodes the post-teleport reposition relocates (block-era NPE class) — clear them;
         // invalidate schedules the SOG async rebuild; needsFrustumUpdate forces the FIRST
         // post-promote applyFrustum so a warm currentGraph repopulates instantly while the rebuild
-        // refines (block-era "instant repaint").
+        // refines (block-era "instant repaint"). Cold branch: frame 1 takes the invalidate path
+        // (no applyFrustum — SOG safely reset by invalidateCompiledGeometry), frame 2's forced
+        // applyFrustum then runs the S14.7 terrain-setup override discovery on the fresh grid.
         promotedRenderer.clearVisibleSections();
         var promotedSog = promotedRenderer.sectionOcclusionGraph();
         if (promotedSog != null) {

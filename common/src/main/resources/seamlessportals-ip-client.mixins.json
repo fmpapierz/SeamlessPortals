@@ -40,6 +40,7 @@
     "client.render.MixinGlStateManager",
     "client.render.MixinLevelExtractor",
     "client.render.MixinLevelExtractor_Reload",
+    "client.render.MixinLevelExtractor_TerrainSetupOverride",
     "client.render.MixinLevelRenderer",
     "client.render.MixinLevelRenderer_CrossPortalEntity",
     "client.render.MixinLevelRenderer_ForceMainThreadRebuild",

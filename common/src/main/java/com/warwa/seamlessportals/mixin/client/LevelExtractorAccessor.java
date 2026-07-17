@@ -64,4 +64,13 @@ public interface LevelExtractorAccessor {
      *  for render() to see the extracted entities/clouds/particles. */
     @Accessor("levelRenderState")
     net.minecraft.client.renderer.state.level.LevelRenderState seamlessportals$getLevelRenderState();
+
+    /** S14.7 (cold-promote fix): the one-shot "rebuild dispatcher/viewArea/graph at next
+     *  extract" flag ({@code LevelExtractor.java:84}, consumed at {@code :122-124} →
+     *  {@code invalidateCompiledGeometry}, which CREATES them when null). Setting it directly —
+     *  paired with a fresh tracker — is the manual equivalent of {@code allChanged()} minus its
+     *  side effects (the S14.5 reload-cascade mixin TAIL-fires on allChanged; a cold promote must
+     *  not trigger a cross-dim reload sweep mid-crossing). */
+    @Accessor("shouldInvalidateCompiledGeometry")
+    void seamlessportals$setShouldInvalidateCompiledGeometry(boolean value);
 }
