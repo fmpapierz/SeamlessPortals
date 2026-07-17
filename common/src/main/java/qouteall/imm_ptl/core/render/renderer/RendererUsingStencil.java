@@ -313,18 +313,28 @@ public class RendererUsingStencil extends PortalRenderer {
 
         int thisPortalStencilValue = outerPortalStencilValue + 1;
 
-        if (!portal.isFuseView()) {
-            Profiler.get().push("clear_depth_of_view_area");
-            clearDepthOfThePortalViewArea(portal);
-            Profiler.get().pop();
+        // S14.29 hardening (round-3 verified LATENT mode, ledgered deviation — IP has the identical
+        // unbracketed shape): a single throw escaping renderPortalContent used to skip
+        // popPortalLayer, leaving isRendering()==true FOREVER — the flag-ON hook then early-returns
+        // every frame (silent portal death) with GL_STENCIL_TEST frozen enabled over stale content
+        // (a permanent-corruption mode; precedent throw class: the S13-J dest-clouds fence crash).
+        // The finally guarantees the layer stack balances; depth-restore + clamp stay AFTER (order
+        // preserved — they need the popped layer, see the ViewAreaRenderer clipping note).
+        try {
+            if (!portal.isFuseView()) {
+                Profiler.get().push("clear_depth_of_view_area");
+                clearDepthOfThePortalViewArea(portal);
+                Profiler.get().pop();
+            }
+
+            setStencilStateForWorldRendering();
+
+            renderPortalContent(portal);
         }
-
-        setStencilStateForWorldRendering();
-
-        renderPortalContent(portal);
-
-        PortalRendering.popPortalLayer();
-        // pop portal layer before restoring depth, for clipping, see ViewAreaRenderer
+        finally {
+            PortalRendering.popPortalLayer();
+            // pop portal layer before restoring depth, for clipping, see ViewAreaRenderer
+        }
 
         if (!portal.isFuseView()) {
             restoreDepthOfPortalViewArea(portal, modelView, thisPortalStencilValue);

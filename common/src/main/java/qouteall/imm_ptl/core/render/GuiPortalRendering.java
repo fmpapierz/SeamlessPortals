@@ -112,6 +112,13 @@ public class GuiPortalRendering {
 
         IPCGlobal.renderer.finishRendering();
 
+        // S14.29 (round-3 CONFIRMED benign leak, closed): RendererUsingStencil.finishRendering()
+        // is IP-verbatim empty, and the GUI path's decomposed render leaves GL_STENCIL_TEST
+        // ENABLED with EQUAL(0) into the HUD and the next frame's early passes (harmless only
+        // because content is all-0 here). Disable explicitly — 26.2 vanilla owns no stencil state
+        // to restore it. Ledgered substrate hardening (IP needed none: 1.21.3 lifecycle differed).
+        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
+
         ((IEMinecraftClient) MyGameRenderer.client).ip_setFrameBuffer(mcFb);
 
         // 26.2 (G8): no mcFb.bindWrite — restoring the mainRenderTarget via ip_setFrameBuffer is sufficient.

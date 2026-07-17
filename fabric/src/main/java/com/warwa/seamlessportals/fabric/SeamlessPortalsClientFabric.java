@@ -124,10 +124,13 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // Phase 2 (stencil mask + composite) at AFTER_TRANSLUCENT_TERRAIN: this is
             // the ONLY point where the framegraph's camera/projection matrices are live
             // (moving it to renderLevel RETURN composites in the wrong screen position).
-            // NOTE: the source overworld sky/celestial renders later in the SAME
-            // framegraph and paints over this composite (the "blank curtain") — fixing
-            // that needs to occlude the source sky in the portal region, not re-time
-            // this composite. See GameRendererPortalPrepareMixin for the diagnosis.
+            // S14.29 ORDERING CORRECTION (round-3 verified; the old claim here — "the source
+            // sky/celestial renders later in the same framegraph and paints over this
+            // composite" — is WRONG and seeded a refuted defect-hunt lead): the verified 26.2
+            // execution order is clear -> SKY pass -> main pass (this hook fires INSIDE the
+            // main pass, AFTER the sky already executed) — mc262 LevelRenderer.java:195-212 +
+            // migration/inventory/current-mod-render.md. Any historical "blank curtain" had a
+            // different mechanism. See GameRendererPortalPrepareMixin for the old diagnosis.
             LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
                 StencilPortalRenderer.renderPortals();
             });
