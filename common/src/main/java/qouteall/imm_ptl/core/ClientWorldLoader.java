@@ -946,10 +946,11 @@ public class ClientWorldLoader {
             .seamlessportals$setFeatureRenderDispatcher(demotedDispatcher);
         qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.onDimensionMainStatusChanged(fromDim);
 
-        // Per-crossing event, not per-frame — logging discipline holds.
+        // Per-crossing event, not per-frame — logging discipline holds. The (cold)/(warm) tag
+        // (S14.24) converts future first-frame reports into branch-attributed evidence.
         LOGGER.info(
-            "[S14 crossing cutover] extract driver promoted {} -> {}",
-            fromDim.identifier(), toDim.identifier()
+            "[S14 crossing cutover] extract driver promoted {} -> {} ({})",
+            fromDim.identifier(), toDim.identifier(), coldPromote ? "cold" : "warm"
         );
     }
 

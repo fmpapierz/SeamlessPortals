@@ -101,7 +101,12 @@ public class RendererUsingStencil extends PortalRenderer {
                 // COLOR_FILL selects PortalRenderTypes.portalCompositeBlit (depth-off), so the fill is never
                 // reversed-Z GEQUAL-gated by leftover portal-plane depth; the fog COLOR rides the draw.
                 MyRenderHelper.renderScreenTriangle(
-                    FogRendererContext.getCurrentFogColor.get(),
+                    // S14.24 lever (debug_dye_portal_fill, default OFF): dye the Row-16 backdrop
+                    // fill MAGENTA — any on-screen residue that dyes with it is stencil-gated dest
+                    // backdrop (stencil content wrong); residue that doesn't is not this fill.
+                    qouteall.imm_ptl.core.IPGlobal.debugDyePortalFill
+                        ? new Vec3(1.0, 0.0, 1.0)
+                        : FogRendererContext.getCurrentFogColor.get(),
                     MyRenderHelper.ScreenTrianglePurpose.COLOR_FILL
                 );
                 GlStateManager._depthMask(true);

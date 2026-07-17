@@ -561,7 +561,8 @@ public class SecondaryWorldRenderCore {
 
                 // 10.4 dest sky (gated on doRenderSky — fuse-view portals set it false). Sky draws
                 // BEFORE the clip is armed (the dome spans both sides of the plane).
-                if (WorldRenderInfo.getTopRenderInfo().doRenderSky) {
+                // S14.24 lever: debug_skip_portal_sky attributes residue to this draw.
+                if (WorldRenderInfo.getTopRenderInfo().doRenderSky && !IPGlobal.debugSkipPortalSky) {
                     renderPortalSky(destRenderer, destLRS, destFogBuffer, destViewMatrix);
                 }
 
@@ -578,7 +579,9 @@ public class SecondaryWorldRenderCore {
                 }
 
                 try {
-                    boolean canDraw = mainChunkSampler != null && destChunks.maxIndicesRequired() > 0;
+                    // S14.24 lever: debug_skip_portal_terrain attributes residue to the renderGroup draws.
+                    boolean canDraw = mainChunkSampler != null && destChunks.maxIndicesRequired() > 0
+                        && !IPGlobal.debugSkipPortalTerrain;
                     if (canDraw) {
                         // 10.6 solid+cutout into the OPAQUE output (== the real main target), masked by
                         // the live stencil; LOAD, no clear.
