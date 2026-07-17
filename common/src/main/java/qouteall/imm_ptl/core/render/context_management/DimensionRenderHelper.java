@@ -46,8 +46,19 @@ public class DimensionRenderHelper {
 
     public final Lightmap lightmapTexture;
 
-    // null for the main-dimension helper (it reuses the GameRenderer's own Lightmap, which vanilla's
-    // own extractor drives); non-null for secondaries, which updateAndRender() drives.
+    // S14-A FIX-7 (audit link fog, MAJOR M7): EVERY helper owns a renderState — the birth-time
+    // role ("main-born reuses the GameRenderer's Lightmap, vanilla drives it") stops being true at
+    // the first cross-dim crossing: the crossing re-points the GameRenderer's lightmap field to
+    // the NEW main dim's helper, and vanilla renders ONLY that field (mc262 GameRenderer.render
+    // this.lightmap.render). A main-born helper whose dim was crossed away from is then driven by
+    // NOBODY, freezing the look-back portal view's lightmap at the crossing moment (time-of-day
+    // tint, gamma, night vision, flicker — worsening until relog). IP's dest lightmap recompute
+    // was UNCONDITIONAL (IP MyGameRenderer:223-226 helper.lightmapTexture.updateLightTexture(0),
+    // a full self-recompute); a universal renderState re-expresses that. Safety: the call-site
+    // gate (!isDimensionRendered(dim), with isDimensionRendered(originalPlayerDimension) always
+    // true) means updateAndRender never runs for the CURRENT main dim, so the Lightmap vanilla is
+    // currently rendering is never re-driven mid-frame; each Lightmap has its own UBO ring (the
+    // block-era-proven mechanic).
     private final LightmapRenderState renderState;
 
     public DimensionRenderHelper(Level world) {
@@ -56,13 +67,12 @@ public class DimensionRenderHelper {
         if (client.level == world) {
             this.lightmapTexture =
                 ((GameRendererAccessorMixin) client.gameRenderer).seamlessportals$getLightmap();
-            this.renderState = null;
         }
         else {
             this.lightmapTexture = new Lightmap();
-            this.renderState = new LightmapRenderState();
             Helper.log("Created lightmap texture for " + world.dimension().identifier());
         }
+        this.renderState = new LightmapRenderState();
     }
 
     public void tick() {
@@ -81,9 +91,9 @@ public class DimensionRenderHelper {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
 
-        // The main-dim helper carries no private renderState (it reuses the gameRenderer's Lightmap,
-        // which vanilla's own extractor drives) — never re-drive it here.
-        if (renderState == null) return;
+        // S14-A FIX-7: no renderState==null early-return anymore — every helper can self-render
+        // (see the renderState field note; the call-site isDimensionRendered gate keeps the
+        // current main dim's vanilla-driven Lightmap out of here).
 
         renderState.needsUpdate = true;
 

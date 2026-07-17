@@ -110,6 +110,31 @@ public class SecondaryWorldRenderCore {
     private static final Map<ResourceKey<Level>, Object> lastAppliedDeltaWindow =
         new ConcurrentHashMap<>();
 
+    // S14-A FIX-6 (M6): per-dim AtmosphericFogEnvironment.rainFogMultiplier values — the IP
+    // StaticFieldsSwappingManager pattern applied to the field's 26.2 home (CUTOVER_SPEC §3 item
+    // 3, designed-but-unimplemented until this audit). Step 6 installs the dest dim's stored
+    // value around setupFog and restores the outer value in a finally; each dim keeps its own
+    // smoothing state (IP's per-dim smoothing fidelity).
+    private static final Map<ResourceKey<Level>, Float> destRainFogMultiplier =
+        new ConcurrentHashMap<>();
+    private static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
+        cachedAtmosphericEnv;
+
+    private static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
+    getAtmosphericFogEnvironment() {
+        if (cachedAtmosphericEnv == null) {
+            for (net.minecraft.client.renderer.fog.environment.FogEnvironment env :
+                qouteall.imm_ptl.core.mixin.client.accessor.IEFogRenderer_Environments.ip_getFogEnvironments()
+            ) {
+                if (env instanceof net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment atmo) {
+                    cachedAtmosphericEnv = atmo;
+                    break;
+                }
+            }
+        }
+        return cachedAtmosphericEnv;
+    }
+
     // The block-atlas GpuSampler that ChunkSectionsToRender.renderGroup needs. Captured ONCE PER
     // FRAME by the shell at the OUTERMOST portal entry (getPortalLayer()==1), while mc.levelRenderer
     // is still the TRUE main renderer — NOT inside the invoke, where nested layers would resolve a
@@ -140,6 +165,7 @@ public class SecondaryWorldRenderCore {
     private static void cleanUp() {
         portalCompileScheduled.clear();
         lastAppliedDeltaWindow.clear();
+        destRainFogMultiplier.clear();
         mainChunkSampler = null;
     }
 
@@ -154,6 +180,9 @@ public class SecondaryWorldRenderCore {
     public static void onDimensionMainStatusChanged(ResourceKey<Level> dim) {
         portalCompileScheduled.remove(dim);
         lastAppliedDeltaWindow.remove(dim);
+        // FIX-6 freshness: while the dim is main, vanilla drives the real multiplier — the stored
+        // dest-side smoothing value goes stale; drop it so the next dest stint re-lerps cleanly.
+        destRainFogMultiplier.remove(dim);
     }
 
     /**
@@ -243,7 +272,10 @@ public class SecondaryWorldRenderCore {
 
         ImmPtlViewArea viewArea =
             (ImmPtlViewArea) ((IEWorldRenderer) destRenderer).ip_getBuiltChunkStorage();
-        SectionUpdateTracker sut = destExtractor.sectionUpdateTracker;
+        // S14-A FIX-10: the tracker is READ at Step 9 (right before the discovery arm), AFTER
+        // Step 5's extract — extract() can trip its render-distance allChanged, which REPLACES
+        // sectionUpdateTracker (the §2.1 identity rule: "always re-read from the extractor, never
+        // cache across frames" — previously honored across frames but violated WITHIN the pass).
 
         // ===== Step 3 — dest view matrix + frustum (the cameraTransformation consumption point) ==
         // 3.1 un-transformed rotation from the player angles the shell set on newCamera.
@@ -392,11 +424,38 @@ public class SecondaryWorldRenderCore {
             // ===== Step 6 — dest FOG (R9): compute-only probe + core-owned standalone buffer =====
             FogRenderer fr =
                 ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
-            // compute-only, ring-buffer-safe (§3.1: setupFog never writes the WORLD slot). Radius =
-            // the render-info render distance (IP's graduated dest radius).
-            FogData destFogData = fr.setupFog(
-                newCamera, WorldRenderInfo.getRenderDistance(), deltaTracker, 0f, destLevel
-            );
+            // S14-A FIX-6 (M6, CUTOVER_SPEC §3 item 3 — finally implemented): setupFog is
+            // compute-only for the UBO but NOT for FogRenderer.FOG_ENVIRONMENTS — the shared
+            // AtmosphericFogEnvironment lerps its private rainFogMultiplier toward THIS query's
+            // level (updateRainFogState, deltaTicks*0.2 per call). Unbracketed, every dest pass
+            // drags the MAIN world's rain fog toward the dest's (raining OW + nether portal on
+            // screen = visibly weakened/unstable main rain fog, and the dest inherits residual OW
+            // offsets). Install the dest dim's own stored smoothing value for the call; restore
+            // the outer value in the finally (throw-safe); persist the updated dest value per-dim.
+            FogData destFogData;
+            var atmosphericEnv = getAtmosphericFogEnvironment();
+            float outerRainFogMultiplier = 0f;
+            if (atmosphericEnv != null) {
+                var atmoAccess =
+                    (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
+                outerRainFogMultiplier = atmoAccess.ip_getRainFogMultiplier();
+                atmoAccess.ip_setRainFogMultiplier(
+                    destRainFogMultiplier.getOrDefault(destDim, 0f));
+            }
+            try {
+                // compute-only for the UBO, ring-buffer-safe (§3.1: setupFog never writes the
+                // WORLD slot). Radius = the render-info render distance (IP's dest radius).
+                destFogData = fr.setupFog(
+                    newCamera, WorldRenderInfo.getRenderDistance(), deltaTracker, 0f, destLevel
+                );
+            } finally {
+                if (atmosphericEnv != null) {
+                    var atmoAccess =
+                        (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
+                    destRainFogMultiplier.put(destDim, atmoAccess.ip_getRainFogMultiplier());
+                    atmoAccess.ip_setRainFogMultiplier(outerRainFogMultiplier);
+                }
+            }
             destCameraState.fogData = destFogData;
             destCameraState.fogType = FogType.NONE;
             // S13-I (first-photons black-seam fix): publish the live dest fog color for the R5 Row-16
@@ -448,6 +507,8 @@ public class SecondaryWorldRenderCore {
                 RenderRegionCache cache = new RenderRegionCache();
                 Set<Long> schedSet =
                     portalCompileScheduled.computeIfAbsent(destDim, k -> new HashSet<>());
+                // FIX-10: post-extract read — see the Step-2 note.
+                SectionUpdateTracker sut = destExtractor.sectionUpdateTracker;
                 VisibleSectionDiscovery.armCompileScheduling(
                     destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS
                 );
