@@ -1,5 +1,9 @@
 # S14-C — rung-2 live round 2: the surviving sky painter (mechanism model + lever protocol)
 
+> **ROUND 3 SUPERSEDES the M1 model below** — see `S14C-round3-wedge-kit.md` (stencil family
+> closed by proof; surviving candidates = clip-cap leak [near-refuted], renderPortalEntities,
+> vanilla-sky-under-corrupted-state; the S14.28 probe/lever kit arbitrates).
+
 ## Round-2 ground truth (user session, tree `ae46a57`)
 
 The S14.21/S14.22 fixes PROVABLY LANDED: **zero** GL_INVALID_OPERATION all session (was 51,470),

@@ -628,6 +628,16 @@ public class ClientDebugCommand {
         );
         registerSwitchCommand(
             builder,
+            "debug_frame_boundary_probe",
+            cond -> IPGlobal.debugFrameBoundaryProbe = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_portal_entities",
+            cond -> IPGlobal.debugSkipPortalEntities = cond
+        );
+        registerSwitchCommand(
+            builder,
             "cloud_optimization",
             cond -> IPGlobal.cloudOptimization = cond
         );

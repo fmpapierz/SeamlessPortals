@@ -170,6 +170,7 @@ public class SecondaryWorldRenderCore {
         lastAppliedDeltaWindow.clear();
         destRainFogMultiplier.clear();
         mainChunkSampler = null;
+        portalEntitiesSwallowLogged = false;
     }
 
     /**
@@ -594,7 +595,10 @@ public class SecondaryWorldRenderCore {
                     // 10.7/10.8 dest lighting + entities (cross-dim only — same-dim entityRenderStates
                     // was already consumed+cleared by the main pass; re-running the shared main
                     // dispatcher mid-frame is unsafe — §6.1 documented gap).
-                    if (!sharedState) {
+                    // S14.28 lever: debug_skip_portal_entities — the ONE in-bracket full-color-write
+                    // draw the round-3 levers never gated (cross-dim-only, matching the wedges'
+                    // surfacing at the cross-dim rung); skipping it is outcome-branch C's test.
+                    if (!sharedState && !IPGlobal.debugSkipPortalEntities) {
                         MyGameRenderer.resetDiffuseLighting(); // mc.level == dest here
                         diffuseChangedToDest = true;
                         renderPortalEntities(destRenderer, destLRS, destViewMatrix);
@@ -819,8 +823,20 @@ public class SecondaryWorldRenderCore {
             }
         } catch (Throwable t) {
             // Entities are non-critical; terrain + sky already drew.
+            // S14.28: one-shot visibility — a silently-swallowed failure here previously left no
+            // evidence at all (round-3 finding: this is the one un-levered color writer). Latch
+            // logs the FIRST throwable per session only (render-thread-logging discipline).
+            if (!portalEntitiesSwallowLogged) {
+                portalEntitiesSwallowLogged = true;
+                qouteall.q_misc_util.Helper.err(
+                    "[renderPortalEntities] swallowed (first per session): " + t);
+                t.printStackTrace();
+            }
         }
     }
+
+    // S14.28: one-shot latch for the renderPortalEntities swallow log.
+    private static boolean portalEntitiesSwallowLogged = false;
 
     // ===== §2.3 / I7 — CONVENTIONAL-Z culling projection for the discovery frustum ================
     // Mirrors Camera.createProjectionMatrixForCulling (26.2:Camera.java:179-189) — private, so

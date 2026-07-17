@@ -107,6 +107,43 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
     @Unique
     private static boolean portal_isRenderingHand = false;
 
+    /**
+     * S14.28 round-4 wedge kit (live-defect hunt r3): frame-boundary PROBE + capability GUARD at
+     * renderLevel HEAD — before the framegraph (clear pass + sky pass) is built/executed, i.e. the
+     * exact point the previous frame's leaked raw-GL capability state would first damage vanilla
+     * draws. 26.2 vanilla owns ZERO stencil or clip-capability state (applyPipelineState toggles
+     * neither), so any leaked GL_STENCIL_TEST / GL_CLIP_DISTANCE0 persists silently across ALL
+     * passes and frames — a new-in-26.2 hazard class with no IP analog (IP needed no frame-start
+     * guard; ledgered substrate deviation). PROBE reads FIRST (pre-guard state, 1Hz, lever-gated);
+     * GUARD then disables both capabilities — in steady state a provable no-op (both already off).
+     */
+    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"))
+    private void portal_onRenderLevelHead(DeltaTracker deltaTracker, CallbackInfo ci) {
+        if (qouteall.imm_ptl.core.IPGlobal.debugFrameBoundaryProbe) {
+            long now = System.currentTimeMillis();
+            if (now - portal_lastBoundaryProbeMs > 1000) {
+                portal_lastBoundaryProbeMs = now;
+                var clip = com.warwa.seamlessportals.render.FrontClipping.capture();
+                qouteall.q_misc_util.Helper.log(
+                    "[frame-boundary] stencilTest=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_STENCIL_TEST)
+                    + " stencilFunc=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_STENCIL_FUNC)
+                    + " stencilRef=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_STENCIL_REF)
+                    + " clipCap=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL30.GL_CLIP_DISTANCE0)
+                    + " plane=(" + clip.x + "," + clip.y + "," + clip.z + "," + clip.w + ") planeEnabled=" + clip.enabled
+                );
+            }
+        }
+        // GUARD (always-on, flag-ON-only mixin): both disables route through the correct owners —
+        // raw GL for stencil (the mod's stencil idiom; vanilla has no stencil cache to desync),
+        // FrontClipping.disable() for the clip cap (single-writer cached bool + no-op plane reset;
+        // never raw-GL a cached state — 26.2 invariant).
+        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
+        com.warwa.seamlessportals.render.FrontClipping.disable();
+    }
+
+    @Unique
+    private static long portal_lastBoundaryProbeMs = 0;
+
     @Inject(method = "renderItemInHand", at = @At("HEAD"))
     private void onRenderHandBegins(CameraRenderState cameraState, float f, Matrix4fc modelViewMatrix, CallbackInfo ci) {
         portal_isRenderingHand = true;

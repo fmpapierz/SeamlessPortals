@@ -133,6 +133,8 @@ public class IPGlobal {
     public static boolean debugSkipPortalTerrain = false;
     public static boolean debugDyeViewAreaMesh = false;
     public static boolean debugNoApertureDepthClamp = false;
+    public static boolean debugFrameBoundaryProbe = false;
+    public static boolean debugSkipPortalEntities = false;
 
     public static boolean viewBobbingReduce = true;
     
