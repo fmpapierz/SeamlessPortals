@@ -110,7 +110,13 @@ public class ViewAreaRenderer {
         }
 
         // 26.2 has no pipeline-level depth clamp — raw GL (GL32.GL_DEPTH_CLAMP) via CHelper (R6).
-        CHelper.enableDepthClamp();
+        // S14.27 L2 lever (debug_no_aperture_depth_clamp, default OFF): skipping the clamp is the
+        // round-2 geometry-root discriminator — if the sky-wide sector wedges collapse to the true
+        // portal quads with the clamp off, the footprint corruption is depth-clamp rasterization of
+        // triangles crossing w<=0 (the 2A fix branch: CPU near-plane clip, clamp kept).
+        if (!qouteall.imm_ptl.core.IPGlobal.debugNoApertureDepthClamp) {
+            CHelper.enableDepthClamp();
+        }
 
         // 26.2 (G9/G6): the GONE portalAreaShader (ShaderInstance) + its MODEL_VIEW/PROJECTION uniform
         // set/apply/clear become a RenderPipeline-backed RenderType carrying the resolved color/depth/
@@ -168,7 +174,9 @@ public class ViewAreaRenderer {
             RenderSystem.setProjectionMatrix(savedProjectionBuffer, savedProjectionType);
         }
 
-        CHelper.disableDepthClamp();
+        if (!qouteall.imm_ptl.core.IPGlobal.debugNoApertureDepthClamp) {
+            CHelper.disableDepthClamp();
+        }
 
         // 26.2: no global GL state to restore — each drawMesh pass sets its own pipeline state (G6),
         // so IP's _enableCull/_colorMask(true..)/_depthMask(true) restores are unnecessary.

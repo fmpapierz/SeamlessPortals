@@ -618,6 +618,16 @@ public class ClientDebugCommand {
         );
         registerSwitchCommand(
             builder,
+            "debug_dye_view_area_mesh",
+            cond -> IPGlobal.debugDyeViewAreaMesh = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_no_aperture_depth_clamp",
+            cond -> IPGlobal.debugNoApertureDepthClamp = cond
+        );
+        registerSwitchCommand(
+            builder,
             "cloud_optimization",
             cond -> IPGlobal.cloudOptimization = cond
         );

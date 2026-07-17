@@ -143,10 +143,13 @@ public class SecondaryWorldRenderCore {
     private static GpuSampler mainChunkSampler;
 
     // Lazy portal-view SkyRenderer (the dest renderer's own is null — its addSkyPass never runs).
-    // Recreated when the main target size changes (§1 Step 10.4).
+    // Recreated when the main target size OR IDENTITY changes (§1 Step 10.4; S14.27 F2).
     private static SkyRenderer portalSkyRenderer;
     private static int portalSkyW = -1;
     private static int portalSkyH = -1;
+    private static RenderTarget portalSkyTarget;
+    private static com.mojang.blaze3d.textures.GpuTextureView portalSkyColorView;
+    private static com.mojang.blaze3d.textures.GpuTextureView portalSkyDepthView;
 
     // Standalone GPU buffers for the dest projection + fog UBOs. Never close()d (the GPU may still
     // read the previous frame's slice); GC reclaims when the reference is overwritten (§1 Steps 6-7,
@@ -730,7 +733,16 @@ public class SecondaryWorldRenderCore {
         if (mainRT == null) {
             return null;
         }
-        if (portalSkyRenderer == null || portalSkyW != mainRT.width || portalSkyH != mainRT.height) {
+        // S14.27 F2 (round-2 painter hunt): recreate on TARGET IDENTITY change, not just size —
+        // the captured RenderTarget object (and its texture-view identities) can be swapped out
+        // under the same dimensions (GUI-portal main-target swap; target churn), leaving the
+        // SkyRenderer bound to a STALE target whose FBO lacks the live stencil content. Mirrors
+        // vanilla's shouldResetSkyRenderer semantics.
+        if (portalSkyRenderer == null || portalSkyW != mainRT.width || portalSkyH != mainRT.height
+            || portalSkyTarget != mainRT
+            || portalSkyColorView != mainRT.getColorTextureView()
+            || portalSkyDepthView != mainRT.getDepthTextureView()
+        ) {
             if (portalSkyRenderer != null) {
                 try {
                     portalSkyRenderer.close();
@@ -742,6 +754,9 @@ public class SecondaryWorldRenderCore {
             portalSkyRenderer = new SkyRenderer(client.getTextureManager(), atlas, mainRT);
             portalSkyW = mainRT.width;
             portalSkyH = mainRT.height;
+            portalSkyTarget = mainRT;
+            portalSkyColorView = mainRT.getColorTextureView();
+            portalSkyDepthView = mainRT.getDepthTextureView();
         }
         return portalSkyRenderer;
     }

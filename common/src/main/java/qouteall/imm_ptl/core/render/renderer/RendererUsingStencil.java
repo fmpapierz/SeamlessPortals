@@ -294,6 +294,17 @@ public class RendererUsingStencil extends PortalRenderer {
         Profiler.get().pop();
 
         if (!anySamplePassed) {
+            // S14.27 F1 (round-2 painter hunt, transient M2): under the OFFSET occlusion scheme the
+            // INCR draw above already EXECUTED this frame (the verdict consumed is LAST frame's), so
+            // a stale-false verdict strands this frame's stencil INCR (+ the mesh's black color) for
+            // later same-frame portals — clampStencilValue is otherwise only reached on the taken
+            // branch. Clean the stencil half before returning. Gated on the offset scheme: the
+            // synchronous path (offset_occlusion_query off) has decision==false ONLY when ZERO
+            // samples passed = zero writes = nothing to clean — that path stays byte-identical with
+            // IP. DEVIATION (ledgered, task #9): IP carries the same latent offset-scheme leak.
+            if (qouteall.imm_ptl.core.IPGlobal.offsetOcclusionQuery) {
+                clampStencilValue(outerPortalStencilValue);
+            }
             setStencilStateForWorldRendering();
             return;
         }
@@ -358,7 +369,13 @@ public class RendererUsingStencil extends PortalRenderer {
         FrontClipping.updateInnerClipping(modelView);
 
         ViewAreaRenderer.renderPortalArea(
-            portal, Vec3.ZERO,
+            portal,
+            // S14.27 L1 lever (debug_dye_view_area_mesh, default OFF): the aperture mesh draws with
+            // doModifyColor=true and this fog color — IP-verbatim BLACK (Vec3.ZERO). Dyeing it GREEN
+            // photographs the mesh's true rasterized footprint directly (the round-2 sector/seam
+            // discriminator: green seams = double-INCR overlap keeping mesh color; green beyond the
+            // portal quad = the corrupted footprint itself).
+            qouteall.imm_ptl.core.IPGlobal.debugDyeViewAreaMesh ? new Vec3(0, 1, 0) : Vec3.ZERO,
             modelView,
             getCurrentProjectionMatrix(),
             true, true,
