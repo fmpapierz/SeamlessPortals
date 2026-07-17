@@ -87,6 +87,24 @@ touches stencil — the persistence assumption is sound).
 Phase 3 (S14.29, only if lag persists with small N post-fix): buffer pooling for the per-pass
 GpuBuffer/ByteBufferBuilder churn (behavior-neutral); optional user-side maxPortalLayer 5→2.
 
+## Phase-1 lever session OUTCOMES (user, tree 6663709) — M1 REFUTED
+
+- Step 2 (mesh dye GREEN): dark seams + sky wedges did **NOT** turn green → the aperture mesh is
+  NOT their painter (the M1 seam mechanism fails its own photograph test).
+- Step 3 (fill dye + skip terrain + skip sky together): the portal WINDOW turned purple/magenta
+  (the dye lever provably works; the Row-16 fill correctly paints the window) — the wedges were
+  **COMPLETELY UNCHANGED** → not the fill, not dest terrain, not dest sky.
+- Step 4 (no aperture depth clamp): wedges did **NOT** collapse → not clamp rasterization.
+- Net: every dest-pass draw is EXONERATED as the wedge painter. Round-3 lead: the wedges are
+  VANILLA's own draws (sky-family fans) being STENCIL-CLIPPED by mod stencil state/content leaking
+  beyond the portal bracket (test left enabled into later same-frame or next-frame-early vanilla
+  draws — the next frame's sky draws BEFORE the mid-frame S14.21 stencil clear). Hunt r3 running.
+- Session incident: the user's MOUSE stopped responding system-wide after the last lever command;
+  no project JVM survived and no TDR/display events in the System log (checked) → most likely a
+  USB/mouse glitch coincident with the GPU load; keyboard recovery steps provided. The sync
+  occlusion lever (step 5) remains a stall-storm risk on wedge-sized queries — do not re-run it
+  until the wedge fix lands.
+
 ## Fidelity ruling wanted from the user (rides the lever session)
 
 F1 is a deviation from IP-verbatim (IP has the same latent offset-scheme stencil leak). Accept as
