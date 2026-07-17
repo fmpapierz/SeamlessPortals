@@ -82,3 +82,14 @@ accessible class net/minecraft/world/item/CreativeModeTab$Output
 # verbatim write: accessible + mutable (de-final). Paired with the accesstransformer.cfg `public-f` entry.
 accessible field net/minecraft/util/profiling/ActiveProfiler WARNING_TIME_NANOS J
 mutable field net/minecraft/util/profiling/ActiveProfiler WARNING_TIME_NANOS J
+
+# S14.21 (rung-2 fix 1 — the prepareRendering stencil-clear FBO resolver): GlDevice is
+# package-private in the real jar (the mc262-ref decompile normalizes access). The resolver needs
+# glDevice.frameBufferCache().getFbo(...) + directStateAccess() — the SAME lookup every main-pass
+# createRenderPass performs — to bind the LIVE main-target FBO for the per-frame stencil clear
+# (the 26.2 1:1 of IP's mainRenderTarget.bindWrite(false); replaces the stale gameFboId capture
+# that produced the 51k/session GL_INVALID_OPERATION flood + the broken stencil reset).
+accessible class com/mojang/blaze3d/opengl/GlDevice
+# S14.21 companion: RenderSystem.getDevice() returns the GpuDevice FACADE; the GL backend
+# (GlDevice implements GpuDeviceBackend) is reachable only through its private `backend` field.
+accessible field com/mojang/blaze3d/systems/GpuDevice backend Lcom/mojang/blaze3d/systems/GpuDeviceBackend;

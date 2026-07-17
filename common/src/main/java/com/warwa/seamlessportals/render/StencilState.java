@@ -14,7 +14,16 @@ package com.warwa.seamlessportals.render;
  * Used by: StencilPortalRenderer.renderSinglePortal()
  */
 public class StencilState {
-    /** The game's main FBO ID with DEPTH24_STENCIL8 stencil attachment. */
+    /** The game's main FBO ID with DEPTH24_STENCIL8 stencil attachment.
+     *
+     * @deprecated S14.21: this last-writer-wins capture is UNSOUND as a "main FBO" identity — it
+     * points at whatever depth FBO was created last and goes stale at resource-lifecycle events
+     * (world teardown, GUI target churn), which produced the 51k/session GL_INVALID_OPERATION
+     * flood and a broken per-frame stencil clear. The flag-ON path now resolves the LIVE main
+     * FBO deterministically via {@code GlDevice.frameBufferCache().getFbo(...)}
+     * (RendererUsingStencil.prepareRendering). Kept only for the flag-OFF block-era DIAG readers;
+     * retire the field + the RenderTargetMixin store at S20. */
+    @Deprecated
     public static int gameFboId = 0;
 
     /** The LAST FBO bound via glBindFramebuffer (captured by GlStateManagerMixin).

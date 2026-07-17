@@ -1,7 +1,11 @@
 package qouteall.imm_ptl.core.render.renderer;
 
+import com.mojang.blaze3d.opengl.GlDevice;
 import com.mojang.blaze3d.opengl.GlStateManager;
-import com.warwa.seamlessportals.render.StencilState;
+import com.mojang.blaze3d.opengl.GlTextureView;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
+import qouteall.q_misc_util.Helper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.profiling.Profiler;
 import net.minecraft.world.phys.Vec3;
@@ -77,6 +81,8 @@ import static org.lwjgl.opengl.GL11.GL_STENCIL_TEST;
 // render-thread-logging discipline (memory render-thread-logging-log4j-stall): NO per-frame LOGGER.
 public class RendererUsingStencil extends PortalRenderer {
 
+    // S14.21: the last FBO id the prepareRendering stencil clear resolved — value-change log gate only.
+    private static int lastResolvedMainFbo = -1;
 
     @Override
     public boolean replaceFrameBufferClearing() {
@@ -161,23 +167,53 @@ public class RendererUsingStencil extends PortalRenderer {
             }
         }
 
-        // 26.2 G12: RenderTarget.bindWrite(false) is GONE. IP bound the main render target so the stencil
-        // clear below lands on it; on 26.2 the main target is already bound during renderLevel, and the
-        // substrate re-attaches a stencil buffer to every FBO. Re-express the bind onto the substrate's
-        // designated main stencil FBO (StencilState.gameFboId — "the game's main FBO ID with
-        // DEPTH24_STENCIL8 stencil attachment"), guarded on non-zero. This is "re-express onto exactly
-        // what the live StencilPortalRenderer proves works" (raw GL30.glBindFramebuffer for stencil ops).
-        // The precise render-time active-FBO selection (the live renderer discovers it at draw time via
-        // StencilState.lastBoundFbo) is an S13 rung-1 driver-core runtime-verify item; inert until then.
-        if (StencilState.gameFboId != 0) {
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, StencilState.gameFboId);
-        }
+        // 26.2 G12 — S14.21 CORRECTED RE-EXPRESSION (live-defect hunt, all four tracks unanimous):
+        // IP's prepareRendering bound THE MAIN RENDER TARGET (bindWrite(false)) so the stencil clear
+        // below lands on it. The prior form bound StencilState.gameFboId — a last-writer-wins capture
+        // of "the most recent depth FBO created anywhere" (RenderTargetMixin), whose staleness flips at
+        // resource-lifecycle events (world teardown, pause-menu GUI target churn via the
+        // CrossFrameResourcePool TTL → FBO delete): stale-DEAD names threw GL_INVALID_OPERATION once
+        // per frame (the 51,470-line U2 flood) and left FBO 0 bound so the clear hit the WINDOW; a
+        // stale-LIVE name cleared a WRONG target silently. Either way the main RT's per-frame stencil
+        // reset never happened — the substrate half of the rung-2 stencil-poison admission (SYMPTOM B).
+        // The 1:1 26.2 translation of IP's bindWrite(false): resolve the LIVE main-target FBO from
+        // FrameBufferCache with the SAME key (color view + depth view) every main-pass createRenderPass
+        // computes — a cache HIT returns the exact FBO integer in use; a MISS creates it through the
+        // stencil-capable substrate path. Bind through GlStateManager._glBindFramebuffer (cache-guarded;
+        // a raw GL30 bind desyncs its readFbo/writeFbo cache — the old code was quietly doing that too),
+        // and restore the previous read/write bindings exactly.
+        RenderTarget mainRt = client.gameRenderer.mainRenderTarget();
+        // 26.2: RenderSystem.getDevice() returns the GpuDevice FACADE; the GL backend is its
+        // (AW-widened) `backend` field — GlDevice implements GpuDeviceBackend.
+        if (RenderSystem.getDevice().backend instanceof GlDevice glDevice
+            && mainRt.getColorTextureView() instanceof GlTextureView colorView
+            && mainRt.getDepthTextureView() instanceof GlTextureView depthView
+        ) {
+            int mainFbo = glDevice.frameBufferCache().getFbo(
+                glDevice.directStateAccess(), List.of(colorView), depthView
+            );
+            // Value-change-gated landing proof (render-thread-logging discipline: logs ONLY when the
+            // resolved id changes — resize/world-switch cadence, never per-frame).
+            if (mainFbo != lastResolvedMainFbo) {
+                Helper.log("[S14.21] stencil-clear main FBO resolved: " + mainFbo
+                    + " (color=" + colorView + ", depth=" + depthView + ")");
+                lastResolvedMainFbo = mainFbo;
+            }
+            int prevRead = GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
+            int prevWrite = GlStateManager.getFrameBuffer(GL30.GL_DRAW_FRAMEBUFFER);
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, mainFbo);
 
-        // R5 Row 1 (prepareRendering :98-99): UNCHANGED. Clears STENCIL only — the main-frame reversed-Z
-        // DEPTH buffer is deliberately preserved for the stencil-write depth test (Row 4). Stencil is
-        // depth-direction-independent.
-        GL11.glClearStencil(0);
-        GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT);
+            // R5 Row 1 (prepareRendering :98-99): UNCHANGED. Clears STENCIL only — the main-frame
+            // reversed-Z DEPTH buffer is deliberately preserved for the stencil-write depth test
+            // (Row 4). Stencil is depth-direction-independent. The clear is LOAD-BEARING: the
+            // end-of-frame clampStencilValue is SKIPPED on the occlusion-mispredict early-return, so
+            // without this per-frame clear a mispredicted portal's INCR'd stencil poisons later frames.
+            GL11.glClearStencil(0);
+            GL11.glClear(GL11.GL_STENCIL_BUFFER_BIT);
+
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevWrite);
+        }
 
         // R5 Row 2 (:101-102): UNCHANGED. Toggles, not comparisons. (26.2 wrapper move:
         // RenderSystem/GlStateManager._enableDepthTest.)
