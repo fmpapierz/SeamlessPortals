@@ -124,30 +124,41 @@ public abstract class PortalRenderer {
     public abstract boolean replaceFrameBufferClearing();
 
     /**
-     * 26.2 re-expression of the GONE {@code RenderSystem.getProjectionMatrix()} (render-core G27/G19).
-     * On 1.21.3 the current projection was a mutable {@code RenderSystem} global that returned a
-     * {@link Matrix4f}; on 26.2 that global is GONE (only {@code backup/restoreProjectionMatrix()} +
-     * the {@code getProjectionMatrixBuffer()} GpuBufferSlice remain, mc262 RenderSystem.java:186-198).
-     * The live current projection now rides the extracted render state — read it from
-     * {@code gameRenderState().levelRenderState.cameraRenderState.projectionMatrix}, the EXACT idiom the
-     * live substrate proves ({@code MOD:StencilPortalRenderer.buildMainFrustum:66-68}). During portal
-     * rendering this is the main (basic) projection — identical to what IP's
-     * {@code RenderSystem.getProjectionMatrix()} returned there, because IP's
-     * {@code MixinGameRenderer} forced {@code getProjectionMatrix == RenderStates.basicProjectionMatrix}
-     * during portal rendering. Returns a defensive copy (the caller feeds it to {@code new Frustum} /
-     * {@code ViewAreaRenderer}). Fallbacks (pre-first-frame): IP's own captured
-     * {@code RenderStates.basicProjectionMatrix} (set by the S12 MixinGameRenderer), else identity —
-     * never null, since {@code new Frustum} requires a non-null projection.
+     * 26.2 re-expression of the GONE {@code RenderSystem.getProjectionMatrix()} (render-core G27/G19) —
+     * the LIVE draw projection of the pass currently rendering, the value IP's
+     * {@code RenderSystem.getProjectionMatrix()} returned everywhere the renderers read it (stencil-aperture
+     * write, Row-11/12 depth restore, portal cull frustum). On 1.21.3 that global was a mutable
+     * {@code RenderSystem} {@link Matrix4f}; on 26.2 it is GONE — only {@code getProjectionMatrixBuffer()}
+     * survives, returning a {@code GpuBufferSlice} (mc262 RenderSystem.java:186-198), so it cannot be read
+     * back as a matrix.
+     *
+     * <p><b>S13-M P1 fix.</b> Return the BOBBED (and spun) draw projection, NOT the unbobbed
+     * {@code cameraRenderState.projectionMatrix}. On 26.2 view-bob + nausea/portal spin ride the PROJECTION
+     * (renderLevel:535-557), while {@code cameraRenderState.projectionMatrix} is deliberately kept BOB-FREE
+     * (it is the extract-time base, used for culling). IP's ambient {@code RenderSystem.getProjectionMatrix()}
+     * was {@code base*bob*spin}; drawing the stencil aperture / cull frustum with the unbobbed base made the
+     * aperture WOBBLE against both the frame and the (bobbing) dest content. We rebuild it from
+     * {@link RenderStates#capturedMainPassBobbedProjection} (the POST-spin main capture) scaled by
+     * {@link PortalRendering#getExtraModelViewScaling()} for the current layer via
+     * {@link RenderStates#getPortalDrawProjection}: at the outer (layer-0) site the scaling is 1, so it is the
+     * captured main projection; at a nested layer it is that layer's dest DRAW projection (bob scaled to the
+     * accumulated portal scale), so a nested aperture aligns with the dest content it is drawn into. This
+     * matches IP: the aperture is drawn with the projection of the pass it is written INTO — the portal is
+     * pushed only around its OWN content, so the stencil write + depth restore (portal not yet / no longer on
+     * the stack) see the OUTER scaling, and the content (portal pushed) sees this-portal scaling.
+     *
+     * <p>Returns a fresh defensive copy (callers feed it to {@code new Frustum} / install it in
+     * {@code ViewAreaRenderer}). Fallback (pre-first-frame, before the first capture): the unbobbed
+     * {@code cameraRenderState.projectionMatrix} else {@code RenderStates.basicProjectionMatrix} else
+     * identity — never null, since {@code new Frustum} requires a non-null projection.
      */
     protected static Matrix4f getCurrentProjectionMatrix() {
         CameraRenderState cameraRenderState =
             client.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
-        if (cameraRenderState != null && cameraRenderState.projectionMatrix != null) {
-            return new Matrix4f(cameraRenderState.projectionMatrix);
-        }
-        return RenderStates.basicProjectionMatrix != null
-            ? new Matrix4f(RenderStates.basicProjectionMatrix)
-            : new Matrix4f();
+        Matrix4f base = (cameraRenderState != null && cameraRenderState.projectionMatrix != null)
+            ? cameraRenderState.projectionMatrix
+            : RenderStates.basicProjectionMatrix;
+        return RenderStates.getPortalDrawProjection(base, PortalRendering.getExtraModelViewScaling());
     }
 
     protected List<Portal> getPortalsToRender(Matrix4f modelView) {

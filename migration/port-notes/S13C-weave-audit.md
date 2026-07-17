@@ -1263,6 +1263,265 @@ blind-patched (3 unlocalized suspects, regression risk to the working multi-port
 **Minor fidelity glance queued:** reciprocal entity portal's `reversePortalId` left undefined after global
 conversion (bookkeeping only; persistence/teleport intact).
 
+---
+---
+
+# S13-L — RUNG-1 CLOSE-OUT: the white-bar CONVICTION + the S11-B scaled-clip refinement landed, the camera verdict, the buried-portal record
+
+**Stage S13-L of the entity-portal migration — rung 1 is CLOSED.** The one rung-1 survivor S13-K carried
+open (the "white bar" at the bottom of a scaled-portal opening, `§J.3`/S13-K) is now root-caused, fixed,
+and the fix's math is derived sign-by-sign. The trigger was the **user's live A/B** that S13-K prescribed
+(`localization protocol = live A/B with enableClippingMechanism=false`): **with `enableClippingMechanism=false`
+the white bar is GONE.** That directly CONVICTS `FrontClipping` — the clip mechanism is clipping scaled-dest
+terrain it must not — out of the three S13-K suspects (runtime stencil-write band rejection / FrontClipping /
+DEPTH_CLEAR-vs-fill coverage mismatch). And it convicts *exactly the edge the port already predicted*: the
+S11-B verifier's documented deferral (`S11B-render-drivers.md §3.1 L310-312` + item 4 `L584-585`, and the
+`FrontClipping` class SIGN NOTE) — *"the mod's live path uses a rotation-only `viewRotation`; the scaling-portal
+edge (model-view carries scale → `nView` non-unit → the signed distance is mis-scaled) is flagged for S13
+driver-core, NOT fixed here."* That refinement is now DUE with a live conviction, and it landed.
+
+**USER SYMPTOM (verbatim, S13-K carry):** on a `set_portal_scale 2` portal, a white band at the BOTTOM of
+the enlarged opening; the user's break-test removed it by removing the source blocks in front of the bottom
+band, and the A/B removed it by disabling the clip mechanism. Also, on the SCALED pair the user observed
+*"when i move away from the portal, the portal render camera also moves away instead of being pinned to the
+dest portal spot."*
+
+**Citation conventions:** as §S13-C…§S13-K — `IP:` = 1.21.3 (`ImmersivePortalsMod/.../qouteall`); `26.2:` =
+`mc262-ref` (Mojang mappings); `MOD-qouteall:` = the held/registered `qouteall.*` ports (the live driver).
+Line numbers are the current on-disk files.
+
+---
+
+## L.1 — THE CONVICTION (why the A/B pins FrontClipping, and why it is the scaled-clip edge specifically)
+
+The white bar is the **S13-I Row-16 backdrop fill** (`getCurrentFogColor` = the now-live dest sky/fog color,
+S13-I) showing through in a band where the **dest terrain that should cover it is being clipped away**. The
+A/B is the decisive discriminator:
+
+- **`enableClippingMechanism=false` → bar GONE.** `FrontClipping.disableClipping()` / the whole feed is
+  gated on `IPGlobal.enableClippingMechanism` (`FrontClipping.java:104,167`); with it off, `gl_ClipDistance[0]`
+  is never fed a portal plane, so NO dest fragment is clipped — and the bottom band fills with dest terrain.
+  That the bar vanishes precisely when the clip is disabled means the clip half-space was **rejecting dest
+  terrain fragments inside the scaled opening** — i.e. the kept half-space `n·p_rel + c > 0` was evaluating
+  with the WRONG boundary under scale.
+- **Break-test agreement.** Removing the source blocks in front of the bottom band also removed the bar
+  (S13-K) — consistent: with the clip mis-placed, the dest terrain that WOULD cover the band is clipped, so
+  whatever is nearest wins the reversed-Z GEQUAL competition; remove the competing source depth and the
+  backdrop no longer survives there. Both observations converge on "the clip boundary is displaced under
+  scale," not on a stencil-write or depth-clear coverage gap.
+- **Only-on-scaled.** The bar appears ONLY on `set_portal_scale > 1` portals; unscaled portals are seamless
+  (first light, S13-J). A defect that manifests only under portal scale, on the clip plane, is the S11-B
+  scaled-clip edge by elimination.
+
+---
+
+## L.2 — FIXCLIP: the on-paper derivation (sign-by-sign), and the landed fix
+
+### L.2.1 — Ground truth: IP is scale-INVARIANT because it clips in WORLD space; we clip in EYE space
+
+- **IP's kept half-space** (`getClipEquationInner`, ported verbatim `FrontClipping.java:237-255`):
+  `n·p_rel + c > 0` in TRUE dest-world units, where `p_rel = worldPos − destCamPos`, `n` = unit dest-portal
+  normal, `c = −n·(clipPoint + corr·n − destCam)`.
+- **Why IP is scale-invariant.** IP's vanilla-terrain clip shader evaluates that half-space in WORLD space —
+  `IP:shader_transformation.yaml:17`: `gl_ClipDistance[0] = dot(Position.xyz + ChunkOffset, {n,c}.xyz) +
+  {n,c}.w`. The model-view SCALE never touches the clip: the plane is dotted against raw world position, so
+  a scaling portal's `k` in the camera model-view is irrelevant to the clip test.
+- **OUR shader evaluates in EYE space.** The proven 26.2 clip mechanism (`com.warwa…ShaderCodeTransformation`,
+  the always-on `GlCommandEncoderClipMixin` upload) injects `gl_ClipDistance[0] = dot(ModelViewMat·pos,
+  planeXYZ) + planeW`. The model-view is applied to the position BEFORE the dot — so any scale in
+  `ModelViewMat` DOES touch the clip. This is the whole reason IP's world-space equation cannot be fed to
+  our eye-space store verbatim under scale.
+
+### L.2.2 — The feed site + the scaling model-view
+
+- **Feed site (unchanged).** `SecondaryWorldRenderCore.setupInnerClipping(getActiveClippingPlane(),
+  destViewMatrix, −ADJUSTMENT)` (`SecondaryWorldRenderCore.java:441-442`). `destViewMatrix`
+  (`:237-243`) = `newCamera.getViewRotationMatrix` ∘ `TransformationManager.processTransformation`, and the
+  SAME matrix feeds `destRenderer.prepareChunkRenders(destViewMatrix)` (`:424`, the dest TERRAIN vertices).
+  So the clip and the terrain it must bound are rasterized under the IDENTICAL model-view — the covector
+  transform inverts exactly what the terrain draw applies.
+- **When the model-view carries scale.** A fuse-view scaling portal installs a UNIFORM scale `k = 1/s` on
+  the camera model-view: `PortalRenderer.getPortalScaleMatrix = scale(1/portal.getScale())` when
+  `shouldApplyScaleToModelView(portal) = portal.hasScaling() && portal.isFuseView()`
+  (`PortalRenderer.java:383-396`). So `M = R·kI` with `det(M linear) = k³`.
+
+### L.2.3 — The bug, exact
+
+Old feed: forward column-form rotate `planeXYZ = M·n` (the S11-A anti-fix guard column form, correct for a
+pure rotation). Under `M = R·kI` that gives `planeXYZ = k·R·n`. The shader then computes
+`dot(M·p_rel, planeXYZ) + c = dot(k·R·p_rel, k·R·n) + c = k²(n·p_rel) + c`. The kept half-space boundary is
+DISPLACED by `k²` — the clip plane sits at the wrong depth, clipping scaled-dest terrain that lies on the
+kept side. That displacement IS the white bar. (For `k=1`, `k²=1` → no displacement → the unscaled seamless
+case, which is why first light was clean.)
+
+### L.2.4 — The fix, exact (INVERSE-TRANSPOSE of the covector, det≈1 fast path)
+
+A clip normal is a **covector**; to survive a linear map `M` it transforms by `M⁻ᵀ`, not `M`. Feeding
+`planeXYZ = M⁻ᵀ·n = (1/k)·R·n` makes the shader compute
+`dot(k·R·p_rel, (1/k)·R·n) + c = (k/k)(n·p_rel) + c = n·p_rel + c` — the EXACT IP world-space half-space,
+for `k>1` and `k<1` alike. `planeW = c` is unchanged (the correction term rides in `c`, a scale-free scalar
+in this decomposition; IP's own `transformClipEquation` leaves the `w` component of the after-model-view
+equation as the transformed constant — our `c` is already the pre-model-view constant the eye-space form
+needs). This is precisely IP's `transformClipEquation` (its after-model-view equation) restricted to the
+translation-free 3×3 block.
+
+Landed in `MOD-qouteall:render/FrontClipping.java` — the ONE changed file (`+94/−19`), the qouteall BRIDGE
+copy; the live `com.warwa…FrontClipping` store is **UNTOUCHED** (B1 single-store contract intact):
+
+- **`rotateClipNormalToViewSpace(double[] beforeModelView, Matrix4f modelView)`** (`:201-223`) — the single
+  place the world-space clip normal becomes the eye-space `planeXYZ`. It takes the linear 3×3 block
+  (`new Matrix3f(modelView)`), computes `det`, and:
+  - **`|det − 1| ≤ SCALE_DETECT_EPSILON` (`= 1.0e-3f`, `:101`)** → UNSCALED / rigid rotation: `R⁻ᵀ == R`, so
+    the proven forward column-form rotate `new Vector4f(nx,ny,nz,0).mul(modelView)` IS the covector transform.
+    **BIT-IDENTICAL to the first-light path** — no invert, no float drift, COLUMN FORM (anti-fix guard: never
+    `mulTranspose`). A pure-rotation product's determinant carries only ~1e-6 float error, while any real
+    portal scale `k=1/s` moves `det=k³` by ≥~3% for `s≳1.01`, so `1e-3` cleanly separates the two.
+  - **else** (scaling model-view, `det = k³ ≠ 1`) → `linear.invert().transpose().transform(n)` = `M⁻ᵀ·n`.
+- **Both consumers route through it** — so the fix is applied everywhere the clip normal is produced, with
+  ZERO other call-shape change:
+  - `feedViewSpacePlane` (`:166-177`) — the LIVE inner/outer clip feed to the `com.warwa` store
+    (`setupInnerClipping`/`setupOuterClipping` → the dest-render Step-10.3 inner-clip bracket).
+  - `toViewSpaceSnapshot` (`:367-376`) — the R3 per-entity capture variants
+    (`captureOuterClipping`/`captureInnerClipping`, the `PerEntityClipBracket` Snapshot path); same eye-space
+    covector transform, returning the Snapshot instead of writing the store.
+- The vestigial IP `double[]` before/after-model-view equations (`transformClipEquation`, `:225-235`) are
+  still computed for the held IP-contract getters but back the dead GL_CLIP_PLANE0 path (26.2-superseded);
+  the LIVE feed is the view-space store.
+
+### L.2.5 — S13-I nested-matrix interplay (cross-checked)
+
+The S13-I `ViewAreaRenderer` fix (per-call MODEL_VIEW/PROJECTION install around `drawMesh`, `§I.5`) keeps
+the shader's ambient `ModelViewMat == destViewMatrix` for the portal-area draw — so the covector transform
+inverts EXACTLY the model-view the shader applies. The two fixes compose: S13-I guarantees the shader sees
+the fed matrix; S13-L makes the clip normal the correct covector under that matrix. (Documented in the
+`FrontClipping.java:71-74` class SIGN NOTE.)
+
+---
+
+## L.3 — CAMERAAUDIT: the dest camera MOVING with the player is IP-CORRECT (verdict: IP-identical, NO fix)
+
+The user's *"the portal render camera moves away when I move away instead of being pinned to the dest portal
+spot"* (observed on the scaled pair) is the **CORRECT window behavior**, verified 1:1 against IP and the
+project's own block-era memory. NO code defect; NO fix.
+
+- **Ground truth (IP).** The dest render camera is the PLAYER camera carried through `Portal.transformPoint`:
+  `pos_dest = destPos + rotation(scaling·(pos − originPos))`. It MOVES with the player — that is what makes
+  a portal a real window with parallax; a camera "pinned to the dest portal spot" would be a static painting.
+- **Our chain is IP-identical.** The dest camera pos is `PortalRendering.getRenderingCameraPos()`, built into
+  `WorldRenderInfo.Builder().setCameraPos(...)` (`PortalRenderer.java:304-306`) and consumed by
+  `SecondaryWorldRenderCore` (`ip_resetState(WorldRenderInfo.cameraPos, destLevel)`, the §H.2 Step-1 camera
+  config). It traces back to `Portal.transformPoint` on the player camera pos — the same construction IP uses.
+- **The SCALE WRINKLE (why the user noticed it on the SCALED pair).** Through a scale-2 portal the `scaling·`
+  factor in `transformPoint` makes the dest camera move **TWICE** the player's displacement. So "I move 1
+  block, the view shifts as if I moved 2" is the *correct* scaled-window parallax — exactly what made the
+  motion conspicuous on the scaled pair where it is invisible-because-correct on an unscaled pair. The scale
+  factor is applied EXACTLY ONCE (in `transformPoint`), not dropped and not double-applied.
+- **Project memory confirms.** The block-era lesson `portal-view-camera-transform` records that the dest
+  render camera KEEPS `transformPoint` (1:1 translation = the correct locked parallax), and that switching it
+  to `transformTeleportPoint` inverts depth parallax → the view SWIMS (tried and reverted). Pinning the camera
+  would be the same class of regression.
+- **Reachability caveat for the retest (action = verify at the A/B, NOT a code change).** The clip's fed
+  model-view carries scale ONLY when `shouldApplyScaleToModelView = hasScaling && isFuseView`
+  (`PortalRenderer.java:395-396`) — i.e. a FUSE-VIEW scaling portal installs `scale(1/s)` on the camera
+  model-view. The user's `set_portal_scale 2` A/B was exactly that path, so the L.2 inverse-transpose branch
+  is the branch under test. A non-fuse scaling portal does NOT install scale on the view matrix (the scale
+  lives only in the camera-pos `transformPoint`), so it takes the bit-identical rotation-only fast path and
+  its clip is unaffected — expected, and worth confirming at the retest if a non-fuse scaled portal is tried.
+
+**VERDICT: IP-identical. No math, sign, or consumer defect in the camera chain.** The camera moving with the
+player (2× on a scale-2 portal) is correct window parallax; document and explain, do not "fix."
+
+---
+
+## L.4 — RECORD: the "buried portal" is byte-identical IP placement (accepted rung-1 look)
+
+Consolidating S13-K's geometry verdict: the "buried portal" the user perceived is **placement math
+byte-identical to IP**, not a defect.
+
+- `make_portal` places the frame at the player's location; the portal's BOTTOM row sits BELOW the grass line
+  as placed (the bottom band is below the surface). S13-K confirmed `set_portal_scale` leaves the scaled
+  portal's OWN crossable rectangle as placed. The "buried" perception was **real source-side grass in front of
+  the bottom band** (same blocks = jump-over collision + render occlusion), not a mis-placed portal.
+  **S13-M correction:** the earlier "grows NEITHER the source NOR the dest rectangle" absolute is WRONG for a
+  COMPLETED pair — `complete_bi_way_portal`/`createReversePortal` spawns the REVERSE at `width*scale ×
+  height*scale` (`PortalManipulation.createReversePortal:98-99`, reverse scaling `1/scale`), so a scale-2 3×3
+  portal has a **6×6 reverse on disk** (S13-M save-data ground truth). The scaled portal itself is unchanged;
+  its reverse is grown. The "bigger/buried after scaling" perception is real geometry on the reverse side plus
+  the buried-band occlusion on the front side, not a defect.
+- The below-ground band of the opening maps to **dest-UNDERGROUND rays** → the S13-I Row-16 backdrop fill /
+  dest-underground terrain = an accepted rung-1 look. The user's "dig a hole and xray through it" observation
+  is this SAME mechanism: looking through the below-ground portion of the opening shows the dest world's
+  sub-surface, exactly as the placement geometry dictates.
+- Disposition: **NO code change** — byte-identical IP placement; the below-ground band is dest-underground
+  backdrop, an accepted rung-1 look. Documented in `S13-FIRST-LIGHT-TEST.md` (this stage's §2 amendment).
+
+---
+
+## L.5 — VERIFICATION TIER + GATE DISCIPLINE
+
+**Tier: live A/B conviction (user ground truth) + on-paper sign-derivation + adversarial-verify of the landed
+fix (S13 is a hard live-checkpoint stage).** The FixClip verdict re-derived the half-space EXACTLY from both
+shader spaces (IP world-space `shader_transformation.yaml:17`; our eye-space `ShaderCodeTransformation`) and
+the feed site (`SecondaryWorldRenderCore.java:237-243,424,441-442`), and confirmed the fix: *"No math, sign,
+or consumer defect found — the fix is exact and the unscaled path is bit-identical."* The camera verdict
+re-read the `transformPoint` chain 1:1 vs IP + the `portal-view-camera-transform` memory. The buried-portal
+record is grounded on the S13-K geometry verdict.
+
+**Green gate PASS (post-fix):** `:common:compileJava`, `:fabric:compileJava`, `:neoforge:compileJava`, and
+`:common:test` ALL **BUILD SUCCESSFUL** under the committed `ip_scc_closed=true` (the closure is on-classpath,
+so the edited `FrontClipping.java` was actually compiled — `JOML 1.10.8` resolved `Matrix3f`/`Vector3f`; a
+bad import/signature would have failed). Logs: `scratchpad/s13l-build*.log`.
+
+**Gate discipline (constraints honored):** ZERO IP-semantic deviation — the fix re-expresses IP's
+`transformClipEquation` (the covector inverse-transpose) restricted to the translation-free block, DUE per
+the S11-B documented deferral; the unscaled/non-fuse path is **BIT-IDENTICAL** (the det≈1 fast path keeps the
+proven first-light render byte-for-byte — the regression risk was the first-light render, and it is untouched).
+Flag-OFF surface byte-identical (the single edit is inside the held/registered qouteall BRIDGE
+`FrontClipping.java`; the live `com.warwa…FrontClipping` store is UNTOUCHED; no `com.warwa` change, no
+`mixins.json`, AW/AT, or build wiring). **This stage did NOT run gradle beyond the green gate, did NOT run the
+game, and did NOT commit** (per the S13-L task constraint) — the orchestrator ships and commits.
+
+**Working-tree touch (S13-L):** 1 tracked source, zero `com.warwa`:
+- `render/FrontClipping.java` (`+94/−19`) — the S13-L class SIGN NOTE refinement block; `SCALE_DETECT_EPSILON`;
+  `rotateClipNormalToViewSpace` (det≈1 rotation-only fast path / covector inverse-transpose branch); both
+  `feedViewSpacePlane` and `toViewSpaceSnapshot` routed through it.
+
+Plus the doc amendments (this record + `S13-FIRST-LIGHT-TEST.md` §2 re-test expectations, L.6).
+
+---
+
+## L.6 — CARRIED FORWARD (rung 1 CLOSED)
+
+1. **Re-test (the LIVE confirmation of FixClip). — S13-M CORRECTION: this expectation was WRONG for a command
+   portal.** The user reran `S13-FIRST-LIGHT-TEST.md §1.2 step 3` (a `set_portal_scale 2` portal with
+   `enableClippingMechanism=true`) and the bar PERSISTED (clearing only on dig-out). Root cause: a
+   `set_portal_scale` portal is NON-fuse (`fuseView=0`), and S13-L's covector clip refinement only engages a
+   FUSE-view scaling model-view (`shouldApplyScaleToModelView = hasScaling && isFuseView`,
+   `PortalRenderer:395-397`) — so **S13-L is INERT for command portals**, and "GONE with clipping ON" never
+   applied to them. The bar on a command portal is the **buried-opening** look (Row-16 backdrop fill where
+   source blocks occlude the below-ground band); **dig out the burying blocks and it clears** (source-depth
+   occlusion, S13-K depth-competition — EXPECTED IP behavior, not a failed fix). The earlier
+   `enableClippingMechanism=false` A/B removed the bar only because it disabled clipping wholesale. **S13-L
+   stands but must be confirmed on a `fuseView=true` scaled portal, not `set_portal_scale`.** See the S13-M
+   record at the end of this file.
+2. **Camera parallax expectation.** On a scale-2 portal the dest view moves 2× the player's displacement —
+   this is CORRECT (L.3). Document, do not re-file as a bug.
+3. **The det≈1 fast path is the unscaled guarantee.** Any future change to `rotateClipNormalToViewSpace` must
+   keep the `|det−1| ≤ SCALE_DETECT_EPSILON` fast path bit-identical (it is the first-light render's clip
+   feed). The inverse-transpose branch is exercised only by a fuse-view scaling model-view.
+4. **Non-fuse scaling portals (untested).** The reachability caveat (L.3): a non-fuse scaling portal takes the
+   rotation-only fast path (no scale on the view matrix). If a future rung exercises non-fuse scaled portals,
+   confirm the clip there — the scale lives only in the camera-pos transform, so the fast path is expected to
+   be correct, but it has not been A/B-convicted.
+5. **S18 nested-recursion (unchanged carry).** The S13-I nested-layer matrix bracket (`§I.5`) and this covector
+   transform first co-exercise under S18 recursion; the sliver genre + a scaled nested clip are the S18 watch.
+6. **Rung 1 is CLOSED.** The rung-1 census (S13-J/§J.0) is fully dispositioned: FIRST LIGHT confirmed; findings
+   1+2 (one-sided/one-way) = EXPECTED IP; 3a (giant scale) = faithful IP physics; 6 (clouds fence) = FIXED
+   (skip-until-S18); 7 (stencil-FBO `GL_INVALID_OPERATION`) = the code's own deferred substrate item; **3b (the
+   white bar) = FIXED here (the S11-B scaled-clip refinement).** Next: S14 (cross-dimension portals, rung 2).
+
+## STATUS: S13-L RUNG-1 CLOSE-OUT — the white bar is CONVICTED (live A/B: `enableClippingMechanism=false` removes it) as the S11-B-deferred scaled-clip edge, and FIXED (the covector INVERSE-TRANSPOSE of the clip normal under a scaling model-view, `M⁻ᵀ·n = (1/k)·R·n`, cancelling the shader's `k²` half-space displacement EXACTLY for k>1 and k<1; det≈1 fast path keeps the unscaled render BIT-IDENTICAL). Camera verdict: IP-identical — the dest camera moving with the player (2× on a scale-2 portal) is correct window parallax, NO fix. Buried portal: byte-identical IP placement, the below-ground band = dest-underground backdrop (accepted rung-1 look). One file changed (qouteall bridge `FrontClipping.java`, +94/−19); flag-OFF `com.warwa` FrontClipping UNTOUCHED; green gate PASS on `:common`/`:fabric`/`:neoforge` compileJava + `:common:test`; game NOT run; NO commit. Rung 1 CLOSED; next is S14 (rung 2, cross-dimension).
+
 ## S13-L — the scaled-portal clip fix + camera verdict (2026-07-16)
 
 **The A/B conviction landed its fix:** the S11-B-deferred scaled-portal FrontClipping refinement is
@@ -1281,3 +1540,116 @@ the dest camera at 2× the player rate). The block-era swimming-bug transform is
 provably inert for it and the (certain) clip-side culprit has a different entry point — the closeout run
 discriminates: bar gone = fixed; bar persists = next diagnosis is already narrowed to the non-modelView
 clip path.
+
+---
+
+## S13-M — the view-bob "window head-bob" fix (Finding B) + the bar-is-expected verdict (Finding A) (2026-07-16)
+
+The S13-L closeout run (user, live, clipping ON) returned two results. The RETEST CAVEAT above called both:
+
+**NBT GROUND TRUTH (Finding A anchor — the mission's "GROUND TRUTH FIRST").** Read from the user's newest test
+save `New World (16)`, overworld entities region `r.-1.0.mca` (save 2026-07-16 18:43): **4
+`immersive_portals:portal` entities, data in nested `imm_ptl_portal_data`, ALL FOUR `fuseView=0`.**
+- **#2 (the scale-2 portal under test):** origin `(-0.5, -58.5, 14.5)`; `width=3 height=3 thickness=0`;
+  **`scale=2`, `fuseView=0` (FALSE), `teleportChangesScale=1`**; `axisW=(-1,0,0) axisH=(0,1,0)` ⇒ normal
+  `(0,0,-1)` [faces −Z]; `dimensionTo=minecraft:overworld` (SAME dim); `destination=(-0.5,-58.5,34.5)`;
+  `reversePortalId=#4`; `portalShape=rectangular`; window **y-extents `[-60.0, -57.0]`** (centered `-58.5`, h=3)
+  ⇒ the bottom row sits **at/below the superflat surface** = the L.4 "buried bottom", located FACTUALLY vs
+  terrain as the mission demanded.
+- **#4 (#2's reverse):** origin `(-0.5,-58.5,34.5)`; **`width=6 height=6`, `scale=0.5`, `fuseView=0`**;
+  `axisW=(1,0,0)` ⇒ normal `(0,0,+1)`. #2↔#4 bi-way, 20 blocks apart in +Z, same dim ⇒ **on-disk proof that
+  `createReversePortal` grew the reverse to 6×6** for the scale-2 3×3 (the L.4 correction below).
+- **#1, #3:** `scale=1`, non-fuse (a separate scale-1 bi-way pair, 20 apart).
+
+This is the definitive reconciliation of the S13-K "byte-identical geometry" contradiction: because `fuseView=0`,
+`shouldApplyScaleToModelView = hasScaling && isFuseView` (`PortalRenderer:395-397`) is FALSE ⇒
+`getPortalScaleMatrix` returns null ⇒ the DRAW/model-view carries NO scale, and the view-area quad is built from
+the RAW `width`/`height` (`RectangularPortalShape:149-152`). The DRAWN window is therefore **3×3, byte-identical
+to the 3×3 crossable rectangle** — so the mission's leading candidate (a fuse-view scaled DRAW matrix rendering
+the window at 2× = 6×6 visual) is **REFUTED at BOTH the flag AND the mesh**. The user's "bigger/buried after
+scaling" is the CONTENT seen THROUGH a 3×3 window (more dest ground falls into the visible band as the dest
+camera is displaced 2× via `transformPoint`), not a bigger frame. IP semantics match exactly: `set_portal_scale`
+(`PortalCommand.java:730-736`) calls `portal.setScaling(scale)` ONLY — it never sets `fuseView`, so an IP scaled
+command portal is likewise non-fuse.
+
+- **(R1) The bar persisted** on the `set_portal_scale 2` command portal, clearing only on dig-out — i.e. the
+  caveat's "bar persists" branch. **Verdict (Finding A): EXPECTED, no code change.** The user's portals are
+  all `fuseView=0` (`set_portal_scale` produces non-fuse portals), so S13-L's covector clip fix — gated on
+  `shouldApplyScaleToModelView = hasScaling && isFuseView` (`PortalRenderer:395-397`) — is **provably INERT
+  for them**. The bar is the S13-I Row-16 backdrop fill showing through the BURIED below-ground band where
+  source-side blocks occlude the dest terrain (source-depth occlusion = the S13-K depth-competition
+  mechanism); digging them out clears it. This is the accepted "buried portal" look, byte-identical IP
+  placement. Save-data ground truth also corrected the L.4 "grows NEITHER rectangle" absolute: a completed
+  bi-way pair grows the REVERSE to `width*scale × height*scale` (`createReversePortal:98-99`) — a 6×6 reverse
+  for a scale-2 3×3. S13-L's clip fix STANDS; it is exercised only by a `fuseView=true` scaled portal.
+  **Disposition: DOC-only (P4)** — the S13-L "NO white bar with clipping ON" retest promise and the "grows
+  NEITHER rectangle" claim are corrected in place (above) and in `S13-FIRST-LIGHT-TEST.md §1.2 step 3`, so
+  the user does not re-file the bar as a failed fix.
+
+- **(R2) A NEW defect: the dest view WOBBLES relative to the frame** ("like the window camera has a head-bob
+  like the player"). **Verdict (Finding B): FIXED (P1/P2/P3).** 26.2 applies view-bob AND the nausea/portal
+  spin to the PROJECTION, not the model-view (`GameRenderer.renderLevel:535-557`), while
+  `cameraRenderState.projectionMatrix` is kept BOB-FREE (it is the extract-time cull base). IP's ambient
+  `RenderSystem.getProjectionMatrix()` was `base*bob*spin`, and IP drew the stencil aperture / cull frustum /
+  depth-restore AND the dest content with that same ambient, so aperture + content + frame all bobbed
+  together. Our port had drifted off that in three ways:
+
+  - **P1 — the aperture drew UNBOBBED.** `getCurrentProjectionMatrix()` returned the bob-free
+    `cameraRenderState.projectionMatrix`, so `RendererUsingStencil` (stencil write :287-293, Row-11/12
+    restore :362-370) and `PortalRenderer` (cull frustum :163-166) drew the aperture with an unbobbed
+    projection while the frame + content bobbed → the aperture wobbled vs both. **Fix:**
+    `getCurrentProjectionMatrix()` now returns `RenderStates.getPortalDrawProjection(base,
+    getExtraModelViewScaling())` — the captured bobbed main-pass projection, scaled to the current layer.
+    Centralized there, so ALL renderers (stencil/framebuffer/debug/iris) get it, matching IP's single
+    `RenderSystem.getProjectionMatrix()` source. Signature unchanged → no caller edits.
+
+  - **P2 — the capture was PRE-spin.** `MixinGameRenderer` captured at the `:542` bob multiply, on the FALSE
+    premise "IP's dest excluded the spin". IP's dest re-enters the FULL `renderLevel` (`IP:MyGameRenderer:231`,
+    no spin suppression anywhere in IP) and gets the SAME nausea/portal spin, so IP's dest is `base*bob*spin`
+    too. **Fix:** the `@WrapOperation` moved to `ProjectionMatrixBuffer.getBuffer(Matrix4f)` ordinal 0 at
+    `:557` (the POST-spin upload — the block-era `GameRendererObliqueClipMixin`'s proven interception point,
+    now unregistered so no weave conflict). `spin==0` in normal play, so the normal-play wobble fix is
+    unaffected; only the nausea/portal-overlay edge is corrected.
+
+  - **P3 — the dest bob was UNSCALED.** IP's dest re-enters `renderLevel` under the pushed portal, so its A2
+    bob ModifyArg multiplies the walk-bob translate by `viewBobFactor * getExtraModelViewScaling()` — a
+    non-fuse scale-`s` portal IS in that product (`PortalRendering:113-121`), giving a `×s` bob so content at
+    dest eye-depth `s*z` shifts on-screen by `s*t/(s*z) = t/z`, locking to the aperture's `t/z`. Our
+    decomposition does NOT re-enter `renderLevel`, so `SecondaryWorldRenderCore` now derives the dest DRAW
+    projection via `getPortalDrawProjection(destProjection, getExtraModelViewScaling())`, which scales the
+    bob TRANSLATION by `s`. **Sign-derivation:** with the bob column of `B*SPIN` = `B`'s (SPIN has no
+    translation) = `R_hurt·t` (IP's ModifyArg target), scaling that column by `s` is exactly IP's ModifyArg;
+    on the composite it is `col3(Pdest) = s·col3(Pfinal) + (1-s)·col3(Pbase)` (the `(1-s)·col3(Pbase)` term is
+    the affine bob column's `w=1` homogeneous correction), every other column unchanged. `s==1` (non-scaling /
+    fuse-view) returns `Pfinal` bit-unchanged — so the first-light-confirmed unscaled path is untouched.
+
+  The three form one coherent re-expression: `getPortalDrawProjection` is the single derivation used by BOTH
+  the aperture (`getCurrentProjectionMatrix`, at the OUTER layer's scaling since the portal is pushed only
+  around its own content) AND the dest content (`SecondaryWorldRenderCore`, at this-portal scaling) — so a
+  nested aperture drawn into a dest pass (Step 10.10) and that pass's content use the identical projection.
+
+**Working-tree touch (S13-M):** 5 tracked sources, ALL `qouteall.*` (flag-ON only; flag-OFF `com.warwa`
+untouched — the D3 gate skips every `qouteall.*` mixin flag-OFF, and the capture site is the flag-ON
+`MixinGameRenderer`):
+- `render/context_management/RenderStates.java` — new `getPortalDrawProjection(base, extraScaling)` helper +
+  `capturedMainPassBobbedProjection` javadoc (POST-spin).
+- `render/renderer/PortalRenderer.java` — `getCurrentProjectionMatrix()` returns the bobbed+scaled draw
+  projection (P1); signature unchanged.
+- `render/SecondaryWorldRenderCore.java` — dest DRAW projection via `getPortalDrawProjection` (P3, P2).
+- `mixin/client/render/MixinGameRenderer.java` — capture `@WrapOperation` moved to the POST-spin
+  `getBuffer(Matrix4f)` upload (P2); handler ⑩ note updated.
+- `render/ViewAreaRenderer.java` — corrected the false "NO-OP at the outer site" comment (P1).
+
+Plus the doc amendments (this record + the L.4 / L.6.1 corrections above + `S13-FIRST-LIGHT-TEST.md §1.2 step
+3`). **Green gate PASS:** `:common`/`:fabric`/`:neoforge` `build` + `:common:test` all BUILD SUCCESSFUL under
+`ip_scc_closed=true` (the `@WrapOperation` target descriptor validated by the per-loader mixin AP). Logs:
+`scratchpad/s13m-greengate.log`, `scratchpad/s13m-shipping.log`. Game NOT run; NO commit (orchestrator ships).
+
+## STATUS: S13-M — Finding B (view-bob window-wobble) FIXED zero-deviation (P1 aperture returns the bobbed
+draw projection; P2 capture moved POST-spin at renderLevel:557; P3 dest bob translation scaled by
+`getExtraModelViewScaling()` — the exact IP ModifyArg re-expression, `col3(Pdest)=s·col3(Pfinal)+(1-s)·col3(Pbase)`,
+`s==1` bit-identical). Finding A (the bar) = EXPECTED IP behavior on a BURIED non-fuse `set_portal_scale`
+command portal (S13-L clip fix is `isFuseView`-gated → inert for command portals; dig-out clears it =
+source-depth occlusion); DOC-only correction (P4), reverse portal is 6×6 by `createReversePortal`. 5 qouteall
+sources changed; flag-OFF `com.warwa` untouched; green gate PASS on 3-loader `build` + `:common:test`; game
+NOT run; NO commit.

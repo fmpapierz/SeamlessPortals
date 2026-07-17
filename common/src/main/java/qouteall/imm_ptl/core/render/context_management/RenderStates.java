@@ -91,6 +91,31 @@ public class RenderStates {
 
     public static Matrix4f basicProjectionMatrix;
 
+    /**
+     * S13-M Finding B (view-bob "window head-bob" fix). The finalized MAIN-pass DRAW projection
+     * {@code base * bob * spin}, captured POST-spin at {@code GameRenderer.renderLevel}'s final
+     * projection upload (26.2 renderLevel:557, {@code levelProjectionMatrixBuffer.getBuffer(projectionMatrix)}
+     * — AFTER both the bob multiply (:542) AND the nausea/portal spin skew (:547-554)). This is the
+     * TRUE ambient the main pass rasterizes with — the 26.2 re-expression of the value IP's
+     * {@code RenderSystem.getProjectionMatrix()} returned during the main pass.
+     *
+     * <p>S13-M P2 correction: the earlier capture was PRE-spin (at the :542 bob multiply), on the FALSE
+     * premise that "IP's dest excluded the spin". IP's dest re-enters the FULL {@code renderLevel}
+     * ({@code IP:MyGameRenderer:231}) which applies the SAME nausea/portal spin at frame-identical
+     * intensity, so IP's dest is {@code base*bob*spin} exactly like its main pass. Capturing POST-spin
+     * matches it (in normal play spin==0, so this equals {@code base*bob} — nothing changes there).
+     *
+     * <p>{@link #getPortalDrawProjection} derives the portal-view DRAW projection from this (scaling the
+     * bob TRANSLATION by the pass's {@link PortalRendering#getExtraModelViewScaling()} so content at dest
+     * eye-depth {@code s*z} bobs on-screen in lock with the portal-plane aperture — S13-M P3), and
+     * {@code PortalRenderer.getCurrentProjectionMatrix()} returns that for the stencil aperture / depth
+     * restore / cull frustum (S13-M P1) so the aperture, the dest content, and the frame all bob together.
+     * Written each main frame by {@code MixinGameRenderer} (woven flag-ON only, so flag-OFF is untouched);
+     * {@code null} until the first capture, where {@link #getPortalDrawProjection} falls back to the
+     * unbobbed extract-time projection.
+     */
+    public static Matrix4f capturedMainPassBobbedProjection;
+
     public static Camera originalCamera;
 
     public static String debugText;
@@ -217,6 +242,49 @@ public class RenderStates {
         double allScaling = PortalRendering.getExtraModelViewScaling();
 
         return viewBobFactor * allScaling;
+    }
+
+    /**
+     * S13-M Finding B (P1/P3) — the portal-view DRAW projection for a pass whose combined portal
+     * scaling is {@code extraScaling} (= {@link PortalRendering#getExtraModelViewScaling()} at that
+     * layer). The 26.2 re-expression of IP's ambient {@code RenderSystem.getProjectionMatrix()} as seen
+     * INSIDE a portal pass: IP re-enters {@code renderLevel} for the dest, and its A2 bob ModifyArg scales
+     * the walk-bob translate by {@code viewBobFactor * getExtraModelViewScaling()} (see
+     * {@link #getViewBobbingOffsetMultiplier()} + {@link PortalRendering#getExtraModelViewScaling()} — a
+     * NON-fuse scaling portal IS in the product), the exact depth-compensation for content at dest
+     * eye-depth {@code s*z}: on-screen shift = t/z, so a scale-{@code s} window (content at {@code s*z})
+     * needs bob translate {@code s*t} to shift by the same t/z as the portal-plane aperture.
+     *
+     * <p>We do NOT re-enter {@code renderLevel}; instead we start from the captured POST-spin main-pass
+     * projection {@code Pfinal = Pbase * B * SPIN} ({@link #capturedMainPassBobbedProjection}) and scale
+     * ONLY the bob TRANSLATION by {@code s}. {@code SPIN} carries no translation, so the 4th (translation)
+     * column of {@code B*SPIN} equals {@code B}'s (= {@code R_hurt·t}, IP's ModifyArg target); scaling
+     * {@code B}'s translation column by {@code s} is exactly IP's ModifyArg. Column algebra (with the
+     * affine bob column's homogeneous {@code w=1}):
+     * {@code col3(Pbase * B_scaled * SPIN) = s·col3(Pfinal) + (1-s)·col3(Pbase)}; every other column is
+     * unchanged. {@code s==1} (no scaling / a fuse-view portal, whose scale is baked into the model-view
+     * per {@code PortalRenderer.shouldApplyScaleToModelView} and so is EXCLUDED from the product) returns
+     * {@code Pfinal} bit-unchanged. Always a fresh copy (callers install/mutate it).
+     *
+     * @param baseProjection the pass's UNBOBBED base projection ({@code Pbase} — the extract-time
+     *                       {@code cameraRenderState.projectionMatrix} that {@code Pfinal} was built from)
+     * @param extraScaling   {@link PortalRendering#getExtraModelViewScaling()} for the pass
+     */
+    public static Matrix4f getPortalDrawProjection(Matrix4f baseProjection, double extraScaling) {
+        Matrix4f postSpinBobbed = capturedMainPassBobbedProjection;
+        if (postSpinBobbed == null) {
+            return baseProjection != null ? new Matrix4f(baseProjection) : new Matrix4f();
+        }
+        Matrix4f result = new Matrix4f(postSpinBobbed);
+        if (extraScaling != 1.0 && baseProjection != null) {
+            float s = (float) extraScaling;
+            float oneMinusS = 1.0f - s;
+            result.m30(s * postSpinBobbed.m30() + oneMinusS * baseProjection.m30());
+            result.m31(s * postSpinBobbed.m31() + oneMinusS * baseProjection.m31());
+            result.m32(s * postSpinBobbed.m32() + oneMinusS * baseProjection.m32());
+            result.m33(s * postSpinBobbed.m33() + oneMinusS * baseProjection.m33());
+        }
+        return result;
     }
 
     private static void setViewBobFactor(double arg) {

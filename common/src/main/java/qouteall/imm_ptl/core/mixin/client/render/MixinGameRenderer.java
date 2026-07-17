@@ -1,11 +1,16 @@
 package qouteall.imm_ptl.core.mixin.client.render;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.Lightmap;
+import net.minecraft.client.renderer.ProjectionMatrixBuffer;
 import net.minecraft.client.renderer.state.GameRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -52,8 +57,11 @@ import qouteall.imm_ptl.core.render.context_management.RenderStates;
  * would DOUBLE-drive the renderer. Handler ① (pre-render chain + render-time teleport) is likewise re-homed
  * to the MOD-OWNED {@code MinecraftFramePumpMixin} at {@code Minecraft.renderFrame} pre-{@code update}
  * (CUTOVER_SPEC §4.2/§4.3, S3 soak-proven), because a render-time teleport must move the camera BEFORE
- * extraction. Handler ⑩ ({@code getProjectionMatrix} redirect) is superseded by S12-A's
- * {@code PortalRenderer.getCurrentProjectionMatrix} reading {@code cameraState.projectionMatrix} directly.
+ * extraction. Handler ⑩ ({@code getProjectionMatrix} redirect) is re-expressed by
+ * {@code PortalRenderer.getCurrentProjectionMatrix}, which returns the live main-pass DRAW projection —
+ * the POST-spin bobbed capture below scaled by {@code getExtraModelViewScaling} (S13-M P1/P2/P3) — the
+ * 26.2 stand-in for IP's ambient {@code RenderSystem.getProjectionMatrix()} (NOT the bob-free
+ * {@code cameraState.projectionMatrix}, which stays the extract-time cull base).
  *
  * <p><b>A2 (VERBATIM IP, {@code MixinGameRenderer.java:200-253}).</b> IP distance-scales the WORLD view-bob
  * offset near portals: {@code @ModifyArg} on all three args of the single {@code PoseStack.translate(FFF)}
@@ -150,6 +158,43 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         else {
             return (float) (f * RenderStates.getViewBobbingOffsetMultiplier());
         }
+    }
+
+    // S13-M Finding B — capture the MAIN-pass DRAW projection so the portal-view content AND the stencil
+    // aperture bob IN SYNC with the frame. 26.2 applies view-bob AND the nausea/portal spin to the
+    // PROJECTION (not the model-view): renderLevel builds `projectionMatrix = new Matrix4f(cameraState
+    // .projectionMatrix)`, multiplies the bob pose (renderLevel:535,542), applies the spin skew
+    // (:547-554), then uploads it via `levelProjectionMatrixBuffer.getBuffer(projectionMatrix)` (:557).
+    // We WRAP that getBuffer (S13-M P2 — the POST-spin site; the same interception point the block-era
+    // GameRendererObliqueClipMixin proves) and snapshot its Matrix4f arg = base*bob*spin, the TRUE ambient
+    // the main pass rasterizes with.
+    //
+    // P2 correction: the earlier capture was at the :542 bob multiply (PRE-spin), on the FALSE premise
+    // that "IP's dest excluded the spin". IP's dest re-enters the FULL renderLevel (IP:MyGameRenderer:231)
+    // and gets the SAME nausea/portal spin at frame-identical intensity, so IP's dest is base*bob*spin like
+    // its main pass. Capturing POST-spin matches it — and in normal play spin==0, so this equals base*bob
+    // then (the normal-play wobble fix is unaffected; only the nausea/portal-overlay edge is corrected).
+    //
+    // RenderStates.getPortalDrawProjection derives the portal-view draw projection from this (bob
+    // TRANSLATION scaled by the pass's getExtraModelViewScaling — P3); PortalRenderer
+    // .getCurrentProjectionMatrix returns it for the stencil aperture / depth restore / cull frustum (P1),
+    // leaving the dest frustum + cameraRenderState on the unbobbed base (vanilla keeps cameraState
+    // .projectionMatrix bob-free). The `getBuffer(Matrix4f)` descriptor matches ONLY the level-projection
+    // upload at :557 (the :570 HUD upload takes a Projection, not a Matrix4f); ordinal 0 pins it. Woven
+    // flag-ON only, so flag-OFF is untouched. Returns the original GpuBufferSlice unchanged (passive snapshot).
+    @WrapOperation(
+        method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;",
+            ordinal = 0
+        )
+    )
+    private GpuBufferSlice seamlessportals$captureMainPassBobbedProjection(
+        ProjectionMatrixBuffer instance, Matrix4f projectionMatrix, Operation<GpuBufferSlice> original
+    ) {
+        RenderStates.capturedMainPassBobbedProjection = new Matrix4f(projectionMatrix);
+        return original.call(instance, projectionMatrix);
     }
 
     // R13k handler ⑪ — post-process cameraState.viewRotationMatrix AFTER extract (see class javadoc).

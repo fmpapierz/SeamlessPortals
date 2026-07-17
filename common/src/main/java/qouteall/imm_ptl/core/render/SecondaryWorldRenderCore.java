@@ -241,10 +241,34 @@ public class SecondaryWorldRenderCore {
         // applyAdditionalTransformations over the WHOLE render-info stack (JOML column-form M·v — the
         // D4.4 anti-"fix" guard; never transpose).
         destViewMatrix = TransformationManager.processTransformation(newCamera, destViewMatrix);
-        // 3.3 dest projection = the UNBOBBED extract-time main projection.
+        // 3.3 dest projection = the UNBOBBED extract-time main projection. Used for the cull/extract
+        // frustum (3.4) + destCameraState.projectionMatrix (below): vanilla keeps
+        // cameraState.projectionMatrix BOB-FREE (bob is applied only to a LOCAL projection copy in
+        // renderLevel) and culls with the un-bobbed projection, so these stay un-bobbed to match.
         CameraRenderState mainCameraState =
             mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
         Matrix4f destProjection = new Matrix4f(mainCameraState.projectionMatrix);
+        // 3.3b dest DRAW projection = the POST-spin main-pass bobbed projection (base*bob*spin) with the
+        // bob TRANSLATION scaled by this pass's getExtraModelViewScaling(), so the portal-view content
+        // bobs IN SYNC with the frame AND the stencil aperture (S13-M Finding B).
+        //   * P2: MixinGameRenderer captures the POST-spin ambient at renderLevel:557 (getBuffer), NOT
+        //     PRE-spin — IP's dest re-enters the FULL renderLevel (IP:MyGameRenderer:231) and gets the
+        //     SAME nausea/portal spin, so IP's dest is base*bob*spin like its main pass (spin==0 in
+        //     normal play, so nothing changes there).
+        //   * P3: the bob-translation scale by getExtraModelViewScaling() — a non-fuse scale-s portal's
+        //     content sits at dest eye-depth s*z, so on-screen it must shift by s*t to track the
+        //     portal-plane aperture's t (= IP's A2 bob ModifyArg, which multiplies the walk-bob translate
+        //     by viewBobFactor*getExtraModelViewScaling(); a non-fuse portal IS in that product —
+        //     PortalRendering:113-121). The portal is already pushed here (renderPortalContent runs inside
+        //     doRenderPortal's pushPortalLayer bracket), so getExtraModelViewScaling() reflects
+        //     this-portal scaling — the SAME value getCurrentProjectionMatrix returns for a nested
+        //     aperture drawn into this content at Step 10.10, so aperture and content stay locked.
+        // Only Step 7's RenderSystem draw projection uses this; the frustum (3.4) + destCameraState
+        // .projectionMatrix stay on the un-bobbed base (destProjection), matching vanilla (which bobs only
+        // its local rasterization projection). getPortalDrawProjection falls back to the un-bobbed base if
+        // the capture has not run yet (first frame).
+        Matrix4f destDrawProjection = RenderStates.getPortalDrawProjection(
+            destProjection, PortalRendering.getExtraModelViewScaling());
         // 3.4 cull/extract frustum — CONVENTIONAL-Z culling projection (I7 / §2.3: feeding the
         // reversed-Z render projection to offsetToFullyIncludeCameraCube deterministically hangs).
         Frustum destFrustum = new Frustum(destViewMatrix, buildCullingProjection(destProjection));
@@ -383,7 +407,12 @@ public class SecondaryWorldRenderCore {
             // projection before the dispatch fired. The shell brackets this with a PER-INVOCATION local
             // save of getProjectionMatrixBuffer()+getProjectionType() and a setProjectionMatrix(...)
             // restore on exit (recursion-safe, V2-DEFECT-2) — only the SET is core work.
-            RenderSystem.setProjectionMatrix(writeProjectionSlice(destProjection), ProjectionType.PERSPECTIVE);
+            // S13-M Finding B: set the bobbed+scaled draw projection (base*bob*spin, bob scaled by
+            // getExtraModelViewScaling() — see Step 3.3b) so the dest content bobs in sync with the frame
+            // and the aperture. This is the ONE site that takes the bobbed matrix; the frustum (3.4) and
+            // destCameraState.projectionMatrix stay on the un-bobbed base, exactly as vanilla bobs only
+            // its local rasterization projection while cameraState.projectionMatrix stays bob-free.
+            RenderSystem.setProjectionMatrix(writeProjectionSlice(destDrawProjection), ProjectionType.PERSPECTIVE);
 
             // ===== Step 8 — Globals UBO for the dest pass ========================================
             RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();

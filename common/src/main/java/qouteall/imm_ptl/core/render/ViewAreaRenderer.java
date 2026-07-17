@@ -134,13 +134,18 @@ public class ViewAreaRenderer {
         // matrices REGARDLESS of what the surrounding passes (translucent terrain, entities, or a nested
         // layer's identity model-view bracket) left ambient. Re-express that verbatim: install the PASSED
         // matrices on RenderSystem around the draw and restore both after (recursion-safe per-call locals,
-        // like MyGameRenderer's projection bracket). This is a NO-OP at the outer (rung-1) site — ambient
-        // already equals the passed matrices (the dispatch reads cameraRenderState.viewRotationMatrix, the
-        // same value the render pass left on the model-view stack, and getCurrentProjectionMatrix returns
-        // the ambient main projection). It is REQUIRED at nested layers (>=2): SecondaryWorldRenderCore
-        // Step 10.10 runs onBeforeTranslucentRendering INSIDE MyGameRenderer.switchAndRenderTheWorld's
-        // identity model-view bracket (MyGameRenderer.java:317-318), so without this the nested view-area
-        // mesh would snapshot IDENTITY and rasterize untransformed (the eye-level sliver genre).
+        // like MyGameRenderer's projection bracket). The INSTALL is what guarantees correctness: the passed
+        // projection is getCurrentProjectionMatrix(), which since S13-M P1 returns the live main-pass DRAW
+        // projection (base*bob*spin, scaled to the layer's accumulated portal scale), so the aperture quad
+        // bobs in LOCK with the frame and the dest content. (Before S13-M P1 the passed projection was the
+        // UNBOBBED base, so this install OVERWROTE the ambient bobbed projection with an unbobbed one and
+        // the aperture WOBBLED whenever bob!=0 — the earlier "NO-OP at the outer site" note was wrong. At
+        // the outer site the passed projection now genuinely equals the ambient, but the explicit install
+        // still MATTERS at nested layers.) REQUIRED at nested layers (>=2): SecondaryWorldRenderCore Step
+        // 10.10 runs onBeforeTranslucentRendering INSIDE MyGameRenderer.switchAndRenderTheWorld's identity
+        // model-view bracket (MyGameRenderer.java:317-318), so without this the nested view-area mesh would
+        // snapshot IDENTITY and rasterize untransformed (the eye-level sliver genre); the passed projection
+        // there is that layer's dest DRAW projection (getCurrentProjectionMatrix at the layer's scaling).
         Matrix4fStack modelViewStack = RenderSystem.getModelViewStack();
         GpuBufferSlice savedProjectionBuffer = RenderSystem.getProjectionMatrixBuffer();
         ProjectionType savedProjectionType = RenderSystem.getProjectionType();

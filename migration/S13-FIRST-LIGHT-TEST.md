@@ -83,7 +83,41 @@ errors. This is the "old system untouched" proof.
 >   IP citation is in step 1). A single portal is visible only from the FRONT and has NO return portal.
 > - **§1.2 step 3 — a `set_portal_scale 2` crossing turns you into a permanent 2× GIANT** (high camera, "can't
 >   go back down" = the giant's eye height, not a stuck position). EXPECTED IP physics; `set_portal_scale 1`
->   to un-scale. Watch step 3 for the OPEN "white bar" coverage item.
+>   to un-scale.
+> - **§1.2 step 3 — the "white bar" on a BURIED scaled COMMAND portal is EXPECTED IP behavior, not a failed
+>   fix (S13-M correction of the earlier S13-L note).** `set_portal_scale` produces a NON-fuse portal
+>   (`fuseView=0` — confirmed by the S13-M **NBT ground truth**: all 4 portals in the current test save
+>   `New World (16)` are `fuseView=0`, the scale-2 one at window y-extents `[-60,-57]` = buried bottom; see
+>   `port-notes/S13C-weave-audit.md §S13-M`), and the S13-L scaled-clip refinement only engages a **fuse-view**
+>   scaling MODEL-VIEW
+>   (`shouldApplyScaleToModelView = hasScaling && isFuseView`, `PortalRenderer:395-397`, byte-identical IP) —
+>   so it is provably **INERT for every `set_portal_scale` command portal**. The residual bar the user sees is
+>   the SAME "buried portal" mechanism as step 1: the opening's below-ground band shows the S13-I Row-16
+>   backdrop fill where source-side blocks in FRONT of that band occlude it (source-depth occlusion, the S13-K
+>   depth-competition mechanism). **DIG OUT the blocks that bury the opening and the bar clears** — this is the
+>   user's own repro ("the portal is still buried after scaling and goes away after I dig out the blocks"). It
+>   is byte-identical IP placement; **do NOT re-file it**. The S13-L clip fix is exercised ONLY by a
+>   `fuseView=true` scaled portal (a scale-box / rendering group), NOT by `set_portal_scale` command portals.
+>   (Note on geometry: `set_portal_scale` leaves the scaled portal's own crossable rectangle as placed, but
+>   `complete_bi_way_portal` on a scaled portal spawns the REVERSE at `width*scale × height*scale` — a scale-2
+>   3×3 gives a **6×6 reverse** (`PortalManipulation.createReversePortal:98-99`, scaling `1/scale`) — so the
+>   pair is NOT "same size both sides".)
+> - **§1.2 step 3 — the portal-view "window head-bob" WOBBLE is FIXED (S13-M Finding B).** The dest view
+>   used to wobble slightly RELATIVE to the frame ("like the window camera has a head-bob like the player").
+>   The stencil aperture, the dest CONTENT, and the frame now all bob TOGETHER: the aperture/cull/depth-restore
+>   draw with the live bobbed main-pass projection (P1), captured POST-spin (P2), and the dest content's bob
+>   translation is scaled by the portal's `getExtraModelViewScaling()` so content at dest eye-depth `s*z` tracks
+>   the portal-plane aperture (P3). EXPECTED now: **no relative wobble between the window and the frame** on any
+>   portal (scaled or not). Any residual relative sliding is a §1.3 symptom — capture it.
+> - **§1.2 step 3 — on a scaled portal the dest view moves FASTER than you (this is CORRECT).** Through a
+>   scale-2 portal the render camera moves 2× your displacement (the scaling factor in `Portal.transformPoint`).
+>   "The view moves away when I move away / it isn't pinned to the dest spot" is correct window parallax, not a
+>   bug — a pinned camera would be a static painting. See §1.2 step 1 (parallax) and the S13-L camera verdict.
+> - **§1.2 step 1 — the "buried portal" / xray-through-a-hole look is byte-identical IP placement.** The portal
+>   bottom row sits below the grass line as placed (`make_portal` places the frame at your location; the bottom
+>   band is below the surface). The below-ground band of the opening shows the DEST world's sub-surface
+>   (dest-underground backdrop) — the accepted rung-1 look, NOT a mis-placed portal. Digging a hole and looking
+>   through the below-ground band is this same mechanism.
 > - **§1.2 step 3/8 — dest CLOUDS are deliberately OMITTED at rung 1** (S13-J documented deviation-until-S18).
 >   They were causing a deterministic "Cannot wait on a fence for the current submit" crash with multiple
 >   portals; that crash is FIXED by skipping them. No clouds through the window is the accepted rung-1 look.
@@ -127,6 +161,11 @@ Use tab-completion — the `/portal` command uses the utility-group syntax (`duc
      sections that were not already in the player's direct view mesh under the budgeted (**3 ms/frame**)
      compile drain. Give it a moment to settle. Holes that PERSIST after it settles are a §1.3 symptom —
      capture them.
+   - **The below-ground band of the opening shows the DEST underground — EXPECTED (S13-L "buried portal").**
+     `make_portal` places the frame at your location, so the portal's bottom row sits below the grass line;
+     that below-ground band of the window shows the dest world's SUB-SURFACE (dest-underground backdrop), not
+     a black hole and not a mis-placed portal. Placement is byte-identical IP. Digging a hole and looking
+     through the below-ground band ("xray") is this same mechanism — the accepted rung-1 look.
    - **ONE-SIDED + ONE-WAY is EXPECTED (S13-J verified vs IP — do NOT file as a bug):**
      - **The window is visible only from the FRONT.** Walk BEHIND the portal and it vanishes; that is
        correct. The gate is `Portal.isRoughlyVisibleTo` → `RectangularPortalShape.roughTestVisibility`
@@ -156,10 +195,27 @@ Use tab-completion — the `/portal` command uses the utility-group syntax (`duc
      faithful IP port and client+server stay consistent (no desync). **To return to normal, run
      `/portal set_portal_scale 1`** (or cross a scale-1 return portal) — do NOT judge your Y-position until
      you un-scale.
-   - **RE-TEST WATCH — "white bar" on the enlarged opening (OPEN, §S13-J.3).** On a `set_portal_scale 2`
-     portal, watch the BOTTOM band of the enlarged window for a white/sky-colored bar (dest content not
-     covering the scaled opening). This is an OPEN static diagnosis with **no fix on disk** — if it appears,
-     **capture a screenshot** (it's needed to pin dest-frustum vs discovery-radius vs mesh-extent).
+   - **RE-TEST — "white bar" on a BURIED scaled COMMAND portal is EXPECTED IP behavior (S13-M verdict;
+     supersedes the S13-L "FIXED / no bar" note).** On a `set_portal_scale 2` COMMAND portal the bottom band
+     may still show the white/sky-colored backdrop fill — **this is EXPECTED, not a failed fix.** Why: a
+     `set_portal_scale` portal is NON-fuse (`fuseView=0`), and S13-L's covector clip refinement only engages a
+     **fuse-view** scaling model-view (`shouldApplyScaleToModelView = hasScaling && isFuseView`,
+     `PortalRenderer:395-397`) — so S13-L is **provably INERT for command portals** (the earlier
+     `enableClippingMechanism=false` A/B removed the bar because it disabled clipping *wholesale*, not because
+     the scaled-clip edge was the cause on a non-fuse portal). The bar is the **buried-opening** look: the
+     below-ground band shows the S13-I Row-16 backdrop fill where the source-side blocks in FRONT of it occlude
+     the dest terrain. **DIG OUT the burying blocks and the bar clears** (the user's own repro — source-depth
+     occlusion, the S13-K depth-competition mechanism). Do NOT re-file it as a failed S13-L fix. **The S13-L
+     clip fix stands, but is exercised ONLY by a `fuseView=true` scaled portal** (scale-box / rendering group);
+     confirm it there, not on `set_portal_scale`. If a bar persists on a scaled portal whose opening is FULLY
+     ABOVE ground (nothing burying it), THAT would be the S13-K residual dest-frustum/discovery-EXTENT suspect
+     — capture a screenshot.
+   - **RE-TEST — scaled parallax is FASTER than you, and that is CORRECT (S13-L camera verdict).** As you
+     move/strafe near a `set_portal_scale 2` portal, the dest view shifts **2× your displacement** (the
+     scaling factor in `Portal.transformPoint`). This is the correct scaled-window parallax — the camera is
+     NOT pinned to the dest portal spot (that would be a static painting), and the 2× motion is what makes it
+     conspicuous on a scaled pair. It is IP-identical; do NOT file it as a bug. On an UNSCALED portal the
+     parallax is 1:1 (§1.2 step 1).
 4. **`/portal complete_bi_way_portal`** (point at the portal first), then cross back and forth **10×**.
    EXPECTED: a return portal appears; **no ping-pong** across the 10 crossings (regression item 1). This is
    the ONLY command that gives you the return trip after a bare `make_portal`
