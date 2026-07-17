@@ -36,6 +36,7 @@ import qouteall.imm_ptl.core.ducks.IEClientPlayNetworkHandler;
 import qouteall.imm_ptl.core.ducks.IEEntity;
 import qouteall.imm_ptl.core.ducks.IEGameRenderer;
 import qouteall.imm_ptl.core.ducks.IEMinecraftClient;
+import qouteall.imm_ptl.core.ducks.IEParticleManager;
 import qouteall.imm_ptl.core.network.ImmPtlNetworking;
 import qouteall.imm_ptl.core.network.PacketRedirectionClient;
 import qouteall.imm_ptl.core.platform_specific.O_O;
@@ -500,10 +501,28 @@ public class ClientTeleportationManager {
         ((IEMinecraftClient) client).ip_setWorldRenderer(
             ClientWorldLoader.getWorldRenderer(toDimension)
         );
-        
+
+        // S14-A FIX-1 (audit BLOCKER B1): on 26.2 the level+renderer swap above is NOT the
+        // complete render cutover — the per-frame extract driver (the single global
+        // mc.levelExtractor) and both worlds' extractor identities must flip too, or the main
+        // view keeps extracting the SOURCE dim into the wrong renderer (see the helper's javadoc).
+        ClientWorldLoader.promoteAndDemoteOnPlayerDimensionChange(fromWorld, toWorld);
+
+        // S14-A FIX-1 tail (audit MAJOR, link teleport): 26.2 re-expression of IP's implicit
+        // per-frame camera-level refresh. 1.21.3 Camera.setup received minecraft.level every
+        // frame, so IP's client.level write auto-propagated; 26.2 caches the level on the Camera
+        // (mainCamera.setLevel) and selects entity cardinal lighting at dim-change time — both
+        // live in GameRenderer.setLevel (mc262 GameRenderer.java:705-711, side-effect-light: no
+        // mesh/render-state invalidation). Without it the main camera keeps the SOURCE ClientLevel
+        // forever: wrong fog/sky/cloud attribute probe, no fluid-submersion fog, third-person
+        // camera clipping against the old world, stale cardinal lighting.
+        client.gameRenderer.setLevel(toWorld);
+
         if (client.particleEngine != null) {
-            // avoid clearing all particles
-            client.particleEngine.setLevel(toWorld);
+            // avoid clearing all particles — IP-verbatim (IP ClientTeleportationManager:494-497
+            // uses the ip_setWorld duck precisely because vanilla setLevel() clears all particles;
+            // S14-A confirmed the port's withSwitchedWorld already uses the same duck).
+            ((IEParticleManager) client.particleEngine).ip_setWorld(toWorld);
         }
         
         if (vehicle != null) {

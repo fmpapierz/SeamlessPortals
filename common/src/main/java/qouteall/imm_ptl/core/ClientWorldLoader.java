@@ -761,6 +761,149 @@ public class ClientWorldLoader {
         return newWorld;
     }
 
+    /**
+     * S14-A FIX-1 (audit BLOCKER B1, links teleport+drivercore — the migration corpus' declared
+     * top-risk §11.1 "CRITICAL PORT-FORWARD, no IP source"): the 26.2 extract-driver
+     * promote/demote at a flag-ON cross-dim crossing.
+     *
+     * <p>WHY: IP 1.21.3's {@code client.level = toWorld} + {@code ip_setWorldRenderer} was the
+     * COMPLETE render cutover because the 1.21.3 LevelRenderer was itself the extractor. 26.2
+     * split per-frame extraction onto the single global {@code Minecraft.levelExtractor} (public
+     * final, bound once to the BOOT renderer at Minecraft.java:649; driven by
+     * GameRenderer.extract:389) — swapping only level+renderer leaves extract() populating the OLD
+     * renderer's visibleSections from the OLD world while render() draws the promoted renderer's
+     * never-fed isolated state: blank/stale main terrain on the first walk-through (the block era
+     * PROVED this exact failure: log DIAG #1 oldRenderer=1225 visibleSections, promoted=0). The
+     * faithful re-expression of IP's dim cutover therefore re-points the extract driver too —
+     * re-derived from the runtime-proven block-era plumbing (MOD:PortalWorldManager.promoteToMain
+     * :1145-1197 + demoteFromMain:1627-1720), which EXCLUSIVITY_LEDGER rows 12/16 suppress
+     * flag-ON precisely so this replacement can own the seam.
+     *
+     * <p>Raw field re-points, NEVER {@code LevelExtractor.setLevel()} — that calls allChanged() →
+     * invalidateCompiledGeometry and WIPES the cached meshes the seamless swap exists to preserve;
+     * {@code lastViewDistance} is synced for the same reason (extract()'s render-distance guard
+     * would otherwise allChanged on the first post-crossing frame).
+     *
+     * <p>Caller: {@link qouteall.imm_ptl.core.teleportation.ClientTeleportationManager}
+     * .changePlayerDimension, immediately after the {@code client.level}/{@code levelRenderer}
+     * swap. IP's {@code vanillaTerrainSetupOverride = 1} (set by both teleport callers after this
+     * returns) covers the first frame's terrain setup with IP's non-multithreaded discovery while
+     * the SOG rebuild lands.
+     */
+    public static void promoteAndDemoteOnPlayerDimensionChange(
+        ClientLevel fromWorld, ClientLevel toWorld
+    ) {
+        ResourceKey<Level> fromDim = fromWorld.dimension();
+        ResourceKey<Level> toDim = toWorld.dimension();
+
+        LevelRenderer promotedRenderer = WORLD_RENDERER_MAP.get(toDim);
+        LevelRenderer demotedRenderer = WORLD_RENDERER_MAP.get(fromDim);
+        Validate.notNull(promotedRenderer, "no renderer for promoted dim %s", toDim.identifier());
+        Validate.notNull(demotedRenderer, "no renderer for demoted dim %s", fromDim.identifier());
+
+        // ===== PROMOTE toDim: the global main extractor now drives the promoted renderer ========
+        LevelExtractor toDimPerDimExtractor = WORLD_EXTRACTOR_MAP.get(toDim);
+        com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor mainExt =
+            (com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) CLIENT.levelExtractor;
+        mainExt.seamlessportals$setLevelRenderer(promotedRenderer);
+        mainExt.seamlessportals$setLevel(toWorld);
+        // Sync lastViewDistance so the FIRST post-promote extract() doesn't trip its
+        // getEffectiveRenderDistance() != lastViewDistance guard -> allChanged -> mesh wipe.
+        mainExt.seamlessportals$setLastViewDistance(CLIENT.options.getEffectiveRenderDistance());
+        if (toDimPerDimExtractor != null && toDimPerDimExtractor != CLIENT.levelExtractor) {
+            // Adopt the per-dim extractor's CURRENT tracker — the object toWorld's dirty-marks
+            // have been landing on while it was a secondary (writer/reader stay one object).
+            mainExt.seamlessportals$setSectionUpdateTracker(
+                ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) toDimPerDimExtractor)
+                    .seamlessportals$getSectionUpdateTracker()
+            );
+        }
+        // The promoted renderer joins the SHARED main render state (extract-writes and
+        // render-reads must be one object) and the MAIN feature dispatcher (vanilla's main pass
+        // drives the renderer's own dispatcher field; its isolated one stays registered in
+        // SECONDARY_FEATURE_DISPATCHERS for its next demoted stint).
+        ((LevelRendererAccessorMixin) promotedRenderer).seamlessportals$setLevelRenderState(
+            CLIENT.gameRenderer.gameRenderState().levelRenderState
+        );
+        ((LevelRendererAccessorMixin) promotedRenderer).seamlessportals$setFeatureRenderDispatcher(
+            CLIENT.gameRenderer.featureRenderDispatcher()
+        );
+        // SYMMETRIC RE-POINT (memory nether-block-freeze-orphaned-extractor): while promoted, the
+        // level's own final levelExtractor field must be mc.levelExtractor ITSELF — any
+        // allChanged() REPLACES the extractor's tracker, and only writing THROUGH the extractor
+        // survives that replacement. A tracker SNAPSHOT share would freeze block updates after the
+        // first F3+A/render-distance change.
+        ((com.warwa.seamlessportals.mixin.client.ClientLevelExtractorAccessor) toWorld)
+            .seamlessportals$setLevelExtractor(CLIENT.levelExtractor);
+        WORLD_EXTRACTOR_MAP.put(toDim, CLIENT.levelExtractor);
+        // Re-prime the promoted renderer: stale portal-view visibleSections hold RenderSection
+        // nodes the post-teleport reposition relocates (block-era NPE class) — clear them;
+        // invalidate schedules the SOG async rebuild; needsFrustumUpdate forces the FIRST
+        // post-promote applyFrustum so a warm currentGraph repopulates instantly while the rebuild
+        // refines (block-era "instant repaint").
+        promotedRenderer.clearVisibleSections();
+        var promotedSog = promotedRenderer.sectionOcclusionGraph();
+        if (promotedSog != null) {
+            promotedSog.invalidate();
+            ((com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphAccessorMixin) (Object) promotedSog)
+                .seamlessportals$getNeedsFrustumUpdate().set(true);
+        }
+        qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.onDimensionMainStatusChanged(toDim);
+
+        // ===== DEMOTE fromDim: the outgoing renderer becomes a self-contained secondary =========
+        // Fresh isolated LevelRenderState + a per-dim LevelExtractor bound to it, so the
+        // portal-view dest pass (looking BACK through the portal) has a live extract substrate
+        // (the block-era demote proved the missing-extractor failure: extract skipped, entities/
+        // particles never populate in the look-back view).
+        LevelRenderState demotedState = new LevelRenderState();
+        ((LevelRendererAccessorMixin) demotedRenderer).seamlessportals$setLevelRenderState(demotedState);
+        LevelExtractor demotedExtractor = new LevelExtractor(CLIENT, demotedState, demotedRenderer);
+        com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor dea =
+            (com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) demotedExtractor;
+        dea.seamlessportals$setLevel(fromWorld);
+        dea.seamlessportals$setSectionUpdateTracker(
+            new net.minecraft.client.SectionUpdateTracker(
+                fromWorld, CLIENT.options.getEffectiveRenderDistance())
+        );
+        // Same mesh-preserving guard as promote: the demoted dim's FIRST dest extract must not
+        // trip the render-distance allChanged (a ~190ms SOG waitAndReset + full re-mesh of the
+        // meshes this demote preserves — block-era measured).
+        dea.seamlessportals$setLastViewDistance(CLIENT.options.getEffectiveRenderDistance());
+        demotedExtractor.onResourceManagerReload(CLIENT.getResourceManager());
+        // The other half of the nether-block-freeze fix: the level keeps writing dirty-marks
+        // through its own extractor field — point it at the CURRENT per-dim extractor so writer
+        // and reader stay on one tracker across every promote/demote cycle.
+        ((com.warwa.seamlessportals.mixin.client.ClientLevelExtractorAccessor) fromWorld)
+            .seamlessportals$setLevelExtractor(demotedExtractor);
+        WORLD_EXTRACTOR_MAP.put(fromDim, demotedExtractor);
+        // Isolated feature pipeline for the demoted renderer (FIX-4 invariant: only the CURRENT
+        // main renderer carries the main dispatcher). The boot dim arrives here without one.
+        net.minecraft.client.renderer.feature.FeatureRenderDispatcher demotedDispatcher =
+            SECONDARY_FEATURE_DISPATCHERS.get(fromDim);
+        if (demotedDispatcher == null) {
+            net.minecraft.client.renderer.RenderBuffers demotedFeatureBuffers =
+                new net.minecraft.client.renderer.RenderBuffers(4);
+            demotedDispatcher = new net.minecraft.client.renderer.feature.FeatureRenderDispatcher(
+                demotedFeatureBuffers,
+                CLIENT.getModelManager(),
+                CLIENT.getAtlasManager(),
+                CLIENT.font,
+                CLIENT.gameRenderer.gameRenderState()
+            );
+            SECONDARY_FEATURE_BUFFERS.put(fromDim, demotedFeatureBuffers);
+            SECONDARY_FEATURE_DISPATCHERS.put(fromDim, demotedDispatcher);
+        }
+        ((LevelRendererAccessorMixin) demotedRenderer)
+            .seamlessportals$setFeatureRenderDispatcher(demotedDispatcher);
+        qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.onDimensionMainStatusChanged(fromDim);
+
+        // Per-crossing event, not per-frame — logging discipline holds.
+        LOGGER.info(
+            "[S14 crossing cutover] extract driver promoted {} -> {}",
+            fromDim.identifier(), toDim.identifier()
+        );
+    }
+
     public static Set<ResourceKey<Level>> getServerDimensions() {
         assert CLIENT.player != null;
         return CLIENT.player.connection.levels();

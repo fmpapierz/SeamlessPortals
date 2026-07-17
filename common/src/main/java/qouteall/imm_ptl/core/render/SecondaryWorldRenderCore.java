@@ -144,6 +144,19 @@ public class SecondaryWorldRenderCore {
     }
 
     /**
+     * S14-A FIX-1: called by {@link ClientWorldLoader}'s crossing promote/demote for BOTH dims of a
+     * cross-dim crossing. The per-dim armed-discovery compile guard and the SOG delta-window
+     * identity are role-scoped: stale scheduled-but-consumed entries from a dim's prior dest stint
+     * would block recompiles when it next becomes a dest (the block-era clearCompileSchedule
+     * lesson, MOD:PortalWorldManager promote/demote both clear it), and a stale delta-window
+     * identity would mis-skip the first SOG delta feed after the role flip.
+     */
+    public static void onDimensionMainStatusChanged(ResourceKey<Level> dim) {
+        portalCompileScheduled.remove(dim);
+        lastAppliedDeltaWindow.remove(dim);
+    }
+
+    /**
      * SHELL HOOK (§2.2). Called by {@link MyGameRenderer#switchAndRenderTheWorld} at the OUTERMOST
      * portal entry ({@code PortalRendering.getPortalLayer()==1}), while {@code mc.levelRenderer} is
      * still the TRUE main renderer, to capture the block-atlas sampler {@code renderGroup} needs. The
