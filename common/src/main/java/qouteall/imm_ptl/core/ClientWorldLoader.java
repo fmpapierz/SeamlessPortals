@@ -89,6 +89,23 @@ public class ClientWorldLoader {
     public static final Map<ResourceKey<Level>, DimensionRenderHelper> RENDER_HELPER_MAP =
         new Object2ObjectOpenHashMap<>();
 
+    // S14-A FIX-4 (M4, audit link drivercore): per-secondary FeatureRenderDispatcher isolation.
+    // 26.2's LevelRenderer ctor binds featureRenderDispatcher = gameRenderer.featureRenderDispatcher()
+    // — the ONE main instance, whose single PreparedFrame is already OPEN during
+    // AFTER_TRANSLUCENT_TERRAIN (begin() throws "PreparedFrame already in use"), so a secondary
+    // driving it renders NO entities/block-entities/particles and its SubmitNodeStorage never
+    // drains (unbounded growth). Each secondary gets its OWN dispatcher over its OWN
+    // RenderBuffers(4) (sharing the MAIN RenderBuffers into a second dispatcher is forbidden:
+    // PreparedFrame.close() calls stagedVertexBuffer.endDraw(), which would end the MAIN pass's
+    // staged draw mid-frame). The renderer's own renderBuffers FIELD stays main-shared — that IS
+    // IP 1.21.3's arrangement (IP passed client.renderBuffers() to secondaries). These maps keep
+    // the isolated instances across promote/demote cycles; every entry needs the per-frame
+    // endFrame() walk (memory gpu-buffer-leak-endframe) and close() at disposal.
+    public static final Map<ResourceKey<Level>, net.minecraft.client.renderer.RenderBuffers>
+        SECONDARY_FEATURE_BUFFERS = new Object2ObjectOpenHashMap<>();
+    public static final Map<ResourceKey<Level>, net.minecraft.client.renderer.feature.FeatureRenderDispatcher>
+        SECONDARY_FEATURE_DISPATCHERS = new Object2ObjectOpenHashMap<>();
+
     public static @Nullable Map<ResourceKey<Level>, ResourceKey<DimensionType>> dimIdToDimTypeId;
 
     // R1 seaLevel client cache (SPIKE-R1-sealevel.md §3 "Client cache lifecycle"): per-dim sea
@@ -269,6 +286,10 @@ public class ClientWorldLoader {
         CLIENT_WORLD_MAP.clear();
         WORLD_RENDERER_MAP.clear();
         WORLD_EXTRACTOR_MAP.clear();
+        // S14-A FIX-4: per-dim entries were closed+removed by disposeWorldRenderer above;
+        // defensive clear only.
+        SECONDARY_FEATURE_BUFFERS.clear();
+        SECONDARY_FEATURE_DISPATCHERS.clear();
 
         disposeRenderHelpers();
 
@@ -288,6 +309,32 @@ public class ClientWorldLoader {
         if (worldRenderer != CLIENT.levelRenderer) {
             worldRenderer.close();
             ((IEWorldRenderer) worldRenderer).portal_fullyDispose();
+        }
+        // S14-A FIX-4: release this dim's isolated feature pipeline (the maps only ever hold
+        // mod-created instances — never the main dispatcher/buffers, so close is always safe).
+        net.minecraft.client.renderer.feature.FeatureRenderDispatcher featureDispatcher =
+            SECONDARY_FEATURE_DISPATCHERS.remove(dimension);
+        if (featureDispatcher != null) {
+            featureDispatcher.close();
+        }
+        net.minecraft.client.renderer.RenderBuffers featureBuffers =
+            SECONDARY_FEATURE_BUFFERS.remove(dimension);
+        if (featureBuffers != null) {
+            featureBuffers.close();
+        }
+    }
+
+    /**
+     * S14-A FIX-4: the per-frame {@code endFrame()} walk over every isolated per-secondary
+     * feature-pipeline {@link net.minecraft.client.renderer.RenderBuffers} (memory
+     * gpu-buffer-leak-endframe — every mod-created RenderBuffers needs vanilla's per-frame
+     * endFrame or its StagedVertexBuffer pools never fence-recycle and leak GPU buffers).
+     * Called from {@link qouteall.imm_ptl.core.render.MyGameRenderer#endFramePooled()}, which the
+     * mod already wires at {@code GameRenderer.render} TAIL flag-ON.
+     */
+    public static void endFrameOnSecondaryFeatureBuffers() {
+        for (net.minecraft.client.renderer.RenderBuffers buffers : SECONDARY_FEATURE_BUFFERS.values()) {
+            buffers.endFrame();
         }
     }
 
@@ -554,6 +601,22 @@ public class ClientWorldLoader {
         LevelRenderState worldRenderState = new LevelRenderState();
         ((LevelRendererAccessorMixin) worldRenderer)
             .seamlessportals$setLevelRenderState(worldRenderState);
+        // S14-A FIX-4 (M4): isolated feature-render pipeline for this secondary (see the
+        // SECONDARY_FEATURE_BUFFERS field note). Ctor shape verified against mc262
+        // FeatureRenderDispatcher.java:37-58 + the identical runtime-proven call at
+        // MOD:PortalWorldManager.createRenderer.
+        net.minecraft.client.renderer.RenderBuffers featureBuffers =
+            new net.minecraft.client.renderer.RenderBuffers(4);
+        net.minecraft.client.renderer.feature.FeatureRenderDispatcher featureDispatcher =
+            new net.minecraft.client.renderer.feature.FeatureRenderDispatcher(
+                featureBuffers,
+                CLIENT.getModelManager(),
+                CLIENT.getAtlasManager(),
+                CLIENT.font,
+                CLIENT.gameRenderer.gameRenderState()
+            );
+        ((LevelRendererAccessorMixin) worldRenderer)
+            .seamlessportals$setFeatureRenderDispatcher(featureDispatcher);
         // EXTRACTOR-IDENTITY (memory nether-block-freeze-orphaned-extractor): this extractor is
         // bound to the ClientLevel below at construction and stays its writer+reader for life;
         // never rebuilt after.
@@ -677,6 +740,8 @@ public class ClientWorldLoader {
             CLIENT_WORLD_MAP.put(dimension, newWorld);
             WORLD_RENDERER_MAP.put(dimension, worldRenderer);
             WORLD_EXTRACTOR_MAP.put(dimension, worldExtractor);
+            SECONDARY_FEATURE_BUFFERS.put(dimension, featureBuffers);
+            SECONDARY_FEATURE_DISPATCHERS.put(dimension, featureDispatcher);
 
             LOGGER.info("Client World Created {}", dimension.identifier());
         }

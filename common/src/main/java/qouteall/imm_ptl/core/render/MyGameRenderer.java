@@ -169,6 +169,10 @@ public class MyGameRenderer {
         for (RenderBuffers renderBuffers : secondaryRenderBuffers) {
             renderBuffers.endFrame();
         }
+        // S14-A FIX-4: the isolated per-secondary feature-pipeline buffers need the same
+        // per-frame endFrame (memory gpu-buffer-leak-endframe); this is the flag-ON
+        // GameRenderer.render-TAIL site that already covers the pool above.
+        ClientWorldLoader.endFrameOnSecondaryFeatureBuffers();
     }
 
     public static void renderWorldNew(
@@ -280,7 +284,22 @@ public class MyGameRenderer {
         if (IPGlobal.useSecondaryEntityVertexConsumer) {
             newRenderBuffers = acquireRenderBuffersObject();
             if (newRenderBuffers != null) {
-                ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(newRenderBuffers);
+                // S14-A FIX-5 (M5, audit link drivercore): do NOT swap the dest renderer's own
+                // renderBuffers field while its SectionRenderDispatcher does not exist yet. 26.2
+                // defers dispatcher creation into the FIRST extract (LevelExtractor.java:105-124,
+                // inside this very pass for a fresh secondary), and the dispatcher PERMANENTLY
+                // captures `this.renderBuffers` at construction — with the swap active that is
+                // this transient pooled RenderBuffers(0) = a 1-pack section-builder pool serializing
+                // every async compile for the dim's whole life (plus a pool-object identity leak).
+                // Skipping the first pass leaves the CONSTRUCTION buffers (the main shared pool at
+                // full concurrency) — exactly IP 1.21.3's permanent arrangement (IP secondaries
+                // compiled from client.renderBuffers()). The swap resumes from the pass after the
+                // dispatcher exists. Accepted corner (documented in S14A): a render-distance change
+                // mid-portal-view recreates the dispatcher under the active swap — transient,
+                // self-heals at the next allChanged.
+                if (worldRenderer.sectionRenderDispatcher() != null) {
+                    ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(newRenderBuffers);
+                }
                 ((IEMinecraftClient) client).ip_setRenderBuffers(newRenderBuffers);
                 // ip_setFixedBuffers(newRenderBuffers.fixedBufferPack()) DROPPED — see header (no held
                 // IESectionRenderDispatcher; 26.2 StagingBuffer model; CUTOVER_SPEC S12 flag).
