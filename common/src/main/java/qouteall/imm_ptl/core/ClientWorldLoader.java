@@ -852,6 +852,11 @@ public class ClientWorldLoader {
                 ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) toDimPerDimExtractor)
                     .seamlessportals$getSectionUpdateTracker()
             );
+            // S14.9 (final verify round): make the warm path's mesh-preservation contract
+            // explicit — a pending invalidate one-shot from a same-tick cold promote (A->B->A
+            // double-crossing) must not survive onto the warm-promoted renderer and wipe the
+            // meshes this path exists to preserve.
+            mainExt.seamlessportals$setShouldInvalidateCompiledGeometry(false);
         }
         // The promoted renderer joins the SHARED main render state (extract-writes and
         // render-reads must be one object) and the MAIN feature dispatcher (vanilla's main pass
@@ -906,6 +911,13 @@ public class ClientWorldLoader {
         // trip the render-distance allChanged (a ~190ms SOG waitAndReset + full re-mesh of the
         // meshes this demote preserves — block-era measured).
         dea.seamlessportals$setLastViewDistance(CLIENT.options.getEffectiveRenderDistance());
+        // S14.9 (final verify round): a NEVER-BUILT demoted renderer (same-tick double-crossing
+        // through a cold dim) must self-heal at its first dest extract — set the invalidate
+        // one-shot so dispatcher/viewArea/graph get created (world-creation gets this from
+        // setLevel->allChanged; the demote's raw writes deliberately skip allChanged).
+        if (demotedRenderer.sectionRenderDispatcher() == null) {
+            dea.seamlessportals$setShouldInvalidateCompiledGeometry(true);
+        }
         demotedExtractor.onResourceManagerReload(CLIENT.getResourceManager());
         // The other half of the nether-block-freeze fix: the level keeps writing dirty-marks
         // through its own extractor field — point it at the CURRENT per-dim extractor so writer

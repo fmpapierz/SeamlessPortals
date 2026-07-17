@@ -422,7 +422,7 @@ public class ClientTeleportationManager {
         isTeleportingTick = true;
         isTeleportingFrame = true;
         
-        MyGameRenderer.vanillaTerrainSetupOverride = 1;
+        MyGameRenderer.armVanillaTerrainSetupOverride(); // S14.9: + SOG frustum force (same-frame consumption, IP contract)
     }
     
     
@@ -451,7 +451,7 @@ public class ClientTeleportationManager {
         lastPlayerEyePos = null;
         
         RenderStates.updatePreRenderInfo(RenderStates.getPartialTick());
-        MyGameRenderer.vanillaTerrainSetupOverride = 1;
+        MyGameRenderer.armVanillaTerrainSetupOverride(); // S14.9: + SOG frustum force (same-frame consumption, IP contract)
     }
     
     /**

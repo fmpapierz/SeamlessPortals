@@ -128,6 +128,26 @@ public class MyGameRenderer {
     // so use IP's non-multi-threaded algorithm at the first frame
     public static int vanillaTerrainSetupOverride = 0;
 
+    /**
+     * S14.9 (final verify round, MINOR — both agents' verbatim prescription): arm the override AND
+     * force the CURRENT main renderer's SOG frustum update. IP's consumer anchor (setupRender
+     * RETURN) ran every frame, so the flag was consumed on the very next frame; the 26.2 re-site
+     * (applyFrustum RETURN) is EVENT-driven — without the force, a SAME-dim teleport's override
+     * sat armed until the next natural applyFrustum (rotation bucket / SOG rebuild), silently
+     * narrowing IP's same-frame contract. Cross-dim promotes force it independently; the double
+     * force is an idempotent AtomicBoolean set (survives waitAndReset — bytecode-verified).
+     */
+    public static void armVanillaTerrainSetupOverride() {
+        vanillaTerrainSetupOverride = 1;
+        if (client.levelRenderer != null) {
+            var sog = client.levelRenderer.sectionOcclusionGraph();
+            if (sog != null) {
+                ((com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphAccessorMixin) (Object) sog)
+                    .seamlessportals$getNeedsFrustumUpdate().set(true);
+            }
+        }
+    }
+
     public static boolean enablePortalCaveCulling = true;
 
     public static void init() {
