@@ -64,9 +64,10 @@ import static org.lwjgl.opengl.GL11.GL_STENCIL_TEST;
 //   * RenderSystem.getProjectionMatrix()           -> getCurrentProjectionMatrix() (inherited from
 //        PortalRenderer; render-core G27/G19 — see that helper's derivation).
 //   * Minecraft.getMainRenderTarget()              -> client.gameRenderer.mainRenderTarget() (G14).
-//   * mainRenderTarget().bindWrite(false)          -> raw-GL bind of the substrate's main stencil FBO
-//        (StencilState.gameFboId; render-core G12 — RenderTarget.bindWrite is GONE on 26.2). See the
-//        inline derivation in prepareRendering().
+//   * mainRenderTarget().bindWrite(false)          -> the S14.21 FrameBufferCache.getFbo resolver
+//        (the LIVE main-target FBO from the same color+depth view key vanilla's createRenderPass
+//        computes; the earlier StencilState.gameFboId capture is @Deprecated — it went stale at
+//        resource-lifecycle events). See the inline derivation in prepareRendering().
 //   * Minecraft.useShaderTransparency()            -> gameRenderState().useShaderTransparency() (R13i /
 //        CUTOVER_SPEC §6.4; GameRenderState.java:17-19). Body is IP-commented (no worldRenderer.reload
 //        on 26.2 — the substrate provides the stencil buffer unconditionally), so the read is inert.
@@ -86,6 +87,9 @@ public class RendererUsingStencil extends PortalRenderer {
 
     // S14.22 lever (default OFF): 1Hz raw-GL state observation for desync diagnosis.
     private static long lastGlStateAssertMs = 0;
+
+    // S14.26: 1Hz limiter for the resolver landing log (GUI-portal alternation guard).
+    private static long lastResolverLogMs = 0;
 
     @Override
     public boolean replaceFrameBufferClearing() {
@@ -212,16 +216,29 @@ public class RendererUsingStencil extends PortalRenderer {
             int mainFbo = glDevice.frameBufferCache().getFbo(
                 glDevice.directStateAccess(), List.of(colorView), depthView
             );
-            // Value-change-gated landing proof (render-thread-logging discipline: logs ONLY when the
-            // resolved id changes — resize/world-switch cadence, never per-frame).
+            // Value-change-gated + 1Hz-limited landing proof (S14.26: value-change alone can fire
+            // 2x/frame while a GUI portal alternates the swapped main target — the debug command
+            // path; the rate limit keeps the log render-thread-safe in every context).
             if (mainFbo != lastResolvedMainFbo) {
-                Helper.log("[S14.21] stencil-clear main FBO resolved: " + mainFbo
-                    + " (color=" + colorView + ", depth=" + depthView + ")");
                 lastResolvedMainFbo = mainFbo;
+                long now = System.currentTimeMillis();
+                if (now - lastResolverLogMs > 1000) {
+                    lastResolverLogMs = now;
+                    Helper.log("[S14.21] stencil-clear main FBO resolved: " + mainFbo
+                        + " (color=" + colorView + ", depth=" + depthView + ")");
+                }
             }
             int prevRead = GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
             int prevWrite = GlStateManager.getFrameBuffer(GL30.GL_DRAW_FRAMEBUFFER);
             GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, mainFbo);
+
+            // S14.26 (raw-GL sweep MINOR): glClear respects GL_SCISSOR_TEST, and 26.2 scissor is
+            // per-pass state that PERSISTS between passes (unlike 1.21.3's popped-to-disabled
+            // stack, which made IP's identical raw clear safe). Vanilla's own clear helpers
+            // disable scissor first — match that discipline (cached twin; no restore needed:
+            // every subsequent draw's trySetup re-establishes per-pass scissor). Matters at the
+            // GuiPortalRendering call site, where leftover GUI scissor could box the clear.
+            GlStateManager._disableScissorTest();
 
             // R5 Row 1 (prepareRendering :98-99): UNCHANGED. Clears STENCIL only — the main-frame
             // reversed-Z DEPTH buffer is deliberately preserved for the stencil-write depth test

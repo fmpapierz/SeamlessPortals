@@ -49,8 +49,16 @@ public abstract class RenderTargetMixin {
 
         int fbo = cir.getReturnValue();
 
-        int oldFbo = GL30.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
+        // S14.26 (raw-GL sweep MINOR): route the bind excursion through GlStateManager's
+        // read/write FBO caches — the raw form saved only the DRAW binding and silently forced
+        // real-read := old-draw while the cache kept the stale read value, letting later
+        // cache-guarded read-binds SKIP their real GL call (the S14.22 cache==real invariant,
+        // applied to this both-flag-states substrate mixin). Cache reads are a valid save source:
+        // vanilla routes every bind through the cache (zero raw binds in DirectStateAccess /
+        // GlCommandEncoder). The attachment surgery below stays raw (no cached twins).
+        int prevRead = com.mojang.blaze3d.opengl.GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
+        int prevWrite = com.mojang.blaze3d.opengl.GlStateManager.getFrameBuffer(GL30.GL_DRAW_FRAMEBUFFER);
+        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
 
         // Detach from GL_DEPTH_ATTACHMENT and reattach as GL_DEPTH_STENCIL_ATTACHMENT
         GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL30.GL_TEXTURE_2D, 0, 0);
@@ -67,6 +75,7 @@ public abstract class RenderTargetMixin {
             com.warwa.seamlessportals.render.StencilState.gameFboId = fbo;
         }
 
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, oldFbo);
+        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevWrite);
     }
 }
