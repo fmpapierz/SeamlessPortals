@@ -421,6 +421,24 @@ public class SecondaryWorldRenderCore {
                 }
             }
 
+            // S14.23 (live-defect hunt, sky-state track): dest SKY extraction for never-main dims.
+            // LevelExtractor.extract fills skyRenderState ONLY while levelRenderer.skyRenderer() is
+            // non-null (mc262 LevelExtractor:182-186), and only vanilla's addSkyPass ever constructs
+            // skyRenderer — which the decomposed dest pass never runs. A never-main dest dim would
+            // keep default/stale sky state forever (OW-as-dest previously worked only through the
+            // ACCIDENTAL invariant that demotion preserves the renderer instance's skyRenderer).
+            // Complete the decomposition's parity with IP's always-extracted dest sky: run the
+            // extraction explicitly with the core-owned portalSkyRenderer as the executor, mirroring
+            // vanilla's own gate, with the same camera the dest extract used.
+            if (!sharedState && destRenderer.skyRenderer() == null) {
+                SkyRenderer portalSr = getOrCreatePortalSkyRenderer(destRenderer);
+                if (portalSr != null) {
+                    portalSr.extractRenderState(
+                        destLevel, partialTick, newCamera, destLRS.skyRenderState
+                    );
+                }
+            }
+
             // ===== Step 6 — dest FOG (R9): compute-only probe + core-owned standalone buffer =====
             FogRenderer fr =
                 ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
