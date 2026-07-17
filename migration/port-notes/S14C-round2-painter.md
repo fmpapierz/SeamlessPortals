@@ -99,11 +99,11 @@ GpuBuffer/ByteBufferBuilder churn (behavior-neutral); optional user-side maxPort
   VANILLA's own draws (sky-family fans) being STENCIL-CLIPPED by mod stencil state/content leaking
   beyond the portal bracket (test left enabled into later same-frame or next-frame-early vanilla
   draws — the next frame's sky draws BEFORE the mid-frame S14.21 stencil clear). Hunt r3 running.
-- Session incident: the user's MOUSE stopped responding system-wide after the last lever command;
-  no project JVM survived and no TDR/display events in the System log (checked) → most likely a
-  USB/mouse glitch coincident with the GPU load; keyboard recovery steps provided. The sync
-  occlusion lever (step 5) remains a stall-storm risk on wedge-sized queries — do not re-run it
-  until the wedge fix lands.
+- Session incident (CLOSED): the user's MOUSE stopped responding system-wide after the last lever
+  command; no project JVM survived and no TDR/display events in the System log (checked); a PC
+  restart fully restored it → USB/input-level glitch, not a persistent driver or game issue. The
+  sync occlusion lever (step 5) remains a stall-storm risk on wedge-sized queries — do not re-run
+  it until the wedge fix lands.
 
 ## Fidelity ruling wanted from the user (rides the lever session)
 
