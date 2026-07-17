@@ -266,19 +266,28 @@ public class MyRenderHelper {
     // and wrongly remove the light data when the chunks get reloaded to client
     // this should not run before world rendering or the smooth lighting may become abnormal in section edge
     //
-    // S11-B carriage (S11-A §3 row lateUpdateLight, flag B7): PORTED VERBATIM from IP. The mod's proven
-    // body (PortalWorldManager.lateUpdateSecondaryLight, commit 3a2c14e) is re-sourced onto
-    // getClientWorlds() + isDimensionRendered() — which is exactly IP's own form here, because
-    // runLightUpdates() survives unchanged on 26.2. The mod-only isDestScopeLive perf gate is DROPPED
-    // (B7: IP gates only on isDimensionRendered; isDestScopeLive stays in the block-era path). Stays at
-    // frame-END, never mid-tick (IP's own smooth-lighting note; memory portalview-light-engine-half-port).
+    // S11-B carriage (S11-A §3 row lateUpdateLight, flag B7): ported from IP, RE-GATED at S14-A
+    // (FIX-3, audit BLOCKER B3). IP's verbatim `!isDimensionRendered` gate was only TOTAL because
+    // 1.21.3 renderLevel itself ran pollLightUpdates+runLightUpdates for WHATEVER dim it rendered
+    // (IP redirect-proof: IP MixinLevelRenderer.java:478-489) — rendered dims were covered by
+    // vanilla, lateUpdateLight covered the rest. 26.2 MOVED that pair out of the render into
+    // Minecraft.renderFrame -> ClientLevel.update() (MAIN level only, mc262 Minecraft.java:1287),
+    // and the stencil-direct dest pass runs no light pass — so the verbatim gate SKIPPED exactly
+    // the dims being looked at: the rendered dest's light publication stalled while the user
+    // stared at the portal (the shipped dark-portal-view mechanism, memory
+    // portalview-light-engine-half-port, resurrected for the rendered case). The 26.2-total gate
+    // is `world != client.level`: vanilla covers the main level, this covers EVERY other live
+    // world — rendered or not — with vanilla's own update() pairing (poll + run). Stays at
+    // frame-END, OUTSIDE any world swap (so onLightUpdate extractor routing sees true identities),
+    // never mid-tick (IP's smooth-lighting note).
     public static void lateUpdateLight() {
         if (!ClientWorldLoader.getIsInitialized()) {
             return;
         }
 
         ClientWorldLoader.getClientWorlds().forEach(world -> {
-            if (!RenderStates.isDimensionRendered(world.dimension())) {
+            if (world != client.level) {
+                world.pollLightUpdates();
                 world.getChunkSource().getLightEngine().runLightUpdates();
             }
         });

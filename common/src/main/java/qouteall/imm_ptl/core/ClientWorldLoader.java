@@ -383,6 +383,18 @@ public class ClientWorldLoader {
     public static LevelExtractor getWorldExtractor(ResourceKey<Level> dimension) {
         initializeIfNeeded();
 
+        // S14-A FIX-3 hardening (latent identity bug, audit link clientworld): prefer the
+        // identity-coherent MAP over the CLIENT.level short-circuit. The map's main-dim entry IS
+        // CLIENT.levelExtractor (seeded by initializeIfNeeded; kept invariant at every crossing by
+        // the S14-A promote/demote), while CLIENT.level is a SWAPPABLE field — the old
+        // level-keyed short-circuit returned the MAIN extractor for a dim whose level was merely
+        // swapped in (withSwitchedWorld / the dest render pass), landing dirties on the wrong
+        // SectionUpdateTracker (the S13-H DEFECT-1 shape). Map-first is swap-safe by construction.
+        LevelExtractor mapped = WORLD_EXTRACTOR_MAP.get(dimension);
+        if (mapped != null) {
+            return mapped;
+        }
+
         if (CLIENT.level != null && CLIENT.level.dimension() == dimension) {
             return CLIENT.levelExtractor;
         }
