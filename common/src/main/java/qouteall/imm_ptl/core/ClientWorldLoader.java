@@ -159,12 +159,22 @@ public class ClientWorldLoader {
 
     public static void tick() {
         if (IPCGlobal.isClientRemoteTickingEnabled) {
+            // S14.6 hardening (fix-verify, deliberate 1-line deviation from IP's shape): the flag
+            // was WRITE-ONLY in IP; S14.1's tickTime HEAD-cancel made it load-bearing, and a throw
+            // escaping the inner catch (withSwitchedWorld's own prologue validations) would strand
+            // it true — permanently cancelling the shared connection clock. try/finally matches
+            // the runtime-proven block-era PortalWorldManager.tickRemoteWorlds form.
             isClientRemoteTicking = true;
-            CLIENT_WORLD_MAP.values().forEach(world -> {
-                if (CLIENT.level != world) {
-                    tickRemoteWorld(world);
-                }
-            });
+            try {
+                CLIENT_WORLD_MAP.values().forEach(world -> {
+                    if (CLIENT.level != world) {
+                        tickRemoteWorld(world);
+                    }
+                });
+            }
+            finally {
+                isClientRemoteTicking = false;
+            }
             // 26.2: LevelRenderer.tick() is GONE (SPIKE-R1 §4.3 "the worldRenderer.tick()
             // loop is DELETED with a documented role transfer, not replaced"). Its only
             // 1.21.3 duty — expiring stale BlockDestructionProgress — moved onto ClientLevel
@@ -172,7 +182,6 @@ public class ClientWorldLoader {
             // algorithm), which tickRemoteWorld above already runs via newWorld.tick(() -> true);
             // the render-side consumption of destruction progress happens per-frame in
             // extraction. Nothing renderer-side remains to tick per game tick.
-            isClientRemoteTicking = false;
         }
 
         // 26.2: GameRenderer.lightTexture() and the LightTexture class are GONE — split into a
@@ -702,10 +711,14 @@ public class ClientWorldLoader {
             // S14-A FIX-2b (B2 part b, ticklight): seed the fresh ClientLevelData's ABSOLUTE
             // gameTime from the current level. IP kept remote gameTime correct via the redirected
             // per-dim ClientboundSetTimePacket, which the F1 weather-only WorldInfoSender deviation
-            // deleted; without the seed every dest-world gameTime consumer (portal-animation
-            // timing, %20 expiry windows, animateTick %2) runs 0-based. Stays in lockstep
-            // afterwards (+1/tick via the remote tick under the shared TickRateManager; the
-            // MixinClientLevel tickTime HEAD-cancel keeps the shared connection clock excluded).
+            // deleted. Scope (S14.6 verifier correction): the surviving IP-verbatim
+            // MixinClientPacketListener.onSetTime fan-out re-syncs every non-current world at each
+            // ~20-tick vanilla SetTime broadcast, so unseeded consumers would be 0-based only for
+            // the creation window — this seed covers that window and keeps creation-time
+            // consumers (%20 expiry stamps, animateTick %2) correct from tick one. Stays in
+            // lockstep afterwards (+1/tick via the remote tick under the shared TickRateManager;
+            // the MixinClientLevel tickTime HEAD-cancel keeps the shared connection clock
+            // excluded; the fan-out snaps any drift).
             newWorld.setTimeFromServer(CLIENT.level.getGameTime());
 
             // 26.2: setLevel moved LevelRenderer → LevelExtractor. Wires the level and builds the

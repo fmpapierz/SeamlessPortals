@@ -291,12 +291,15 @@ public class MyGameRenderer {
                 // captures `this.renderBuffers` at construction — with the swap active that is
                 // this transient pooled RenderBuffers(0) = a 1-pack section-builder pool serializing
                 // every async compile for the dim's whole life (plus a pool-object identity leak).
-                // Skipping the first pass leaves the CONSTRUCTION buffers (the main shared pool at
-                // full concurrency) — exactly IP 1.21.3's permanent arrangement (IP secondaries
-                // compiled from client.renderBuffers()). The swap resumes from the pass after the
-                // dispatcher exists. Accepted corner (documented in S14A): a render-distance change
-                // mid-portal-view recreates the dispatcher under the active swap — transient,
-                // self-heals at the next allChanged.
+                // Skipping the first pass leaves the CONSTRUCTION buffers — for layer-1 creation
+                // the main shared pool at full concurrency, exactly IP 1.21.3's permanent
+                // arrangement (IP secondaries compiled from client.renderBuffers()); a dim FIRST
+                // created inside a NESTED pass (needs a 3rd dim) captures the outer pooled object,
+                // an IP-inherited corner, unreachable at rung 2 — ledgered. The swap resumes from
+                // the pass after the dispatcher exists. (S14.6 verifier correction: the previously
+                // documented "RD change mid-pass recreates the dispatcher under the swap" corner is
+                // mechanically impossible — recreation needs shouldResetLevelRenderData, set only
+                // by setLevel, never by an RD-change allChanged; the guard is complete.)
                 if (worldRenderer.sectionRenderDispatcher() != null) {
                     ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(newRenderBuffers);
                 }

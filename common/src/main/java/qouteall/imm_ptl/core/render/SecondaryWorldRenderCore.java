@@ -503,6 +503,13 @@ public class SecondaryWorldRenderCore {
             // ===== Step 9 — visibleSections: ARMED discovery ====================================
             ObjectArrayList<SectionRenderDispatcher.RenderSection> resultList =
                 ((IEWorldRenderer) destRenderer).portal_getChunkInfoList();
+            // S14.6 (fix-verify MINOR): re-read the grid too — Step 5's extract can consume
+            // shouldInvalidateCompiledGeometry (RD change, or the FIX-9 reload cascade on ANY
+            // main reload with a portal visible), which RELEASES and REPLACES the renderer's
+            // viewArea (same §2.1 identity class as the FIX-10 tracker re-read below). The
+            // Step-3 repositionCamera on the pre-extract read stays as-is (a replacement grid is
+            // repositioned by invalidateCompiledGeometry itself).
+            viewArea = (ImmPtlViewArea) ((IEWorldRenderer) destRenderer).ip_getBuiltChunkStorage();
             if (viewArea != null) {
                 RenderRegionCache cache = new RenderRegionCache();
                 Set<Long> schedSet =

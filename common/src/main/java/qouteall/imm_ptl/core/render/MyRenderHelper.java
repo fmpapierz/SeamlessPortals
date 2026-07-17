@@ -277,9 +277,21 @@ public class MyRenderHelper {
     // stared at the portal (the shipped dark-portal-view mechanism, memory
     // portalview-light-engine-half-port, resurrected for the rendered case). The 26.2-total gate
     // is `world != client.level`: vanilla covers the main level, this covers EVERY other live
-    // world — rendered or not — with vanilla's own update() pairing (poll + run). Stays at
-    // frame-END, OUTSIDE any world swap (so onLightUpdate extractor routing sees true identities),
-    // never mid-tick (IP's smooth-lighting note).
+    // world — rendered or not — RUN-ONLY, exactly IP's body. Stays at frame-END, OUTSIDE any
+    // world swap (so onLightUpdate extractor routing sees true identities), never mid-tick (IP's
+    // smooth-lighting note).
+    //
+    // S14.6 BLOCKER correction (fix-verify): do NOT poll here. The 26.2 queued light lambdas
+    // resolve their target level AT EXECUTION TIME through the LISTENER's level field
+    // (handleLightUpdatePacket queues `() -> this.applyLightData(...)` which reads
+    // `this.level.getChunkSource().getLightEngine()`), and redirected dest packets enqueue those
+    // lambdas while withSwitchedWorld has the listener swapped — so a bare frame-end poll outside
+    // the swap would apply DEST light nibbles into the MAIN engine and lose them to the dest
+    // (IP's own redirect-proof comment says exactly this: "the captured lambda uses the net
+    // handler's world field, so switch that correctly"). The poll half stays tick-side inside the
+    // full context swap (ClientWorldLoader.tickRemoteWorld), matching IP and the runtime-proven
+    // 3a2c14e form. ChunkLightLambdaGuardMixin remains load-bearing for the chunk-with-light path
+    // (S20 must not delete it without guaranteeing drain context).
     public static void lateUpdateLight() {
         if (!ClientWorldLoader.getIsInitialized()) {
             return;
@@ -287,7 +299,6 @@ public class MyRenderHelper {
 
         ClientWorldLoader.getClientWorlds().forEach(world -> {
             if (world != client.level) {
-                world.pollLightUpdates();
                 world.getChunkSource().getLightEngine().runLightUpdates();
             }
         });

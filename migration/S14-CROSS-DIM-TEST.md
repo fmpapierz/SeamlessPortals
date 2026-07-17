@@ -44,7 +44,12 @@ lessons in `S13-FIRST-LIGHT-TEST.md`.
    overworld from the nether side.
 6. **Weather RENDER through the window is deferred to S18** (deviation ledger: weather + world border
    omitted). Step 6 verifies weather STATE sync (it rains when you cross into the overworld), not
-   rain visuals inside the window. [PENDING AUDIT — the packets track may refine this pre-answer.]
+   rain visuals inside the window. [AUDIT-CONFIRMED: F1 weather-only is correctly wired end-to-end —
+   `WorldInfoSender` cadence + dim selection match IP, and the client applies it to the swapped
+   secondary via `handleGameEvent` → `setRainLevel/setThunderLevel`. The main-world rain-fog
+   stability while a portal is on screen was audit defect M6 (`rainFogMultiplier` shared-static
+   leak) and is FIXED in S14.5 — if main-world rain fog still flickers/weakens with a window in
+   view during rain, capture it: that would be a failed M6 fix, not a new bug.]
 7. **Mobs may spawn near the nether-side portal (piglins/ghasts/zombified piglins) — that is R10
    under watch.** IP's ticket semantics re-enable natural spawns in dest chunks. It is IP-faithful
    behavior, NOT a bug — but NOTE the intensity (a piglin FLOOD through the window within a minute
@@ -58,6 +63,17 @@ lessons in `S13-FIRST-LIGHT-TEST.md`.
     (root-caused, fix queued for polish; chip task_70fec4eb). Note only if it CHANGES character.
 11. **The scaled-portal notes from S13 all still apply** (giant physics, buried-portal white bar,
     2× parallax on scaled portals) if you experiment beyond the script.
+12. **Distant nether view beyond the loaded radius = flat atmosphere-color backdrop — EXPECTED
+    IP behavior.** IP fogs the dest at the FULL render distance while loading only ~8 chunks, so
+    past the loaded terrain you see the Row-16 atmosphere fill, not fog-converged terrain. The
+    block era deliberately deviated here (smoothed fog radius); the faithful port drops that
+    polish. If you prefer the old look, say so — it is a candidate approved-deviation for the
+    polish backlog, not a bug.
+13. **Dying in the nether and respawning resets ALL portal views — EXPECTED.** A death respawn
+    runs the vanilla path (flag-ON it degrades to pure vanilla by design), which disposes every
+    portal-view secondary (`cleanUp`); views re-fade-in gradually afterwards. Do not file it as
+    the C8 flake or a persistence loss. (The S14 world is deliberately NOT peaceful for the R10
+    watch, and the nether has ghasts — a death is plausible mid-test.)
 
 ---
 
