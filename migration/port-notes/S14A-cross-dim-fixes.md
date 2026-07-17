@@ -173,6 +173,20 @@ here) caught **1 BLOCKER + 2 MAJORs in the fix series itself**, corrected in S14
   flag-OFF byte-inert (all surfaces plugin-gated `qouteall.*`; zero `com.warwa` files touched
   except the always-inert accessor row).
 
+## Round 3 (final): S14.6/S14.7 verification → S14.9
+
+The focused round (semantic adversarial + bytecode weave audit, 2 Fable agents) PASSED every
+surface: the poll-removal, try/finally, viewArea re-read, cold-promote branch, and the re-sited
+override consumer all re-derived correct; the new mixin + accessor row javap-verified against the
+loom named jar (single applyFrustum overload, declared fields, no collisions — the block-era
+flash-bridge's applyFrustum hooks are arm-unreachable flag-ON); union flag-OFF byte-inert. Three
+convergent prescriptions landed verbatim as **S14.9**: (1) `armVanillaTerrainSetupOverride` —
+the override now forces the current main renderer's SOG frustum update at both set sites,
+restoring IP's same-frame consumption for SAME-dim teleports (the 26.2 anchor is event-driven;
+IP's ran every frame); (2) warm promote explicitly clears the invalidate one-shot (mesh
+preservation vs same-tick A→B→A); (3) a never-built demoted renderer gets the invalidate one-shot
+(self-heals at first dest extract). READY declared at `8b7d62a`.
+
 ## Backlog entries this audit adds (→ ledger / task #9 / S15+)
 
 - debugSynchronizers entity replay in `ip_updateEntityTrackingStatus` (MINOR, debug-only) — S15 or ledger.

@@ -1,8 +1,19 @@
 # S14 — CROSS-DIMENSION: the USER runClient script (rung 2)
 
-> **STATUS: DRAFT — do not run yet.** This script goes live only after the S14 readiness audit's
-> confirmed defects are fixed, Fable-verified, committed, and you get an explicit **READY** with all
-> workflows idle (process rule 1). A "§ audit outcomes" section will be appended then.
+> **STATUS: LIVE — READY given at tree `8b7d62a` (all workflows idle).**
+>
+> **§ Audit outcomes (what changed since the S13 sign-off):** the readiness audit statically traced
+> all 9 cross-dim chain links and found 4 BLOCKERs + 6 MAJORs — every one on the never-run-live
+> cross-dim path, every one fixed and adversarially verified across three Fable rounds (commits
+> `S14.0`–`S14.9`, evidence in `migration/verify/S14-readiness-audit-digest.md` + the port-note
+> `S14A-cross-dim-fixes.md`). Headlines you'd otherwise have hit live: the first walk-through would
+> have broken the main render (extract driver never cut over — now a full promote/demote at each
+> crossing); the overworld clock would have jumped the moment the nether view existed (shared-clock
+> tickTime); the nether view would have been dark/stale while stared at (light gate); cross-dim
+> windows would have shown no entities/block-entities/particles (dispatcher isolation); rain fog
+> would have destabilized during step 6 (per-dim bracket). **C8 was statically CLEARED** (no cause
+> found on the IP path — step 5 is its live recheck). The verification also proved the return path:
+> `complete_bi_way_portal` is IP-identical cross-dim (step 1 tells you when to run it).
 
 This is the hands-on test script for **S14 rung 2** — the first REAL cross-dimension (nether-view)
 portal. Rung 2 is the first live contact for: **R1** secondary `ClientLevel` construction (seaLevel
