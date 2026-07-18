@@ -41,6 +41,7 @@
     "client.render.MixinGlRenderPass_DrawTrace",
     "client.render.MixinGlStateManager",
     "client.render.MixinLevelExtractor",
+    "client.render.MixinLevelExtractor_DestSubLevers",
     "client.render.MixinLevelExtractor_Reload",
     "client.render.MixinLevelExtractor_TerrainSetupOverride",
     "client.render.MixinLevelRenderer",

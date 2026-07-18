@@ -158,6 +158,19 @@ public class IPGlobal {
     public static boolean debugSkipGlobalsUbo = false;
     public static boolean debugSkipDestLightmap = false;
     public static boolean debugSkipProjectionInstall = false;
+    // S14.40: the wedge FIX'S A/B lever — ON restores the CORRUPTING vanilla mid-frame
+    // ParticleEngine.extract during the dest-pass extract (mechanism: MixinParticleEngine).
+    public static boolean debugAllowDestParticleExtract = false;
+    // S14.40: dest-extract sub-call attribution levers (MixinLevelExtractor_DestSubLevers;
+    // active only during the dest-pass extract — the main extract never consults them).
+    public static boolean debugSkipExtractBerdPrepare = false;
+    public static boolean debugSkipExtractErdPrepare = false;
+    public static boolean debugSkipExtractEntities = false;
+    public static boolean debugSkipExtractBlockEntities = false;
+    public static boolean debugSkipExtractWeather = false;
+    public static boolean debugSkipExtractSky = false;
+    public static boolean debugSkipExtractBorder = false;
+    public static boolean debugSkipExtractGizmos = false;
 
     public static boolean viewBobbingReduce = true;
     

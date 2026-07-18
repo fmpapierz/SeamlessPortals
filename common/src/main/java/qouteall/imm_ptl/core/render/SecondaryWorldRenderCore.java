@@ -117,6 +117,14 @@ public class SecondaryWorldRenderCore {
     // smoothing state (IP's per-dim smoothing fidelity).
     private static final Map<ResourceKey<Level>, Float> destRainFogMultiplier =
         new ConcurrentHashMap<>();
+
+    // S14.40: TRUE exactly while destExtractor.extract(...) runs (Step 5). This is the context gate
+    // for the shared-state guards that vanilla's single-extractor-per-frame invariant needs when a
+    // SECOND extract runs mid-frame: MixinParticleEngine's dest-pass particle-extract cancel (the
+    // wedge corruptor — the shared per-group accumulators, see that mixin's S14.40 note) and the
+    // MixinLevelExtractor_DestSubLevers attribution kit. Render-thread only; covers every flag-ON
+    // dest extract (this call is the only flag-ON dest-extract site, incl. GUI-portal-driven runs).
+    public static boolean isDestExtracting = false;
     private static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
         cachedAtmosphericEnv;
 
@@ -454,7 +462,13 @@ public class SecondaryWorldRenderCore {
                         DrawCallTrace.record("   [pre-extract]  " + stateFingerprint());
                     }
                     if (!IPGlobal.debugSkipExtractOnly) {
-                        destExtractor.extract(deltaTracker, newCamera, partialTick);
+                        isDestExtracting = true;
+                        try {
+                            destExtractor.extract(deltaTracker, newCamera, partialTick);
+                        }
+                        finally {
+                            isDestExtracting = false;
+                        }
                     }
                     if (DrawCallTrace.capturing) {
                         DrawCallTrace.record("   [post-extract] " + stateFingerprint());

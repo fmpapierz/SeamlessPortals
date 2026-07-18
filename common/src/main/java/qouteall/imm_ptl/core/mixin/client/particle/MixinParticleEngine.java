@@ -61,6 +61,28 @@ public class MixinParticleEngine implements IEParticleManager {
         ParticlesRenderState particlesRenderState, Frustum frustum, Camera camera, float partialTickTime,
         CallbackInfo ci
     ) {
+        // S14.40 (the live-rung-2 sky-wedge root cause — user-bisected to destExtractor.extract, then
+        // source-pinned here): QuadParticleGroup.extractRenderState RE-FILLS AND RETURNS the group's
+        // SHARED particleTypeRenderState field (26.2:QuadParticleGroup.java:24-39); vanilla's invariant
+        // is ONE ParticleEngine.extract per frame, so exactly one LevelRenderState ever references those
+        // accumulators. The dest-pass extract (SecondaryWorldRenderCore Step 5) is a SECOND mid-frame
+        // call: destLRS.reset() clears the shared accumulators the main LRS still references
+        // (ParticlesRenderState.reset -> ParticleGroupRenderState::clear), then the dest-camera extract
+        // re-bills the MAIN world's particle pool against the DEST camera into them — the main frame's
+        // translucent particle submit then draws dest-camera geometry under the main camera state:
+        // garbage triangles that depth-test onto sky/far-fog pixels only (the wedges), plus main-world
+        // particle wipe (block-era precedent: ParticleEnginePortalSkipMixin, same mechanism, its gate is
+        // block-era-only so it is inert flag-ON). IP's per-particle world filter (deferred item ② below)
+        // is the missing faithful mechanism; until it lands the dest pass extracts NO particles — the
+        // main world's pool is the WRONG world for the dest view anyway, so skipping loses nothing that
+        // ever rendered correctly. debug_allow_dest_particle_extract restores the corrupting vanilla
+        // call for live A/B attribution (S20-removal-ledgered).
+        if (qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting
+            && !qouteall.imm_ptl.core.IPGlobal.debugAllowDestParticleExtract
+        ) {
+            ci.cancel();
+            return;
+        }
         if (PortalRendering.isRendering()) {
             if (RenderStates.getRenderedPortalNum() > 4) {
                 ci.cancel();

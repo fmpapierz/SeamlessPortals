@@ -711,6 +711,52 @@ public class ClientDebugCommand {
             "debug_skip_projection_install",
             cond -> IPGlobal.debugSkipProjectionInstall = cond
         );
+        // S14.40: the wedge fix's A/B lever + the dest-extract sub-call attribution kit.
+        registerSwitchCommand(
+            builder,
+            "debug_allow_dest_particle_extract",
+            cond -> IPGlobal.debugAllowDestParticleExtract = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_berd_prepare",
+            cond -> IPGlobal.debugSkipExtractBerdPrepare = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_erd_prepare",
+            cond -> IPGlobal.debugSkipExtractErdPrepare = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_entities",
+            cond -> IPGlobal.debugSkipExtractEntities = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_block_entities",
+            cond -> IPGlobal.debugSkipExtractBlockEntities = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_weather",
+            cond -> IPGlobal.debugSkipExtractWeather = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_sky",
+            cond -> IPGlobal.debugSkipExtractSky = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_border",
+            cond -> IPGlobal.debugSkipExtractBorder = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_extract_gizmos",
+            cond -> IPGlobal.debugSkipExtractGizmos = cond
+        );
         // S14.31: _enable arms ONE frame capture (self-clears); _disable is a no-op.
         registerSwitchCommand(
             builder,
