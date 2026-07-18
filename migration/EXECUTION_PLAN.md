@@ -1394,6 +1394,22 @@ registries; 4) breakable-family runtime fixes; 5) port-note.
 holes/limbo watch on generated portals + first-visit worldgen), 10 (full); re-run 1, 2, 12.
 **(f) Rollback/flag:** flag OFF = today's game; revert commits.
 
+**PROGRESS: S16 CLOSED — rung 4 USER-SIGNED-OFF 2026-07-18** ("swirls confirmed working, s16
+sign off"; commit series S16.1→S16.4, final `1cb7044`; port-note of record
+`S16-portal-generation.md` §1-§6). The generation pipeline live end-to-end: headline
+frame+flint → seamless 4-portal cluster PASS; fire spread PASS; existing-frame linking PASS;
+frame-break PASS; crouch-hatch vanilla portal PASS (teleport live-proven + the swirl render
+defect root-caused to the B11-misclassified SectionCompilerMixin — flag-gated, user-confirmed
+fixed; the gate-audit rule's 4th scalp → ALL B11 dormant labels distrusted at S20).
+Nether-side ignition + negative-coords exactness AUTOMATED as gametest legs 6a/6b (the live
+round's nether-side step never actually fired per logs; item 10's 8:1 sign+magnitude now
+asserted permanently). Datapack custom generation end-to-end green (leg 5; two 26.2 lessons:
+mcmeta min/max_format; dynamic registries load at world open only). Flag-OFF sanity SKIPPED
+by user choice (recorded; baseline green through S13-S15). Suite: 7 legs ALL GREEN. R13d
+soft-open: no live tall-frame; wrappers code-complete + leg 6b roof-frame staging. Verify
+track record this stage: 2 blockers + 1 ledger misclassification caught pre-ship across 4
+passes; the D3 suppression swap corrected to the IP-authentic demotion form.
+
 ### S17 — THE CUTOVER FLIP — effort M (testing-heavy)
 
 **(a) Contents:** flip `entityPortals` default to `true` (config + fresh-install default). Old
