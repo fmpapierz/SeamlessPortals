@@ -1453,6 +1453,13 @@ near/away from a portal — bob scales down near, returns away (changed behavior
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**C1 DECIDED (user, 2026-07-18, during S16): S19 WILL BE BUILT — "we are not skipping
+s19."** The default-skip is overridden; the greenlit branch below is the operative one.
+Per-feature ordering/priorities are surfaced at stage open (a scope question, not a
+re-ask of the decision). NOTE the R13g implication: alternate-dims runtime is now
+greenlit work, so the dynamic-dimension DESIGN (R13g) + the DimLib-stub (F11) runtime
+surface become real S19 scope.
+
 **(a) Contents:** checkpoint C1 decides (default: core-complete = SKIP beyond what already
 ported). If greenlit: wand RUNTIME bring-up (~3,900 LOC ALREADY COMPILED — the whole 9-file
 wand package shipped at S13 as compile shell, S13(a); overlays re-express via
@@ -1571,7 +1578,7 @@ port-note, not silent deletions; faithful vanilla behavior everywhere else stays
 
 | # | Decision | When | Default | Notes |
 |---|---|---|---|---|
-| C1 | Peripheral features: wand, dim stack, alternate dims | before S19 | SKIP (core-complete) | dim stack's COMPILE shell (ALL 11 dim_stack files — the GUI half compiles at S13 too, S13(a) — extending via `DimStackGuiController.java:12` into `alternate_dimension`, pulling its compile surface + `NoiseBasedChunkGenerator` AW/AT + the three alternate_dimension mixin accessors to S13) is S13-mandatory — PortalCommand imports it; the 9-file wand package's compile shell likewise ships at S13; C1 governs only the runtime/GUI wiring halves. Alt-dims RUNTIME additionally blocked by R13g; the compile-closure files already ported regardless (constraint 7) |
+| C1 | Peripheral features: wand, dim stack, alternate dims | before S19 | **DECIDED 2026-07-18: BUILD (user: "we are not skipping s19"); default-skip overridden; R13g design becomes S19 scope** | dim stack's COMPILE shell (ALL 11 dim_stack files — the GUI half compiles at S13 too, S13(a) — extending via `DimStackGuiController.java:12` into `alternate_dimension`, pulling its compile surface + `NoiseBasedChunkGenerator` AW/AT + the three alternate_dimension mixin accessors to S13) is S13-mandatory — PortalCommand imports it; the 9-file wand package's compile shell likewise ships at S13; C1 governs only the runtime/GUI wiring halves. Alt-dims RUNTIME additionally blocked by R13g; the compile-closure files already ported regardless (constraint 7) |
 | C2 | Sodium/Iris compat beyond compile shells | before S19 | shells only | dead on 26.2 until those mods port; compile strategy is F21 (stub classpath, decided S0); if entered, COVERAGE INFO-3 requires a full-depth pass on 27 files first |
 | C3 | R4 override: keep the pinned-bounded deviation instead of the ImmPtlViewArea rebuild | S11 spec review | rebuild (fidelity, spike-backed) | overriding re-accepts the >71-chunk latent bug (F19) |
 | C4 | R3 delivery mechanism (clip-uniform vs one-entity storage) + confirmation of the D7 reading of "trails the cutover" | S11 design review; re-confirm S18 | whichever the design round proves; D7 reading | the compile-level half CANNOT trail (D7); only runtime verification can |

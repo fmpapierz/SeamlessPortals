@@ -126,7 +126,10 @@ gametest). Surface the C4 A/B switch at every one of these tests.
   the multi-portal PARITY GAP (dpMs-attributed pass-internal, recursion-scaled; candidates:
   IP nested-portal aperture/frustum culling parity, per-pass overhead, fix the dpMs bracket
   to top-level-only). Plus dest weather isolation; C4 A/B again.
-- **S19**: ask the user per C1 (default skip). **S20**: cleanup honoring every §Ledger
+- **S19**: C1 DECIDED 2026-07-18 — **BUILD, not skipped** (user: "we are not skipping
+  s19"); wand + dim stack + alternate dims + compat layers + ModMenu GUI runtime bring-up;
+  R13g dynamic-dimension design becomes real scope. Per-feature ordering surfaced at stage
+  open. **S20**: cleanup honoring every §Ledger
   (the PUMP + RESOLVER + preResolvePromotedWindow + the frontier gate + the light-cadence
   plugs are PERMANENT substrate; the probes/levers/DrawCallTrace are removal candidates).
 - **Polish backlog** (briefing §5): incl. the underwater-fog composite deviation and the NEW
