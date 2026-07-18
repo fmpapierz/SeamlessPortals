@@ -104,6 +104,15 @@ public class TeleportFlashProbe {
     /** S14.52: total dest-pass wall time this frame (dpMs=) — with dp=N, splits per-pass cost
      *  from between-pass overhead in the many-portal superlinear-lag hunt. */
     public static long destPassNanosThisFrame = 0;
+    /** S15 (recursive-view entities): sde=P:L:E:S:T — same-dim/loop-back entity passes this
+     *  frame (P), max recursion layer among them (L), entity states extracted (E) vs submitted
+     *  (S — E>0,S=0 brackets a throw between the two), and the one-shot-swallow flag (T).
+     *  The live discrimination row for the S15 watch-list fix (port-note S15 §4). */
+    public static int sameDimPassesThisFrame = 0;
+    public static int sameDimMaxLayerThisFrame = 0;
+    public static int sameDimEntitiesExtracted = 0;
+    public static int sameDimEntitiesSubmitted = 0;
+    public static int sameDimEntityThrow = 0;
 
     // For the rcLog marker (did RenderChainProbe write a 1Hz line since the previous row?).
     private static long lastSeenRcLogMs = 0;
@@ -146,6 +155,16 @@ public class TeleportFlashProbe {
         int foldM = foldSchedMainThisFrame;
         int foldD = foldSchedDestThisFrame;
         long destPassNanos = destPassNanosThisFrame;
+        int sdeP = sameDimPassesThisFrame;
+        int sdeL = sameDimMaxLayerThisFrame;
+        int sdeE = sameDimEntitiesExtracted;
+        int sdeS = sameDimEntitiesSubmitted;
+        int sdeT = sameDimEntityThrow;
+        sameDimPassesThisFrame = 0;
+        sameDimMaxLayerThisFrame = 0;
+        sameDimEntitiesExtracted = 0;
+        sameDimEntitiesSubmitted = 0;
+        sameDimEntityThrow = 0;
         destPassesThisFrame = 0;
         foldSchedMainThisFrame = 0;
         foldSchedDestThisFrame = 0;
@@ -161,7 +180,7 @@ public class TeleportFlashProbe {
             ring[ringWrite] = collectRow(
                 frameMs, skyDraws, portalSkyDraws, targetA, targetB,
                 promoteNanos, discoveryNanos, vanillaYield, destPasses, foldM, foldD,
-                destPassNanos);
+                destPassNanos, sdeP, sdeL, sdeE, sdeS, sdeT);
         }
         catch (Throwable t) {
             // The probe must never take down the frame.
@@ -184,7 +203,8 @@ public class TeleportFlashProbe {
     private static String collectRow(
         double frameMs, int skyDraws, int portalSkyDraws, int targetA, int targetB,
         long promoteNanos, long discoveryNanos, int vanillaYield, int destPasses,
-        int foldM, int foldD, long destPassNanos
+        int foldM, int foldD, long destPassNanos,
+        int sdeP, int sdeL, int sdeE, int sdeS, int sdeT
     ) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.levelRenderer == null || mc.gameRenderer == null) {
@@ -255,6 +275,8 @@ public class TeleportFlashProbe {
             + (destPasses > 0 ? " dp=" + destPasses : "")
             + (destPassNanos > 0 ? " dpMs=" + String.format("%.2f", destPassNanos / 1.0e6) : "")
             + (foldM + foldD > 0 ? " fs=" + foldM + "+" + foldD : "")
+            + (sdeP > 0 || sdeT > 0
+                ? " sde=" + sdeP + ":" + sdeL + ":" + sdeE + ":" + sdeS + ":" + sdeT : "")
             + (rcLogged ? " rcLog" : "");
     }
 

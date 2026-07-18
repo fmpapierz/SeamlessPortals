@@ -385,6 +385,10 @@ public class SecondaryWorldRenderCore {
         destRainFogMultiplier.clear();
         mainChunkSampler = null;
         portalEntitiesSwallowLogged = false;
+        // S15 verify fold: un-latch the same-dim swallow log + throw fence per world session
+        // (a prior session's throw must not keep the pass dead or mute its log).
+        sameDimEntitiesSwallowLogged = false;
+        sameDimEntityThrowCount = 0;
         closeFrameTransientUbos(); // S14.30: disposal path
     }
 
@@ -889,16 +893,36 @@ public class SecondaryWorldRenderCore {
                         destChunks.renderGroup(ChunkSectionLayerGroup.OPAQUE, mainChunkSampler);
                     }
 
-                    // 10.7/10.8 dest lighting + entities (cross-dim only — same-dim entityRenderStates
-                    // was already consumed+cleared by the main pass; re-running the shared main
-                    // dispatcher mid-frame is unsafe — §6.1 documented gap).
+                    // 10.7/10.8 dest lighting + entities. Cross-dim: the extracted dest LRS via the
+                    // renderer's own submitFeatures/dispatcher (unchanged S14 path).
                     // S14.28 lever: debug_skip_portal_entities — the ONE in-bracket full-color-write
                     // draw the round-3 levers never gated (cross-dim-only, matching the wedges'
                     // surfacing at the cross-dim rung); skipping it is outcome-branch C's test.
+                    // S15 (the layer>=2 / same-dim entity gap — port-note S15 §4): sharedState
+                    // (loop-back-into-main-dim) passes previously drew NO entities at all — the §6.1
+                    // "documented gap" — because the main entityRenderStates were consumed+cleared by
+                    // the main pass and were main-camera states anyway, and re-running the shared
+                    // main dispatcher mid-frame throws ("PreparedFrame already in use"). The gap is
+                    // exactly why layer-2 recursion (A<->B loops back home) and same-dim portals
+                    // showed empty-of-entities views, and — because the ported render-yourself gate
+                    // (CrossPortalEntityRenderer.shouldRenderPlayerDefault: client.level ==
+                    // player.level()) is true ONLY in this pass class — why the player's own body
+                    // never rendered. Fix: an ISOLATED entities-only re-extract under the portal
+                    // camera + submit through a core-owned dispatcher trio (no shared PreparedFrame,
+                    // no main-state mutation). IP parity: IP's nested renderLevel just runs vanilla
+                    // entity rendering per pass at every layer with no layer gate.
                     if (!sharedState && !IPGlobal.debugSkipPortalEntities) {
                         MyGameRenderer.resetDiffuseLighting(); // mc.level == dest here
                         diffuseChangedToDest = true;
                         renderPortalEntities(destRenderer, destLRS, destViewMatrix);
+                    }
+                    else if (sharedState && !IPGlobal.debugSkipSameDimEntities) {
+                        MyGameRenderer.resetDiffuseLighting(); // mc.level == dest (the main dim) here
+                        diffuseChangedToDest = true;
+                        renderPortalEntitiesSameDim(
+                            destRenderer, destViewMatrix, newCamera, destFrustum,
+                            deltaTracker, destCameraState
+                        );
                     }
 
                     if (canDraw) {
@@ -1137,6 +1161,147 @@ public class SecondaryWorldRenderCore {
 
     // S14.28: one-shot latch for the renderPortalEntities swallow log.
     private static boolean portalEntitiesSwallowLogged = false;
+
+    // ===== S15 — same-dim (loop-back) entity pass: the isolated pipeline trio ====================
+    // Core-owned because the sharedState destRenderer IS the main renderer: its
+    // FeatureRenderDispatcher's single PreparedFrame is OPEN mid-framegraph when portal passes run
+    // (the throw lives in PreparedFrame.begin, 26.2 FeatureRenderDispatcher.java:187-190, reached
+    // from prepareFrameWithContext:78 / renderAllFeatures:113 — verify cite fold; same constraint
+    // PerEntityClipBracket.getOrCreateOwnDispatcher documents), and its SubmitNodeStorage/LRS are
+    // the live main-frame state. Construction pattern verbatim from
+    // PortalWorldManager.createRenderer's per-secondary isolation (the S14-proven cross-dim shape).
+    private static net.minecraft.client.renderer.RenderBuffers sameDimRenderBuffers;
+    private static net.minecraft.client.renderer.feature.FeatureRenderDispatcher sameDimFeatureDispatcher;
+    private static net.minecraft.client.renderer.SubmitNodeStorage sameDimSubmitStorage;
+    private static LevelRenderState sameDimScratchLRS;
+    // One-shot latch for the same-dim swallow log (the renderPortalEntities discipline).
+    private static boolean sameDimEntitiesSwallowLogged = false;
+    // S15 verify fold (state-safety lens): throw fence. A throw between submitEntities and
+    // renderAllFeatures strands this pass's nodes in the storage (next pass would draw them as
+    // mis-placed one-frame ghosts under the new camera), and a persistent throw landing after
+    // PreparedFrame.begin leaves the frame open forever (every later begin throws, swallowed).
+    // The catch therefore REPLACES the storage (drops strands), and after 3 swallowed throws the
+    // pass dead-latches for the session (behavior degrades to exactly pre-S15: no same-dim
+    // entities), reset per world session in cleanUp().
+    private static int sameDimEntityThrowCount = 0;
+
+    private static void ensureSameDimEntityPipeline() {
+        if (sameDimFeatureDispatcher == null) {
+            sameDimRenderBuffers = new net.minecraft.client.renderer.RenderBuffers(0);
+            sameDimFeatureDispatcher = new net.minecraft.client.renderer.feature.FeatureRenderDispatcher(
+                sameDimRenderBuffers,
+                client.getModelManager(),
+                client.getAtlasManager(),
+                client.font,
+                client.gameRenderer.gameRenderState()
+            );
+            sameDimSubmitStorage = new net.minecraft.client.renderer.SubmitNodeStorage();
+            sameDimScratchLRS = new LevelRenderState();
+            // memory gpu-buffer-leak-endframe: every mod-created RenderBuffers needs the per-frame
+            // endFrame or its StagedVertexBuffer pools never fence-recycle (multi-second stalls).
+            ClientWorldLoader.registerCoreOwnedFeatureBuffers(sameDimRenderBuffers);
+        }
+    }
+
+    /**
+     * S15 §1 Step 10.8-SAME-DIM — entities for loop-back (sharedState) passes: the layer>=2 /
+     * same-dim entity gap + the render-yourself delivery (port-note S15 §4).
+     *
+     * <p>Isolated entities-only re-extract under the PORTAL camera into a scratch LRS
+     * (vanilla's private extractVisibleEntities writes only entityRenderStates — no one-shot
+     * trackers, no particles, no light), then the REAL submitEntities (every cross-portal mixin
+     * anchor fires as on the cross-dim path) drained through the core-owned dispatcher.
+     * During the extract, the ALREADY-PORTED IP gates do their exact IP jobs:
+     * MixinEntityRenderDispatcher.shouldRender → shouldRenderEntityNow (isOnDestinationSide vs
+     * the innermost portal, doRenderPlayer), and MixinCamera's forced isDetached admits the
+     * LocalPlayer because client.level == player.level() holds here — that one line IS the
+     * render-player-itself delivery (IP renders your body via vanilla's own camera-entity check
+     * plus the isDetached force; no player-specific code exists in IP's nested pass either).
+     *
+     * <p>Same-dim block entities + particles remain omitted at S15 (pre-existing gap: block
+     * entities need a per-pass visibleSections list the loop-back view doesn't have) — S18
+     * ladder item. Runs inside the armed 10.5 inner clip + live stencil, like cross-dim.
+     */
+    private static void renderPortalEntitiesSameDim(
+        LevelRenderer destRenderer, Matrix4f destViewMatrix,
+        net.minecraft.client.Camera newCamera,
+        net.minecraft.client.renderer.culling.Frustum destFrustum,
+        net.minecraft.client.DeltaTracker deltaTracker,
+        CameraRenderState destCameraState
+    ) {
+        if (sameDimEntityThrowCount >= 3) {
+            return; // dead-latched this session (see the throw-fence note above)
+        }
+        try {
+            ensureSameDimEntityPipeline();
+            TeleportFlashProbe.sameDimPassesThisFrame++;
+            TeleportFlashProbe.sameDimMaxLayerThisFrame = Math.max(
+                TeleportFlashProbe.sameDimMaxLayerThisFrame, PortalRendering.getPortalLayer());
+
+            net.minecraft.client.renderer.entity.EntityRenderDispatcher erd =
+                destRenderer.entityRenderDispatcher();
+            sameDimScratchLRS.entityRenderStates.clear();
+            sameDimScratchLRS.cameraRenderState = destCameraState;
+            // Re-express vanilla LevelExtractor.extract:121's prepare for the PORTAL camera
+            // (shouldRender/extract read dispatcher.camera). Verify fold (wf_b11fbd6f-f8a): the
+            // finally's mainCamera() re-prepare is a PARITY gesture, not a true restore —
+            // ip_setCamera is active for the whole pass, so mainCamera() IS the portal camera
+            // here; the dispatcher keeps a pass camera until the next frame's extract re-prepares
+            // (LevelExtractor:121). Harmless: the only mid-frame reader is extract-time
+            // distanceToSqr, and every extract prepares first — exact parity with the S14-proven
+            // cross-dim path, which also leaves pass cameras unrestored.
+            erd.prepare(newCamera, client.crosshairPickEntity);
+            try {
+                // isDestExtracting keys LevelRendererEntityVisibilityMixin's fade-gate override
+                // (vanilla's isSectionCompiledAndVisible fade would hide entities in
+                // freshly-uploaded sections — meaningless inside a portal pass).
+                isDestExtracting = true;
+                try {
+                    ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                        .seamlessportals$invokeExtractVisibleEntities(
+                            newCamera, destFrustum, deltaTracker, sameDimScratchLRS);
+                }
+                finally {
+                    isDestExtracting = false;
+                }
+                TeleportFlashProbe.sameDimEntitiesExtracted +=
+                    sameDimScratchLRS.entityRenderStates.size();
+
+                ((LevelRendererAccessorMixin) destRenderer).seamlessportals$invokeSubmitEntities(
+                    new com.mojang.blaze3d.vertex.PoseStack(), sameDimScratchLRS, sameDimSubmitStorage);
+                TeleportFlashProbe.sameDimEntitiesSubmitted +=
+                    sameDimScratchLRS.entityRenderStates.size();
+
+                Matrix4fStack mv = RenderSystem.getModelViewStack();
+                mv.pushMatrix();
+                mv.mul(destViewMatrix);
+                try {
+                    sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
+                } finally {
+                    mv.popMatrix();
+                }
+            } finally {
+                erd.prepare(client.gameRenderer.mainCamera(), client.crosshairPickEntity);
+                sameDimScratchLRS.entityRenderStates.clear();
+            }
+        } catch (Throwable t) {
+            // Entities are non-critical; terrain + sky already drew. One-shot swallow visibility
+            // (the renderPortalEntities S14.28 discipline) + the sde= T flag for attribution.
+            TeleportFlashProbe.sameDimEntityThrow = 1;
+            // Throw fence (verify fold): drop any half-submitted strands + count toward the
+            // dead-latch. Storage replacement (not drain) — the old instance may hold nodes
+            // submitted before the throw, and a stuck-open PreparedFrame makes every later
+            // renderAllFeatures throw anyway; three strikes disables the pass for the session.
+            sameDimEntityThrowCount++;
+            sameDimSubmitStorage = new net.minecraft.client.renderer.SubmitNodeStorage();
+            if (!sameDimEntitiesSwallowLogged) {
+                sameDimEntitiesSwallowLogged = true;
+                qouteall.q_misc_util.Helper.err(
+                    "[renderPortalEntitiesSameDim] swallowed (first per session): " + t);
+                t.printStackTrace();
+            }
+        }
+    }
 
     // ===== §2.3 / I7 — CONVENTIONAL-Z culling projection for the discovery frustum ================
     // Mirrors Camera.createProjectionMatrixForCulling (26.2:Camera.java:179-189) — private, so

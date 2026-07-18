@@ -135,6 +135,14 @@ public class IPGlobal {
     public static boolean debugNoApertureDepthClamp = false;
     public static boolean debugFrameBoundaryProbe = false;
     public static boolean debugSkipPortalEntities = false;
+    // S15 (recursive-view entities): kills ONLY the new same-dim/loop-back entity pass
+    // (renderPortalEntitiesSameDim) — flipping it ON restores the pre-S15 SAME-DIM pass
+    // behavior exactly (the one-flip regression discriminator for the live A/B). Verify
+    // fold (wf_b11fbd6f-f8a): CROSS-DIM frames may still differ from pre-S15 via the
+    // deliberately un-levered fade-gate keying extension in
+    // LevelRendererEntityVisibilityMixin (isDestExtracting) — attribute cross-dim
+    // entity-pop deltas to that mixin change, not to this lever.
+    public static boolean debugSkipSameDimEntities = false;
     // S14.35: per-draw kill switches for the four never-individually-levered portal draws.
     // NOTE (S14.37): debugSkipApertureIncr zeroes the occlusion query => kills the WHOLE portal
     // pass — it attributes "the pass", not the draw. The channel masks below are the surgical form.

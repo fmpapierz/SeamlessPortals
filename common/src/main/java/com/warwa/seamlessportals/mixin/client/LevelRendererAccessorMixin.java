@@ -167,4 +167,21 @@ public interface LevelRendererAccessorMixin {
     @org.spongepowered.asm.mixin.gen.Invoker("compileSections")
     void seamlessportals$invokeCompileSections(
         net.minecraft.client.renderer.state.level.CameraRenderState camera);
+
+    /** S15 (recursive-view entities): the ENTITIES-ONLY submit — vanilla's private
+     *  {@code submitEntities(PoseStack, LevelRenderState, SubmitNodeCollector)}
+     *  (LevelRenderer.java:653) reads only {@code lrs.cameraRenderState} +
+     *  {@code lrs.entityRenderStates}. Invoking the REAL method (not a re-expression)
+     *  keeps every registered mixin anchor on it firing exactly as on the cross-dim
+     *  path — the MixinLevelRenderer_CrossPortalEntity HEAD/TAIL/per-entity hooks
+     *  (FrontClipping inner-clip bracket, R3 collided-entity tagging) need no new
+     *  wiring. Used with a scratch LRS by
+     *  {@code SecondaryWorldRenderCore.renderPortalEntitiesSameDim} (full
+     *  {@code submitFeatures} would re-submit main particles under the wrong camera,
+     *  re-submit gizmos, and clear shared lists — entities-only is the surgical cut). */
+    @org.spongepowered.asm.mixin.gen.Invoker("submitEntities")
+    void seamlessportals$invokeSubmitEntities(
+        com.mojang.blaze3d.vertex.PoseStack poseStack,
+        LevelRenderState levelRenderState,
+        net.minecraft.client.renderer.SubmitNodeCollector output);
 }

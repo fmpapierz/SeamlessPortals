@@ -638,6 +638,11 @@ public class ClientDebugCommand {
         );
         registerSwitchCommand(
             builder,
+            "debug_skip_same_dim_entities",
+            cond -> IPGlobal.debugSkipSameDimEntities = cond
+        );
+        registerSwitchCommand(
+            builder,
             "debug_skip_aperture_incr",
             cond -> IPGlobal.debugSkipApertureIncr = cond
         );

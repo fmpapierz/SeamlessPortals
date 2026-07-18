@@ -86,4 +86,23 @@ public interface LevelExtractorAccessor {
      *  pre-first-view chunk (verify BLOCKER, wf_723f7b39-bf4). */
     @Accessor("shouldResetLevelRenderData")
     boolean seamlessportals$getShouldResetLevelRenderData();
+
+    /** S15 (recursive-view entities): the ISOLATED entity-only extract — vanilla's private
+     *  {@code extractVisibleEntities(Camera, Frustum, DeltaTracker, LevelRenderState)}
+     *  (LevelExtractor.java:221) writes {@code output.entityRenderStates} +
+     *  {@code lastEntityRenderStateCount}, plus two idempotent re-writes of values the main
+     *  extract already set this frame (the static {@code Entity.setViewScale}, options-derived;
+     *  {@code xOld/yOld/zOld} on tickCount==0 entities — current pos); it touches NO one-shot
+     *  dirty trackers, no particles, no light — safe to re-run mid-frame against a scratch
+     *  output LRS. Used by
+     *  {@code SecondaryWorldRenderCore.renderPortalEntitiesSameDim} to give loop-back
+     *  (same-dim / sharedState) portal passes a real portal-camera entity extract: the main
+     *  pass consumed+cleared the main {@code entityRenderStates}, and those states were
+     *  extracted against the MAIN camera anyway. */
+    @org.spongepowered.asm.mixin.gen.Invoker("extractVisibleEntities")
+    void seamlessportals$invokeExtractVisibleEntities(
+        net.minecraft.client.Camera camera,
+        net.minecraft.client.renderer.culling.Frustum frustum,
+        net.minecraft.client.DeltaTracker deltaTracker,
+        net.minecraft.client.renderer.state.level.LevelRenderState output);
 }

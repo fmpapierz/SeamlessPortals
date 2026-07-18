@@ -43,8 +43,32 @@ public class LevelRendererEntityVisibilityMixin {
     @Inject(method = "isSectionCompiledAndVisible", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$showEntitiesInPortalView(
             BlockPos blockPos, CallbackInfoReturnable<Boolean> cir) {
-        if (PortalContextSwitch.isRenderingPortal) {
-            cir.setReturnValue(true);
+        // Block-era key (flag OFF) OR the flag-ON dest-extract bracket (S15): the ported IP
+        // path's extracts run under SecondaryWorldRenderCore.isDestExtracting and need the same
+        // fade-gate bypass this mixin has always given the block-era path — a portal pass's
+        // sections are compiled/uploaded on demand, so the uploadedTime fade would cull entities
+        // in fresh sections (cross-dim: brief post-crossing pops; same-dim loop-back: the
+        // S15 entity pass). Layer-independent; main-pass extracts see neither flag.
+        //
+        // S15 verify fold (wf_b11fbd6f-f8a): bypass ONLY the fade term, PRESERVE vanilla's
+        // compiled-section gate — IP's exact shape (MixinLevelRenderer.ip_isChunkCompiled:
+        // rawGet + compiled != UNCOMPILED; a blanket forced-true would draw entities floating
+        // against the fog fill where terrain has not compiled, which IP culls). The block-era
+        // path is unaffected: its on-demand-compiled sections pass the compiled gate and only
+        // ever lost entities to the fade term.
+        if (PortalContextSwitch.isRenderingPortal
+            || qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
+            net.minecraft.client.renderer.ViewArea viewArea =
+                ((LevelRendererAccessorMixin) this).seamlessportals$getViewArea();
+            if (viewArea == null) {
+                cir.setReturnValue(false);
+                return;
+            }
+            net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section =
+                viewArea.getRenderSectionAt(blockPos);
+            cir.setReturnValue(section != null
+                && section.getSectionMesh()
+                    != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
         }
     }
 }

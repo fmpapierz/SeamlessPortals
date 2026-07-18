@@ -356,6 +356,23 @@ public class ClientWorldLoader {
         for (net.minecraft.client.renderer.RenderBuffers buffers : SECONDARY_FEATURE_BUFFERS.values()) {
             buffers.endFrame();
         }
+        for (net.minecraft.client.renderer.RenderBuffers buffers : CORE_OWNED_FEATURE_BUFFERS) {
+            buffers.endFrame();
+        }
+    }
+
+    /** S15: core-owned (non-per-dim) mod RenderBuffers that need the same per-frame endFrame
+     *  as the per-secondary map above (memory gpu-buffer-leak-endframe). Render thread only.
+     *  First registrant: SecondaryWorldRenderCore's same-dim entity pipeline. */
+    private static final java.util.List<net.minecraft.client.renderer.RenderBuffers>
+        CORE_OWNED_FEATURE_BUFFERS = new java.util.ArrayList<>();
+
+    public static void registerCoreOwnedFeatureBuffers(
+        net.minecraft.client.renderer.RenderBuffers buffers
+    ) {
+        if (!CORE_OWNED_FEATURE_BUFFERS.contains(buffers)) {
+            CORE_OWNED_FEATURE_BUFFERS.add(buffers);
+        }
     }
 
     private static void disposeDimensionDynamically(ResourceKey<Level> dimension) {
