@@ -49,6 +49,11 @@ public abstract class ClientPacketListenerAddEntityAdoptMixin {
     @Inject(method = "handleAddEntity", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$adoptExistingEntity(ClientboundAddEntityPacket packet, CallbackInfo ci) {
         if (!Minecraft.getInstance().isSameThread()) return;
+        // S17 sweep DEFENSIVE GATE (wf_5183007f-fee): content-triggered and previously ungated;
+        // no flag-ON trigger was provable (IP mirrors dest entities into SEPARATE levels), but a
+        // spurious fire would ci.cancel() vanilla's postAddEntitySideEffects (passenger/leash
+        // linkage). Block-era adoption serves the block-era crossing only. Flag-OFF unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         ClientLevel lvl = this.level;
         if (lvl == null) return;
         Entity existing = lvl.getEntity(packet.getId());

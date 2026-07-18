@@ -51,6 +51,7 @@
     "client.GlCommandEncoderClipMixin",
     "client.ViewAreaInvokerMixin",
     "client.LevelRendererCompileSectionsMixin",
+    "client.LevelExtractorWindowHardeningMixin",
     "client.LevelRendererEntityVisibilityMixin",
     "client.LevelExtractorAccessor",
     "client.QuadParticleGroupMixin",

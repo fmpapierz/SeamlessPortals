@@ -47,9 +47,10 @@ public class SeamlessPortalsConfig {
     }
 
     /**
-     * The entity-portal migration MASTER SWITCH (D3). {@code true} = the ported Immersive-Portals
-     * entity-portal driver set runs; {@code false} (default) = the block-era driver set runs,
-     * byte-for-byte unchanged. Load-time, read ONCE (see {@link com.warwa.seamlessportals.EntityPortalsFlag}
+     * The entity-portal migration MASTER SWITCH (D3). {@code true} (<b>the default since the
+     * S17 cutover flip, 2026-07-18</b>) = the ported Immersive-Portals entity-portal driver set
+     * runs; {@code false} = the block-era driver set runs, byte-for-byte unchanged (two-way
+     * switch until S20). Load-time, read ONCE (see {@link com.warwa.seamlessportals.EntityPortalsFlag}
      * for the mechanism and the mixin-plugin/runtime-gate consistency contract). Every
      * {@code !entityPortals} gate in mod-owned driver code, and the IP-mixin gating in
      * {@code SeamlessMixinConfigPlugin}, read this same value.
@@ -139,10 +140,11 @@ public class SeamlessPortalsConfig {
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"
-                    + "# entityPortals: MASTER SWITCH for the entity-portal engine. false (default) =\n"
-                    + "#   the classic block-portal system. true = the Immersive-Portals entity-portal\n"
-                    + "#   engine (experimental). LOAD-TIME: edit and RESTART the game to change it;\n"
-                    + "#   only change it in a dedicated test world for now.\n"
+                    + "# entityPortals: MASTER SWITCH. true (the default) = the Immersive-Portals\n"
+                    + "#   entity-portal engine — seamless see-through portals, entity crossings,\n"
+                    + "#   recursion, obsidian-frame generation. false = the classic block-portal\n"
+                    + "#   system (returns everything to the pre-engine behavior). LOAD-TIME: edit\n"
+                    + "#   and RESTART the game to change it.\n"
                     + "# portalRenderDistance: how many chunks deep the portal DESTINATION is kept\n"
                     + "#   loaded + meshed. Set to \"auto\" for IP-style GRADUATED depth (full near the\n"
                     + "#   portal, less as you back away — cheaper, the default), OR a number 1..32 to\n"

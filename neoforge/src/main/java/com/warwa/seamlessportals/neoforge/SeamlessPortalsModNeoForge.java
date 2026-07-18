@@ -59,7 +59,16 @@ public class SeamlessPortalsModNeoForge {
     }
 
     private void onServerTick(ServerTickEvent.Post event) {
-        chunkTracker.tick(event.getServer());
+        // S17 sweep (wf_5183007f-fee CONFIRMED LEAK): the block-era portal scan was ungated
+        // here (Fabric registers it flag-OFF-only) — flag-ON it would populate the block-era
+        // PortalManager alongside IP's engine. Today the flag is force-false off Fabric
+        // (EntityPortalsFlag S13-B P4 — no config load needed; the check is safe and constant),
+        // so this gate is C7-proofing: when the NeoForge IP port lands, the block-era driver
+        // stays structurally dead flag-ON, matching Fabric. The mirror-buffer flush stays
+        // unconditional (its only filler is self-gated; provably empty flag-ON).
+        if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            chunkTracker.tick(event.getServer());
+        }
         // Flush the coalesced live-block-mirror updates (also clears the per-tick buffer
         // the common LevelChunkSetBlockStateMixin fills, so it cannot grow unbounded).
         com.warwa.seamlessportals.chunk.BlockUpdateMirrorBuffer.flush(event.getServer());

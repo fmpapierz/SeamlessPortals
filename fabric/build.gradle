@@ -79,10 +79,25 @@ loom {
     }
 }
 
+// S17: the TITLE-CARD capture drives the BLOCK-ERA flow (NetherPortalBlock.entityInside
+// teleport + the block-era portal view) — post-flip the default is entity portals, so its
+// run dir is pinned flag-OFF to preserve the capture's purpose (a flag-ON title card is a
+// future re-shoot; its June-era config file predates the flag key and would resolve to the
+// new TRUE default otherwise).
+tasks.matching { it.name == 'runClientGametest' }.configureEach {
+    doFirst {
+        def cfgDir = file('runs/gametest/config')
+        cfgDir.mkdirs()
+        new File(cfgDir, 'seamlessportals.properties').text = 'entityPortals=false\n'
+    }
+}
+
 // Seed the entity-portal MASTER SWITCH into the crossing-smoke run dir before every
 // launch. EntityPortalsFlag reads <configDir>/seamlessportals.properties ONCE at
 // mixin-bootstrap (load-time, before any mod initializer), so the file must exist
 // before the JVM starts — no in-game mechanism can flip it.
+// S17 note: the explicit seed stays (redundant with the flipped default, but the test's
+// contract should not silently depend on the shipping default).
 tasks.matching { it.name == 'runCrossingGametest' }.configureEach {
     doFirst {
         def cfgDir = file('runs/gametest-crossing/config')

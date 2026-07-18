@@ -12,9 +12,11 @@ import java.util.Properties;
  *
  * <p>One boolean, {@code entityPortals}, keyed in the mod's own
  * {@code <configDir>/seamlessportals.properties} file (managed by {@link
- * com.warwa.seamlessportals.config.SeamlessPortalsConfig}). Default {@code false} — the shipping
- * baseline runs the proven block-era portal driver set, byte-for-byte unchanged. Set to
- * {@code true} (and restart) to run the ported Immersive-Portals entity-portal driver set instead.
+ * com.warwa.seamlessportals.config.SeamlessPortalsConfig}). <b>Default {@code true} since S17
+ * (THE CUTOVER FLIP, 2026-07-18)</b> — a fresh install runs the ported Immersive-Portals
+ * entity-portal driver set. Set to {@code false} (and restart) to return to the block-era
+ * portal driver set, byte-for-byte unchanged (the two-way switch survives until S20 deletes
+ * the old system). Off Fabric the flag remains force-{@code false} (see below).
  *
  * <p><b>LOAD-TIME, read ONCE (D3).</b> The value is read a single time, lazily, and cached for the
  * whole JVM session. Flipping it requires a game restart — this is deliberate: it means the mixin
@@ -30,10 +32,10 @@ import java.util.Properties;
  * failure path defaults to {@code false} (the safe block-era baseline).
  *
  * <p><b>Bootstrap ordering.</b> The plugin reads this before {@code SeamlessPortalsConfig.loadFrom}
- * runs, so on the very first launch (no properties file yet) this returns {@code false} and
- * {@code loadFrom}/{@code saveTo} then write the key with that default. On subsequent launches the
- * user's edited value is read from the same file. Both readers hit the same file/key, so they never
- * disagree within a session.
+ * runs, so on the very first launch (no properties file yet) this returns the DEFAULT ({@code true}
+ * on Fabric since S17) and {@code loadFrom}/{@code saveTo} then write the key with that value. On
+ * subsequent launches the user's edited value is read from the same file. Both readers hit the same
+ * file/key, so they never disagree within a session.
  *
  * <p><b>Fabric-only hard gate (S13-B P4).</b> The ported IP integration is wired on Fabric ONLY (the
  * init sequence, the entity/renderer registrations, the mixin-config manifest entries — WIRE 1/2;
@@ -60,7 +62,8 @@ public final class EntityPortalsFlag {
     /**
      * The load-time entity-portal master switch. Read once from
      * {@code <configDir>/seamlessportals.properties} (key {@code entityPortals}); cached for the
-     * session. Defaults to {@code false} on any error or missing key.
+     * session. Since S17: missing dir/file/key defaults to {@code true} on Fabric; a hard
+     * resolution ERROR (and any off-Fabric launch) still resolves {@code false}.
      */
     public static boolean isOn() {
         Boolean c = cached;
@@ -80,6 +83,9 @@ public final class EntityPortalsFlag {
     public static synchronized void seedIfUnset(boolean value) {
         if (cached == null) {
             // S13-B P4: force-OFF off Fabric so a NeoForge config never turns the IP set on.
+            // (S17 note: the seed value comes from an EXPLICIT config key — the flipped default
+            // only applies in readFromDisk's missing-dir/file/key paths, identically here-vs-there
+            // because loadFrom only calls this when the key is present.)
             cached = isFabricLoaderPresent() && value;
         }
     }
@@ -94,11 +100,15 @@ public final class EntityPortalsFlag {
             }
             Path dir = resolveConfigDir();
             if (dir == null) {
-                return false;
+                // S17 THE CUTOVER FLIP (EXECUTION_PLAN §S17, 2026-07-18): the DEFAULT is now TRUE
+                // on Fabric — a fresh install (no config dir/file/key) runs the entity-portal
+                // engine. An explicit entityPortals=false still returns to block portals (the
+                // two-way switch survives until S20).
+                return true;
             }
             Path file = dir.resolve(CONFIG_FILE_NAME);
             if (!Files.exists(file)) {
-                return false;
+                return true; // S17 flip: fresh install → entity portals
             }
             Properties props = new Properties();
             try (InputStream in = Files.newInputStream(file)) {
@@ -106,11 +116,23 @@ public final class EntityPortalsFlag {
             }
             String raw = props.getProperty(KEY);
             if (raw == null) {
-                return false;
+                return true; // S17 flip: config exists but no key → the new default
             }
             return Boolean.parseBoolean(raw.trim());
-        } catch (Throwable ignored) {
-            // Any failure → the safe block-era default. Never let flag resolution destabilize load.
+        } catch (Throwable t) {
+            // Any failure → block-era. A HARD FAILURE mid-resolution (I/O error on an existing
+            // file) still falls to the proven baseline rather than half-resolving; the S17 flip
+            // only applies on the clean missing-dir/file/key paths above. POST-FLIP this is a
+            // visible RATCHET-DOWN (saveTo will persist false) — log it loudly so a transient
+            // I/O blip pinning block-era is diagnosable, never silent (S17 verify minor).
+            try {
+                org.slf4j.LoggerFactory.getLogger("SeamlessPortals").warn(
+                    "[SeamlessPortals] entityPortals flag resolution FAILED — falling back to the"
+                        + " block-era baseline (false) for this session; if the config file is"
+                        + " intact this may persist. Cause: {}", t.toString());
+            } catch (Throwable ignored) {
+                // never let logging break bootstrap
+            }
             return false;
         }
     }

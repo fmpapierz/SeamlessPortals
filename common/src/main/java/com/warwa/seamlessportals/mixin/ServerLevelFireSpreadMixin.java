@@ -57,6 +57,13 @@ public abstract class ServerLevelFireSpreadMixin {
     @Inject(method = "canSpreadFireAround", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$allowFireForPortalWatchers(
             BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
+        // S17 sweep (wf_5183007f-fee CONFIRMED LEAK): self-gate — the block-era PortalManager
+        // registry keeps this transitively inert flag-ON on Fabric, but the NeoForge driver was
+        // ungated and the inert-by-dormancy shape has failed 4x; structural inertness on all
+        // platforms (D3), flag-OFF unchanged.
+        if (SeamlessPortalsConfig.isEntityPortals()) {
+            return;
+        }
         ServerLevel self = (ServerLevel) (Object) this;
         MinecraftServer server = self.getServer();
         if (server == null) return;

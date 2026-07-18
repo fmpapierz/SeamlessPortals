@@ -164,6 +164,14 @@ public abstract class HandleRespawnMixin {
         // per-block updates (dimension-less) painted nether lava into the overworld
         // at 1:1 aliased coords. Only the main-thread pass may touch our state.
         if (!mc.isSameThread()) return;
+        // S17 sweep DEFENSIVE GATE (wf_5183007f-fee — supersedes the B4 "no gate" decision):
+        // every flag-ON-live branch of this handler is judge-verified inert (block-era-keyed
+        // writers all gated; the RemoteChunkDataPayload branch has NO sender anywhere), but it
+        // is the single most powerful ungated handler (respawn hijack into block-era
+        // promote/demote) and the inert-by-dormancy shape has failed 4x. Flag-ON, vanilla
+        // respawns ride vanilla + IP's onSetWorld cleanup (S16.2-verified, crouch-hatch
+        // live-proven); this mixin serves the BLOCK-ERA path only. Flag-OFF unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         // Defensive re-init: any Throwable escaping a previous handleRespawn body
         // skips the @At("RETURN") cleanup (the same shape as the netty throw) —
         // never let stale transition state leak into this pass.

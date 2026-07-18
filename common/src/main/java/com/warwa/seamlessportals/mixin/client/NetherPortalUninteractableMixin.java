@@ -69,6 +69,13 @@ public abstract class NetherPortalUninteractableMixin {
     )
     private void seamlessportals$cancelContinueOnPortalBlock(
             BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
+        // S17 sweep (wf_5183007f-fee CONFIRMED LEAK): the S16.2 gate covered only the
+        // startDestroyBlock sibling — this handler was left open, suppressing survival
+        // continue-destroy feedback on flag-ON vanilla portal blocks (crouch-hatch/legacy).
+        // Same gate, same rationale: flag-ON vanilla portals behave vanilla-style per IP.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            return;
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) return;
         if (mc.level.getBlockState(pos).getBlock() instanceof NetherPortalBlock) {
