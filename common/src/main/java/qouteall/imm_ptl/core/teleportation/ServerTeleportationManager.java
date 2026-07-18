@@ -688,7 +688,8 @@ public class ServerTeleportationManager {
             McHelper.setEyePos(newEntity, newEyePos, newEyePos);
             McHelper.updateBoundingBox(newEntity);
             newEntity.setYHeadRot(oldEntity.getYHeadRot());
-            
+            preserveTransientHurtState(oldEntity, newEntity);
+
             // TODO check minecart item duplication
             oldEntity.remove(Entity.RemovalReason.CHANGED_DIMENSION);
             
@@ -734,13 +735,77 @@ public class ServerTeleportationManager {
         McHelper.setEyePos(newEntity, newEyePos, newEyePos);
         McHelper.updateBoundingBox(newEntity);
         newEntity.setYHeadRot(oldEntity.getYHeadRot());
-        
+        // F3: living vehicles (horse/camel/strider) lose transient hurt state at this
+        // second restoreFrom site too — same patch as changeEntityDimension (rule: any
+        // per-entity-type crossing behavior exists in EVERY crossing path).
+        preserveTransientHurtState(oldEntity, newEntity);
+
         oldEntity.remove(Entity.RemovalReason.CHANGED_DIMENSION);
         ((IEEntity) oldEntity).ip_unsetRemoved();
-        
+
         toWorld.addDuringTeleport(newEntity);
-        
+
         return newEntity;
+    }
+
+    /**
+     * F3 (EXECUTION_PLAN §Deviations, reproduce-then-patch; reproduced on this path
+     * 2026-07-18 — CrossingSmoke leg 3 RED, commit 306ab5d): carry a mob's TRANSIENT
+     * hurt/panic state across the recreate. {@code restoreFrom} is an NBT round-trip;
+     * fields with no save codec reset to default on the new object. The critical one is
+     * {@code lastDamageSource} (+ its {@code lastDamageStamp} 40-tick window):
+     * {@code PanicGoal.shouldPanic()} reads {@code getLastDamageSource() != null}
+     * (LivingEntity:1419), so on the recreated mob it is null → panic never starts → a
+     * shot animal stops fleeing the instant it crosses (the block-era mod's paid-for fix,
+     * PortalTeleporter.preserveTransientHurtState, ported 1:1).
+     *
+     * <p>{@code lastDamageStamp} is compared against the SHARED server
+     * {@code getGameTime()}, so it is copied RAW (no rebase). The stale cross-dim entity
+     * ref inside the copied {@code lastDamageSource} is dereferenced only by consumers
+     * that self-heal or tolerate cross-dim refs ({@code PanicGoal} reads just the
+     * damage-TYPE tag; {@code HurtBySensor} erases a wrong-level HURT_BY_ENTITY itself —
+     * and vanilla keeps the same stale ref when an ATTACKER changes dimension, so this is
+     * vanilla-equivalent staleness). Velocity/knockback is already carried by
+     * {@code transformEntityVelocity}; not touched here. The new entity has not ticked
+     * yet, so these plain field writes are race-free. Items/XP/projectiles are skipped by
+     * the type guard.
+     *
+     * <p>The brain {@code HURT_BY} copy MUST stay guarded by {@code hasMemoryValue}:
+     * {@code Brain.getMemory} THROWS {@code IllegalStateException} on an UNREGISTERED
+     * slot, and plain goal-AI farm animals (cow, chicken, pig, sheep — exactly the mobs
+     * this fix targets) use the default empty brain with no HURT_BY slot; an unguarded
+     * getMemory would crash the crossing tick. {@code hasMemoryValue} returns false (no
+     * throw) when the slot is absent; the new entity is the same type, so when the old
+     * brain has the slot the new brain has it too.
+     */
+    private static void preserveTransientHurtState(Entity oldEntity, Entity newEntity) {
+        if (!(oldEntity instanceof net.minecraft.world.entity.LivingEntity oldL)
+            || !(newEntity instanceof net.minecraft.world.entity.LivingEntity newL)) {
+            return;
+        }
+        com.warwa.seamlessportals.mixin.LivingEntityHurtAccessor oldA =
+            (com.warwa.seamlessportals.mixin.LivingEntityHurtAccessor) oldL;
+        com.warwa.seamlessportals.mixin.LivingEntityHurtAccessor newA =
+            (com.warwa.seamlessportals.mixin.LivingEntityHurtAccessor) newL;
+        // The panic trigger (the reported bug).
+        newA.seamlessportals$setLastDamageSource(oldA.seamlessportals$getLastDamageSource());
+        newA.seamlessportals$setLastDamageStamp(oldA.seamlessportals$getLastDamageStamp());
+        // Completeness: i-frames + the red-hurt flash stay consistent.
+        newA.seamlessportals$setLastHurt(oldA.seamlessportals$getLastHurt());
+        newL.hurtTime = oldL.hurtTime;          // serialized in 26.2 ("HurtTime"); kept paired, not load-bearing
+        newL.hurtDuration = oldL.hurtDuration;  // not serialized
+        newL.invulnerableTime = oldL.invulnerableTime; // not serialized
+        // Brain-based panic (villagers, axolotls, ...): HURT_BY has no codec, so the
+        // persisted-memory NBT round-trip drops it — copy it live. (Brain.setMemory
+        // silently no-ops on an unregistered slot, so the new-brain write is safe even
+        // if the same-type assumption were ever violated.)
+        if (oldL.getBrain().hasMemoryValue(
+            net.minecraft.world.entity.ai.memory.MemoryModuleType.HURT_BY)) {
+            oldL.getBrain()
+                .getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.HURT_BY)
+                .ifPresent(src -> newL.getBrain()
+                    .setMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.HURT_BY, src));
+        }
     }
     
     private boolean doesEntityClusterContainPlayer(Entity entity) {

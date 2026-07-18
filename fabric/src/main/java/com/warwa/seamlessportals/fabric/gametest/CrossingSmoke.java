@@ -175,7 +175,13 @@ public class CrossingSmoke implements FabricClientGameTest {
                 if (!(e instanceof Cow cow)) {
                     throw new AssertionError(LOG + "leg 3: staged cow missing pre-crossing (got " + e + ")");
                 }
-                boolean hurt = cow.hurtServer(ow, ow.damageSources().generic(), 2.0f);
+                // playerAttack (not generic): minecraft:generic is NOT in the
+                // panic_causes damage-type tag, so a generic-hurt cow never panics even
+                // with the state carried — player_attack makes the staged hazard
+                // end-to-end faithful (BOTH conjuncts of PanicGoal.shouldPanic).
+                net.minecraft.server.level.ServerPlayer attacker =
+                    server.getPlayerList().getPlayers().get(0);
+                boolean hurt = cow.hurtServer(ow, ow.damageSources().playerAttack(attacker), 2.0f);
                 if (!hurt || cow.getLastDamageSource() == null) {
                     throw new AssertionError(LOG + "leg 3 precondition failed: hurtServer=" + hurt
                         + " lastDamageSource=" + cow.getLastDamageSource()
