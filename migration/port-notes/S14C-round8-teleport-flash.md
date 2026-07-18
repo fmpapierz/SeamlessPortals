@@ -112,6 +112,69 @@ alone explains the spike, discount one log write before attributing to promote l
 discarded rocket's CLIENT replica may run 1-2 more invisible glue ticks until the remove packet
 lands — bounded, not a fix failure.
 
+## 10. S14.48 — the term NAMED (capture round 3) + the warm-gate fix
+
+**S14.47 retest capture (user: firework GONE — 0 log mentions, 0 spam; "teleport is pretty
+good, a little laggy going to OW"):** `pMs=0.5-1.7` (promote body EXONERATED), `dMs=3-12`
+(discovery meaningful, not dominant). **The named term: `visSec=23,000-33,000` on EVERY promote
+frame** (vs 140-1,900 baseline) — IP's `VisibleSectionDiscovery` is an occlusion-BLIND frustum
+flood; its 23-33k list makes the promote frame's extract+draw the 15-35ms cost. OW-bound is
+heavier (avg ~30ms vs ~15ms; the "laggy going to OW" feel) because OW's flood sections are
+retained-COMPILED (real draws; nether's are mostly post-collapse uncompiled skips), plus
+spike-stacking (one 99.79+62.15ms double-spike; compQ up to 836 on one promote).
+
+**The design insight (vanilla-ref-verified):** `SOG.invalidate()` only schedules the ASYNC
+rebuild — `currentGraph` stays the dim's WARM occlusion tree and vanilla's own applyFrustum
+fill (which runs immediately before our override refill) walks it, producing a small
+occlusion-culled set BFS'd from ~the same camera position on rapid crossings. The override then
+overwrote the good set with the flood. The override's purpose was always the COLD case (S14.7:
+a never-BFS'd/just-reset graph yields ~nothing → IP's blank-first-frame bug).
+
+**Fix (S14.48, as SHIPPED after the round-1 folds — see §11):** two-condition gate — keep
+vanilla's fill at applyFrustum RETURN only when `visibleSections.size() > 32` AND the SOG's
+BFS origin (`prevCamX/Y/Z` accessors) is within ≤2 8-block cells of the current camera (the
+round-1 BLOCKER: a far-origin warm tree passes the yield check while missing the arrival's
+near field); otherwise the discovery runs (cold case unchanged; `alwaysOverrideTerrainSetup`
+keeps the unconditional behavior); one-shot consumed either way; `vy=` records yield+branch.
+CAUTION: Double.MIN_VALUE (the never-updated prevCam sentinel) is ~+0.0, not far — the cold
+case is caught by the YIELD check alone (empty octree ⇒ yield ~0); do not weaken it.
++ RenderChainProbe's first armed 1Hz log moved off the promote frame, and the flash row's
+`rcLog` marker re-keyed to `lastWriteMs` (stamped ONLY by an actual LOGGER write — the round-1
+MAJOR: pacing-state keying false-flagged the promote row). + TRACKER CONTINUITY (§11): the
+demote reuses fromDim's live tracker captured before the promote re-point — kills the
+all-dirty-fresh-tracker phantom remesh wave.
+
+**Open observations for the next capture:** 35× `ImmPtlChunkTickets Chunk loading failure`
+(OW side — watch for correlation with residual OW-bound spikes); the 99/62ms double-spike class
+(compile/upload burst? re-measure post-gate); expected post-fix promote frame ≈ dMs-free
+warm-set cost, target ≲ 10ms.
+
+## 11. S14.48 verify round 1 FAIL → folds, + the REMESH WAVE classified & fixed
+
+**Gate live-confirmed first** (user capture, provisional build): first 2 crossings `vy=0/24` →
+discovery correctly ran (cold graphs); ALL subsequent warm crossings `vy=160-2978`, no `dMs` —
+promote frames dropped to **7.5-19ms** (nether-bound ~8-12 ≈ baseline; user: "seems a lot
+better"). BUT verify round 1 (`wf_33dda3b2-9f5`) FAILed the naive yield-only gate:
+
+- **BLOCKER (folded):** the TWO-PORTAL geometry — a warm tree BFS'd from a FAR last-main-stint
+  origin still yields >32 stale in-frustum sections while MISSING the arrival's near field
+  (occluded from the old origin) → 1-3 frames of holes on return-via-a-different-portal. Fold:
+  the gate now also requires ORIGIN PROXIMITY — SOG `prevCamX/Y/Z` (the last BFS origin,
+  8-block cells, new accessors; MIN_VALUE=cold→far) within ≤2 cells of the current camera;
+  borderline → discovery (safe direction). Same-portal flow (the measured win) passes.
+- **MAJOR (folded):** `rcLog` false-flagged every promote row (the marker keyed to pacing state
+  the new arm mutates without a write — user-log-confirmed). Fold: `lastWriteMs` stamped only
+  in the actual LOGGER branch; marker re-keyed.
+- **User's mid-distance REMESH observation = REAL + classified (not normal, now fixed):**
+  capture shows compile bursts at returns (`compQ=323`, one `compQ=3042` draining over seconds
+  = the visible wave). Root cause (vanilla-source-proven): `new SectionUpdateTracker(...)`
+  marks EVERY section dirty (vanilla only constructs at level init); our demote created a FRESH
+  tracker per crossing for the departed dim → phantom full-dim remesh scheduled → warm-adopt on
+  return = the wave. Exonerated: `onResourceManagerReload` (only sets shouldResetSkyRenderer).
+  Fix: TRACKER CONTINUITY — capture fromDim's live tracker before the promote overwrites the
+  field; the demote reuses it (pending dirty-marks survive exactly; null-guard falls back to
+  fresh). Re-verify (`wf_0abb365a-666`) in flight.
+
 ## 0. The observations (user, 2026-07-17, same round that closed the far-walk wipe)
 
 1. **Teleport flash:** appears ONLY on distant-fog/sky pixels — looking down at nearby terrain

@@ -89,6 +89,49 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
             MyGameRenderer.vanillaTerrainSetupOverride--;
         }
 
+        // S14.48 (the zero-lag hunt's named term): vanilla's applyFrustum body ran just above and
+        // filled visibleSections by walking the SOG currentGraph. On a WARM promote that graph is
+        // the dim's previous occlusion tree (invalidate() only schedules the ASYNC rebuild — the
+        // old graph keeps serving), BFS'd from ~this same camera position on rapid crossings, so
+        // the vanilla fill is already a small, correctly-occluded set. IP's discovery below is a
+        // frustum flood WITHOUT occlusion — capture-proven to hand the promote frame a 23k-33k
+        // section list (visSec on every PROMOTE row) whose extract+draw is the dominant term of
+        // the 15-35ms crossing hitch. The override exists for the COLD case (a never-BFS'd or
+        // just-reset graph yields ~nothing -> IP's blank-first-frame bug): so only REPLACE the
+        // vanilla fill when it is actually blank-ish. The one-shot is consumed either way; the
+        // debug switch keeps the unconditional-override behavior. vy= in the flash-probe row
+        // records the vanilla yield + branch for the confirming capture.
+        int vanillaYield = ((IEWorldRenderer) levelRenderer).portal_getChunkInfoList().size();
+        qouteall.imm_ptl.core.render.TeleportFlashProbe.vanillaYieldThisFrame = vanillaYield;
+        // S14.48 verify BLOCKER fold (wf_33dda3b2-9f5): yield alone is NOT enough — a warm tree
+        // BFS'd from a FAR-AWAY last-main-stint camera (return via a DIFFERENT portal, classic
+        // two-portal geometry) can still push >32 stale in-frustum sections while MISSING the
+        // arrival's near field (occluded from the old origin, e.g. the enclosed arrival room) →
+        // 1-3 frames of holes. The SOG's prevCam fields ARE the last BFS origin (8-block cells,
+        // updated only by main-stint invalidateIfNeeded). CAUTION (re-verify wf_0abb365a-666):
+        // Double.MIN_VALUE — the never-updated sentinel — is the smallest POSITIVE double
+        // (~0.0), NOT a far value; near the world origin it can spuriously read as "near". That
+        // cannot reach a wrong branch TODAY only because a never-updated graph has an EMPTY
+        // octree and can't yield >32 (the yield check is the sole cold guard) — do NOT weaken
+        // the yield check without adding a real sentinel test. Keep vanilla's fill only when
+        // the tree was built from ~here (≤2 cells ≈ 16-24 blocks — the same-portal flow); any
+        // borderline case falls back to the discovery flood = the safe direction.
+        boolean originNear = false;
+        var sog = levelRenderer.sectionOcclusionGraph();
+        if (sog != null) {
+            var sogAcc = (com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphAccessorMixin)
+                (Object) sog;
+            net.minecraft.world.phys.Vec3 camPos =
+                Minecraft.getInstance().gameRenderer.mainCamera().position();
+            originNear =
+                Math.abs(Math.floor(camPos.x / 8.0) - sogAcc.seamlessportals$getPrevCamX()) <= 2
+                && Math.abs(Math.floor(camPos.y / 8.0) - sogAcc.seamlessportals$getPrevCamY()) <= 2
+                && Math.abs(Math.floor(camPos.z / 8.0) - sogAcc.seamlessportals$getPrevCamZ()) <= 2;
+        }
+        if (vanillaYield > 32 && originNear && !IPGlobal.alwaysOverrideTerrainSetup) {
+            return;
+        }
+
         Profiler.get().push("ip_terrain_setup");
         // S14.47 zero-lag hunt: the synchronous override discovery's wall time (dMs= in the
         // flash-probe row) — a promote-frame phase-cost suspect.

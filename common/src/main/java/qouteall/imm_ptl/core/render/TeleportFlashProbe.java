@@ -90,6 +90,10 @@ public class TeleportFlashProbe {
     // reset each TAIL; printed only when nonzero.
     public static long promoteNanosThisFrame = 0;
     public static long discoveryNanosThisFrame = 0;
+    /** S14.48: vanilla applyFrustum's visibleSections yield BEFORE the override decision
+     *  (-1 = no applyFrustum this frame). dMs present on the same row = the discovery branch
+     *  ran (blank-ish yield); absent = the warm vanilla fill was kept. */
+    public static int vanillaYieldThisFrame = -1;
 
     // For the rcLog marker (did RenderChainProbe write a 1Hz line since the previous row?).
     private static long lastSeenRcLogMs = 0;
@@ -127,15 +131,18 @@ public class TeleportFlashProbe {
         int targetB = skyTargetHashB;
         long promoteNanos = promoteNanosThisFrame;
         long discoveryNanos = discoveryNanosThisFrame;
+        int vanillaYield = vanillaYieldThisFrame;
         skyDrawsThisFrame = 0;
         portalSkyDrawsThisFrame = 0;
         skyTargetHashA = 0;
         skyTargetHashB = 0;
         promoteNanosThisFrame = 0;
         discoveryNanosThisFrame = 0;
+        vanillaYieldThisFrame = -1;
         try {
             ring[ringWrite] = collectRow(
-                frameMs, skyDraws, portalSkyDraws, targetA, targetB, promoteNanos, discoveryNanos);
+                frameMs, skyDraws, portalSkyDraws, targetA, targetB,
+                promoteNanos, discoveryNanos, vanillaYield);
         }
         catch (Throwable t) {
             // The probe must never take down the frame.
@@ -157,7 +164,7 @@ public class TeleportFlashProbe {
 
     private static String collectRow(
         double frameMs, int skyDraws, int portalSkyDraws, int targetA, int targetB,
-        long promoteNanos, long discoveryNanos
+        long promoteNanos, long discoveryNanos, int vanillaYield
     ) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.levelRenderer == null || mc.gameRenderer == null) {
@@ -186,12 +193,11 @@ public class TeleportFlashProbe {
         }
 
         var dispatcher = renderer.sectionRenderDispatcher();
-        // Kit-verify fold (wf_a144117b-011): armOnPromote zeroes lastLogMs (so the first armed
-        // frame logs immediately) — without the !=0 guard the promote row is falsely flagged one
-        // frame before the actual 1Hz write fires.
-        boolean rcLogged =
-            RenderChainProbe.lastLogMs != lastSeenRcLogMs && RenderChainProbe.lastLogMs != 0;
-        lastSeenRcLogMs = RenderChainProbe.lastLogMs;
+        // S14.48 verify MAJOR fold: compare against lastWriteMs — stamped ONLY by an actual
+        // LOGGER write — so rcLog marks exactly the frames a log4j stall could contaminate
+        // (lastLogMs is pacing state and mutates at arm with no write).
+        boolean rcLogged = RenderChainProbe.lastWriteMs != lastSeenRcLogMs;
+        lastSeenRcLogMs = RenderChainProbe.lastWriteMs;
 
         return "f=" + frameCounter
             + " ms=" + String.format("%.2f", frameMs)
@@ -225,6 +231,7 @@ public class TeleportFlashProbe {
             + " compQ=" + (dispatcher == null ? -1 : dispatcher.getCompileQueueSize())
             + (promoteNanos > 0 ? " pMs=" + String.format("%.2f", promoteNanos / 1.0e6) : "")
             + (discoveryNanos > 0 ? " dMs=" + String.format("%.2f", discoveryNanos / 1.0e6) : "")
+            + (vanillaYield >= 0 ? " vy=" + vanillaYield : "")
             + (rcLogged ? " rcLog" : "");
     }
 

@@ -57,15 +57,21 @@ public class RenderChainProbe {
      *  MixinLevelExtractor_TerrainSetupOverride). */
     public static int applyFrustumCount = 0;
 
-    // S14.45: package-visible so TeleportFlashProbe rows can mark frames where this probe's 1Hz
-    // log4j write fired (a write can stall the frame — those rows must not be misread as stutter).
     static long lastLogMs = 0;
+    // S14.48 verify MAJOR fold: the flash-probe rcLog marker reads THIS — stamped ONLY when a
+    // LOGGER write actually happens (lastLogMs is pure rate-limit pacing state and now changes at
+    // arm without a write, which false-flagged the promote row — the exact row the zero-lag
+    // capture reads).
+    static long lastWriteMs = 0;
 
     /** Called by ClientWorldLoader at the end of every promote. */
     public static void armOnPromote() {
         armedFrames = ARMED_FRAMES;
         applyFrustumCount = 0;
-        lastLogMs = 0; // first armed frame logs immediately
+        // S14.48: log from ~1s AFTER the promote, not on the promote frame — the frame is the
+        // crossing's hottest (the zero-lag hunt) and a log4j write there costs real ms. The
+        // diagnostic value shifts by <=1s; the dumpOnce lever is unaffected.
+        lastLogMs = System.currentTimeMillis();
     }
 
     /** Called from MixinGameRenderer at renderLevel HEAD, every frame. */
@@ -82,6 +88,7 @@ public class RenderChainProbe {
             return;
         }
         lastLogMs = now;
+        lastWriteMs = now;
         boolean wasDump = dumpOnce;
         dumpOnce = false;
         try {

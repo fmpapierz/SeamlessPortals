@@ -47,6 +47,23 @@ public interface SectionOcclusionGraphAccessorMixin {
     @Accessor("loadedChunks")
     it.unimi.dsi.fastutil.longs.LongOpenHashSet seamlessportals$getLoadedChunks();
 
+    /**
+     * S14.48 BLOCKER fold: the graph's last BFS-origin camera cell (floor(pos/8), doubles).
+     * The warm-gate keeps vanilla's applyFrustum fill only when the tree was built from near
+     * the current camera. NOTE: the never-updated sentinel is Double.MIN_VALUE = the smallest
+     * POSITIVE double (~0.0) — NOT far; near the origin it can read as "near". Safe today only
+     * because a never-updated graph has an empty octree (yield ~0 fails the gate's yield check
+     * first) — see the caution at the gate site before relying on these as a cold test.
+     */
+    @Accessor("prevCamX")
+    double seamlessportals$getPrevCamX();
+
+    @Accessor("prevCamY")
+    double seamlessportals$getPrevCamY();
+
+    @Accessor("prevCamZ")
+    double seamlessportals$getPrevCamZ();
+
     /** S14.42 verify-fold: the graph's viewArea — NULL until the renderer's FIRST extract runs
      *  the deferred build + waitAndReset(viewArea). updateEmptySections dereferences it
      *  unguarded (SOG:396-399), so the delta pump must not apply to a SOG whose viewArea is

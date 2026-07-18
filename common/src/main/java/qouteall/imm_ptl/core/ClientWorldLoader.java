@@ -830,6 +830,15 @@ public class ClientWorldLoader {
         LevelExtractor toDimPerDimExtractor = WORLD_EXTRACTOR_MAP.get(toDim);
         com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor mainExt =
             (com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) CLIENT.levelExtractor;
+        // S14.48 (the remesh-wave fix, capture-proven compQ=3042): capture fromDim's LIVE tracker
+        // BEFORE the promote overwrites mainExt's tracker field — this is the object fromDim's
+        // dirty-marks accumulated on all main stint. The demote below hands it to the demoted
+        // extractor instead of a FRESH one: a fresh SectionUpdateTracker is ALL-DIRTY by
+        // construction (vanilla news it only at level init where everything genuinely needs
+        // compiling), so every crossing was scheduling a full-dim background remesh of the dim
+        // just left — adopted back on return as the visible mid-distance remesh wave.
+        net.minecraft.client.SectionUpdateTracker fromDimLiveTracker =
+            mainExt.seamlessportals$getSectionUpdateTracker();
         mainExt.seamlessportals$setLevelRenderer(promotedRenderer);
         mainExt.seamlessportals$setLevel(toWorld);
         // Sync lastViewDistance so the FIRST post-promote extract() doesn't trip its
@@ -913,9 +922,15 @@ public class ClientWorldLoader {
         com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor dea =
             (com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) demotedExtractor;
         dea.seamlessportals$setLevel(fromWorld);
+        // S14.48: tracker CONTINUITY (see the capture at the promote head) — reuse fromDim's
+        // live main-stint tracker; pending dirty-marks survive exactly, and no all-dirty fresh
+        // tracker schedules a phantom full-dim remesh. Null-guard: fall back to fresh (all-dirty
+        // = the previous behavior) on any path where the main extractor had none.
         dea.seamlessportals$setSectionUpdateTracker(
-            new net.minecraft.client.SectionUpdateTracker(
-                fromWorld, CLIENT.options.getEffectiveRenderDistance())
+            fromDimLiveTracker != null
+                ? fromDimLiveTracker
+                : new net.minecraft.client.SectionUpdateTracker(
+                    fromWorld, CLIENT.options.getEffectiveRenderDistance())
         );
         // Same mesh-preserving guard as promote: the demoted dim's FIRST dest extract must not
         // trip the render-distance allChanged (a ~190ms SOG waitAndReset + full re-mesh of the
