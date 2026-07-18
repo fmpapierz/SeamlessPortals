@@ -67,6 +67,24 @@ public abstract class MinecraftFramePumpMixin {
             if (mc.level == null) {
                 return;
             }
+            // S15 pearl-freeze fix, client half (26.2-FORCED, port-note S15 §5): 26.2's
+            // setScreenAndShow renders a frame SYNCHRONOUSLY mid-packet-handling
+            // (Minecraft.java:2294 -> renderFrame). Vanilla respawn handling
+            // (ClientPacketListener.startWaitingForNewLevel:1630) fires that frame in the window
+            // where mc.level is already the NEW dim's level but mc.player is still the OLD-dim
+            // player (the new LocalPlayer is created later in handleRespawn). No such mid-packet
+            // frame exists in IP's 1.21.3 substrate. Running the pre-render chain against the
+            // incoherent pair crashed the connection (initializeIfNeeded's player-level Validate
+            // -> netty "Packet handling error" -> disconnect + freeze; crossing detection against
+            // the wrong level would be its own hazard). Skip the WHOLE chain for the transient
+            // frame — the first coherent frame re-runs it; respawn cleanup has already reset the
+            // loader, so nothing stale accumulates across the skip. The server half (the pearl's
+            // vanilla respawn-path teleport rerouted seamlessly) lives in MixinThrownEnderPearl;
+            // this guard also protects every OTHER legitimate vanilla respawn flag-ON
+            // (cross-dim death respawn, server-initiated /tp on dedicated servers).
+            if (mc.player == null || mc.player.level() != mc.level) {
+                return;
+            }
             // Note: use PARTIAL tick, not delta tick (IP MixinGameRenderer:85-86).
             float partialTick = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
             qouteall.imm_ptl.core.render.context_management.RenderStates.updatePreRenderInfo(partialTick);

@@ -227,6 +227,84 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
             SeamlessPortalsConstants.LOGGER.info(LOG + "leg 3 PASS — transient hurt state carried across the recreate");
 
+            // ---- Leg 4: ender pearl through the cross-dim portal (the S15 round-1 FREEZE
+            // regression). The pearl crosses via the unified path, lands on the bedrock roof,
+            // and vanilla's onHit owner-teleport branch fires — which, pre-fix, took the
+            // VANILLA respawn-packet path and killed the session (26.2 setScreenAndShow
+            // renders a frame mid-packet; the pre-render pump asserted on the transient
+            // player/level mismatch → "Packet handling error" disconnect;
+            // disconnect-2026-07-18_04.37.31/04.55.38). Post-fix the R13a redirect routes it
+            // through forceTeleportPlayer (seamless, no respawn packet). Asserts: player
+            // arrives in the nether near the dest AND the client survives with a COHERENT
+            // player/level pair (the disconnect would fail both). Runs LAST — it moves the
+            // player. ----
+            // The vanilla branch preserves the owner's ROTATION+DELTA as RELATIVES
+            // (Relative.union(ROTATION, DELTA)); the first fix cut dropped them (verify
+            // wf_30866195-b9f BLOCKER: empty relatives → zeroed momentum + snapped
+            // rotation). Regression net: pin a distinctive client yaw before the throw and
+            // assert it SURVIVES the teleport — a relatives-dropping regression snaps the
+            // client to the transition's yaw 0.0. (Rotation and velocity ride the same
+            // relatives Set; yaw is the deterministic, physics-free assert of the pair.)
+            final float pinnedYaw = 137.5f;
+            context.runOnClient(mc -> {
+                mc.player.setYRot(pinnedYaw);
+                mc.player.setXRot(4.0f);
+            });
+            context.waitTicks(5); // let the client rotation reach the server
+            AtomicReference<UUID> playerId = new AtomicReference<>();
+            runOnServer(context, server -> {
+                net.minecraft.server.level.ServerPlayer player =
+                    server.getPlayerList().getPlayers().get(0);
+                playerId.set(player.getUUID());
+                net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl pearl =
+                    new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl(
+                        server.getLevel(Level.OVERWORLD), player,
+                        new ItemStack(net.minecraft.world.item.Items.ENDER_PEARL));
+                pearl.snapTo(originB.x, originB.y - 0.3, originB.z + 2.0, 0f, 0f);
+                pearl.setDeltaMovement(0, 0.02, -0.7);
+                server.getLevel(Level.OVERWORLD).addFreshEntity(pearl);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "leg 4: pearl thrown at {} (owner {})",
+                    pearl.position(), player.getGameProfile().name());
+            });
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    if (server == null) return false;
+                    net.minecraft.server.level.ServerPlayer p =
+                        server.getPlayerList().getPlayer(playerId.get());
+                    return p != null && p.level().dimension().equals(Level.NETHER)
+                        && p.position().distanceTo(destB) < 16;
+                }, 300);
+            } catch (Throwable t) {
+                throw new AssertionError(LOG + "leg 4 (pearl) FAILED: owner never arrived in the"
+                    + " nether near " + destB + " — the seamless native-teleport route"
+                    + " (MixinThrownEnderPearl redirect -> forceTeleportPlayer) did not deliver", t);
+            }
+            // Client-side coherence: the seamless swap must leave mc.player/mc.level paired in
+            // the nether with the connection alive (pre-fix the session was already dead here).
+            context.waitTicks(40);
+            String clientState = context.computeOnClient(mc -> {
+                if (mc.player == null || mc.level == null) return "player/level null";
+                if (mc.player.level() != mc.level) return "player level != client level";
+                if (!mc.level.dimension().equals(Level.NETHER)) {
+                    return "client dim = " + mc.level.dimension().identifier();
+                }
+                return "OK";
+            });
+            if (!clientState.equals("OK")) {
+                throw new AssertionError(LOG + "leg 4 (pearl) FAILED client-side: " + clientState);
+            }
+            float postYaw = context.computeOnClient(mc -> mc.player.getYRot());
+            if (Math.abs(postYaw - pinnedYaw) > 1.0f) {
+                throw new AssertionError(LOG + "leg 4 (pearl) FAILED relatives-preservation: "
+                    + "client yaw " + postYaw + " != pinned " + pinnedYaw
+                    + " — the teleport dropped the ROTATION/DELTA relatives (vanilla preserves "
+                    + "both; momentum is wiped the same way when this trips)");
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "leg 4 PASS — pearl owner teleported seamlessly, client coherent in the"
+                    + " nether, yaw {} preserved (relatives intact)", postYaw);
+
             SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
         }
     }

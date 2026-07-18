@@ -218,3 +218,112 @@ Worst plausible visuals: own body with odd clip at extreme mirror proximity, a o
 doubled entity at a crossing transient, entity pop timing changes near fresh sections
 (E7). Terrain/SOG/light/particles/cross-dim Step-5 extract untouched — the S14-closed
 saga surfaces are structurally out of blast radius.
+
+**LIVE RESULT (round 1, 2026-07-18): user-confirmed — "i see entities and my own body."
+Both watch-list items CLOSED.** The sde= discrimination was not even needed.
+
+## 5. THE PEARL FREEZE (round 1, crash-class) — R13a RESOLUTION
+
+**Reported:** "sometimes after throwing ender pearl through, i get a total freeze" + the
+game wrote `disconnect-2026-07-18_04.37.31-client.txt` (and `04.55.38` — reproduced
+twice, IDENTICAL signature; evidence-grade, no probe needed).
+
+**Mechanism (fully captured in the disconnect stacks):** a pearl that crossed the portal
+lands cross-dim → 26.2 vanilla `ThrownEnderpearl.onHit` teleports the OWNER itself via
+`player.teleport(TeleportTransition)` (ThrownEnderpearl.java:103-123) — the VANILLA
+dimension-change path → `ClientboundRespawnPacket` → client `handleRespawn` →
+`startWaitingForNewLevel` → **26.2's `setScreenAndShow` renders a frame SYNCHRONOUSLY
+mid-packet-handling** (Minecraft.java:2294 → renderFrame:1357; no such mid-packet frame
+exists in IP's 1.21.3 substrate) → the flag-ON pre-render pump ran in the window where
+`mc.level` is already the new dim but `mc.player` is still the old-dim player →
+`ClientWorldLoader.initializeIfNeeded:576`'s player-level `Validate` threw → netty
+"Packet handling error" → disconnect + total freeze. This was the S10-C **"SEMANTICS
+FLAG"** on `MixinThrownEnderPearl` (26.2 vanilla now cross-dim teleports where 1.21.3 did
+not; resolution deferred "to the unified crossing bring-up") coming due, and API_RISKS
+R13a had already prescribed the shape: *"IP's mixin must intercept/REPLACE vanilla's
+branch (redirect the teleport calls when dims differ), not add a missing case."*
+
+**Fix (both halves, 2026-07-18):**
+1. **Server root (`MixinThrownEnderPearl`)** — IP's 1.21.3 discard()-point inject (the
+   add-the-missing-case form) replaced by the R13a `@Redirect` of the one
+   cross-dim-capable `ServerPlayer.teleport(TeleportTransition)` call in `onHit`:
+   same-dim pearls → vanilla untouched; cross-dim →
+   `ServerTeleportationManager.forceTeleportPlayer` (seamless: player reuse, NO respawn
+   packet). Vanilla-parity: `Relative.union(ROTATION, DELTA)` ≙ forceTeleportPlayer
+   keeping rotation + velocity; the reused player returns into vanilla's own tail
+   (resetFallDistance / resetCurrentImpulseContext / 5.0 pearl damage in the NEW level /
+   sound) — nothing re-implemented. Endermite roll + portal-cooldown transfer run before
+   the redirect site, untouched. Non-player owners keep vanilla's `Entity.teleport`
+   branch (server-side recreate, no respawn packet — IP's original scope was players).
+2. **Client hardening (`MinecraftFramePumpMixin`, 26.2-FORCED deviation)** — the flag-ON
+   pre-render chain now skips the transient frame (`mc.player == null ||
+   mc.player.level() != mc.level`). Protects every OTHER legitimate vanilla respawn
+   flag-ON (cross-dim death respawn, server-initiated /tp on dedicated servers) — the
+   respawn-packet path can always reach a flag-ON client, so the pump must tolerate the
+   mid-packet frame regardless of the pearl reroute.
+
+**Gametest leg 4 (the automated freeze regression):** pearl through the cross-dim portal;
+owner must arrive in the nether seamlessly AND the client must come out with a coherent
+player/level pair (the pre-fix disconnect fails both). RUN 2026-07-18 05:03: `Doing
+cross-dimensional ender pearl teleportation (R13a seamless route)` → **leg 4 PASS, ALL
+LEGS PASS** — also the first end-to-end proof that the R8-stamped seamless client half
+delivers on the native-teleport (forceTeleportPlayer) path.
+
+**Fable verify `wf_30866195-b9f`: FAIL first pass — a REAL BLOCKER caught before shipping
+(the verify layer's S14 track record continues); corrected + re-run green.**
+- **BLOCKER (folded):** the first cut routed the packet through forceTeleportPlayer's 5-arg
+  `connection.teleport`, whose vanilla delegate passes **EMPTY relatives** —
+  `teleportSetPosition` zeroes `deltaMovement` server-side, the client applies the same
+  zero and absolute-snaps rotation. Vanilla's pearl branch preserves the owner's momentum
+  and client-held rotation via `Relative.union(ROTATION, DELTA)` — a sprinting/falling
+  pearl throw arrived with wiped momentum, and the justifying comment ("velocity
+  untouched") was factually wrong (contradicted by the project's own S14-CROSS-DIM-TEST
+  goback note: "position snap + motion reset are EXPECTED" on that path). **Correction:**
+  `forceTeleportPlayer(..., sendPacket=false)` (the seamless move only), then the
+  VANILLA-SHAPED packet sent by the redirect itself —
+  `connection.teleport(PositionMoveRotation.of(transition), transition.relatives())` +
+  `resetPosition()` — through the R8-stamped overwrite (the stamp reads
+  `player.level().dimension()`, already the dest), so the client swaps dimensions AND both
+  halves honor the relatives.
+- **Regression net added:** gametest leg 4 pins a distinctive client yaw (137.5°) before
+  the throw and asserts it survives (a relatives-dropping regression snaps to the
+  transition's 0.0; rotation and velocity ride the same Set — yaw is the deterministic,
+  physics-free assert of the pair). Verify also noted the pre-fix leg's teeth were
+  entirely in the client-coherence check (the server-side move succeeds either way) —
+  accepted, documented here.
+- **Dropped IP-only behavior (recorded for the deferred dead-player-fallback ledger):**
+  IP 1.21.3's inject also teleported cross-dim owners vanilla REFUSED
+  (`isAllowedToTeleportOwner` false — notably a dead-but-connected owner, since
+  `canUsePortal` requires `isAlive`). The redirect never sees those (vanilla skips the
+  call), so that fallback is gone — vanilla-consistent, accepted; the deferred
+  dead-player-fallback work should know the pearl path no longer provides it.
+- **History correction:** "upstream vanilla never cross-dim teleported there" was wrong —
+  the owner-teleport branch shipped in vanilla 1.21.2; IP 1.21.3's inject was largely
+  INERT behind it (refused-owner gap aside). The R13a resolution shape stands.
+- **IP-consistent omissions (one-line record):** vanilla's `ServerPlayer.teleport` also
+  runs `stopUsingItem` and `teleportSpectators`; the seamless route omits both, matching
+  IP's native crossing semantics everywhere (a spectator spectating the owner stays
+  behind where vanilla would carry them).
+- **Pump guard clean bill:** the transient-frame skips (frameIndex/animation/timer) are
+  one-frame + self-healing; the `mc.player == null` arm also closes the pre-existing
+  LOGIN-window hazard (level set before player creation with 26.2's mid-packet frames);
+  NO false-positive path — the mod's own seamless client swap updates `mc.level` and the
+  player's level atomically inside one call, so no rendered frame can observe the pair
+  incoherent during mod crossings.
+
+## 6. ROUND-1 LEDGER — everything else observed
+
+| Observation | Classification | Route |
+|---|---|---|
+| (d).1 items | **PASS** | — |
+| (d).2 arrows: occasional "hits portal like solid" when the portal is clipped into / flush against solid blocks | Scenario-inherent: the arrow's raytrace legitimately collides with the SOLID BLOCKS the plane overlaps/abuts (detection is eye-segment + next-tick; nothing exempts terrain at the plane). IP has no such exemption either. User's own read: "probably normal" | WATCH; IP side-by-side if it ever matters |
+| (d).2 pearl: occasional clip into nether terrain when the dest portal is flush against terrain | Vanilla-authentic: the owner teleports to the pearl's LANDING position (`transition.position()` = pearl `oldPosition()`); vanilla pearls clip you into blocks in the same geometry | WATCH |
+| (d).2 pearl: total freeze | **FIXED** — §5 | closed pending live re-test |
+| (d).3 cow panic | **PASS live** ("panic stayed on teleport") — F3 user-confirmed | — |
+| (d).4 elytra+firework | **PASS live** — F2 AFTER-state user-confirmed | — |
+| (d).5 straddle | PASS to the status-quo standard ("can see myself in portal frame"); tiny hand/hand-item cutoff until a threshold then both sides render | S18 (two-sided render + C4/R3 iteration) |
+| (d).6 minecart vanishes ~1 s at the crossing; passenger flickers/disappears ~1 s | The vehicle recreate's client remove→add gap (`teleportVehicleAcrossDimensions` restoreFrom recreate; IP-shape). Backlog-grade per (d).6 (no crash) | S18/polish backlog (vehicle-crossing presentation) |
+| (d).6 rail alignment needs .5 coords; x-axis can't line up (rail half-buried either side) | Command-usage geometry: `make_portal` centers the PLANE at the given coords — .5 aligns the plane to block boundaries; a rail column at the dest coords intersects the plane visually. Not a defect | explained; no action |
+| (d).6 redstone signal not traveling through into the nether | KNOWN DEFERRED (memory redstone-rail-minecart-deferred): redstone/rail/minecart interop is post-migration; IP does not implement it either | deferred ledger (unchanged) |
+| (d).6 minecart stutter at fast speed | Crossing detection + 1-tick server-task delay + recreate cost; same family as the vanish gap | S18/polish backlog with the above |
+| (d).7 recursive entities + own body | **PASS live** — §4 CLOSED | — |
