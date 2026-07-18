@@ -77,4 +77,13 @@ public interface LevelExtractorAccessor {
      *  not trigger a cross-dim reload sweep mid-crossing). */
     @Accessor("shouldInvalidateCompiledGeometry")
     void seamlessportals$setShouldInvalidateCompiledGeometry(boolean value);
+
+    /** S14.42 verify-fold: the "reset level render data at next extract" one-shot (armed by
+     *  setLevel at world creation; consumed at the FIRST extract → resetLevelRenderData →
+     *  SOG.waitAndReset(null) → loadedChunks.clear()). While armed, the delta pump must NOT
+     *  drain the dim's window — the first Step-5 feed's WHOLESALE window re-seeds loadedChunks
+     *  after that clear, and draining beforehand would permanently under-include every
+     *  pre-first-view chunk (verify BLOCKER, wf_723f7b39-bf4). */
+    @Accessor("shouldResetLevelRenderData")
+    boolean seamlessportals$getShouldResetLevelRenderData();
 }

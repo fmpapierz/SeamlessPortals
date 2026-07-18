@@ -46,4 +46,11 @@ public interface SectionOcclusionGraphAccessorMixin {
      */
     @Accessor("loadedChunks")
     it.unimi.dsi.fastutil.longs.LongOpenHashSet seamlessportals$getLoadedChunks();
+
+    /** S14.42 verify-fold: the graph's viewArea — NULL until the renderer's FIRST extract runs
+     *  the deferred build + waitAndReset(viewArea). updateEmptySections dereferences it
+     *  unguarded (SOG:396-399), so the delta pump must not apply to a SOG whose viewArea is
+     *  still null (verify BLOCKER: NPE on never-viewed dest dims, wf_723f7b39-bf4). */
+    @Accessor("viewArea")
+    net.minecraft.client.renderer.@Nullable ViewArea seamlessportals$getViewArea();
 }

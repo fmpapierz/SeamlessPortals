@@ -233,14 +233,17 @@ public class SecondaryWorldRenderCore {
      */
     private static void tickSecondaryDeltaPump() {
         Minecraft mc = client;
-        if (mc.level == null) {
+        // Verify-fold BLOCKER (wf_723f7b39-bf4): the login-iteration POST_CLIENT_TICK can fire
+        // BEFORE the first frame's initializeIfNeeded — getClientWorlds() Validates isInitialized
+        // and would hard-crash the join. Same guard as the sibling listener CollisionHelper.
+        if (mc.level == null || !ClientWorldLoader.getIsInitialized()) {
             return;
         }
         for (ClientLevel world : ClientWorldLoader.getClientWorlds()) {
             ResourceKey<Level> dim = world.dimension();
             // The MAIN dim's window is vanilla-owned (extract flips it every frame).
-            if (ClientWorldLoader.WORLD_EXTRACTOR_MAP.get(dim) == mc.levelExtractor
-                || world == mc.level) {
+            LevelExtractor dimExtractor = ClientWorldLoader.WORLD_EXTRACTOR_MAP.get(dim);
+            if (dimExtractor == mc.levelExtractor || world == mc.level || dimExtractor == null) {
                 continue;
             }
             var cache = world.getChunkSource();
@@ -251,17 +254,30 @@ public class SecondaryWorldRenderCore {
             if (addedL.isEmpty() && removedL.isEmpty() && addedE.isEmpty() && removedE.isEmpty()) {
                 continue;
             }
+            // Verify-fold BLOCKERs (wf_723f7b39-bf4) — the pre-first-extract lifecycle gate.
+            // Until the dim's FIRST dest extract has run, (a) the SOG's viewArea/currentGraph are
+            // null (26.2 defers their creation into extract — updateEmptySections would NPE), and
+            // (b) the extractor's shouldResetLevelRenderData one-shot is still armed: its consume
+            // clears SOG.loadedChunks, and the wholesale never-flipped window the first Step-5
+            // feed then applies is the ONLY thing that re-seeds the set. So while not ready:
+            // SKIP WITHOUT CLEARING — keep accumulating (the pre-fix lifecycle, which the feed's
+            // truth resolver now applies correctly even when coalesced). Ready state is reached
+            // exactly once per dim creation (setLevel is the only armer; the demote path uses raw
+            // field writes), after which windows drain here every tick.
             LevelRenderer renderer = ClientWorldLoader.WORLD_RENDERER_MAP.get(dim);
             SectionOcclusionGraph sog = renderer == null ? null : renderer.sectionOcclusionGraph();
-            if (sog != null) {
-                // Pump-owned window: mutation is safe (nothing else references the CURRENT side;
-                // the LRS only ever captures the FROZEN side at an extract's flip).
-                applyLoadedDeltasResolved(world, sog, addedL, removedL, true);
-                sog.updateEmptySections(addedE, removedE);
+            if (sog == null
+                || ((com.warwa.seamlessportals.mixin.client.SectionOcclusionGraphAccessorMixin)
+                        (Object) sog).seamlessportals$getViewArea() == null
+                || ((com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor) (Object) dimExtractor)
+                        .seamlessportals$getShouldResetLevelRenderData()
+            ) {
+                continue;
             }
-            // else: no graph yet — its creation-time invalidate rebuilds loadedChunks from the
-            // live storage (SOG.waitAndReset with viewArea==null), so dropping the window is
-            // exactly correct.
+            // Pump-owned window: mutation is safe (nothing else references the CURRENT side;
+            // the LRS only ever captures the FROZEN side at an extract's flip).
+            applyLoadedDeltasResolved(world, sog, addedL, removedL, true);
+            sog.updateEmptySections(addedE, removedE);
             addedL.clear();
             removedL.clear();
             addedE.clear();

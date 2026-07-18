@@ -1,7 +1,30 @@
 # S14-C round 7 — the far-walk terrain wipe: SOG loadedChunks net-drop (S14.42)
 
-**Status:** fix + probe implemented, Fable verify round in flight (`wf_723f7b39-bf4`), awaiting
-commit + the user's confirming run.
+**Status:** fix + probe implemented; **verify round 1 (`wf_723f7b39-bf4`) = FAIL, 3 findings
+FOLDED (S14.43)** — re-verify in flight, then READY + the user's confirming run.
+
+## 0. Verify round 1 catches (all folded — the round paid for itself)
+1. **BLOCKER — join crash:** the pump lacked the `ClientWorldLoader.getIsInitialized()` guard;
+   the login-iteration POST_CLIENT_TICK can fire before the first frame's initializeIfNeeded →
+   `getClientWorlds()` Validate throws inside `Minecraft.tick`. Folded: the CollisionHelper
+   guard pattern.
+2. **BLOCKER — NPE on never-viewed dims:** the pump applied to SOGs whose viewArea/currentGraph
+   are NULL (26.2 defers their creation into the FIRST extract); `updateEmptySections`
+   dereferences viewArea unguarded. Folded: per-dim readiness gate (viewArea non-null).
+3. **BLOCKER — the fix re-created its own poison on the STANDARD flow:** pre-first-view window
+   accumulation is LOAD-BEARING — the first extract's `shouldResetLevelRenderData` consume runs
+   `waitAndReset(null)` → `loadedChunks.clear()`, and the wholesale never-flipped window applied
+   by the first Step-5 feed is the ONLY re-seeder. The pump was draining that history tick by
+   tick → every pre-first-view chunk permanently under-included → the same wipe, now on
+   approach-then-cross. Folded: the readiness gate also requires the reset one-shot CONSUMED;
+   while not ready the pump **skips WITHOUT clearing** (pre-fix lifecycle preserved; the feed's
+   resolver now applies the eventual coalesced wholesale window truth-correctly).
+4. MINORs: the no-SOG "drop" branch's rationale was wrong (nothing in vanilla rebuilds
+   loadedChunks from storage — `waitAndReset(null)` CLEARS it) — branch replaced by the
+   skip-no-clear gate; the main-dim vanilla application (addAll-then-removeAll, no resolver)
+   remains a quantified-low residual (needs a forget+chunk packet same-pos in one ≤1-tick
+   window; the resend-suppression/ACK discipline doesn't emit that; ledgered as an S17
+   hardening candidate: route `SOG.update` through the resolver via mixin).
 **Defect (user, rung-2 steps 5+7):** walk far from a portal (loaders collapse), return (portal
 view perfect), cross → the promoted dim draws NO terrain (entities only), unrecoverable through
 minutes of movement/rotation/200-block flights; relog fully fixes. The dim the player walked
