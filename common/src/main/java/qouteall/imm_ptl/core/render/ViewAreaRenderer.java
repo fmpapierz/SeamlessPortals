@@ -166,7 +166,8 @@ public class ViewAreaRenderer {
                 portal,
                 CHelper.getCurrentCameraPos(),
                 RenderStates.getPartialTick(),
-                renderType
+                renderType,
+                modelViewMatrix // S14.36: near-plane clip basis
             );
         }
         finally {
@@ -215,7 +216,8 @@ public class ViewAreaRenderer {
     public static void buildPortalViewAreaTrianglesBuffer(
         Vec3 fogColor, Portal portal,
         Vec3 cameraPos, float partialTick,
-        RenderType renderType
+        RenderType renderType,
+        Matrix4f modelViewMatrix
     ) {
         // 26.2 (G7/G8): Tesselator/BufferUploader are GONE. Build the POSITION_COLOR TRIANGLES mesh
         // into a growable ByteBufferBuilder and draw it via the mod's immediate-mesh path (drawMesh
@@ -236,7 +238,7 @@ public class ViewAreaRenderer {
 
             Vec3 originRelativeToCamera = portal.getOriginPos().subtract(cameraPos);
 
-            TriangleConsumer vertexOutput = (p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z) -> {
+            TriangleConsumer rawOutput = (p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z) -> {
                 bufferBuilder
                     .addVertex((float) p0x, (float) p0y, (float) p0z)
                     .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
@@ -248,15 +250,92 @@ public class ViewAreaRenderer {
                     .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
             };
 
+            // S14.36 — THE WEDGE FIX (painter user-confirmed via debug_skip_aperture_incr: the
+            // aperture mesh draw causes the sky wedges; its dyed color never showed, so the
+            // damage is its rasterized FOOTPRINT — triangles crossing the camera plane (w<=0)
+            // rasterize "external" wedge regions spanning the sky). CPU near-plane clip: vertices
+            // are CAMERA-RELATIVE, so view-space depth of p is row-2 of the view matrix dotted
+            // with p (JOML column-major: m02,m12,m22); "safely in front" means viewZ < -EPS
+            // (OpenGL looks down -Z). Triangles fully in front pass through BIT-IDENTICAL;
+            // fully behind are dropped (they could never contribute visible aperture); straddlers
+            // are Sutherland-Hodgman clipped (1 behind -> 2 tris, 2 behind -> 1 tri). Depth clamp
+            // stays ENABLED (IP's near/far fragment semantics preserved — the clip only removes
+            // what 26.2 rasterizes as external wedges). Capture-time vertex logging per triangle
+            // (bounded) preserves the raw data per the NO-GUESSING rule.
+            double nx = modelViewMatrix.m02();
+            double ny = modelViewMatrix.m12();
+            double nz = modelViewMatrix.m22();
+            final double EPS = 1.0e-4;
+
+            TriangleConsumer vertexOutput = (p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z) -> {
+                double z0 = nx * p0x + ny * p0y + nz * p0z;
+                double z1 = nx * p1x + ny * p1y + nz * p1z;
+                double z2 = nx * p2x + ny * p2y + nz * p2z;
+                boolean in0 = z0 < -EPS;
+                boolean in1 = z1 < -EPS;
+                boolean in2 = z2 < -EPS;
+
+                if (DrawCallTrace.capturing) {
+                    DrawCallTrace.record(String.format(
+                        "   [aperture tri] vz=(%.3f,%.3f,%.3f) in=(%b,%b,%b)", z0, z1, z2, in0, in1, in2));
+                }
+
+                if (in0 && in1 && in2) {
+                    rawOutput.accept(p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z);
+                    return;
+                }
+                if (!in0 && !in1 && !in2) {
+                    return; // fully behind the camera plane — can never be visible aperture
+                }
+
+                // Sutherland-Hodgman clip against viewZ = -EPS, keeping the in-front side.
+                double[][] src = {
+                    {p0x, p0y, p0z, z0}, {p1x, p1y, p1z, z1}, {p2x, p2y, p2z, z2}
+                };
+                double[][] poly = new double[4][3];
+                int n = 0;
+                for (int i = 0; i < 3; i++) {
+                    double[] cur = src[i];
+                    double[] nxt = src[(i + 1) % 3];
+                    boolean curIn = cur[3] < -EPS;
+                    boolean nxtIn = nxt[3] < -EPS;
+                    if (curIn) {
+                        poly[n][0] = cur[0]; poly[n][1] = cur[1]; poly[n][2] = cur[2]; n++;
+                    }
+                    if (curIn != nxtIn) {
+                        double t = (-EPS - cur[3]) / (nxt[3] - cur[3]);
+                        poly[n][0] = cur[0] + (nxt[0] - cur[0]) * t;
+                        poly[n][1] = cur[1] + (nxt[1] - cur[1]) * t;
+                        poly[n][2] = cur[2] + (nxt[2] - cur[2]) * t;
+                        n++;
+                    }
+                }
+                if (n >= 3) {
+                    rawOutput.accept(
+                        poly[0][0], poly[0][1], poly[0][2],
+                        poly[1][0], poly[1][1], poly[1][2],
+                        poly[2][0], poly[2][1], poly[2][2]);
+                    if (n == 4) {
+                        rawOutput.accept(
+                            poly[0][0], poly[0][1], poly[0][2],
+                            poly[2][0], poly[2][1], poly[2][2],
+                            poly[3][0], poly[3][1], poly[3][2]);
+                    }
+                }
+            };
+
             portal.renderViewAreaMesh(originRelativeToCamera, vertexOutput);
 
-            // IP: BufferUploader.draw(Objects.requireNonNull(bufferBuilder.build())). The mandated 26.2
-            // translation is BufferUploader.draw -> PortalRenderTypes.drawMesh (render-core G8); the
-            // Objects.requireNonNull assertion is VERBATIM IP (a portal view-area mesh always emits
-            // geometry, so build() is never null in practice — an empty mesh is an IP-contract violation
-            // and stays a hard fail, not a silent skip). drawMesh's try(mesh)+mesh.drawState() would NPE on
-            // null anyway, so requireNonNull only sharpens the failure site; no behaviour softened.
-            PortalRenderTypes.drawMesh(renderType, Objects.requireNonNull(bufferBuilder.build()));
+            // IP: BufferUploader.draw(Objects.requireNonNull(bufferBuilder.build())) — the 26.2
+            // translation is PortalRenderTypes.drawMesh (render-core G8). S14.36 amendment: an
+            // EMPTY mesh is now a LEGITIMATE outcome (every aperture triangle clipped away when
+            // the quad sits behind the camera plane), so null build() skips the draw instead of
+            // hard-failing; any other emptiness still surfaces via the skipped aperture (blank
+            // window), not a crash.
+            var apertureMesh = bufferBuilder.build();
+            if (apertureMesh != null) {
+                PortalRenderTypes.drawMesh(renderType, apertureMesh);
+            }
         }
     }
 
