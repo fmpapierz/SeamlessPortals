@@ -205,6 +205,24 @@ public class SecondaryWorldRenderCore {
      * lesson, MOD:PortalWorldManager promote/demote both clear it), and a stale delta-window
      * identity would mis-skip the first SOG delta feed after the role flip.
      */
+    /**
+     * S14.39: shared-render-state fingerprint (capture-only) — logged immediately before/after the
+     * lever-confirmed corruptor (the dest extract). The pre/post DIFF names the corrupted shared
+     * state directly.
+     */
+    private static String stateFingerprint() {
+        return DrawCallTrace.mvTop()
+            + " projSlice=" + System.identityHashCode(RenderSystem.getProjectionMatrixBuffer())
+            + " fogSlice=" + System.identityHashCode(RenderSystem.getShaderFog())
+            + " drawFbo=" + com.mojang.blaze3d.opengl.GlStateManager.getFrameBuffer(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER)
+            + " depthFunc=" + GL11.glGetInteger(GL11.GL_DEPTH_FUNC)
+            + " depthMask=" + GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK)
+            + " blend=" + GL11.glIsEnabled(GL11.GL_BLEND)
+            + " stencilTest=" + GL11.glIsEnabled(GL11.GL_STENCIL_TEST)
+            + " stencilFunc=" + GL11.glGetInteger(GL11.GL_STENCIL_FUNC)
+            + " prog=" + org.lwjgl.opengl.GL20.glGetInteger(org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM);
+    }
+
     public static void onDimensionMainStatusChanged(ResourceKey<Level> dim) {
         portalCompileScheduled.remove(dim);
         lastAppliedDeltaWindow.remove(dim);
@@ -431,14 +449,24 @@ public class SecondaryWorldRenderCore {
             // — attribution only.
             if (!sharedState && !IPGlobal.debugSkipDestExtract) {
                 try {
-                    destExtractor.extract(deltaTracker, newCamera, partialTick);
+                    // S14.39: state fingerprint around the CONFIRMED corruptor (capture-only).
+                    if (DrawCallTrace.capturing) {
+                        DrawCallTrace.record("   [pre-extract]  " + stateFingerprint());
+                    }
+                    if (!IPGlobal.debugSkipExtractOnly) {
+                        destExtractor.extract(deltaTracker, newCamera, partialTick);
+                    }
+                    if (DrawCallTrace.capturing) {
+                        DrawCallTrace.record("   [post-extract] " + stateFingerprint());
+                    }
                 } finally {
                     // (b) SOG delta feed (§5.2 / memory distant-chunk-vanish-sog-desync): the
                     // decomposition never runs destRenderer.render(), vanilla's only delta consumer,
                     // so feed the dest SOG here under the set-object IDENTITY window guard — applied
                     // once per flip window, idempotent within a window, NEVER lost on throw.
                     ChunkLoadingRenderState destDeltas = destLRS.chunkLoadingRenderState;
-                    if (lastAppliedDeltaWindow.get(destDim) != destDeltas.addedLoadedChunks) {
+                    if (!IPGlobal.debugSkipSogFeed // S14.39 sub-lever
+                        && lastAppliedDeltaWindow.get(destDim) != destDeltas.addedLoadedChunks) {
                         lastAppliedDeltaWindow.put(destDim, destDeltas.addedLoadedChunks);
                         SectionOcclusionGraph destSog = destRenderer.sectionOcclusionGraph();
                         LongOpenHashSet addedLoaded = destDeltas.addedLoadedChunks;
@@ -455,8 +483,10 @@ public class SecondaryWorldRenderCore {
                     // Safe mid-main-framegraph (no GPU RenderPass open; compileAsync scheduling). The
                     // GPU upload half rides MyRenderHelper.earlyRemoteUpload (pre-frame pump, already
                     // wired flag-ON) — required BY CONSTRUCTION here (no render() upload tail runs).
-                    ((LevelRendererAccessorMixin) destRenderer)
-                        .seamlessportals$invokeCompileSections(destCameraState);
+                    if (!IPGlobal.debugSkipCompileDrain) { // S14.39 sub-lever
+                        ((LevelRendererAccessorMixin) destRenderer)
+                            .seamlessportals$invokeCompileSections(destCameraState);
+                    }
                 }
             }
 

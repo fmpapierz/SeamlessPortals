@@ -678,6 +678,21 @@ public class ClientDebugCommand {
         );
         registerSwitchCommand(
             builder,
+            "debug_skip_extract_only",
+            cond -> IPGlobal.debugSkipExtractOnly = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_sog_feed",
+            cond -> IPGlobal.debugSkipSogFeed = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_compile_drain",
+            cond -> IPGlobal.debugSkipCompileDrain = cond
+        );
+        registerSwitchCommand(
+            builder,
             "debug_skip_dest_fog_install",
             cond -> IPGlobal.debugSkipDestFogInstall = cond
         );
