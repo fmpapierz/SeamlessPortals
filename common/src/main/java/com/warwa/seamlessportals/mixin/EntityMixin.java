@@ -67,17 +67,23 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
         Entity self = (Entity)(Object) this;
         if (self.level().isClientSide()) return;
 
-        // Tick down vanilla portal cooldown since we cancel handlePortal()
-        if (getPortalCooldown() > 0) {
+        // Tick down vanilla portal cooldown since we cancel handlePortal() — gated IDENTICALLY
+        // to the cancel below (S16.2 verify fold wf_91b049a9-0c1): flag-ON the cancel is demoted,
+        // vanilla handlePortal runs and does its own processPortalCooldown; an ungated tick-down
+        // here would double-decrement every tick.
+        if (!SeamlessPortalsConfig.isEntityPortals()
+            && SeamlessPortalsConfig.get().isSeamlessTeleportation()
+            && getPortalCooldown() > 0) {
             setPortalCooldown(getPortalCooldown() - 1);
         }
 
         // D3 EXCLUSIVITY GATE (row 2 — EntityMixin server-side detection). Flag ON → IP's per-portal
         // scan (Portal.SERVER_PORTAL_TICK_SIGNAL → getEntitiesToTeleport) is the sole non-player
-        // detector; this one stays off. The cooldown tick-down ABOVE and the handlePortal cancel BELOW
-        // are the §2 always-active suppression (kept in BOTH flag states, config-gated on
-        // isSeamlessTeleportation — NOT on entityPortals — so vanilla nether-portal blocks stay inert
-        // pre-S16). Flag OFF (default) → falls through to the block-era detection unchanged.
+        // detector; this one stays off. The cooldown tick-down ABOVE and the handlePortal cancel
+        // BELOW are now gated !entityPortals && isSeamlessTeleportation since S16.2 — flag-ON,
+        // vanilla handlePortal owns portal-block behavior (crouch-hatch/legacy blocks teleport
+        // vanilla-style per IP) and does its own cooldown decrement. Flag OFF (default) → falls
+        // through to the block-era detection unchanged.
         if (SeamlessPortalsConfig.isEntityPortals()) return;
 
         // IP-style: for ServerPlayer entities, the client is the authoritative
@@ -165,11 +171,21 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
     }
 
     /**
-     * Prevent vanilla's portal timer from advancing.
+     * Prevent vanilla's portal timer from advancing — FLAG-OFF ONLY since S16.2 (verify
+     * wf_91b049a9-0c1 ruling): IP 1.21.3 has NO handlePortal suppression anywhere; its crouch
+     * escape hatch (IntrinsicPortalGeneration.onCrouchingPlayerIgnite) exists precisely to give
+     * the player a WORKING vanilla portal. Flag-ON, vanilla portal blocks (crouch-hatch or
+     * legacy pre-S16 worlds) therefore teleport VANILLA-STYLE — IP-authentic; the client
+     * survives the respawn packet via the S15 pump transient-frame guard. Vanilla-block
+     * FORMATION flag-ON is separately suppressed by the ported structural suppression
+     * (MixinAbstractFireBlock_CVB), so this demotion re-arms nothing except the deliberate
+     * hatch. PortalForcerMixin is gated with the same demotion (it observes vanilla portal
+     * creation for the BLOCK-ERA system — reachable again flag-ON once vanilla portals work).
      */
     @Inject(method = "handlePortal", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$cancelVanillaPortal(CallbackInfo ci) {
-        if (SeamlessPortalsConfig.get().isSeamlessTeleportation()) {
+        if (!SeamlessPortalsConfig.isEntityPortals()
+            && SeamlessPortalsConfig.get().isSeamlessTeleportation()) {
             ci.cancel();
         }
     }

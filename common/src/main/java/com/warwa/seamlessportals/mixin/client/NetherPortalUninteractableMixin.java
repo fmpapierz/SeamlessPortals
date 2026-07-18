@@ -41,6 +41,13 @@ public abstract class NetherPortalUninteractableMixin {
     )
     private void seamlessportals$cancelOnPortalBlock(
             BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
+        // S16.2 (B7 disposition update, verify wf_91b049a9-0c1): flag-OFF only. Flag-ON,
+        // vanilla portal blocks exist solely via the deliberate crouch escape hatch (or legacy
+        // worlds) and behave VANILLA-STYLE per IP — including creative breakability; IP has no
+        // such suppression. Flag-OFF (block-era visuals) unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            return;
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) return;
         if (mc.level.getBlockState(pos).getBlock() instanceof NetherPortalBlock) {

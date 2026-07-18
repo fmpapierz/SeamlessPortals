@@ -30,6 +30,13 @@ public abstract class PortalForcerMixin {
     @Inject(method = "createPortal", at = @At("RETURN"))
     private void seamlessportals$onPortalCreated(BlockPos pos, Direction.Axis axis,
                                                   CallbackInfoReturnable<Optional<BlockUtil.FoundRectangle>> cir) {
+        // S16.2 (verify fold wf_91b049a9-0c1): flag-gated — with the handlePortal cancel demoted
+        // flag-OFF-only, vanilla PortalForcer IS reachable flag-ON (crouch-hatch/legacy vanilla
+        // portals teleporting vanilla-style create dest-side portals); feeding those into the
+        // BLOCK-ERA PortalDetector flag-ON would double-handle (D3). Flag-OFF unchanged.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            return;
+        }
         Optional<BlockUtil.FoundRectangle> result = cir.getReturnValue();
         if (result.isPresent()) {
             BlockPos portalPos = result.get().minCorner;

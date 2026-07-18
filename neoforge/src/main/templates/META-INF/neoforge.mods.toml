@@ -18,6 +18,12 @@ config = "seamlessportals-ip-core-common.mixins.json"
 [[mixins]]
 config = "seamlessportals-ip-client.mixins.json"
 
+# S16 consistency (verify wf_91b049a9-0c1 minor): listed like the other IP configs. Inert on
+# NeoForge in practice — EntityPortalsFlag force-falses off Fabric (S13-B P4), so the plugin
+# skips every qouteall.* mixin; flag-ON NeoForge remains deferred (C7).
+[[mixins]]
+config = "seamlessportals-ip-peripheral.mixins.json"
+
 [[dependencies.${mod_id}]]
     modId="neoforge"
     type="required"

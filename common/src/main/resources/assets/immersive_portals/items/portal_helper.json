@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "immersive_portals:block/portal_helper"
+  }
+}

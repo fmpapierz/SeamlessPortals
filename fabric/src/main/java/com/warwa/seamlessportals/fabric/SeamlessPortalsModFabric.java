@@ -63,6 +63,16 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         IPModMain.registerBlocks(
             (id, block) -> Registry.register(BuiltInRegistries.BLOCK, id, block));
 
+        // S16: the peripheral portal-helper block + item ride the SAME unconditional D3 seam —
+        // world-saveable registry entries must be identical in both flag states (a world saved
+        // flag-ON with portal_helper blocks placed must open flag-OFF). Registered but never
+        // obtainable/placed flag-OFF (the CVB ignition mixins + PeripheralModMain.init are
+        // flag-gated; no creative tab until S19 — /give-only).
+        qouteall.imm_ptl.peripheral.PeripheralModMain.registerBlocks(
+            (id, block) -> Registry.register(BuiltInRegistries.BLOCK, id, block));
+        qouteall.imm_ptl.peripheral.PeripheralModMain.registerItems(
+            (id, item) -> Registry.register(BuiltInRegistries.ITEM, id, item));
+
         // ===== S13-F (crash-1 fix): imm_ptl chunk-ticket TYPE registration — UNCONDITIONAL =====
         // 26.2 TicketType is a BuiltInRegistries.TICKET_TYPE-registered record (api-map chunk-loading
         // #23); the 1.21.3 TicketType.create is GONE and a bare unregistered instance throws when handed
@@ -91,6 +101,14 @@ public class SeamlessPortalsModFabric implements ModInitializer {
             qouteall.q_misc_util.MiscNetworking.init();
             qouteall.q_misc_util.dimension.DimensionIntId.init();
             qouteall.imm_ptl.core.IPModMain.init();
+            // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
+            // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
+            // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally
+            // irrelevant for the ported subset (identifiers are only read post-init; nothing in
+            // it is init-order-sensitive), so this placement stands as the tidier one-branch
+            // shape. Minimal subset: everything except the portal-generation cargo is held to
+            // S19 (see PeripheralModMain header).
+            qouteall.imm_ptl.peripheral.PeripheralModMain.init();
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (server/common)");
         } else {
