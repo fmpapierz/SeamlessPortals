@@ -136,10 +136,17 @@ public class IPGlobal {
     public static boolean debugFrameBoundaryProbe = false;
     public static boolean debugSkipPortalEntities = false;
     // S14.35: per-draw kill switches for the four never-individually-levered portal draws.
+    // NOTE (S14.37): debugSkipApertureIncr zeroes the occlusion query => kills the WHOLE portal
+    // pass — it attributes "the pass", not the draw. The channel masks below are the surgical form.
     public static boolean debugSkipApertureIncr = false;
     public static boolean debugSkipDepthClear = false;
     public static boolean debugSkipDepthRestore = false;
     public static boolean debugSkipStencilClamp = false;
+    // S14.37: aperture-draw CHANNEL masks — the draw still rasterizes (query samples still pass,
+    // the full pipeline still runs); only the named write channel is disabled.
+    public static boolean debugApertureNoStencilWrite = false;
+    public static boolean debugApertureNoDepthWrite = false;
+    public static boolean debugApertureNoColorWrite = false;
 
     public static boolean viewBobbingReduce = true;
     

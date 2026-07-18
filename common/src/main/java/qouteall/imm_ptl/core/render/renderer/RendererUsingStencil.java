@@ -378,7 +378,14 @@ public class RendererUsingStencil extends PortalRenderer {
         // (authored S11-B). The depth WRITE MASK follows IP's own writeDepth = doModifyDepth && !fuseView
         // (here doModifyColor=true, doModifyDepth=true => a non-fuse portal WRITES depth); NOT a false
         // mask (CUTOVER_SPEC §2.1 Row 4, Fable-corrected).
-        GL11.glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+        // S14.37 channel mask: KEEP instead of INCR — the draw still rasterizes (query samples pass,
+        // pipeline continues) but writes no stencil.
+        if (qouteall.imm_ptl.core.IPGlobal.debugApertureNoStencilWrite) {
+            GL11.glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        }
+        else {
+            GL11.glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+        }
         //NOTE about GL_INCR:
         //if multiple triangles occupy the same pixel and passed stencil and depth tests,
         //its stencil value will still increase by one
@@ -399,7 +406,10 @@ public class RendererUsingStencil extends PortalRenderer {
             qouteall.imm_ptl.core.IPGlobal.debugDyeViewAreaMesh ? new Vec3(0, 1, 0) : Vec3.ZERO,
             modelView,
             getCurrentProjectionMatrix(),
-            true, true,
+            // S14.37 channel masks: color / depth write individually disableable while the draw
+            // still rasterizes (query samples + pipeline unaffected).
+            !qouteall.imm_ptl.core.IPGlobal.debugApertureNoColorWrite,
+            !qouteall.imm_ptl.core.IPGlobal.debugApertureNoDepthWrite,
             true, true
         );
     }
