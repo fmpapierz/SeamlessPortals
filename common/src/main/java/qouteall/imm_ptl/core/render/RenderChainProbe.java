@@ -57,7 +57,9 @@ public class RenderChainProbe {
      *  MixinLevelExtractor_TerrainSetupOverride). */
     public static int applyFrustumCount = 0;
 
-    private static long lastLogMs = 0;
+    // S14.45: package-visible so TeleportFlashProbe rows can mark frames where this probe's 1Hz
+    // log4j write fired (a write can stall the frame — those rows must not be misread as stutter).
+    static long lastLogMs = 0;
 
     /** Called by ClientWorldLoader at the end of every promote. */
     public static void armOnPromote() {

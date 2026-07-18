@@ -969,6 +969,9 @@ public class ClientWorldLoader {
             toWorld.getChunkSource().getLoadedChunksCount()
         );
         qouteall.imm_ptl.core.render.RenderChainProbe.armOnPromote();
+        // S14.45: arm the teleport-flash/stutter capture (batched ring dump ~40 frames later).
+        qouteall.imm_ptl.core.render.TeleportFlashProbe.armOnPromote(
+            fromDim.identifier().getPath(), toDim.identifier().getPath(), coldPromote);
     }
 
     public static Set<ResourceKey<Level>> getServerDimensions() {

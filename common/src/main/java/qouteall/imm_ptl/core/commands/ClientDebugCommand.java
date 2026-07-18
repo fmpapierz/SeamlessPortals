@@ -780,6 +780,17 @@ public class ClientDebugCommand {
                 }
             }
         );
+        // S14.45: _enable arms a manual ~40-frame flash/stutter ring capture + batched dump
+        // (baseline without a crossing; crossings auto-arm the same capture); _disable no-op.
+        registerSwitchCommand(
+            builder,
+            "debug_capture_flash",
+            cond -> {
+                if (cond) {
+                    qouteall.imm_ptl.core.render.TeleportFlashProbe.armManual();
+                }
+            }
+        );
         registerSwitchCommand(
             builder,
             "cloud_optimization",

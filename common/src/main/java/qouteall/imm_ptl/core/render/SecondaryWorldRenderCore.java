@@ -129,7 +129,8 @@ public class SecondaryWorldRenderCore {
     private static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
         cachedAtmosphericEnv;
 
-    private static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
+    // S14.45: package-visible for TeleportFlashProbe's per-frame rainFogMultiplier read.
+    static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
     getAtmosphericFogEnvironment() {
         if (cachedAtmosphericEnv == null) {
             for (net.minecraft.client.renderer.fog.environment.FogEnvironment env :

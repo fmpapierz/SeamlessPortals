@@ -4,7 +4,8 @@
 FOLDED (S14.43); **verify round 2 (`wf_4089f91b-610`) = PASS×2 lenses** with one MAJOR residual
 folded as the promote-time pre-resolve hardening (§0b); **hardening verify round
 (`wf_c9c7c2e1-b00`) = PASS×2** (§0c) — S14.44 committed, READY issued, awaiting the user's
-confirming far-walk run.
+confirming far-walk run. **RETEST PASSED 2026-07-17 ("all good now") — DEFECT CLOSED,
+user-confirmed.** Bonus confirmation same round: entities are now visible THROUGH the window.
 
 ## 0. Verify round 1 catches (all folded — the round paid for itself)
 1. **BLOCKER — join crash:** the pump lacked the `ClientWorldLoader.getIsInitialized()` guard;

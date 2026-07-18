@@ -26,8 +26,9 @@ listing collapsed loaders; the "COLLAPSED message" expectation was script wordin
 (weather state sync; window rain visuals = S18-deferred), 8 PASS (window-shines-through-water-fog
 = **user-verified authentic IP** via side-by-side → logged as a planned deviation in
 `ENTITY_PORTAL_MIGRATION_BRIEFING.md` §5), 9 PASS. Wedge defect (rounds 2–6): **CLOSED,
-user-confirmed** ("worked") — see below. Step 5+7's far-walk terrain wipe: **root-caused + fixed
-in code, verify round interrupted by the usage cutoff** — finishing it is THE resume task.
+user-confirmed** ("worked"). Step 5+7's far-walk terrain wipe: **CLOSED, user-confirmed
+2026-07-17 ("all good now")** after the full S14.42–44 verify ladder; bonus same round:
+entities now visible THROUGH the window. **THE ACTIVE ITEM = the teleport flash** (§2).
 
 **Closed this session:**
 - **S14.40/41 — the sky wedges (CLOSED, user-confirmed live):** painter = vanilla
@@ -66,16 +67,27 @@ the toDim's CURRENT window, resolution-only, called at the top of
 `promoteAndDemoteOnPlayerDimensionChange`; also closes the warm promote-instant LOW residual);
 3 MINORs ledgered. Full record: port-note `S14C-round7-terrain-wipe.md` §0/§0b.
 
-**Hardening verify round (`wf_c9c7c2e1-b00`) COMPLETED: PASS×2** — 4 MINORs, no code change;
-the one real residual (sub-tick post-hook re-poison race, pre-existing class, strictly narrowed)
-is folded into the S17 capture-point-mixin ledger item (port-note §0c/§5). Compile gate GREEN.
-**S14.44 committed + pushed; READY was issued** — the resume point is now: await the user's
-far-walk retest verdict (§2 protocol below), then §3.
+**Hardening verify round (`wf_c9c7c2e1-b00`) COMPLETED: PASS×2**; S14.44 @ `70a0350` pushed;
+READY issued; **RETEST PASSED (user 2026-07-17: "all good now")** — the wipe thread is DONE.
 
-Retest protocol (port-note §4): far-walk 200+ → wait ~1 min → return → cross (both directions,
-repeat step 7's long walks); expect NO wipe; any residue →
-`/imm_ptl_client_debug debug_dump_render_chain_enable` WHILE wiped → the log's `sogLoaded` vs
-`ldChunks` names it.
+**NEW ACTIVE ITEM — the teleport flash (was §3-1), now under NO-GUESSING instrumentation:**
+user observation: the flash appears ONLY on distant-fog/sky pixels — looking down at nearby
+terrain during a crossing shows NO flash (same far-depth pixel class the wedges painted).
+User directive: do NOT assume; add full debugging logs to verify everything; agents = Opus for
+simple/mechanical tasks, Fable ONLY for complicated (verify/design). ALSO: crossing STUTTER —
+user's IP side-by-side (instance `C:\Users\warwa\curseforge\minecraft\Instances\1.21.1 fabric
+ip`, MC 1.21.1 + IP 6.0.6, no Sodium/Iris) feels ZERO-lag; ours hitches → same capture kit
+profiles it; "inherent mesh cost" may NOT be asserted without numbers.
+
+State: Opus enumeration DONE (`wf_92129b0d-5f7`, 74 sites); capture kit IMPLEMENTED, Fable
+kit-verify **PASS** (`wf_a144117b-011`, aliasing CLEAN, 4 MINORs folded), compile GREEN,
+**committed as S14.45 + pushed; READY issued for the CAPTURE RUN.** Port-note
+**`S14C-round8-teleport-flash.md`** has everything: candidates, row schema, kit-verify-corrected
+signatures, capture protocol (§3 — crossings auto-dump `==== TELEPORT-FLASH CAPTURE ====`
+blocks; user hands over latest.log + the IP-side horizon-crossing flash check in the 1.21.1
+instance). NEXT SESSION RESUME = read the user's capture blocks → classify flash (a/b/c or
+GPU-escalation via DrawCallTrace) + stutter profile vs the IP zero-lag bar → THEN fix design
+(Fable) with a Fable verify round. Then §3 items (sign-off etc.) and the §4 ladder.
 
 Then: fold findings (BLOCKER/MAJOR before READY) → commit → push → **READY + retest protocol**
 (port-note §4): far-walk 200+ → wait ~1 min → return → cross (both directions, repeat step 7's

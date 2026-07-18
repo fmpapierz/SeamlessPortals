@@ -64,6 +64,9 @@ public abstract class GameRendererMixin {
         qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.closeFrameTransientUbos();
         // S14.31: dump the one-frame draw trace (single log write; no-op unless a capture ran).
         qouteall.imm_ptl.core.render.DrawCallTrace.onFrameEnd();
+        // S14.45: teleport-flash/stutter ring row (always-on, in-memory only; one batched log
+        // write when a promote-armed or lever-armed capture window closes).
+        qouteall.imm_ptl.core.render.TeleportFlashProbe.onFrameEnd();
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }

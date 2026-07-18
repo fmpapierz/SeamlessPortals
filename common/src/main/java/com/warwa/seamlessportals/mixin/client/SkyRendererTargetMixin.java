@@ -63,6 +63,27 @@ public abstract class SkyRendererTargetMixin {
     private RenderTarget seamlessportals$useCurrentMainTarget(SkyRenderer instance) {
         Minecraft mc = Minecraft.getInstance();
         RenderTarget current = mc.gameRenderer != null ? mc.gameRenderer.mainRenderTarget() : null;
-        return current != null ? current : this.renderTarget;
+        RenderTarget resolved = current != null ? current : this.renderTarget;
+        // S14.45 flash kit: per-frame sky-draw accounting (count + up to 2 distinct target
+        // identities), sampled + reset by TeleportFlashProbe.onFrameEnd. Plain int writes, no
+        // allocation, no logging — safe on every sky draw. Kit-verify fold (wf_a144117b-011):
+        // MAIN vs PORTAL-pass draws counted separately — under flag-ON stencil-direct BOTH
+        // resolve the same main target, so target hashes cannot disambiguate and a portal
+        // sky draw would mask a main-sky-skip frame in a combined count.
+        if (qouteall.imm_ptl.core.render.context_management.WorldRenderInfo.isRendering()) {
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.portalSkyDrawsThisFrame++;
+        }
+        else {
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.skyDrawsThisFrame++;
+        }
+        int hash = System.identityHashCode(resolved);
+        if (qouteall.imm_ptl.core.render.TeleportFlashProbe.skyTargetHashA == 0
+            || qouteall.imm_ptl.core.render.TeleportFlashProbe.skyTargetHashA == hash) {
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.skyTargetHashA = hash;
+        }
+        else {
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.skyTargetHashB = hash;
+        }
+        return resolved;
     }
 }
