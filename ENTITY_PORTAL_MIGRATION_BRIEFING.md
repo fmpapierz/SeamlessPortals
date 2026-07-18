@@ -60,6 +60,14 @@ Every one of these was a user-visible bug fixed this cycle; each has a memory fi
   The improvement is OURS to design: composite source-dim fog over the aperture region by
   per-pixel distance to the portal plane (screen-space pass over the stencil-masked area).
   Applies to any source-side fog medium (water, lava, powder snow, thick nether fog looking OUT).
+- **Portal-aware panic/escape pathfinding (polish — user-spotted 2026-07-18, S15 round 2):**
+  a panicking mob cornered in the dest dim will NOT flee through another portal (nor back
+  through the bi-way portal it arrived from) even when that is the only escape route — mob
+  pathfinding has no concept of a portal opening as a traversable cell. The wish: panic/escape
+  path search treats visible portal apertures as legitimate paths (sees the blocks through the
+  window). Novel work on the entity-portal architecture (same family as the redstone/rails
+  item: opening cells aren't blocks); NOT an IP behavior (original IP doesn't even transfer
+  panic across the crossing — ours does via F3 and the user chose to KEEP the improvement).
 - **Source-dim full-RD keep-loaded toggle (planned deviation — user-requested 2026-07-18, S14
   churn classification):** when the player crosses, the departed dim keeps only the portal
   loaders' bounded radius; the player's far ring (out to the full 32-chunk RD) loses its tickets
@@ -81,6 +89,12 @@ Every one of these was a user-visible bug fixed this cycle; each has a memory fi
 - **Tracker/extractor identity is everything** — writers and readers must share the object, and `allChanged()` REPLACES trackers (the block-freeze bug family). Applies anywhere renderer state is adopted/swapped.
 - **Any "client holds X" claim must be verified AND survive retention** (5 ledger lies + the honest-ledger-fossilizes-render-loss rule). IP's vanilla-packet chunk tracking should retire this class, but the doctrine applies to anything custom that remains.
 - **`Brain.getMemory` on an arbitrary mob throws on unregistered slots** — `hasMemoryValue` first.
+- **26.2 renders frames SYNCHRONOUSLY mid-packet-handling** (`setScreenAndShow` →
+  `renderFrame`, e.g. inside `handleRespawn`'s `startWaitingForNewLevel`) — no such frame
+  exists in the 1.21.3 substrate. Every pre-render/per-frame consumer must tolerate the
+  transient `mc.player`/`mc.level` MISMATCH frame (skip, never assert): the S15 pearl freeze
+  was the pump asserting on it, and the netty error path converts any packet-context throw
+  into a session-killing disconnect.
 - **Never trust a prior geometry-sign claim** — re-derive clip/transform signs from source (two sign errors caught by adversarial verification this cycle).
 - **debug.log ≠ vanilla packets; `[SEAMLESS SERVER-CROSSING] ... in X` names the DESTINATION dim; world-save (stats + entities .mca) is ground truth for entity-fate questions.**
 - Strict fidelity applies to VANILLA too: don't "fix" faithful vanilla behavior (firework billboard rotation).

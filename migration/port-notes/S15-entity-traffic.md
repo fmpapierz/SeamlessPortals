@@ -327,3 +327,19 @@ delivers on the native-teleport (forceTeleportPlayer) path.
 | (d).6 redstone signal not traveling through into the nether | KNOWN DEFERRED (memory redstone-rail-minecart-deferred): redstone/rail/minecart interop is post-migration; IP does not implement it either | deferred ledger (unchanged) |
 | (d).6 minecart stutter at fast speed | Crossing detection + 1-tick server-task delay + recreate cost; same family as the vanish gap | S18/polish backlog with the above |
 | (d).7 recursive entities + own body | **PASS live** — §4 CLOSED | — |
+
+## 7. ROUND 2 (2026-07-18) — S15 SIGN-OFF
+
+- **Arrows: IP-AUTHENTIC CONFIRMED by user side-by-side** ("verified bow and arrow same
+  behavior on both original and this port") — the §6 arrow watch item is CLOSED by the
+  classification court.
+- **Pearl: user-verified "actually seems to work better than original — keep it."** The
+  R13a seamless route (§5) is a KEPT improvement over IP (original IP rides vanilla's
+  respawn-path pearl teleport; ours is seamless with momentum/rotation preserved).
+- **Cow panic: works; ours is BETTER than original — keep.** User side-by-side: original
+  IP does NOT transfer panic across the crossing at all; ours does (F3). New user-spotted
+  polish item: a cornered panicking mob won't flee THROUGH a portal (nor back through the
+  bi-way portal) even when that's the only escape — mob pathfinding has no concept of the
+  aperture as a traversable cell. Routed to briefing §5 polish backlog
+  ("Portal-aware panic/escape pathfinding").
+- **"everything seems good. s15 sign off"** — S15 rung 3 USER-SIGNED-OFF 2026-07-18.

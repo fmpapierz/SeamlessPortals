@@ -1319,6 +1319,36 @@ item entity, assert arrival position/dimension) added beside `TitleCardCapture` 
 **(e) Regression items:** 3, 4, 5, 6, 7 (partial).
 **(f) Rollback/flag:** flag OFF default.
 
+**PROGRESS: S15 CLOSED — rung 3 USER-SIGNED-OFF 2026-07-18** (commit series S15.1→S15.5,
+final `13d1ecc`; port-note of record `S15-entity-traffic.md` §1-§7). Register items BOTH
+DONE with dated evidence: F2 recorded (pre-completed S14.47, `63174f6`); F3
+reproduce-then-apply executed by the book (CrossingSmoke leg 3 RED `306ab5d` = the
+reproduction, applied `eea9675` at BOTH restoreFrom sites, Fable verify PASS, live
+"panic stayed on teleport"). NEW gametest `runCrossingGametest` (D4.6, re-run every later
+stage): 4 server-asserted legs — same-dim item, cross-dim item, F3 hurt-carry, pearl
+crossing + relatives net — ALL GREEN. Watch-list recursion items CLOSED live ("i see
+entities and my own body"): the layer≥2/same-dim entity gap + missing render-yourself =
+ONE proven root (sharedState-gated extract+submit; mutual exclusion with the ported
+render-yourself gate), fixed by the isolated same-dim entity pass
+(renderPortalEntitiesSameDim + trio + sde= probe + debug_skip_same_dim_entities lever;
+2-lens Fable verify PASS). Round-1 crash-class pearl FREEZE root-caused from the user's
+disconnect reports (26.2 vanilla pearl branch → respawn packet → 26.2 setScreenAndShow
+MID-PACKET frame → pump assert) and fixed both halves: the S10-C-deferred R13a resolution
+(@Redirect → seamless forceTeleportPlayer + vanilla-shaped PositionMoveRotation relatives
+pass-through through the R8-stamped overwrite — verify caught the momentum-wipe blocker
+in the first cut) + the 26.2-forced pump transient-frame guard (also closes the
+login-window hazard; protects every vanilla respawn flag-ON). All (d) steps PASS;
+classification court (user IP side-by-side): arrows-near-solid IP-AUTHENTIC; pearl
+BETTER-than-IP (kept); panic-transfer BETTER-than-IP (kept — original does not transfer
+panic). Verify layer track record: 2 real blockers + the E7 fidelity rework caught
+pre-ship across 4 verify passes. Routed forward: portal-aware panic/escape pathfinding →
+briefing §5 (NEW); vehicle recreate presentation gap (minecart ~1s vanish + passenger
+flicker + fast-speed stutter) → S18/polish; straddle two-sided render → S18 (standing);
+refused-owner pearl fallback drop → recorded on the deferred dead-player-fallback item.
+NEW 26.2 invariant (briefing §6-grade): setScreenAndShow renders frames SYNCHRONOUSLY
+mid-packet-handling — every pre-render consumer must tolerate the transient
+player/level-mismatch frame.
+
 ### S16 — Portal generation (U12) — rung 4 — effort XL
 
 **(a) Contents** (the U12 REMAINDER — the generation-pipeline HEAD already compiled at S13 as
