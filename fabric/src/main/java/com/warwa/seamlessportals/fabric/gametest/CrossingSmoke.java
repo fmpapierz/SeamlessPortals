@@ -94,6 +94,7 @@ public class CrossingSmoke implements FabricClientGameTest {
 
         context.runOnClient(mc -> mc.options.renderDistance().set(6));
 
+        net.fabricmc.fabric.api.client.gametest.v1.world.TestWorldSave worldSave;
         try (TestSingleplayerContext sp = context.worldBuilder()
                 .setUseConsistentSettings(true)
                 .adjustSettings(s -> {
@@ -101,6 +102,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                     s.setName("seamless-crossing-smoke");
                 })
                 .create()) {
+            worldSave = sp.getWorldSave();
 
             context.waitTicks(80);
 
@@ -304,6 +306,76 @@ public class CrossingSmoke implements FabricClientGameTest {
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "leg 4 PASS — pearl owner teleported seamlessly, client coherent in the"
                     + " nether, yaw {} preserved (relatives intact)", postYaw);
+
+            // ---- Leg 5 setup (S16 commit 3): write a DEV-ONLY datapack into THIS
+            // throwaway world's save dir (never shipped resources). FIRST-RUN LESSON
+            // (log-proven): dynamic-registry entries load at WORLD OPEN only — /reload
+            // re-buckets the unchanged registry but cannot add entries (vanilla
+            // semantics; the reload ran, entries stayed 0). So the files are written
+            // here and the ASSERT happens after close + TestWorldSave.open() below. ----
+            runOnServer(context, server -> {
+                java.nio.file.Path dpDir = server.getWorldPath(
+                        net.minecraft.world.level.storage.LevelResource.DATAPACK_DIR)
+                    .resolve("s16test");
+                try {
+                    java.nio.file.Path genDir = dpDir.resolve(
+                        "data/s16test/immersive_portals/custom_portal_generation");
+                    java.nio.file.Files.createDirectories(genDir);
+                    // 26.2 mcmeta shape: formats >81 REQUIRE min_format/max_format (the legacy
+                    // single pack_format fails metadata parsing and the pack is never
+                    // discovered — first leg-5 run's exact failure; vanilla example:
+                    // data/minecraft/datapacks/minecart_improvements/pack.mcmeta).
+                    java.nio.file.Files.writeString(dpDir.resolve("pack.mcmeta"),
+                        "{\"pack\": {\"min_format\": 107, \"max_format\": 107,"
+                            + " \"description\": \"S16 dev test\"}}");
+                    java.nio.file.Files.writeString(genDir.resolve("test_gen.json"), """
+                        {
+                          "schema_version": "imm_ptl:v1",
+                          "from": ["minecraft:overworld"],
+                          "to": "minecraft:the_nether",
+                          "form": {
+                            "type": "imm_ptl:classical",
+                            "from_frame_block": "minecraft:gold_block",
+                            "area_block": "minecraft:air",
+                            "to_frame_block": "minecraft:gold_block",
+                            "generate_frame_if_not_found": true
+                          },
+                          "trigger": {
+                            "type": "imm_ptl:use_item",
+                            "item": "minecraft:golden_apple"
+                          }
+                        }
+                        """);
+                } catch (java.io.IOException e) {
+                    throw new AssertionError(LOG + "leg 5: failed writing the dev datapack", e);
+                }
+                SeamlessPortalsConstants.LOGGER.info(LOG + "leg 5: dev datapack written; will"
+                    + " assert after world reopen (dynamic registries load at open only)");
+            });
+        }
+
+        // ---- Leg 5 assert: reopen the SAME save — the datapacks folder now contains the
+        // dev pack at world open, so the dynamic registry decodes it and the manager
+        // buckets it at SERVER_STARTED. (World-folder datapacks are auto-enabled on
+        // discovery, the standard drop-in-folder player workflow.) ----
+        try (TestSingleplayerContext sp2 = worldSave.open()) {
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    if (server == null) return false;
+                    var registry = server.registryAccess().lookupOrThrow(
+                        qouteall.imm_ptl.core.portal.custom_portal_gen.CustomPortalGeneration.REGISTRY_KEY);
+                    Object manager = qouteall.imm_ptl.core.IPPerServerInfo.of(server).customPortalGenManager;
+                    return registry.size() >= 1 && manager != null;
+                }, 600);
+            } catch (Throwable t) {
+                throw new AssertionError(LOG + "leg 5 (datapack) FAILED: after reopening the save"
+                    + " with the dev pack in datapacks/, the"
+                    + " immersive_portals:custom_portal_generation dynamic registry has no entries"
+                    + " (or the manager never built)", t);
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "leg 5 PASS — datapack custom generation decoded at world open + manager built");
 
             SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
         }
