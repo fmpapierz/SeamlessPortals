@@ -202,6 +202,72 @@ Two observations from the many-portal live round, both instrumented (NO GUESSING
    for portal-loaded chunks); sky=0 = the DATA is wrong (→ loader/packet path); dirty=true = a
    compile-scheduling stall instead. Await the user's screenshot-adjacent confirmations too:
    section-grid-aligned edges? freshly-streamed area? stable until block update?
+
+   **DUMP RESULTS (user run, 2026-07-18 ~01:11): THE LOST-SIGNAL CASE CONFIRMED.** Two dumps in
+   section (313,-4,5) OW: `skyHere=0` (inside the opaque block — normal) `skyAbove=15`
+   `skyN4=[15,15,15,15]` `chunkFull=true lightOnInColumn=true` `tracker[dirty=false]`
+   `mesh=CompiledSectionMesh` `sogHasChunk=true` — engine light PERFECT, mesh compiled stale,
+   NO pending remesh. User: breaking one block heals ~16 at once = exactly one section's worth
+   (section-granular remesh healing). ALSO: the per-crossing phantom wave is GONE (zero compQ
+   bursts at all 10 promotes this run — S14.48 holds); the REMAINING "mid-distance remeshing"
+   = ONE burst (+~10 compQ/frame for ~6s then drain) during ACTIVE CHUNK STREAMING (dp=1,
+   visSec growing 1199→1303) — i.e., the light-arrival remesh WORKING for most sections while
+   some MISS the mark permanently (the shadow). Two outcomes of ONE race. Same-dim dest pass
+   exonerated by code read (sharedState skips extract + reposition entirely). Fable trace
+   `wf_9749e767-5bc` hunting the lost-mark site (dirty-flag consume timing vs async compile
+   snapshot vs hasAllNeighbors deferral vs portal-loader chunk-arrival re-marks).
+
+## 13. S14.50 — the lost-mark trace verdict (both halves HIGH) + the frontier-deferral fix
+
+**Trace verdict (`wf_9749e767-5bc`):**
+- **Early-compile half (HIGH):** the ARMED `VisibleSectionDiscovery.acceptVisible` fold (the
+  dest pass's Step-9 compile scheduler — the ONLY armed caller) scheduled compileAsync gated
+  ONLY on own-chunk-loaded, never vanilla's load-bearing first-compile gate
+  `dirty && (compiled || hasAllNeighbors)` (all 8 neighbor chunks FULL + lightOnInColumn each),
+  and consumed the one-shot mark at schedule time → frontier sections baked dark seams with the
+  mark gone. Vanilla's invariant "a compiled mesh implies neighbors+light existed at first
+  compile" broken at exactly one site.
+- **Permanence half (HIGH):** the neighbor-arrival re-mark (enableChunkLight ±1 — routing
+  verified SOUND incl. the redirected-packet/lambda-guard path) can be re-consumed mid-frame
+  and compiled BEFORE the secondary dim's frame-END lateUpdateLight publish (compiles read
+  light LIVE at worker execution — blocks snapshotted, light NOT); the publish's onLightUpdate
+  re-marks ONLY sections whose OWN stored light changed — never the sampler → permanent.
+- **Exonerated (do not re-litigate):** mark routing for portal-loaded chunks; tracker
+  continuity across crossings; the createRegion budget mixin (defers without consuming); the
+  Step-5 consume-always-compiles pairing; the tracker window-drop self-heal.
+- **Rejected fixes:** completion-time flag clear (breaks the one-shot contract everywhere);
+  moving lateUpdateLight earlier (IP-inherited section-edge warning + FIX-3 placement is
+  load-bearing).
+
+**The fix (shipped):** in the armed fold, defer ANY compile (first AND re-compile — stricter
+than vanilla's first-only gate, deliberately, closing the mid-frame re-bake window) while
+`!hasAllNeighbors`; defer keeps the mark + schedSet eligibility (the over-budget branch's
+retained shape); the section still enters the draw list and the BFS floods through. Frontier
+compiles land a few frames later with real light — vanilla/IP 1.21.3 cadence. Ledgered
+residual: block-update remeshes at a PERMANENTLY incomplete frontier (view/world edge) defer
+until neighbors arrive (mark retained, self-heals).
+
+**Verify verdict (`wf_3b6a4ccd-772` PASS, 5 MINORs) — the mechanism CORRECTED + fix C
+REJECTED:** lightOnInColumn flips at data-ENABLE (tick) while the worker reads the PUBLISHED
+store (frame-end for secondaries) → a 1-frame stale window survives the gate — BUT the trace's
+permanence premise was WRONG: the engine's publish delivers a 27-neighbor affected set to
+onLightUpdate (markSectionAndNeighborsAsAffected at initializeSection; swap-then-callbacks), so
+samplers ARE re-marked post-publish and the in-scope residue is a 1-2-frame flicker, not
+permanence. **Fix C (±1 spread in onLightUpdate) was implemented, then REVERTED on this
+verdict** — redundant (the set is already spread) and a ~27× re-mark storm risk (the all-dirty
+wave's cousin). Also folded: the false comment corrected; budget-check-before-gate micro-opt
+(over-budget frames skip the 8-chunk probe); main-dim isolation PROVEN (unarmed path
+early-returns); the block-era duplicate scheduler POSITIVELY confirmed unreachable flag-ON
+(registration- + runtime-gated — the 2-for-2 audit rule extends to 3-for-3).
+
+**Live status (user, post-A+B build): mid-distance churn FIXED; a shadow STILL forms on
+portals to NEVER-VISITED dests** (both dims suspected; nether unconfirmable visually). Since
+the in-scope path now self-heals, the residual requires a mark-LOSS mechanism on top (verify's
+watch item: losing the publish-frame re-mark across a promote/tracker event; window-drop
+exonerated — vanilla extract repositions the tracker window to the dest camera every dest
+extract). **NEXT DISCRIMINATOR: dump a post-A+B shadow** — `dirty=true` ⇒ mark retained but
+the heal-compile never ran (scheduling/portal-stopped-rendering); `dirty=false` ⇒ a consume
+race survives. That dump routes the last fix.
 2. **Many-portal steady-state lag** (142 non-promote frames ≥25ms with many portals; small
    visSec, empty compQ — the per-frame dest-pass scaling): `dp=` row field counts dest passes
    (incl. nesting layers) per frame — regressing ms against dp across a capture names the

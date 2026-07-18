@@ -299,6 +299,12 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
         // LevelRenderer → LevelExtractor (api-map chunk-loading #45). getWorldExtractor routes to
         // the per-dim extractor (the ACTIVE dim → the global mc.levelExtractor itself, extractor
         // identity — memory nether-block-freeze-orphaned-extractor).
+        // S14.50 note: a ±1 neighbor-spread was TRIED here (fix C) and REVERTED on verify
+        // (wf_3b6a4ccd-772): the light engine ALREADY delivers a 27-neighbor affected set to this
+        // callback (markSectionAndNeighborsAsAffected at initializeSection → swapSectionMap fires
+        // per affected section, POST-publish) — an extra spread would multiply re-marks up to
+        // ~27× per update (a remesh-storm cousin of the S14.48-removed all-dirty wave) with zero
+        // added healing. Single-section is correct here for ALL dims.
         ClientWorldLoader.getWorldExtractor(level.dimension())
             .setSectionDirty(chunkSectionPos.x(), chunkSectionPos.y(), chunkSectionPos.z());
     }

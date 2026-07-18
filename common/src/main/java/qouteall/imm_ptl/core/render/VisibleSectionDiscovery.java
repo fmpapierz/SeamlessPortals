@@ -278,7 +278,33 @@ public class VisibleSectionDiscovery {
             scratchSchedSet.remove(node);
         }
         boolean wantCompile = (ds != null && ds.isDirty()) || (uncompiled && !scratchSchedSet.contains(node));
-        if (wantCompile && System.nanoTime() - compileStartNs < compileBudgetNs) {
+        // S14.50 — the BOUNDARY-SHADOW root fix (trace wf_9749e767-5bc; verify wf_3b6a4ccd-772
+        // PASS with the mechanism CORRECTED): vanilla's load-bearing FIRST-compile gate is
+        // `dirty && (compiled || hasAllNeighbors)` (LevelExtractor:154-159; hasAllNeighbors = all
+        // 8 neighbor chunks FULL + lightOnInColumn per neighbor). This armed fold compiled on
+        // own-chunk-loaded alone AND consumed the one-shot mark at schedule time — a
+        // streaming-ring frontier section therefore baked its smooth-lighting seam against
+        // ABSENT/unlit neighbors (dark), with the mark gone. (Verify correction of the trace's
+        // permanence claim: the light engine DOES re-mark samplers — the publish delivers a
+        // 27-neighbor affected set to onLightUpdate post-publish — so the post-fix residual
+        // exposure through THIS site is a 1-2 frame flicker in the enable-vs-publish window, not
+        // permanence; hasAllNeighbors' lightOnInColumn flips at data-ENABLE (tick), the worker
+        // reads the PUBLISHED store (frame-end for secondaries).) Fix: defer ANY armed compile
+        // until the frontier is complete — vanilla's predicate for first compiles, plus
+        // (hardening, stricter than vanilla) the same hold for RE-compiles, narrowing the
+        // enable-vs-publish window. Defer = keep the mark, keep schedSet eligibility (the
+        // over-budget branch's retained-mark shape) — the compile happens a few frames later with
+        // real light, vanilla's (and IP 1.21.3's) frontier cadence. The BFS still floods THROUGH
+        // deferred sections (tempQueue add precedes this call) — no reachability loss. Ledgered
+        // residuals: (a) block-update remeshes at a PERMANENTLY incomplete frontier defer until
+        // neighbors exist (mark retained, self-heals); (b) any REMAINING permanent seam requires
+        // a mark-LOSS mechanism on top (e.g. across a promote in the publish frame) — dump a
+        // post-fix shadow (dirty=true ⇒ heal never scheduled; dirty=false ⇒ a consume race
+        // survives). Budget check runs FIRST (verify micro-opt): over-budget frames skip the
+        // 8-chunk neighbor probe entirely; both defer branches retain the mark.
+        if (wantCompile && System.nanoTime() - compileStartNs < compileBudgetNs
+            && (scratchSut == null || scratchSut.hasAllNeighbors(scratchDestLevel, node))
+        ) {
             section.compileAsync(scratchCache.createRegion(scratchDestLevel, node));
             if (ds != null) {
                 ds.setNotDirty();
