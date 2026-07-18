@@ -32,6 +32,17 @@ public abstract class MixinGlCommandEncoder_DrawTrace {
                 label = "<label threw: " + t + ">";
             }
             DrawCallTrace.record("PASS " + label);
+            // S14.33 (v3): the sky-family passes consume the MAIN skyRenderState — dump its full
+            // numeric contents at each such pass (the wedge frame's numbers vs the control's ARE
+            // the pollution diagnosis; the wedge/control structural diff already proved Sunrise
+            // sunset + Stars run at midday only while a portal is in view).
+            if (label.startsWith("Sky") || label.startsWith("Sunrise") || label.startsWith("Stars")) {
+                DrawCallTrace.recordSkyState(
+                    "    mainSkyState",
+                    net.minecraft.client.Minecraft.getInstance().gameRenderer
+                        .gameRenderState().levelRenderState.skyRenderState
+                );
+            }
             // S14.32: attribute every IMMEDIATE-mode pass (PreparedRenderType buffer-source draws
             // — the unowned line-49 suspect class) to its CALLER via a compact filtered stack.
             if (label.startsWith("Immediate draw")) {

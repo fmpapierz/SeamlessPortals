@@ -51,4 +51,35 @@ public class DrawCallTrace {
             SB.append(line).append('\n');
         }
     }
+
+    /**
+     * S14.33 (v3, the NO-GUESSING rule): dump the given SkyRenderState's full numeric contents +
+     * the current level's gameTime — called at every sky-family pass creation (main state) and at
+     * the dest-pass marker (dest state). The wedge frame's numbers vs the control frame's ARE the
+     * answer to which value is polluted.
+     */
+    public static void recordSkyState(String tag, net.minecraft.client.renderer.state.level.SkyRenderState s) {
+        if (!capturing) {
+            return;
+        }
+        if (s == null) {
+            record(tag + " skyState=null");
+            return;
+        }
+        net.minecraft.client.multiplayer.ClientLevel level =
+            net.minecraft.client.Minecraft.getInstance().level;
+        record(tag
+            + " skybox=" + s.skybox
+            + " sunAngle=" + s.sunAngle
+            + " moonAngle=" + s.moonAngle
+            + " starAngle=" + s.starAngle
+            + " moonPhase=" + s.moonPhase
+            + " rainBrightness=" + s.rainBrightness
+            + " starBrightness=" + s.starBrightness
+            + " skyColor=" + Integer.toHexString(s.skyColor)
+            + " sunriseSunsetColor=" + Integer.toHexString(s.sunriseAndSunsetColor)
+            + " darkDisc=" + s.shouldRenderDarkDisc
+            + " levelGameTime=" + (level != null ? level.getGameTime() : -1)
+            + " levelDim=" + (level != null ? level.dimension().identifier() : "null"));
+    }
 }

@@ -255,6 +255,12 @@ public class SecondaryWorldRenderCore {
 
         DrawCallTrace.record(">>> renderDestWorld dim=" + destDim.identifier()
             + " layer=" + PortalRendering.getPortalLayer());
+        // S14.33 (v3): dest-side + main-side sky state at portal-pass entry (pollution timing:
+        // if the MAIN state is already wrong HERE, the pollution predates the dest pass).
+        DrawCallTrace.recordSkyState("    destSkyState@enter",
+            ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState().skyRenderState);
+        DrawCallTrace.recordSkyState("    mainSkyState@portalEnter",
+            mc.gameRenderer.gameRenderState().levelRenderState.skyRenderState);
 
         // ===== Step 2 — resolve the per-dim substrate (EXTRACTOR-IDENTITY router) ===============
         // DEFECT-1 fix (S13-H verifier 2, MAJOR): route the main-dim short-circuit by the TRUE main dim
