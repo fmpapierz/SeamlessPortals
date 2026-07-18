@@ -293,7 +293,11 @@ public class RendererUsingStencil extends PortalRenderer {
             + " layer=" + PortalRendering.getPortalLayer() + " [aperture INCR draw next] "
             + qouteall.imm_ptl.core.render.DrawCallTrace.mvTop());
         boolean anySamplePassed = PortalRenderInfo.renderAndDecideVisibility(portal, () -> {
-            renderPortalViewAreaToStencil(portal, modelView);
+            // S14.35 kill switch: skipping the INCR draw leaves stencil empty -> the window goes
+            // un-rendered while ON (expected side effect; attribution only).
+            if (!qouteall.imm_ptl.core.IPGlobal.debugSkipApertureIncr) {
+                renderPortalViewAreaToStencil(portal, modelView);
+            }
         });
 
         Profiler.get().pop();
@@ -326,7 +330,7 @@ public class RendererUsingStencil extends PortalRenderer {
         // The finally guarantees the layer stack balances; depth-restore + clamp stay AFTER (order
         // preserved — they need the popped layer, see the ViewAreaRenderer clipping note).
         try {
-            if (!portal.isFuseView()) {
+            if (!portal.isFuseView() && !qouteall.imm_ptl.core.IPGlobal.debugSkipDepthClear) {
                 Profiler.get().push("clear_depth_of_view_area");
                 clearDepthOfThePortalViewArea(portal);
                 Profiler.get().pop();
@@ -341,11 +345,13 @@ public class RendererUsingStencil extends PortalRenderer {
             // pop portal layer before restoring depth, for clipping, see ViewAreaRenderer
         }
 
-        if (!portal.isFuseView()) {
+        if (!portal.isFuseView() && !qouteall.imm_ptl.core.IPGlobal.debugSkipDepthRestore) {
             restoreDepthOfPortalViewArea(portal, modelView, thisPortalStencilValue);
         }
 
-        clampStencilValue(outerPortalStencilValue);
+        if (!qouteall.imm_ptl.core.IPGlobal.debugSkipStencilClamp) {
+            clampStencilValue(outerPortalStencilValue);
+        }
     }
 
     @Override

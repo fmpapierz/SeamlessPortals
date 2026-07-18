@@ -135,6 +135,11 @@ public class IPGlobal {
     public static boolean debugNoApertureDepthClamp = false;
     public static boolean debugFrameBoundaryProbe = false;
     public static boolean debugSkipPortalEntities = false;
+    // S14.35: per-draw kill switches for the four never-individually-levered portal draws.
+    public static boolean debugSkipApertureIncr = false;
+    public static boolean debugSkipDepthClear = false;
+    public static boolean debugSkipDepthRestore = false;
+    public static boolean debugSkipStencilClamp = false;
 
     public static boolean viewBobbingReduce = true;
     

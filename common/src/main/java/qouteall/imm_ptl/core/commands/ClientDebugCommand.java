@@ -636,6 +636,26 @@ public class ClientDebugCommand {
             "debug_skip_portal_entities",
             cond -> IPGlobal.debugSkipPortalEntities = cond
         );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_aperture_incr",
+            cond -> IPGlobal.debugSkipApertureIncr = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_depth_clear",
+            cond -> IPGlobal.debugSkipDepthClear = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_depth_restore",
+            cond -> IPGlobal.debugSkipDepthRestore = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_stencil_clamp",
+            cond -> IPGlobal.debugSkipStencilClamp = cond
+        );
         // S14.31: _enable arms ONE frame capture (self-clears); _disable is a no-op.
         registerSwitchCommand(
             builder,
