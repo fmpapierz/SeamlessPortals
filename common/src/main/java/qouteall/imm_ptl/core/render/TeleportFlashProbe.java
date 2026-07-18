@@ -101,6 +101,9 @@ public class TeleportFlashProbe {
      *  passes) vs normal dest arms — the standstill-churn attribution (fs=M+D in rows). */
     public static int foldSchedMainThisFrame = 0;
     public static int foldSchedDestThisFrame = 0;
+    /** S14.52: total dest-pass wall time this frame (dpMs=) — with dp=N, splits per-pass cost
+     *  from between-pass overhead in the many-portal superlinear-lag hunt. */
+    public static long destPassNanosThisFrame = 0;
 
     // For the rcLog marker (did RenderChainProbe write a 1Hz line since the previous row?).
     private static long lastSeenRcLogMs = 0;
@@ -142,9 +145,11 @@ public class TeleportFlashProbe {
         int destPasses = destPassesThisFrame;
         int foldM = foldSchedMainThisFrame;
         int foldD = foldSchedDestThisFrame;
+        long destPassNanos = destPassNanosThisFrame;
         destPassesThisFrame = 0;
         foldSchedMainThisFrame = 0;
         foldSchedDestThisFrame = 0;
+        destPassNanosThisFrame = 0;
         skyDrawsThisFrame = 0;
         portalSkyDrawsThisFrame = 0;
         skyTargetHashA = 0;
@@ -155,7 +160,8 @@ public class TeleportFlashProbe {
         try {
             ring[ringWrite] = collectRow(
                 frameMs, skyDraws, portalSkyDraws, targetA, targetB,
-                promoteNanos, discoveryNanos, vanillaYield, destPasses, foldM, foldD);
+                promoteNanos, discoveryNanos, vanillaYield, destPasses, foldM, foldD,
+                destPassNanos);
         }
         catch (Throwable t) {
             // The probe must never take down the frame.
@@ -178,7 +184,7 @@ public class TeleportFlashProbe {
     private static String collectRow(
         double frameMs, int skyDraws, int portalSkyDraws, int targetA, int targetB,
         long promoteNanos, long discoveryNanos, int vanillaYield, int destPasses,
-        int foldM, int foldD
+        int foldM, int foldD, long destPassNanos
     ) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.levelRenderer == null || mc.gameRenderer == null) {
@@ -247,6 +253,7 @@ public class TeleportFlashProbe {
             + (discoveryNanos > 0 ? " dMs=" + String.format("%.2f", discoveryNanos / 1.0e6) : "")
             + (vanillaYield >= 0 ? " vy=" + vanillaYield : "")
             + (destPasses > 0 ? " dp=" + destPasses : "")
+            + (destPassNanos > 0 ? " dpMs=" + String.format("%.2f", destPassNanos / 1.0e6) : "")
             + (foldM + foldD > 0 ? " fs=" + foldM + "+" + foldD : "")
             + (rcLogged ? " rcLog" : "");
     }

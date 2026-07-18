@@ -376,9 +376,14 @@ public class MyGameRenderer {
             // OUTER layer's world+camera, captured above before the swap) into the core so its
             // Globals-UBO + diffuse-lighting restore targets the outer layer under nesting, not the
             // layer-0 originals. At layer 1 these equal the originals (no rung-1 change).
+            // S14.52 zero-lag hunt (many-portal): whole-pass wall time, dpMs= in the kit rows —
+            // splits "the passes themselves are expensive" from "something BETWEEN passes is".
+            long dpT0 = System.nanoTime();
             SecondaryWorldRenderCore.renderDestWorld(
                 newWorld, worldRenderer, newCamera, renderDistance,
                 oldWorld, oldCamera);
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.destPassNanosThisFrame +=
+                System.nanoTime() - dpT0;
             profiler.pop();
         });
 
