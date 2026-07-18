@@ -1445,6 +1445,25 @@ verifies the `useShaderTransparency` re-anchor executed at S12.
 **(f) Rollback/flag:** `entityPortals=false` returns to block portals instantly (the two-way
 switch is why the old system survives until S20).
 
+**PROGRESS: S17 CLOSED — THE CUTOVER FLIP USER-SIGNED-OFF 2026-07-18** ("s17 sign off";
+commits `fd06032` + `c496b40`; port-note of record `S17-cutover-flip.md` §1-§6).
+`entityPortals` DEFAULT = TRUE on Fabric (missing dir/file/key paths; explicit false = the
+two-way switch until S20; Throwable path falls to block-era WITH a loud ratchet-down WARN;
+off-Fabric force-false unchanged). Pre-flip hardening landed (the two S14-ledgered items:
+capture-point window resolution closing the main-dim LOW residual + the sub-tick re-poison
+race; the setLevel re-arm assertion). The pre-flip guard sweep audited ALL 69 always-active
+mixins: 3 confirmed leaks gated (NetherPortalUninteractableMixin.continueDestroyBlock — the
+S16.2 fix's missed sibling; ServerLevelFireSpreadMixin self-gate; the NeoForge
+onServerTick block-era scan) + 2 defensive gates (HandleRespawnMixin — B4 superseded;
+ClientPacketListenerAddEntityAdoptMixin); 66 clean verdicts affirmed. CUTOVER_SPEC R4/R5
+FORMALLY SIGNED OFF (port-note §4): R4 all five obligations PROVEN (incl. the §1.4
+earlyRemoteUpload documented supersession); R5 all 16 rows + §2.2/§2.3 PROVEN; F18 Vulkan
+→ S18. THE (d) ROUND: 13/13 PASS (items 1-13 user-verdict good incl. step 13 Fabulous =
+R13i runtime-proven; logs audited — 64 IP-inherited ticket-noise errors, zero new classes;
+C4 A/B deferred to S18 by design). The >71-chunk same-dim dest residual AUTOMATED as
+gametest leg 7 — THE SUITE IS NOW 8 LEGS ALL GREEN (items ×2, F3 cow, pearl+relatives,
+generation ×2, >71-chunk store, datapack). Resume doc: `migration/S18_HANDOFF.md`.
+
 ### S18 — Trailing render periphery + R3 runtime delivery — effort L
 
 **(a) Contents** (API_RISKS verdict stage 3; R3 runtime half per D7):
