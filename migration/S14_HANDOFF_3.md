@@ -111,8 +111,11 @@ WHILE wiped → the log's `sogLoaded` vs `ldChunks` names it.
 - **S17**: THE DEFAULT FLIP + full 12-point regression checklist (briefing). Before the flip:
   re-check the block-era-guard sweep verdict (wdbmtoea8 output file, same tasks dir) — 2 guards
   re-keyed, ~10 confirmed block-era-only.
-- **S18**: R3 runtime + trailing render periphery (dest clouds/weather isolation; dest particles
-  through the window = IP deferred item ② in MixinParticleEngine / per-dim engines; C4 A/B again).
+- **S18**: R3 runtime + trailing render periphery — now THREE user-verified IP-parity items
+  (round-8 port-note §7): dest CLOUDS in the portal view (S13-J deviation, CloudContext-vs-single-
+  ring-buffer isolation), dest break PARTICLES through the window (deferred item ② in
+  MixinParticleEngine / per-dim engines), dest targeted-block OUTLINE through the window (new —
+  the decomposed dest pass has no hit-outline step). Plus dest weather isolation; C4 A/B again.
 - **S19**: ask the user per checkpoint C1 (default skip).
 - **S20**: cleanup/deletion — honor every §Ledger in port-notes S14A→S14C-round7 (the PUMP +
   RESOLVER + the two default guards SURVIVE S20 as permanent substrate; levers/probe/DrawCallTrace

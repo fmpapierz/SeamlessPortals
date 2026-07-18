@@ -6,8 +6,71 @@ target-hash disambiguation], rcLog zero-guard for the promote frame, post-dump s
 skyRenNull wording corrected — the sky-skip signature is skybox=NONE + main skyDraws=0, NOT
 skyRenNull, which addSkyPass makes non-null before its skybox gate)**; the aliasing question
 came back CLEAN (the dest pass writes an isolated CameraRenderState — TAIL reads are valid).
-Committed as S14.45 — awaiting the user's capture run, then classification vs original IP.
-NO root cause asserted yet (NO-GUESSING).
+Committed as S14.45. **CAPTURE RUN DONE (user, 4-5 worlds) → CLASSIFIED: candidate (a),
+capture-proven both directions (§5). Fix implemented (S14.46, §6) — Fable verify in flight.**
+
+## 5. Classification (from the user's capture, fabric/runs/client/logs/latest.log 23:46-23:48)
+
+User's felt report: "nether gets an OW flash in distance/fog/sky, OW gets a dark flash in
+distance/fog/sky" — matched EXACTLY by the rows:
+
+- **OW→nether (f=4759, warm):** frames 1-3 paint PURE OW atmosphere in the nether
+  (`fogCol=0.753,0.847,1.000`, fogDist env 0..1024 = OW-wide) with `probeFog=ffc0d8ff` showing
+  NO endpoint divergence — the probe's internal level pointer is still the OW world (phase 1:
+  it updates only in Camera.tick). Frame 4 (`f=4762`): endpoints split
+  `probeFog=ffc0d8ff->ff330808`, painted color lerps to nether dark-red over ~9 frames ≈ 1 tick
+  (phase 2: partialTickLerp). Total ~12 frames ≈ 90ms.
+- **Nether→OW (f=7625, warm):** symmetric — 2 frames of pure nether fog
+  (`fogCol=0.200,0.027,0.027`) AND a BLACK sky disc (`skyCol=0` while `skyDraws=6` — the OW sky
+  pass drawing with nether's SKY_COLOR=0), then the ~1-tick lerp to blue. The "dark flash".
+- **(b) sky-skip REFUTED:** skybox correct every frame both directions (NONE in nether,
+  OVERWORLD immediately on return; no zero-main-sky-draw OW frame). **(c) rainMult REFUTED:**
+  0.000 stable throughout.
+- **Stutter reading (same rows):** ONE ~20ms promote frame (baseline 5-6ms), no elevated tail,
+  compQ ≤ 43, `rcLog` marks the promote frame (part of its 20ms is the RenderChainProbe 1Hz
+  write — S20-removed anyway). The felt "stutter" is likely DOMINATED by the 90ms color flash
+  reading as jank + one dropped frame; re-assess feel after the fix, against the IP zero-lag
+  bar, before any perf work.
+
+## 6. The fix (S14.46): the missing 26.2 HALF of IP's per-dim fog swap
+
+`FogRendererContext.onPlayerTeleport` (the IP-analog site, already called at
+ClientTeleportationManager:551 after the level swap + player placement) swapped only the
+block-era static-field contexts — a 26.2 no-op (the fog statics are gone; smoothing moved into
+`Camera.attributeProbe`, which the crossing never touched — the half-ported-IP-call pattern
+again, memory portalview-light-engine-half-port). Fix: the method now also does
+`probe.reset()` + `probe.tick(client.level, client.player.getEyePosition())` — the next
+extract's lazily-created ValueProbes sample lastValue=newValue=dest → instant snap, killing
+BOTH phases. Fidelity: IP's literal saved-context restore degenerates to the same snap for any
+absence > 2 ticks (ValueProbe.tick evicts unread entries), so the snap IS the faithful 26.2
+re-expression. Vanilla's own dimension travel is untouched (it never routes through
+onPlayerTeleport and keeps its loading screen).
+
+NO root cause was asserted before the capture (NO-GUESSING held).
+
+## 7. Post-fix live round (user, 2026-07-18): FLASH GONE + three S18-family observations
+
+**"ran it, flash is gone"** — the fix is live-confirmed in both directions (formal close awaits
+the Fable verify verdict). Three further observations, all classified as the DEST-PASS
+TRAILING-PERIPHERY family (none are flash-fix regressions — the fix touches only the main
+camera probe at the crossing instant), all **user-verified present in original IP** → upgraded
+from deviations to confirmed IP-parity items for S18:
+
+1. **Dest clouds absent in the portal view** ("in nether, ow clouds dont render, they pop in
+   when you teleport to ow") — the documented S13-J deliberate deviation
+   (SecondaryWorldRenderCore ~:899-914): dest clouds mid-submit would rotate/fence the SINGLE
+   shared CloudRenderer ring buffers the main pass draws later the same frame;
+   renderPortalClouds is preserved-but-uncalled; the S18 work = IP's CloudContext per-dim
+   isolation reconciled with 26.2's single-renderer ring buffer.
+2. **Break particles absent in the portal view** (block breaks through the portal show no
+   particles in the dest world; source-dim particles fine) — deferred item ② since S14.40: the
+   dest-pass particle extract is cancelled (MixinParticleEngine round-5 guard — shared
+   accumulator corruption otherwise); S18 = IP's per-particle world filter / per-dim engines.
+3. **Targeted-block outline absent through the portal** (NEW ledger entry): the decomposed dest
+   pass has no hit-outline step (grep: zero outline sites in SecondaryWorldRenderCore);
+   LevelRendererBlockOutlineMixin only re-buckets the MAIN world's outline near portals.
+   Cross-portal block breaking works (server interaction fine) — only the dest-view outline
+   visual is missing. S18: submit the transformed hit outline inside the dest pass.
 
 ## 0. The observations (user, 2026-07-17, same round that closed the far-walk wipe)
 

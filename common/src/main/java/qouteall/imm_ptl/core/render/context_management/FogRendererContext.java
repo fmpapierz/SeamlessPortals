@@ -176,8 +176,37 @@ public class FogRendererContext {
         }
     }
 
+    /**
+     * S14.46 — the TELEPORT-FLASH fix (capture-proven, port-note S14C-round8): the 26.2 HALF of
+     * IP's per-dimension fog swap. The block-era half below swaps this class's static-field
+     * contexts (a 26.2 no-op — the fog statics are gone), but 26.2 moved ALL atmospheric
+     * smoothing (FOG/SKY/CLOUD colors, fog distances) into the retained
+     * {@code Camera.attributeProbe}, which the crossing never touched — the capture shows the
+     * exact two-phase far-pixel flash: (1) the probe's internal level/position update only in
+     * {@code Camera.tick}, so until the next client tick every sample still comes from the
+     * SOURCE dim (2-3 frames of pure source fog/sky — "nether gets an OW flash", and the OW
+     * return paints a black sky disc from nether's SKY_COLOR=0); (2) then partialTickLerp blends
+     * source→dest over one more tick. Vanilla hides this behind its dimension loading screen;
+     * seamless crossing exposes it. IP solved it with the per-dim context swap re-expressed
+     * here: reset the probe and immediately re-tick it against the DEST world at the arrival
+     * position — the next extract's lazily-created ValueProbes then sample lastValue=newValue=
+     * dest (an instant snap, no lerp). NOTE on fidelity: restoring a SAVED per-dim probe (IP's
+     * literal swap semantics) degenerates to this same snap for any absence > 2 ticks —
+     * ValueProbe.tick evicts entries not read since the last tick — so the snap IS the faithful
+     * 26.2 re-expression; only sub-2-tick double-crossings would differ, and they snap correctly
+     * too (each crossing re-snaps to the then-current dim).
+     */
     public static void onPlayerTeleport(ResourceKey<Level> from, ResourceKey<Level> to) {
         swappingManager.updateOuterDimensionAndChangeContext(to);
+
+        Minecraft client = Minecraft.getInstance();
+        // mc.level is already the dest world here (changePlayerDimension swaps it before this
+        // call), and the player already stands at the arrival position.
+        if (client.gameRenderer != null && client.level != null && client.player != null) {
+            var probe = client.gameRenderer.mainCamera().attributeProbe();
+            probe.reset();
+            probe.tick(client.level, client.player.getEyePosition());
+        }
     }
 
 }
