@@ -143,6 +143,18 @@ as the crossing seed). Confirmed by the verify: the keyless-config ratchet-UP is
 safety at both legitimate armers, HandleRespawnMixin's writer-audited flag-ON inertness,
 and the NeoForge class-load-ordering safety.
 
-## 6. (d) — the full 12-point regression round (user-gated)
+## 6. (d) — the full 12-point regression round (2026-07-18): ALL PASS
 
-(pending READY)
+User verdicts: items 1-6 "good"; 7 straddle PASS on the default mechanism (the C4 A/B
+question answered: the meaningful comparison is DEFERRED TO S18 BY DESIGN — Mechanism B's
+draw call site lands there; nothing more to do this round); 8 "i think its good"; 9 good;
+10 "working, tested for vertical/horizontal too" (large/tall/orientation live-PASS;
+negative-coords machine-proven legs 6a/6b; the >71-chunk same-dim dest residual was
+log-inconclusive → AUTOMATED as gametest leg 7: portal C dest ~81 chunks from destA, both
+in view 150 ticks, client-coherence net — the suite is now 8 legs); 11 log-audited GOOD
+(72 errors = 64 IP-INHERITED chunk-ticket noise (S14.52 classification) + dev-env auth
+chatter, ZERO new classes; WARNs = the IP-faithful fresh-arrow guard + vanilla sound noise
++ IP's own two advisories — the Fabulous advisory doubling as proof step 13 exercised
+Fabulous); 12 good; 13 good (R13i runtime-proven — the last in-stage R5 residual closed).
+
+**S17 (d): 13/13 PASS. The cutover flip holds.**

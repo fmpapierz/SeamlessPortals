@@ -240,6 +240,42 @@ public class CrossingSmoke implements FabricClientGameTest {
             // arrives in the nether near the dest AND the client survives with a COHERENT
             // player/level pair (the disconnect would fail both). Runs LAST — it moves the
             // player. ----
+            // ---- Leg 7 (S17 sign-off residual, automated): the R4 >71-chunk same-dim
+            // dest check. The retired latent bug: two same-dim portal DESTS >71 chunks
+            // apart collided in the old bounded client store (memory walking-limbo);
+            // the C3-approved unbounded ImmPtlViewArea rebuild retires it. Net: portal C
+            // (dest ~1300 blocks / ~81 chunks from leg-1's destA), BOTH portals held in
+            // the rendered view for 150 ticks — the collision class corrupts/crashes the
+            // client store; survival + coherence is the crash-class regression net (the
+            // visual half stays eyeball-only, S17 round PASSED it live). ----
+            runCommands(context, List.of(
+                "forceload add 1384 1384 1416 1416"
+            ));
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                spawnTestPortal(ow, new Vec3(px - 3.5, py + 1.5, planeZ),
+                    Level.OVERWORLD, new Vec3(1400.5, 250.0, 1400.5));
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "leg 7: far-dest same-dim portal C spawned (dest 1400,250,1400 — "
+                        + "~81 chunks from destA)");
+            });
+            context.runOnClient(mc -> {
+                mc.player.setYRot(180f); // face the portal row (north of the platform)
+                mc.player.setXRot(0f);
+            });
+            context.waitTicks(150);
+            String leg7State = context.computeOnClient(mc -> {
+                if (mc.player == null || mc.level == null) return "player/level null";
+                if (mc.player.level() != mc.level) return "player/level incoherent";
+                return "OK";
+            });
+            if (!leg7State.equals("OK")) {
+                throw new AssertionError(LOG + "leg 7 (>71-chunk same-dim dests) FAILED: "
+                    + leg7State + " — the unbounded-store retirement regressed");
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "leg 7 PASS — both far-dest same-dim portals rendered 150 ticks, client coherent");
+
             // The vanilla branch preserves the owner's ROTATION+DELTA as RELATIVES
             // (Relative.union(ROTATION, DELTA)); the first fix cut dropped them (verify
             // wf_30866195-b9f BLOCKER: empty relatives → zeroed momentum + snapped
