@@ -79,15 +79,16 @@ user's IP side-by-side (instance `C:\Users\warwa\curseforge\minecraft\Instances\
 ip`, MC 1.21.1 + IP 6.0.6, no Sodium/Iris) feels ZERO-lag; ours hitches → same capture kit
 profiles it; "inherent mesh cost" may NOT be asserted without numbers.
 
-State: Opus enumeration DONE (`wf_92129b0d-5f7`, 74 sites); capture kit IMPLEMENTED, Fable
-kit-verify **PASS** (`wf_a144117b-011`, aliasing CLEAN, 4 MINORs folded), compile GREEN,
-**committed as S14.45 + pushed; READY issued for the CAPTURE RUN.** Port-note
-**`S14C-round8-teleport-flash.md`** has everything: candidates, row schema, kit-verify-corrected
-signatures, capture protocol (§3 — crossings auto-dump `==== TELEPORT-FLASH CAPTURE ====`
-blocks; user hands over latest.log + the IP-side horizon-crossing flash check in the 1.21.1
-instance). NEXT SESSION RESUME = read the user's capture blocks → classify flash (a/b/c or
-GPU-escalation via DrawCallTrace) + stutter profile vs the IP zero-lag bar → THEN fix design
-(Fable) with a Fable verify round. Then §3 items (sign-off etc.) and the §4 ladder.
+State (read port-note `S14C-round8-teleport-flash.md` §1-§12 — it is the whole ledger): FLASH
+CLOSED (S14.46, user-confirmed); PHANTOM ROCKET CLOSED (S14.47, log-clean); crossing lag fixed
+via the WARM GATE + TRACKER CONTINUITY (S14.48 @ 0786d21, re-verify PASS, user "a lot better",
+block breaking clean, no holes). OPEN THREADS (S14.49 instrumentation built, verify
+`wf_9cb676c5-b4a` in flight at last save): (1) the superflat BOUNDARY SHADOW —
+`debug_dump_light_section` discriminator lever, protocol + reading table in §12; (2)
+MANY-PORTAL steady-state lag — `dp=` row field; regress ms-vs-dp from the next capture, then
+IP side-by-side the SAME portal-count scene. On verify PASS: commit S14.49 + push + READY
+(shadow dump on a shadowed + a healthy block; normal play for dp rows). Then classification →
+fix (Fable verify) → §3 sign-off → the §4 ladder.
 
 Then: fold findings (BLOCKER/MAJOR before READY) → commit → push → **READY + retest protocol**
 (port-note §4): far-walk 200+ → wait ~1 min → return → cross (both directions, repeat step 7's

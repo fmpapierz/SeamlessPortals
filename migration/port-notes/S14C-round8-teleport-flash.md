@@ -173,7 +173,41 @@ better"). BUT verify round 1 (`wf_33dda3b2-9f5`) FAILed the naive yield-only gat
   return = the wave. Exonerated: `onResourceManagerReload` (only sets shouldResetSkyRenderer).
   Fix: TRACKER CONTINUITY — capture fromDim's live tracker before the promote overwrites the
   field; the demote reuses it (pending dirty-marks survive exactly; null-guard falls back to
-  fresh). Re-verify (`wf_0abb365a-666`) in flight.
+  fresh). Re-verify (`wf_0abb365a-666`) PASS (2 MINORs folded: the MIN_VALUE comment correction
+  + this note's §10 rewritten to the shipped design). S14.48 @ `0786d21`. Post-S14.48 live
+  round: block breaking clean (tracker holds), no arrival holes (origin gate holds).
+
+## 12. S14.49 — the OPEN threads' instrumentation (shadow discriminator + many-portal cost)
+
+Two observations from the many-portal live round, both instrumented (NO GUESSING):
+
+1. **The superflat boundary shadow** (user: a 50-100-block horizontal shadow band + two
+   receding legs on distant grass around a new distant portal; a block update there clears it):
+   suspected = sections MESHED before (neighbor) light arrived, the light→remesh signal lost;
+   previously masked by the phantom all-dirty remesh wave S14.48 removed. NOT yet confirmed —
+   `debug_dump_light_section` (LightSectionDump) dumps the crosshair section's engine light
+   values / chunkFull / lightOnInColumn / tracker SectionDirtyState (new accessor) / mesh
+   class-vs-UNCOMPILED / SOG membership in one line. Protocol: dump on a SHADOWED block, then a
+   HEALTHY one for contrast. **User confirmations (refined observation):** grid-aligned-ish
+   edges with GAPS; legs point TOWARD the player and are short; sometimes CONCENTRIC square
+   borders smaller→larger ("if i cross into the area while the distant chunk build edge is
+   receding") — i.e., frozen chunk-STREAMING-RING boundary seams; area = freshly streamed
+   (nether portal to OW +5000 blocks); stable until a block update. Sharpened suspect: the
+   dest-pass compile path schedules boundary sections BEFORE vanilla's hasAllNeighbors
+   deferral would (all 8 neighbor chunks + lightOnInColumn), baking dark seams and CONSUMING
+   the one-shot dirty flag (the ow-holes rule: "extract() consumes one-shot dirty flags") —
+   the later neighbor-arrival never re-marks. Predicted dump on a shadow: sky=15 + compiled
+   mesh + dirty=false (the lost-signal case). Await the dump before any fix. Reading: sky=15 + mesh compiled + dirty=false = light data correct,
+   mesh stale, no pending remesh (the lost-signal case → fix the light→setSectionDirty plumbing
+   for portal-loaded chunks); sky=0 = the DATA is wrong (→ loader/packet path); dirty=true = a
+   compile-scheduling stall instead. Await the user's screenshot-adjacent confirmations too:
+   section-grid-aligned edges? freshly-streamed area? stable until block update?
+2. **Many-portal steady-state lag** (142 non-promote frames ≥25ms with many portals; small
+   visSec, empty compQ — the per-frame dest-pass scaling): `dp=` row field counts dest passes
+   (incl. nesting layers) per frame — regressing ms against dp across a capture names the
+   per-portal cost; then compare the same scene against the IP instance (its zero-lag bar was
+   measured on teleporting, not necessarily many-portal scenes — get the IP-side feel for the
+   SAME portal count before judging parity).
 
 ## 0. The observations (user, 2026-07-17, same round that closed the far-walk wipe)
 
