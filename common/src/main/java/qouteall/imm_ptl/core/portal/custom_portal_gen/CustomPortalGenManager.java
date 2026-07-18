@@ -99,6 +99,20 @@ public class CustomPortalGenManager {
         
         IPPerServerInfo perServerInfo = IPPerServerInfo.of(server);
         perServerInfo.customPortalGenManager = manager;
+
+        // S16 commit-1 probe (once per server start / reload — server thread, never per-frame):
+        // proves at runtime that (a) the PortalGenForm static codec registry populated (expect
+        // 7+ once class-init ran via the CODEC chain above; intrinsic forms add more at S16
+        // commit 2), (b) both datapack dynamic registries resolved on the real Fabric runtime
+        // (lookupOrThrow did not throw to reach this line), (c) the manager bucketed its
+        // entries. Demoted/retired at S16 commit 3 per the plan.
+        LOGGER.info(
+            "[S16 gen-state] forms registered: {}; datapack entries: {} (+{} legacy); "
+                + "manager buckets: useItem={} throwItem={} conv={}",
+            qouteall.imm_ptl.core.portal.custom_portal_gen.form.PortalGenForm.CODEC_REGISTRY.size(),
+            registry.size(), legacyRegistry.size(),
+            manager.useItemGen.size(), manager.throwItemGen.size(), manager.convGen.size()
+        );
     }
     
     private void addEntry(
