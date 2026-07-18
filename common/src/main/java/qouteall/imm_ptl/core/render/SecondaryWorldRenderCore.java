@@ -1142,6 +1142,12 @@ public class SecondaryWorldRenderCore {
             mv.mul(destViewMatrix);
             try {
                 acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
+                // S18 Mechanism-B dest-pass draw site (PerEntityClipBracket design §2.1.3, decided):
+                // drain this pass's deferred one-entity brackets INSIDE the pushed dest view matrix
+                // and the armed inner clip + stencil, right after the pass's own feature draws —
+                // the dest-pass analog of IP's end-of-entity-rendering immediate draws. Inert under
+                // Mechanism A (empty deferred list).
+                qouteall.imm_ptl.core.render.PerEntityClipBracket.drawBracketedEntitiesIfAny(storage);
             } finally {
                 mv.popMatrix();
             }
@@ -1277,6 +1283,11 @@ public class SecondaryWorldRenderCore {
                 mv.mul(destViewMatrix);
                 try {
                     sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
+                    // S18 Mechanism-B same-dim draw site (mirrors renderPortalEntities): drain the
+                    // brackets this pass's submitEntities deferred (keyed by sameDimSubmitStorage),
+                    // inside the same matrix/clip/stencil scope. Inert under Mechanism A.
+                    qouteall.imm_ptl.core.render.PerEntityClipBracket
+                        .drawBracketedEntitiesIfAny(sameDimSubmitStorage);
                 } finally {
                     mv.popMatrix();
                 }
@@ -1292,7 +1303,11 @@ public class SecondaryWorldRenderCore {
             // dead-latch. Storage replacement (not drain) — the old instance may hold nodes
             // submitted before the throw, and a stuck-open PreparedFrame makes every later
             // renderAllFeatures throw anyway; three strikes disables the pass for the session.
+            // S18: evict the replaced storage's seam state first (its PassState + phase
+            // registrations would otherwise linger keyed to a dead identity, with any deferred
+            // Mechanism-B brackets orphaned).
             sameDimEntityThrowCount++;
+            qouteall.imm_ptl.core.render.PerEntityClipBracket.evictPassState(sameDimSubmitStorage);
             sameDimSubmitStorage = new net.minecraft.client.renderer.SubmitNodeStorage();
             if (!sameDimEntitiesSwallowLogged) {
                 sameDimEntitiesSwallowLogged = true;

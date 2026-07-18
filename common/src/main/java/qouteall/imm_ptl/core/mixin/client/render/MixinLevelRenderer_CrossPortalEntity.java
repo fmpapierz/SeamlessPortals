@@ -56,7 +56,8 @@ import qouteall.imm_ptl.core.render.PerEntityClipBracket;
  * {@code LevelRenderer.render:170-172}); the exact equivalence + the extract-vs-render timing of this
  * submit-side anchor vs the driver's persistent store finalise at S13 (design §6; CUTOVER_SPEC §4).
  *
- * <p>Held/UNREGISTERED; registered into the S12 client-mixin set, activated flag-ON at S13.
+ * <p>REGISTERED + LIVE (seamlessportals-ip-client.mixins.json "client" array) — fires per pass on every
+ * LevelRenderer instance (main + secondaries + the same-dim scratch submit) since S13.
  */
 @Mixin(LevelRenderer.class)
 public abstract class MixinLevelRenderer_CrossPortalEntity {

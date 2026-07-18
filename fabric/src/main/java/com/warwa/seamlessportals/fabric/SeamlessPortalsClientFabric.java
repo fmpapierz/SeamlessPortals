@@ -73,8 +73,11 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // block-era StencilPortalRenderer.renderPortals() (the else-branch below). This is the strict
             // first-missing link and the direct cause of the invisibility; it makes the renderer RUN.
             //
-            // Recursion guard: renderPortalContent recursively calls renderLevel on the destination, which
-            // re-fires this event; re-running prepareRendering() there would clear the OUTER portal's
+            // Recursion guard (S18 doc correction — the landed S13-H decomposition never recurses
+            // renderLevel: SecondaryWorldRenderCore hand-drives renderGroup/renderAllFeatures, so
+            // Level render events do NOT re-fire for dest passes; the guard below is DEFENSIVE).
+            // Original S13-G rationale, kept for history: re-running prepareRendering() inside a
+            // nested pass would clear the OUTER portal's
             // stencil mid-render. IP was structurally immune (prepareRendering fired once per frame at
             // GameRenderer.render, not on the recursive renderLevel; onBeforeTranslucentRendering re-fired
             // per pass for nested portals). The mod's single per-renderLevel seam reproduces the essential
@@ -113,6 +116,18 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
                 IPCGlobal.renderer.onBeforeTranslucentRendering(modelView);
                 IPCGlobal.renderer.finishRendering();
             });
+
+            // ===== S18: Mechanism-B main-pass draw site (R3 seam, design §2.1.3 decided) =====
+            // Fires inside the main-pass framegraph lambda AFTER the entity feature phases
+            // (solid/translucent/outline) execute and BEFORE translucent terrain — IP's exact
+            // end-of-entity-rendering slot, so translucent terrain still tints bracketed entities
+            // drawn behind it (drawing at AFTER_TRANSLUCENT_TERRAIN would depth-reject them:
+            // translucent terrain writes depth). Thin timing driver only; all logic is common-side
+            // (F12). Inert under Mechanism A and with no straddling entities (one map lookup).
+            // Dest passes have their own direct call sites in SecondaryWorldRenderCore (no
+            // framegraph runs there — this event never fires for them).
+            LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
+                qouteall.imm_ptl.core.render.PerEntityClipBracket.onMainPassBeforeTranslucentTerrain());
 
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (client); "

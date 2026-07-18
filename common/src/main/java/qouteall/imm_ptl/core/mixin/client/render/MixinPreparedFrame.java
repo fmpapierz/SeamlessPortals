@@ -32,10 +32,14 @@ import qouteall.imm_ptl.core.render.PerEntityClipBracket;
  * {@code PreparedFrame} instance. {@code executePhase} is called sequentially per pass (never re-entrant within
  * one {@code PreparedFrame}); a nested dest {@code LevelRenderer} pass uses a DIFFERENT
  * {@code FeatureRenderDispatcher}/{@code PreparedFrame} instance, so its bracket state is naturally isolated.
- * The RETURN restore fires on normal completion; hardening the (exceptional) throw path is an S13 runtime item
- * (the whole per-{@code PassState} recursion behaviour is a named S13 rung-1 check, S11-R3 §6).
+ * The RETURN restore fires on normal completion; the (exceptional) throw path is KNOWN-OPEN and accepted
+ * (S18 port-note ledger): a throw inside {@code executePhase} skips the RETURN restore, but on the main
+ * path nothing above swallows — the frame dies anyway (vanilla behavior for a feature-renderer throw), so
+ * the leaked plane never draws. The seam's own dispatcher path IS throw-fenced (S18:
+ * {@code PerEntityClipBracket.drawBracketedEntitiesIfAny} try/finally + 3-strike dead-latch).
  *
- * <p>Held/UNREGISTERED; registered into the S12 client-mixin set, activated flag-ON at S13.
+ * <p>REGISTERED + LIVE (seamlessportals-ip-client.mixins.json "client" array) — brackets every
+ * executePhase on every dispatcher instance (main + secondaries + the seam's own) since S13.
  */
 @Mixin(FeatureRenderDispatcher.PreparedFrame.class)
 public class MixinPreparedFrame {

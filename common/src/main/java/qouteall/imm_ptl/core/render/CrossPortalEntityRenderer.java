@@ -85,8 +85,8 @@ import java.util.WeakHashMap;
  * <p><b>Expected forward-refs (documented debt, design §3.4; NOT translation slips):</b>
  * {@code render.renderer.PortalRenderer} (IP {@code :34,:386} — U10/S12). Everything else this class
  * consumes (IEEntity duck, PortalCollisionHandler/Entry, IrisInterface, Mirror, context_management,
- * McHelper/CHelper/Helper) is landed. Held/inert until S13; runtime wiring (anchor mixins + A/B verdict)
- * trails S18.
+ * McHelper/CHelper/Helper) is landed. LIVE since S13 (anchor mixins registered + firing); Mechanism B's
+ * draw sites landed at S18 — only the C4 A/B live verdict remains.
  */
 @Environment(EnvType.CLIENT)
 public class CrossPortalEntityRenderer {
@@ -109,6 +109,10 @@ public class CrossPortalEntityRenderer {
 
     private static void cleanUp() {
         collidedEntities.clear();
+        // S18 (design §1.2.5): reset the seam's identity maps alongside the collided set at the same
+        // cleanup boundaries (world unload + dynamic dimension removal), so discarded renderers'
+        // storages and stale phase registrations don't accumulate across dimension churn.
+        PerEntityClipBracket.onClientCleanup();
     }
 
     private static void onClientTick() {
