@@ -791,6 +791,18 @@ public class ClientDebugCommand {
                 }
             }
         );
+        // S14.49: _enable dumps ONE light/mesh/tracker discriminator line for the crosshair
+        // section (the superflat boundary-shadow hunt — run on a SHADOWED block, then once on a
+        // healthy one for contrast); _disable is a no-op.
+        registerSwitchCommand(
+            builder,
+            "debug_dump_light_section",
+            cond -> {
+                if (cond) {
+                    qouteall.imm_ptl.core.render.LightSectionDump.dump();
+                }
+            }
+        );
         registerSwitchCommand(
             builder,
             "cloud_optimization",

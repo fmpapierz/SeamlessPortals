@@ -94,6 +94,9 @@ public class TeleportFlashProbe {
      *  (-1 = no applyFrustum this frame). dMs present on the same row = the discovery branch
      *  ran (blank-ish yield); absent = the warm vanilla fill was kept. */
     public static int vanillaYieldThisFrame = -1;
+    /** S14.49 (the many-portal steady-state lag): dest passes rendered this frame (incl.
+     *  nesting layers) — regressing row ms against dp names the per-portal cost. */
+    public static int destPassesThisFrame = 0;
 
     // For the rcLog marker (did RenderChainProbe write a 1Hz line since the previous row?).
     private static long lastSeenRcLogMs = 0;
@@ -132,6 +135,8 @@ public class TeleportFlashProbe {
         long promoteNanos = promoteNanosThisFrame;
         long discoveryNanos = discoveryNanosThisFrame;
         int vanillaYield = vanillaYieldThisFrame;
+        int destPasses = destPassesThisFrame;
+        destPassesThisFrame = 0;
         skyDrawsThisFrame = 0;
         portalSkyDrawsThisFrame = 0;
         skyTargetHashA = 0;
@@ -142,7 +147,7 @@ public class TeleportFlashProbe {
         try {
             ring[ringWrite] = collectRow(
                 frameMs, skyDraws, portalSkyDraws, targetA, targetB,
-                promoteNanos, discoveryNanos, vanillaYield);
+                promoteNanos, discoveryNanos, vanillaYield, destPasses);
         }
         catch (Throwable t) {
             // The probe must never take down the frame.
@@ -164,7 +169,7 @@ public class TeleportFlashProbe {
 
     private static String collectRow(
         double frameMs, int skyDraws, int portalSkyDraws, int targetA, int targetB,
-        long promoteNanos, long discoveryNanos, int vanillaYield
+        long promoteNanos, long discoveryNanos, int vanillaYield, int destPasses
     ) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.levelRenderer == null || mc.gameRenderer == null) {
@@ -232,6 +237,7 @@ public class TeleportFlashProbe {
             + (promoteNanos > 0 ? " pMs=" + String.format("%.2f", promoteNanos / 1.0e6) : "")
             + (discoveryNanos > 0 ? " dMs=" + String.format("%.2f", discoveryNanos / 1.0e6) : "")
             + (vanillaYield >= 0 ? " vy=" + vanillaYield : "")
+            + (destPasses > 0 ? " dp=" + destPasses : "")
             + (rcLogged ? " rcLog" : "");
     }
 

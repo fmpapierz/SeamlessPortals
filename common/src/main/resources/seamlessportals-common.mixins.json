@@ -31,6 +31,7 @@
     "client.ParticleEngineAccessorMixin",
     "client.LocalPlayerMixin",
     "client.ChunkPacketGuardMixin",
+    "client.SectionDirtyStateAccessor",
     "client.SectionOcclusionGraphAccessorMixin",
     "client.SectionOcclusionGraphPartialUpdateSkipMixin",
     "client.LevelExtractorFlashBridgeMixin",

@@ -451,6 +451,8 @@ public class SecondaryWorldRenderCore {
         float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
         ResourceKey<Level> destDim = destLevel.dimension();
         Vec3 destCameraPos = newCamera.position();
+        // S14.49: many-portal cost accounting (dp= in the flash-probe row).
+        TeleportFlashProbe.destPassesThisFrame++;
 
         DrawCallTrace.record(">>> renderDestWorld dim=" + destDim.identifier()
             + " layer=" + PortalRendering.getPortalLayer() + " " + DrawCallTrace.mvTop());
