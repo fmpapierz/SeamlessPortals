@@ -32,6 +32,21 @@ public abstract class MixinGlCommandEncoder_DrawTrace {
                 label = "<label threw: " + t + ">";
             }
             DrawCallTrace.record("PASS " + label);
+            // S14.32: attribute every IMMEDIATE-mode pass (PreparedRenderType buffer-source draws
+            // — the unowned line-49 suspect class) to its CALLER via a compact filtered stack.
+            if (label.startsWith("Immediate draw")) {
+                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                int emitted = 0;
+                for (StackTraceElement e : stack) {
+                    String c = e.getClassName();
+                    if (c.contains("qouteall") || c.contains("seamlessportals")
+                        || c.contains("net.minecraft.client")
+                    ) {
+                        DrawCallTrace.record("    at " + c + "." + e.getMethodName() + ":" + e.getLineNumber());
+                        if (++emitted >= 10) break;
+                    }
+                }
+            }
         }
     }
 }
