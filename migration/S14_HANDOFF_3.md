@@ -114,7 +114,10 @@ WHILE wiped → the log's `sogLoaded` vs `ldChunks` names it.
   clip-mechanism switch** (`IPGlobal.crossPortalEntityClipMechanism`) at every entity live test
   (user decision memory c3-c4). Watch: the round-5 particle guard's A/B lever during rain/particle
   scenes; the MEDIUM amplifier (portal-cone compiles a beat late after far-walk crossings —
-  expected, self-healing).
+  expected, self-healing). **+ Two user-spotted items (round-8 §16):** the player's own body is
+  NOT visible through recursive portals (IP shows it; ours only a split-second at crossing —
+  the render-player-itself feature), and entities are invisible in layer-≥2 recursive views
+  (layer-1 works). Both = dest-pass entity rendering at nested layers.
 - **S16**: nether portal generation (U12 remainder) — rung 4, obsidian portals.
 - **S17**: THE DEFAULT FLIP + full 12-point regression checklist (briefing). Before the flip:
   re-check the block-era-guard sweep verdict (wdbmtoea8 output file, same tasks dir) — 2 guards

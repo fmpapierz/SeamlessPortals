@@ -324,6 +324,31 @@ the flag-OFF block-era M1 split ledgered out-of-scope). S14.51 @ `95a31fa`.
   across crossings) is recorded as a planned deviation in the BRIEFING §5 backlog.
 - Round-8 remaining OPEN: the many-portal `dp=` cost regression (any multi-portal capture) +
   the IP same-scene bar. Everything else in this note is CLOSED.
+
+## 16. The many-portal verdict (S14.52 capture + IP same-scene bar) → S18 PARITY-GAP ledger
+
+**User's IP bar (two runs):** ours is now "like IP — only laggy when looking at portals," but
+"a little more laggy than IP when viewing multiple portals." **dpMs attribution:** the cost is
+INSIDE the passes (74-86% of frame where nesting is shallow); sustained states: dp=1 = 6.9ms
+(fine), the 5-6-pass cluster = 19-44ms (52→23fps). Per-pass cost grows with the recursion tree
+(portals seeing portals — dp counts layers; IP pays the same tree, capped 5, slightly cheaper).
+KNOWN INSTRUMENT ARTIFACT: the dpMs bracket double-counts nested passes (parent includes
+children; fix = top-level-only accumulation) — dp≥5 dpMs values are inflated; the dp=2-4
+buckets carry the clean signal. compQ=0 and fs=0+N throughout (compiles + F1 exonerated).
+
+**ROUTED TO S18 (polish-class parity gap, NOT an S14 defect):** candidates for that work —
+(a) nested-portal culling parity vs IP (aperture-size/frustum culling of portal-in-portal
+passes; IP's renderable-square gating), (b) per-pass fixed overhead (~2.2ms at dp=1 — measure
+IP's single-portal cost), (c) fix the dpMs bracket to top-level-only first. The IP-side log
+also showed "Chunk loading failure" errors — OUR ImmPtlChunkTickets noise is IP-INHERITED;
+watch item CLOSED.
+
+**Two S15 items from the same runs (user-spotted, correctly routed):** (1) the player CANNOT
+see their own body through recursive portals (IP: visible; ours: only a split-second during
+the crossing) — the render-player-itself feature in portal views; (2) entities are NOT visible
+in RECURSIVE (layer ≥2) portal views (layer-1 entity rendering works, S14-confirmed). Both =
+the dest-pass entity-render scope at nested layers → the S15 entity-traffic stage's watch
+list.
 2. **Many-portal steady-state lag** (142 non-promote frames ≥25ms with many portals; small
    visSec, empty compQ — the per-frame dest-pass scaling): `dp=` row field counts dest passes
    (incl. nesting layers) per frame — regressing ms against dp across a capture names the
