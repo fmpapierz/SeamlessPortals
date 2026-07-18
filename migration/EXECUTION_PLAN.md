@@ -1269,6 +1269,23 @@ default — gradual fade-in is FAITHFUL, not a defect), per-dim fog/lightmap (R9
 **(e) Regression items:** 1, 2, 8, 9, 10, 12.
 **(f) Rollback/flag:** flag OFF default; revert fixes individually.
 
+**PROGRESS: S14 CLOSED — rung 2 SIGNED OFF by the user 2026-07-18** (commit series S14.1→S14.52,
+final `0645a6b`; port-notes S14A → `S14C-round8-teleport-flash.md` — round 8 §1-§16 is the
+defect ledger of record). All (d) steps PASS (step 8's window-through-water-fog user-verified
+IP-authentic → briefing §5 deviation; step 6 window rain visuals S18). Closed live-defect
+sagas, each root-caused → Fable-verified → user-confirmed: the sky wedges (gizmo trio),
+far-walk terrain wipe (delta pump + readiness gate + cold pre-resolve), teleport flash (the
+attributeProbe snap — IP's fog-swap 26.2 half), phantom boost rocket (third-path skip + orphan
+discard under player reuse — NOTE: S15's F2 item effectively PRE-COMPLETED live:
+reproduced-on-the-IP-path log-proven, applied, verified), crossing lag (warm gate + tracker
+continuity; 15-35ms → 7.5-19ms), the boundary shadows (frontier deferral + the light
+poll→publish adjacency restoration + main-dim arm guard). Classified IP-authentic by user
+side-by-side: crossing far-chunk unload/reload, chunk-loading-failure log noise. Routed
+forward: S18 gains the multi-portal parity gap + dest clouds/particles/block-outline; S15
+gains the recursion entity items (player self-render, layer≥2 entities); briefing §5 gains
+the full-32-RD keep-loaded toggle deviation. Bonus user-confirmed: entities visible through
+windows. Resume doc: `migration/S15_HANDOFF.md`.
+
 ### S15 — Bring-up rung 3: entity traffic + F2/F3 + gametest — effort M
 
 **(a) Contents:** bring-up fixes for non-player crossings via the ONE unified path
