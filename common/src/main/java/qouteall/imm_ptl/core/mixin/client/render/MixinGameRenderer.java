@@ -130,6 +130,11 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
                     + " stencilRef=" + org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_STENCIL_REF)
                     + " clipCap=" + org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL30.GL_CLIP_DISTANCE0)
                     + " plane=(" + clip.x + "," + clip.y + "," + clip.z + "," + clip.w + ") planeEnabled=" + clip.enabled
+                    // S14.30 (round-5 discriminator): the value addSkyPass gates on — pins whether
+                    // the current dim can have a vanilla sky pass at all.
+                    + " skybox=" + (net.minecraft.client.Minecraft.getInstance().level != null
+                        ? net.minecraft.client.Minecraft.getInstance().level.dimensionType().skybox()
+                        : "null")
                 );
             }
         }

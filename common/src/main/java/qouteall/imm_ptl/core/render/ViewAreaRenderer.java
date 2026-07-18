@@ -193,25 +193,23 @@ public class ViewAreaRenderer {
     }
 
     // S13-I nested-layer fix: standalone projection UBO for the portal-area draw, the 26.2 re-expression
-    // of IP's shader.PROJECTION_MATRIX.set (IP ViewAreaRenderer.java:88). Mirrors the proven
-    // SecondaryWorldRenderCore.writeProjectionSlice idiom (§1 Step 7) VERBATIM: write the Matrix4f into a
-    // 64-byte std140 UNIFORM buffer and hand RenderSystem its slice. A fresh core-owned GpuBuffer per
-    // call, retained in this static ONLY until the next call overwrites it — do NOT close the old one
-    // (the GPU may still be reading it); dropping the last reference lets GC reclaim the native handle.
-    // Kept LOCAL to ViewAreaRenderer (its own field, never SecondaryWorldRenderCore's) so a nested draw
-    // never disturbs the ambient dest-projection buffer this same draw saves + restores.
-    private static GpuBuffer viewAreaProjGpuBuffer;
-
+    // of IP's shader.PROJECTION_MATRIX.set (IP ViewAreaRenderer.java:88).
+    // S14.30: the old "GC reclaims the native handle" retention static was FALSE (blaze3d has no
+    // Cleaner — un-closed buffers leak forever) and is replaced by the frame-transient UBO ledger
+    // (registerFrameTransientUbo, drained at GameRenderer.render TAIL). Recursion safety is
+    // preserved BY the ledger design: each call still creates a DISTINCT buffer (nested draws save
+    // + restore slice references), only the close is deferred to frame end — vanilla's
+    // DynamicUniformStorage.endFrame discipline.
     private static GpuBufferSlice writeProjectionSlice(Matrix4f matrix) {
-        ByteBuffer buf = ByteBuffer.allocateDirect(64).order(ByteOrder.nativeOrder());
-        matrix.get(buf);
-        buf.position(64);
-        buf.flip();
-        // fresh buffer per call; do NOT close the old one (the GPU may still be reading it).
-        viewAreaProjGpuBuffer = RenderSystem.getDevice().createBuffer(
-            () -> "seamlessportals_viewarea_proj", GpuBuffer.USAGE_UNIFORM, buf
-        );
-        return viewAreaProjGpuBuffer.slice();
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            ByteBuffer buf = com.mojang.blaze3d.buffers.Std140Builder.onStack(stack, 64)
+                .putMat4f(matrix).get();
+            return SecondaryWorldRenderCore.registerFrameTransientUbo(
+                RenderSystem.getDevice().createBuffer(
+                    () -> "seamlessportals_viewarea_proj", GpuBuffer.USAGE_UNIFORM, buf
+                )
+            );
+        }
     }
 
     public static void buildPortalViewAreaTrianglesBuffer(
@@ -223,36 +221,43 @@ public class ViewAreaRenderer {
         // into a growable ByteBufferBuilder and draw it via the mod's immediate-mesh path (drawMesh
         // uploads the vertices to a transient GpuBuffer + fetches the shared sequential index buffer
         // for the mesh topology). Vertices are camera-relative, exactly as IP built them.
-        ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
+        // S14.30: try-with-resources — the builder's malloc block was NEVER freed (~4KB+ leaked per
+        // aperture draw, 2 draws/layer/frame ≈ 1.7 GB/h native RSS growth; invisible to the Java
+        // heap AND to GL). Vanilla's own discipline for the identical transient-builder use is
+        // try-with-resources (SkyRenderer). Safe ordering: drawMesh copies the vertex bytes into
+        // the GL store at createBuffer and draws synchronously; MeshData.close only releases its
+        // result ref — the builder close after it is the sole ALLOCATOR.free.
+        try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
             256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
-        );
-        BufferBuilder bufferBuilder = new BufferBuilder(
-            byteBuffer, PrimitiveTopology.TRIANGLES, DefaultVertexFormat.POSITION_COLOR
-        );
+        )) {
+            BufferBuilder bufferBuilder = new BufferBuilder(
+                byteBuffer, PrimitiveTopology.TRIANGLES, DefaultVertexFormat.POSITION_COLOR
+            );
 
-        Vec3 originRelativeToCamera = portal.getOriginPos().subtract(cameraPos);
+            Vec3 originRelativeToCamera = portal.getOriginPos().subtract(cameraPos);
 
-        TriangleConsumer vertexOutput = (p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z) -> {
-            bufferBuilder
-                .addVertex((float) p0x, (float) p0y, (float) p0z)
-                .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
-            bufferBuilder
-                .addVertex((float) p1x, (float) p1y, (float) p1z)
-                .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
-            bufferBuilder
-                .addVertex((float) p2x, (float) p2y, (float) p2z)
-                .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
-        };
+            TriangleConsumer vertexOutput = (p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z) -> {
+                bufferBuilder
+                    .addVertex((float) p0x, (float) p0y, (float) p0z)
+                    .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
+                bufferBuilder
+                    .addVertex((float) p1x, (float) p1y, (float) p1z)
+                    .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
+                bufferBuilder
+                    .addVertex((float) p2x, (float) p2y, (float) p2z)
+                    .setColor((float) fogColor.x, (float) fogColor.y, (float) fogColor.z, 1.0f);
+            };
 
-        portal.renderViewAreaMesh(originRelativeToCamera, vertexOutput);
+            portal.renderViewAreaMesh(originRelativeToCamera, vertexOutput);
 
-        // IP: BufferUploader.draw(Objects.requireNonNull(bufferBuilder.build())). The mandated 26.2
-        // translation is BufferUploader.draw -> PortalRenderTypes.drawMesh (render-core G8); the
-        // Objects.requireNonNull assertion is VERBATIM IP (a portal view-area mesh always emits
-        // geometry, so build() is never null in practice — an empty mesh is an IP-contract violation
-        // and stays a hard fail, not a silent skip). drawMesh's try(mesh)+mesh.drawState() would NPE on
-        // null anyway, so requireNonNull only sharpens the failure site; no behaviour softened.
-        PortalRenderTypes.drawMesh(renderType, Objects.requireNonNull(bufferBuilder.build()));
+            // IP: BufferUploader.draw(Objects.requireNonNull(bufferBuilder.build())). The mandated 26.2
+            // translation is BufferUploader.draw -> PortalRenderTypes.drawMesh (render-core G8); the
+            // Objects.requireNonNull assertion is VERBATIM IP (a portal view-area mesh always emits
+            // geometry, so build() is never null in practice — an empty mesh is an IP-contract violation
+            // and stays a hard fail, not a silent skip). drawMesh's try(mesh)+mesh.drawState() would NPE on
+            // null anyway, so requireNonNull only sharpens the failure site; no behaviour softened.
+            PortalRenderTypes.drawMesh(renderType, Objects.requireNonNull(bufferBuilder.build()));
+        }
     }
 
     public static void outputTriangle(

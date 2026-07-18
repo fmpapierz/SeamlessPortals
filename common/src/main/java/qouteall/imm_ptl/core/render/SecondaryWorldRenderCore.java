@@ -151,11 +151,34 @@ public class SecondaryWorldRenderCore {
     private static com.mojang.blaze3d.textures.GpuTextureView portalSkyColorView;
     private static com.mojang.blaze3d.textures.GpuTextureView portalSkyDepthView;
 
-    // Standalone GPU buffers for the dest projection + fog UBOs. Never close()d (the GPU may still
-    // read the previous frame's slice); GC reclaims when the reference is overwritten (§1 Steps 6-7,
-    // MOD:PortalContextSwitch.writeProjectionBuffer:2378 / writePortalFogBuffer:2495).
-    private static GpuBuffer portalProjGpuBuffer;
-    private static GpuBuffer portalFogGpuBuffer;
+    // S14.30 (round-4 verdict): frame-transient UBO ledger. The prior "GC reclaims when the
+    // reference is overwritten" retention comment was FALSE — blaze3d has NO Cleaner/finalizer
+    // anywhere (grep-verified); GlBuffer.close() is the ONLY glDeleteBuffers path, so every
+    // un-closed buffer leaked its GL name + driver store PERMANENTLY (2-6 per portal layer per
+    // frame). Discipline = vanilla's own DynamicUniformStorage.endFrame (close old buffers at
+    // frame end). Per-call DISTINCT buffers are KEPT deliberately: nested layers save + restore
+    // slice REFERENCES (savedShaderFog / savedProjectionBuffer), so one shared rewritten buffer
+    // would corrupt the outer layer's restored contents — recursion safety comes from
+    // distinct-buffer-per-call + DEFERRED close.
+    private static final java.util.List<GpuBuffer> frameTransientUbos = new java.util.ArrayList<>();
+
+    static GpuBufferSlice registerFrameTransientUbo(GpuBuffer buffer) {
+        frameTransientUbos.add(buffer);
+        return buffer.slice();
+    }
+
+    /**
+     * S14.30: drained at {@code GameRenderer.render} TAIL (the same lifecycle point as the
+     * endFrame walk — GameRendererMixin) — every draw of the frame has been synchronously issued
+     * by then, so a close here can never free a referenced name; dev-runtime VALIDATION would
+     * crash loudly ("... is already closed") if that reasoning were ever wrong.
+     */
+    public static void closeFrameTransientUbos() {
+        for (GpuBuffer buffer : frameTransientUbos) {
+            buffer.close();
+        }
+        frameTransientUbos.clear();
+    }
 
     // The proven steady-state compile-scheduling budget (MOD:PortalContextSwitch.java:1285).
     private static final long PORTAL_VIEW_COMPILE_BUDGET_NS = 3_000_000L;
@@ -171,6 +194,7 @@ public class SecondaryWorldRenderCore {
         destRainFogMultiplier.clear();
         mainChunkSampler = null;
         portalEntitiesSwallowLogged = false;
+        closeFrameTransientUbos(); // S14.30: disposal path
     }
 
     /**
@@ -866,35 +890,34 @@ public class SecondaryWorldRenderCore {
     }
 
     // ===== §1 Step 7 — standalone projection UBO (re-expresses writeProjectionBuffer:2378) ========
+    // S14.30: MemoryStack staging (vanilla ProjectionMatrixBuffer.writeBuffer idiom) — createBuffer
+    // copies the bytes synchronously and 26.2 GL draws issue immediately, so neither the stack
+    // frame nor the frame-TAIL ledger close can outrun a consumer.
     private static GpuBufferSlice writeProjectionSlice(Matrix4f matrix) {
-        ByteBuffer buf = ByteBuffer.allocateDirect(64).order(ByteOrder.nativeOrder());
-        matrix.get(buf);
-        buf.position(64);
-        buf.flip();
-        // fresh buffer per call; do NOT close the old one (the GPU may still be reading it).
-        portalProjGpuBuffer = RenderSystem.getDevice().createBuffer(
-            () -> "seamlessportals_portal_proj", GpuBuffer.USAGE_UNIFORM, buf
-        );
-        return portalProjGpuBuffer.slice();
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            ByteBuffer buf = Std140Builder.onStack(stack, 64).putMat4f(matrix).get();
+            return registerFrameTransientUbo(RenderSystem.getDevice().createBuffer(
+                () -> "seamlessportals_portal_proj", GpuBuffer.USAGE_UNIFORM, buf
+            ));
+        }
     }
 
     // ===== §1 Step 6 — standalone fog UBO (re-expresses writePortalFogBuffer:2495) ================
     private static GpuBufferSlice writeFogSlice(FogData fog) {
         // FOG_UBO_SIZE = 48 (std140: vec4(16) + 6*float(24) + 8 padding).
-        ByteBuffer buf = ByteBuffer.allocateDirect(48).order(ByteOrder.nativeOrder());
-        Std140Builder.intoBuffer(buf)
-            .putVec4(fog.color)
-            .putFloat(fog.environmentalStart)
-            .putFloat(fog.environmentalEnd)
-            .putFloat(fog.renderDistanceStart)
-            .putFloat(fog.renderDistanceEnd)
-            .putFloat(fog.skyEnd)
-            .putFloat(fog.cloudEnd);
-        buf.position(48);
-        buf.flip();
-        portalFogGpuBuffer = RenderSystem.getDevice().createBuffer(
-            () -> "seamlessportals_portal_fog", GpuBuffer.USAGE_UNIFORM, buf
-        );
-        return portalFogGpuBuffer.slice();
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            ByteBuffer buf = Std140Builder.onStack(stack, 48)
+                .putVec4(fog.color)
+                .putFloat(fog.environmentalStart)
+                .putFloat(fog.environmentalEnd)
+                .putFloat(fog.renderDistanceStart)
+                .putFloat(fog.renderDistanceEnd)
+                .putFloat(fog.skyEnd)
+                .putFloat(fog.cloudEnd)
+                .get();
+            return registerFrameTransientUbo(RenderSystem.getDevice().createBuffer(
+                () -> "seamlessportals_portal_fog", GpuBuffer.USAGE_UNIFORM, buf
+            ));
+        }
     }
 }

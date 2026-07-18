@@ -57,6 +57,11 @@ public abstract class GameRendererMixin {
         if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
             qouteall.imm_ptl.core.render.MyGameRenderer.endFramePooled();
         }
+        // S14.30: drain the frame-transient UBO ledger (deferred close of the per-pass fog/projection
+        // GpuBuffers — vanilla's DynamicUniformStorage.endFrame discipline). UNCONDITIONAL, not
+        // inside the flag gate, so a mid-session flag flip cannot strand pending buffers; byte-inert
+        // flag-OFF (the list is only ever fed by flag-ON code paths — empty loop).
+        qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.closeFrameTransientUbos();
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }
