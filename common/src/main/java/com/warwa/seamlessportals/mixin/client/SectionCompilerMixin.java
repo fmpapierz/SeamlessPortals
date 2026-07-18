@@ -40,6 +40,15 @@ public abstract class SectionCompilerMixin {
         require = 0
     )
     private RenderShape seamlessportals$suppressPortalSwirl(BlockState blockState) {
+        // S16.4 (rung-4 round-1, user-observed "no purple swirls, see-through frame"): flag-OFF
+        // only. The EXCLUSIVITY_LEDGER B11 row had this mixin misclassified DORMANT — it is
+        // registered (seamlessportals-common.mixins.json:15) and its compile redirect fires on
+        // 26.2; the config gate (shouldRenderThrough) is flag-independent, so flag-ON crouch-hatch
+        // vanilla portals rendered INVISIBLE where IP renders vanilla swirls. The S14 gate-audit
+        // rule ("positively verify reachability — never trust the dormant label") strikes again.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            return blockState.getRenderShape();
+        }
         if (blockState.is(Blocks.NETHER_PORTAL) && SeamlessPortalsConfig.shouldRenderThrough(PortalType.NETHER)) {
             return RenderShape.INVISIBLE;
         }
@@ -59,6 +68,12 @@ public abstract class SectionCompilerMixin {
         require = 0  // Sodium-replaced method; gracefully no-op when absent
     )
     private BlockState seamlessportals$suppressFrameObsidian(RenderSectionRegion region, BlockPos pos) {
+        // S16.4: same flag gate as the swirl redirect above — PortalFrameSuppressor is only ever
+        // armed by block-era drivers today, but the B11 "dormant" label was already wrong once in
+        // this file; the explicit gate makes flag-ON structurally clean instead of transitively.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            return region.getBlockState(pos);
+        }
         BlockState state = region.getBlockState(pos);
         if (state.is(Blocks.OBSIDIAN) && PortalFrameSuppressor.isFrameBlock(pos)) {
             return Blocks.AIR.defaultBlockState();

@@ -109,7 +109,38 @@ round. **Record-only item per §S16(a):** the defaulted-registry `entity_type` l
 (`getValue` → pig fallback, matching 1.21.3) — code verified correct at
 `GlobalPortalStorage.java:312-328` (portal-generation api-map note 3); no change.
 
-## 5. (d) live round — see the READY gate
+## 5. (d) live round 1 (2026-07-18) — results + routing
 
-R13d runtime verification (tall frame near world min/max Y) and the breakable-family
-checks ((d).2-4) are live-round items; commit 4 lands fixes only if the round finds them.
+| Step | Result | Notes |
+|---|---|---|
+| (d).1 headline (frame+flint → cluster) | **PASS** ("worked") | logs clean: attempts, links, indicator |
+| Crouch-hatch vanilla portal | **teleport PASS, render DEFECT** | vanilla teleporting confirmed live (the never-exercised path proven); "no purple swirls, see-through frame" → §6 |
+| Fire spread | **PASS** | |
+| Nether-side ignition | **AMBIGUOUS live → AUTOMATED** | user "seems good" but logs show ZERO `Attempted minecraft:the_nether` lines — the live step never actually fired; covered by leg 6b instead (PASS) |
+| Existing-frame linking | **PASS** | |
+| Frame-break | **PASS** | Broke + linking-break cascade clean in logs |
+| Negative-coords / tall frame | user unsure what it tests → **AUTOMATED** | leg 6a (PASS); R13d tall-frame remains a soft open (no live tall frame built; the wrappers are code-complete + leg 6b's roof frame exercises high-Y staging) |
+| Flag-OFF sanity | **SKIPPED by user choice** ("I'm not checking this") | recorded honestly; baseline was green through S13-S15; block-era dies at S20 anyway |
+
+## 6. S16.4 — round-1 folds (verify `wf_09f21c54-e1a` PASS)
+
+**The swirl thief (crouch-hatch portals invisible):** `SectionCompilerMixin.
+suppressPortalSwirl` — a block-era compile redirect returning `RenderShape.INVISIBLE` for
+nether portal blocks, gated only on the block-era CONFIG (flag-independent). The
+EXCLUSIVITY_LEDGER B11 row had this REGISTERED mixin misclassified as "dormant legacy" so
+it was never gate-audited — the user's round-1 observation is the runtime reachability
+proof. **The S14 gate-audit rule's 4th scalp.** Both redirects in the file now
+`!entityPortals`-gated (swirls render flag-ON; block-era render-through unchanged
+flag-OFF); B11's "dormant" labels are formally DISTRUSTED at S20 deletion (per-entry
+reachability check mandated, incl. the companion api-map rows).
+
+**Gametest legs 6a/6b (permanent item-10 + nether-side coverage):** command-built frames at
+negative coords, direct `onFireLitOnObsidian` calls (the exact mixin entry), dest asserted
+by sign+magnitude window. GREEN: 6a dest (-24, -20.5) for the -25 target; 6b nether-side
+FIRED + linked (-309, -318.5) for the -320 target. Verify calibration folded: the
+match-path searches ±152 blocks — the tight windows rely on the consistent-seed world
+having no matchable frame (false-fail diagnosis note in the test). Boundary honest: the
+legs prove ignition-entry + link exactness, not fire-block semantics (the live round
+proved those separately).
+
+**Suite: 7 legs, ALL GREEN** (items ×2, F3 cow, pearl+relatives, generation ×2, datapack).

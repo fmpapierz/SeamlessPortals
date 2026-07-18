@@ -307,6 +307,68 @@ public class CrossingSmoke implements FabricClientGameTest {
                 LOG + "leg 4 PASS — pearl owner teleported seamlessly, client coherent in the"
                     + " nether, yaw {} preserved (relatives intact)", postYaw);
 
+            // ---- Legs 6a/6b (S16.4): PORTAL GENERATION exactness — automated cover for
+            // regression item 10 (negative-coordinate linking) and the nether-side
+            // ignition path (the round-1 live session logged ZERO nether-side attempts —
+            // ambiguity removed by asserting it here forever). Both call the EXACT
+            // ignition entry the fire/flint mixins use (IntrinsicPortalGeneration
+            // .onFireLitOnObsidian) against command-built obsidian frames, then assert a
+            // NetherPortalEntity spawns whose DESTINATION obeys the 8:1 map with the
+            // right SIGN and magnitude (the floored-scaling/sign-flip defect class lands
+            // hundreds of blocks off or positive-mirrored). Window calibration (verify
+            // wf_09f21c54-e1a): the FABRICATE-path placement freedom is tens of blocks,
+            // but MATCH-existing-frame searches netherPortalFindingRadius=128 (~±152
+            // blocks) — the tight windows rely on the consistent-seed test world holding
+            // no matchable obsidian frame in that box (proven by the live PASS). If this
+            // ever false-fails: check the reported dest FIRST — a nearby matchable frame
+            // means recalibrate the window, NOT a 8:1-map defect. ----
+            // Leg 6a: OW frame at NEGATIVE coords (-200,-200) -> nether dest ~(-25,-25).
+            runCommands(context, List.of(
+                "forceload add -216 -216 -184 -184",
+                "execute in minecraft:the_nether run forceload add -57 -57 7 7",
+                fill(-201, py, -200, -198, py, -200),          // base (obsidian)
+                fill(-201, py + 4, -200, -198, py + 4, -200),  // lintel
+                fill(-201, py + 1, -200, -201, py + 3, -200),  // left column
+                fill(-198, py + 1, -200, -198, py + 3, -200),  // right column
+                "fill " + (-200) + " " + (py + 1) + " " + (-200) + " "
+                    + (-199) + " " + (py + 3) + " " + (-200) + " minecraft:air"
+            ));
+            context.waitTicks(10);
+            runOnServer(context, server -> {
+                boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                        new BlockPos(-200, py + 1, -200), null);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "leg 6a: OW negative-coords ignition fired={}", fired);
+                if (!fired) throw new AssertionError(LOG + "leg 6a: onFireLitOnObsidian returned false"
+                    + " — the generation entry rejected a valid negative-coords frame");
+            });
+            assertGeneratedPortal(context, "leg 6a (negative-coords OW->nether)",
+                Level.OVERWORLD, new Vec3(-199.5, py + 2, -200), Level.NETHER,
+                -45, -5, -45, -5, 1200);
+
+            // Leg 6b: NETHER frame on the roof at (-40,-40) -> OW dest ~(-320,-320).
+            runCommands(context, List.of(
+                "execute in minecraft:the_nether run forceload add -56 -56 -24 -24",
+                "execute in minecraft:overworld run forceload add -336 -336 -304 -304",
+                inDim("minecraft:the_nether", fill(-41, 128, -40, -38, 128, -40)),
+                inDim("minecraft:the_nether", fill(-41, 132, -40, -38, 132, -40)),
+                inDim("minecraft:the_nether", fill(-41, 129, -40, -41, 131, -40)),
+                inDim("minecraft:the_nether", fill(-38, 129, -40, -38, 131, -40)),
+                inDim("minecraft:the_nether", "fill -40 129 -40 -39 131 -40 minecraft:air")
+            ));
+            context.waitTicks(10);
+            runOnServer(context, server -> {
+                boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                    .onFireLitOnObsidian(server.getLevel(Level.NETHER),
+                        new BlockPos(-40, 129, -40), null);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "leg 6b: nether-side ignition fired={}", fired);
+                if (!fired) throw new AssertionError(LOG + "leg 6b: onFireLitOnObsidian returned false"
+                    + " — the nether-side ignition path rejected a valid frame");
+            });
+            assertGeneratedPortal(context, "leg 6b (nether-side ignition ->OW, 8:1)",
+                Level.NETHER, new Vec3(-39.5, 130, -40), Level.OVERWORLD,
+                -480, -160, -480, -160, 1200);
+
             // ---- Leg 5 setup (S16 commit 3): write a DEV-ONLY datapack into THIS
             // throwaway world's save dir (never shipped resources). FIRST-RUN LESSON
             // (log-proven): dynamic-registry entries load at WORLD OPEN only — /reload
@@ -469,6 +531,63 @@ public class CrossingSmoke implements FabricClientGameTest {
         if (still.get() != null) {
             throw new AssertionError(LOG + leg + " FAILED: source entity still present in "
                 + dim.identifier() + ": " + still.get());
+        }
+    }
+
+    private static String fill(int x1, int y1, int z1, int x2, int y2, int z2) {
+        return "fill " + x1 + " " + y1 + " " + z1 + " "
+            + x2 + " " + y2 + " " + z2 + " minecraft:obsidian";
+    }
+
+    private static String inDim(String dim, String command) {
+        return "execute in " + dim + " run " + command;
+    }
+
+    /**
+     * Wait for a generated {@code NetherPortalEntity} near {@code framePos} in {@code srcDim}
+     * whose destination is {@code destDim} with dest X/Z inside the given windows — the
+     * item-10 exactness net: a sign flip or floored-scaling error lands far outside the
+     * window; the matcher's legitimate placement freedom stays well inside it.
+     */
+    private static void assertGeneratedPortal(
+        ClientGameTestContext context, String leg,
+        net.minecraft.resources.ResourceKey<Level> srcDim, Vec3 framePos,
+        net.minecraft.resources.ResourceKey<Level> destDim,
+        double minX, double maxX, double minZ, double maxZ, int timeoutTicks
+    ) {
+        AtomicReference<String> lastSeen = new AtomicReference<>("(no portal entity appeared)");
+        try {
+            context.waitFor(mc -> {
+                MinecraftServer server = mc.getSingleplayerServer();
+                if (server == null) return false;
+                ServerLevel src = server.getLevel(srcDim);
+                if (src == null) return false;
+                var portals = src.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    new net.minecraft.world.phys.AABB(
+                        framePos.subtract(8, 8, 8), framePos.add(8, 8, 8)),
+                    p -> true);
+                for (var portal : portals) {
+                    Vec3 dest = portal.getDestPos();
+                    lastSeen.set(portal.getDestDim().identifier() + " @ " + dest);
+                    if (portal.getDestDim().equals(destDim)
+                        && dest.x >= minX && dest.x <= maxX
+                        && dest.z >= minZ && dest.z <= maxZ) {
+                        SeamlessPortalsConstants.LOGGER.info(
+                            LOG + "{} PASS — generated portal dest {} within [{},{}]x[{},{}]",
+                            leg, dest, minX, maxX, minZ, maxZ);
+                        return true;
+                    }
+                }
+                return false;
+            }, timeoutTicks);
+        } catch (Throwable t) {
+            throw new AssertionError(LOG + leg + " FAILED: no generated NetherPortalEntity near "
+                + framePos + " with dest in " + destDim.identifier() + " X[" + minX + "," + maxX
+                + "] Z[" + minZ + "," + maxZ + "] within " + timeoutTicks
+                + " ticks. Last portal seen: " + lastSeen.get()
+                + " (a sign/scale error lands outside the window; timeout = the async"
+                + " pipeline stalled — check FrameSearching/chunk loading)", t);
         }
     }
 
