@@ -66,6 +66,15 @@ public class TitleCardCapture implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext context) {
+        // Test selection: with multiple fabric-client-gametest entrypoints the framework
+        // runs ALL of them; each run config selects one via this property (the
+        // clientGametest config sets "titlecard", crossingGametest sets "crossing").
+        String only = System.getProperty("seamlessportals.gametest.only", "");
+        if (!only.isEmpty() && !only.equals("titlecard")) {
+            SeamlessPortalsConstants.LOGGER.info("[TITLE CARD] skipped (selected test: {})", only);
+            return;
+        }
+
         SeamlessPortalsConstants.LOGGER.info("[TITLE CARD] Capture starting…");
 
         // Moderate render distance → fuller terrain through the portal,

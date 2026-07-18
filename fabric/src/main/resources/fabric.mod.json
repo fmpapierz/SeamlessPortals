@@ -17,7 +17,8 @@
       "com.warwa.seamlessportals.fabric.SeamlessPortalsClientFabric"
     ],
     "fabric-client-gametest": [
-      "com.warwa.seamlessportals.fabric.gametest.TitleCardCapture"
+      "com.warwa.seamlessportals.fabric.gametest.TitleCardCapture",
+      "com.warwa.seamlessportals.fabric.gametest.CrossingSmoke"
     ],
     "modmenu": [
       "com.warwa.seamlessportals.fabric.ModMenuIntegration"

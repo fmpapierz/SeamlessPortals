@@ -59,7 +59,40 @@ loom {
             // Both are required; the modid filter alone is inert.
             property('fabric.client.gametest', 'true')
             property('fabric.client.gametest.modid', project.mod_id)
+            // Selects WHICH of the mod's client-gametests runs (the framework
+            // runs every registered entrypoint otherwise; each test class
+            // no-ops unless selected).
+            property('seamlessportals.gametest.only', 'titlecard')
         }
+        // S15 entity-crossing smoke on the UNIFIED path (EXECUTION_PLAN §S15,
+        // D4.6 — re-run at every later stage). Own run dir: its config is
+        // seeded with entityPortals=true (the load-time master switch) before
+        // every launch, so it never contaminates the title-card run dir.
+        crossingGametest {
+            client()
+            setConfigName('Entity Crossing Smoke')
+            runDir('runs/gametest-crossing')
+            property('fabric.client.gametest', 'true')
+            property('fabric.client.gametest.modid', project.mod_id)
+            property('seamlessportals.gametest.only', 'crossing')
+        }
+    }
+}
+
+// Seed the entity-portal MASTER SWITCH into the crossing-smoke run dir before every
+// launch. EntityPortalsFlag reads <configDir>/seamlessportals.properties ONCE at
+// mixin-bootstrap (load-time, before any mod initializer), so the file must exist
+// before the JVM starts — no in-game mechanism can flip it.
+tasks.matching { it.name == 'runCrossingGametest' }.configureEach {
+    doFirst {
+        def cfgDir = file('runs/gametest-crossing/config')
+        cfgDir.mkdirs()
+        new File(cfgDir, 'seamlessportals.properties').text = 'entityPortals=true\n'
+        // Suppress IP's one-time first-launch splash (IPortalInitialScreen,
+        // MixinGui append gate !initialScreenShown) — the client-gametest
+        // framework asserts a bare title screen between tests, and the splash
+        // sits over it. Gson AutoConfig leaves absent fields at their defaults.
+        new File(cfgDir, 'immersive_portals.json').text = '{\n  "initialScreenShown": true\n}\n'
     }
 }
 
