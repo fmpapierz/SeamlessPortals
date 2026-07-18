@@ -508,6 +508,29 @@ public class ClientTeleportationManager {
         // view keeps extracting the SOURCE dim into the wrong renderer (see the helper's javadoc).
         ClientWorldLoader.promoteAndDemoteOnPlayerDimensionChange(fromWorld, toWorld);
 
+        // S14.51 fix P — the PROMOTE-GAP PLUG (trace wf_1e07ce4b-f53 M2, HIGH): vanilla's
+        // contract is poll+publish ADJACENT and BEFORE the frame's consume (ClientLevel.update()
+        // runs pollLightUpdates then runLightUpdates, and renderFrame calls it BEFORE extract).
+        // A render-side crossing (the frame pump) fires AFTER the OLD main's update(), so the
+        // promote frame's forced wholesale extract batch-consumed every pending dirty mark of the
+        // just-promoted dim against a one-frame-STALE published light store — and the next
+        // frame's publish is SILENT for re-sent light corrections (queuedSections → only
+        // changedSections; zero onLightUpdate callbacks) → mass permanent dark seams when
+        // crossing during streaming. Run the pair the crossing frame skipped, HERE — after the
+        // promote (routing is map-first on the just-re-pointed row; client.level already =
+        // toWorld) and before the frame-N extract consumes anything. Guarded (verify fold): a
+        // throwing light lambda here would otherwise abort changePlayerDimension between the
+        // promote and the gameRenderer.setLevel below, stranding a half-cutover client —
+        // swallow+log instead (vanilla's own drain is equally unguarded, but its crash doesn't
+        // strand a teleport).
+        try {
+            toWorld.pollLightUpdates();
+            toWorld.getChunkSource().getLightEngine().runLightUpdates();
+        }
+        catch (Throwable t) {
+            LOGGER.error("promote-gap light drain failed", t);
+        }
+
         // S14-A FIX-1 tail (audit MAJOR, link teleport): 26.2 re-expression of IP's implicit
         // per-frame camera-level refresh. 1.21.3 Camera.setup received minecraft.level every
         // frame, so IP's client.level write auto-propagated; 26.2 caches the level on the Camera

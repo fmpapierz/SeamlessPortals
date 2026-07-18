@@ -241,6 +241,17 @@ public class ClientWorldLoader {
                 }
 
                 newWorld.pollLightUpdates();
+                // S14.51 fix T (trace wf_1e07ce4b-f53 M1, HIGH): restore vanilla's poll→run
+                // ADJACENCY for secondaries. Vanilla publishes immediately after polling
+                // (ClientLevel.update()), so a light-correction packet's drain-time dirty mark
+                // can never be consumed against a pre-publish store. Our split (poll here at
+                // tick, publish at frame-END lateUpdateLight) opened a window where the
+                // dest-pass consumers compile against stale light and re-sent corrections then
+                // publish SILENTLY (no onLightUpdate callbacks) — the mark is gone, the dark
+                // bake permanent. This ADDS the vanilla-cadence run at the drain site; the
+                // frame-end lateUpdateLight stays (its FIX-3 placement is load-bearing) and
+                // becomes a near-no-op safety net for anything queued post-tick.
+                newWorld.getChunkSource().getLightEngine().runLightUpdates();
             }
             catch (Throwable e) {
                 if (LOG_LIMIT.tryDecrement()) {

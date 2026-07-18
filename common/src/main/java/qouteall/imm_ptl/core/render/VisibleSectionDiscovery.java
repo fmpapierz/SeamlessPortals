@@ -75,6 +75,10 @@ public class VisibleSectionDiscovery {
     private static long compileBudgetNs;
     private static long compileStartNs;
     private static int scheduledCount;
+    // S14.51 F1: true when the armed tracker is the MAIN dim's (nested/return pass) — the fold
+    // then compiles UNCOMPILED-only and never consumes dirty marks (they belong to the main
+    // extract).
+    private static boolean scratchMainDimArm;
 
     /**
      * Arm the folded-in compile scheduling for the NEXT {@link #discoverVisibleSections} call (A3).
@@ -92,11 +96,28 @@ public class VisibleSectionDiscovery {
         ClientLevel destLevel, @Nullable SectionUpdateTracker sut,
         RenderRegionCache cache, Set<Long> schedSet, long budgetNs
     ) {
+        armCompileScheduling(destLevel, sut, cache, schedSet, budgetNs, false);
+    }
+
+    /**
+     * S14.51 fix F1 (trace wf_1e07ce4b-f53 tracer B, HIGH): {@code isMainDimArm} = this arm's
+     * tracker IS the MAIN dim's (a nested/return pass whose dest dim == the main dim). The fold
+     * must then never act as if it OWNS the tracker: dirty marks belong to the MAIN extract
+     * (next frame, vanilla semantics) — consuming them here was mid-frame mark THEFT on the
+     * origin dim (the standstill nether compQ churn, and a shadow feeder on "both dims"). The
+     * load-bearing half stays: UNCOMPILED behind-player sections seen through a return window
+     * still compile (the ow-holes rule), just without touching the dirty flags.
+     */
+    public static void armCompileScheduling(
+        ClientLevel destLevel, @Nullable SectionUpdateTracker sut,
+        RenderRegionCache cache, Set<Long> schedSet, long budgetNs, boolean isMainDimArm
+    ) {
         scratchDestLevel = destLevel;
         scratchSut = sut;
         scratchCache = cache;
         scratchSchedSet = schedSet;
         compileBudgetNs = budgetNs;
+        scratchMainDimArm = isMainDimArm;
     }
 
     /** Number of async compiles scheduled during the last discovery run (diagnostics). */
@@ -192,6 +213,7 @@ public class VisibleSectionDiscovery {
             scratchSut = null;
             scratchCache = null;
             scratchSchedSet = null;
+            scratchMainDimArm = false;
         }
     }
 
@@ -277,7 +299,12 @@ public class VisibleSectionDiscovery {
         if (!uncompiled) {
             scratchSchedSet.remove(node);
         }
-        boolean wantCompile = (ds != null && ds.isDirty()) || (uncompiled && !scratchSchedSet.contains(node));
+        // S14.51 F1: a MAIN-dim arm (nested/return pass) compiles UNCOMPILED-only — main-visible
+        // dirty sections are the MAIN extract's job next frame; consuming them here was the
+        // standstill-churn scheduler AND a mark-theft shadow feeder on the origin dim.
+        boolean wantCompile = scratchMainDimArm
+            ? (uncompiled && !scratchSchedSet.contains(node))
+            : (ds != null && ds.isDirty()) || (uncompiled && !scratchSchedSet.contains(node));
         // S14.50 — the BOUNDARY-SHADOW root fix (trace wf_9749e767-5bc; verify wf_3b6a4ccd-772
         // PASS with the mechanism CORRECTED): vanilla's load-bearing FIRST-compile gate is
         // `dirty && (compiled || hasAllNeighbors)` (LevelExtractor:154-159; hasAllNeighbors = all
@@ -306,13 +333,21 @@ public class VisibleSectionDiscovery {
             && (scratchSut == null || scratchSut.hasAllNeighbors(scratchDestLevel, node))
         ) {
             section.compileAsync(scratchCache.createRegion(scratchDestLevel, node));
-            if (ds != null) {
+            // F1: never consume the MAIN tracker's marks (vanilla ownership — the main extract).
+            if (ds != null && !scratchMainDimArm) {
                 ds.setNotDirty();
             }
             if (uncompiled) {
                 scratchSchedSet.add(node);
             }
             scheduledCount++;
+            // F0 attribution: split fold-scheduled counts by arm kind for the kit rows.
+            if (scratchMainDimArm) {
+                TeleportFlashProbe.foldSchedMainThisFrame++;
+            }
+            else {
+                TeleportFlashProbe.foldSchedDestThisFrame++;
+            }
         }
         // Over-budget sections are left dirty/uncompiled for the next frame + the per-tick pump.
     }
@@ -350,6 +385,7 @@ public class VisibleSectionDiscovery {
         scratchSut = null;
         scratchCache = null;
         scratchSchedSet = null;
+        scratchMainDimArm = false;
     }
 
 }

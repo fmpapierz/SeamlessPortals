@@ -43,6 +43,12 @@ public class MixinLevelExtractor_Reload {
         }
         if ((Object) this == Minecraft.getInstance().levelExtractor) {
             ClientWorldLoader._onWorldRendererReloaded();
+            // S14.51 verify fold (wf_4f61536d-2e4): an allChanged replaces the viewArea (fresh
+            // all-UNCOMPILED sections) and the tracker, but the fold's one-shot schedule-guard
+            // sets survived — stale entries then blocked re-scheduling of the replaced sections
+            // through the armed fold (F1 disabled the dirty-branch rescue for main-dim arms).
+            // Clearing forces at worst one duplicate compile per section; correctness restored.
+            qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.clearPortalCompileScheduled();
         }
     }
 }

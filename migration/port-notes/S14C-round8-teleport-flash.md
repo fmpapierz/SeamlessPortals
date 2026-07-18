@@ -268,6 +268,47 @@ exonerated — vanilla extract repositions the tracker window to the dest camera
 extract). **NEXT DISCRIMINATOR: dump a post-A+B shadow** — `dirty=true` ⇒ mark retained but
 the heal-compile never ran (scheduling/portal-stopped-rendering); `dirty=false` ⇒ a consume
 race survives. That dump routes the last fix.
+
+## 14. S14.51 — trace round 2 (`wf_1e07ce4b-f53`): the FULL mechanism + four fixes
+
+**Post-S14.50 dumps read dirty=FALSE again (consume race confirmed); waiting-before-crossing
+mostly prevents seams; a NEW churn signature: the user standing STILL in the nether, nether
+compQ +10/frame for ~21 frames while viewing the streaming OW.** Tracer verdicts:
+
+- **M1 (HIGH, the permanence engine):** vanilla keeps poll+publish ADJACENT and before the
+  consume (`ClientLevel.update()` = pollLightUpdates→runLightUpdates, before extract). Our
+  secondaries split them (poll at tick, publish at frame-END) with two mid-frame consumers in
+  between. RE-SENT light corrections (the worldgen-ring class) mark-at-drain + queue-data; the
+  queued-data publish is SILENT (`markNewInconsistencies` → changedSections only — NO
+  onLightUpdate callbacks; the 27-neighbor affected set fires only for initializeSection/
+  setStoredLevel). Mark consumed mid-frame against the stale store → dark bake → silent publish
+  → permanent. This RECONCILES rounds 1-2: initialize-class flickers+heals; correction-class is
+  silent+permanent — each earlier analysis was right for a different packet class.
+- **M2 (HIGH, the promote amplifier):** render-side crossings (the frame pump) fire AFTER the
+  old main's update(); the promote frame's forced wholesale extract batch-consumes EVERY
+  pending mark of the just-promoted dim against a 1-frame-stale store; frame-end
+  lateUpdateSecondaryLight SKIPS the now-main dim; next frame publishes silently per M1. Mass
+  loss. (Tick-side crossings are accidentally coherent — the pump's S03 render anchor is
+  causally upstream.) Exonerated: tracker plumbing loss-free; lambda-guard sound; demoted-dim
+  frame-end marks sound.
+- **M3 (MEDIUM):** pollLightUpdates' max(10,size/10) budget × once-per-tick secondary drain
+  stretches the window over seconds on never-visited streams (why waiting helps; why seams are
+  patchy — workers racing the silent publish).
+- **Tracer B (HIGH): the standstill churn = MAIN-DIM ARMED-FOLD SCHEDULING** — nesting is live
+  (maxPortalLayer=5); a nested/return pass whose dest dim == the MAIN dim arms the fold against
+  the MAIN tracker + viewArea (Step 2 routes it to mc.levelExtractor) and schedules compiles
+  into the MAIN dispatcher, budget-paced ~10/frame — ALSO consuming main-tracker marks
+  mid-frame (mark theft; a shadow feeder on the origin dim). OW-publish misroute REFUTED
+  (engine chunkSource refs are construction-bound). S14.50's "main-dim isolation" claim was
+  about the UNARMED path only — the nested pass ARMS it.
+
+**Fixes (S14.51): (P)** the promote-gap plug — poll+run for toWorld right after the promote,
+restoring publish-before-consume for the batch; **(T)** tick-side poll→run adjacency for
+secondaries (vanilla cadence; frame-end lateUpdateLight STAYS as the safety net — the FIX-3
+placement untouched); **(F1)** main-dim arms compile UNCOMPILED-only and never consume dirty
+marks (`isMainDimArm` through armCompileScheduling; the behind-player compile half preserved);
+**(F0)** `fs=M+D` fold-schedule attribution in the kit rows. Verify `wf_4f61536d-2e4` in
+flight.
 2. **Many-portal steady-state lag** (142 non-promote frames ≥25ms with many portals; small
    visSec, empty compQ — the per-frame dest-pass scaling): `dp=` row field counts dest passes
    (incl. nesting layers) per frame — regressing ms against dp across a capture names the

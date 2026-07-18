@@ -79,16 +79,23 @@ user's IP side-by-side (instance `C:\Users\warwa\curseforge\minecraft\Instances\
 ip`, MC 1.21.1 + IP 6.0.6, no Sodium/Iris) feels ZERO-lag; ours hitches → same capture kit
 profiles it; "inherent mesh cost" may NOT be asserted without numbers.
 
-State (read port-note `S14C-round8-teleport-flash.md` §1-§12 — it is the whole ledger): FLASH
-CLOSED (S14.46, user-confirmed); PHANTOM ROCKET CLOSED (S14.47, log-clean); crossing lag fixed
-via the WARM GATE + TRACKER CONTINUITY (S14.48 @ 0786d21, re-verify PASS, user "a lot better",
-block breaking clean, no holes). OPEN THREADS (S14.49 instrumentation built, verify
-`wf_9cb676c5-b4a` in flight at last save): (1) the superflat BOUNDARY SHADOW —
-`debug_dump_light_section` discriminator lever, protocol + reading table in §12; (2)
-MANY-PORTAL steady-state lag — `dp=` row field; regress ms-vs-dp from the next capture, then
-IP side-by-side the SAME portal-count scene. On verify PASS: commit S14.49 + push + READY
-(shadow dump on a shadowed + a healthy block; normal play for dp rows). Then classification →
-fix (Fable verify) → §3 sign-off → the §4 ladder.
+State (read port-note `S14C-round8-teleport-flash.md` §1-§13 — it is the whole ledger): CLOSED
++ user-confirmed: flash (S14.46), phantom rocket (S14.47), crossing lag + per-crossing remesh
+wave (S14.48), mid-distance churn during same-area play + the frontier dark-seam DOMINANT path
+(S14.50 @ ed87f4b — the armed dest-pass compile fold now defers on hasAllNeighbors, mark
+retained; fix C was implemented then REVERTED per verify — never reintroduce, see the
+onLightUpdate site note).
+
+OPEN (trace round 2 `wf_1e07ce4b-f53` IN FLIGHT at last save — 2 Fable tracers): (1) RESIDUAL
+SHADOW on never-visited far dests when crossing DURING streaming (waiting largely prevents it;
+post-fix dumps read dirty=FALSE = the consume race/mark LOSS survives; prime suspect = the
+promote-window interaction with the frame-end secondary light publish — the just-promoted dim
+is excluded from lateUpdateSecondaryLight that frame; tracer A walks the handoff); (2) the
+NETHER-SIDE STANDSTILL CHURN (user standing still, visSec stable, nether compQ grows ~10/frame
+for ~21 frames while viewing the streaming OW through the portal — NETHER sections scheduling;
+tracer B hunts the scheduler incl. possible cross-dim mark mis-routing at the frame-end
+publish). On trace: fix design (Fable) → verify → commit S14.51 → READY. Then still: many-
+portal dp= regression + IP same-scene bar; rung-2 sign-off; close-out; the §4 ladder.
 
 Then: fold findings (BLOCKER/MAJOR before READY) → commit → push → **READY + retest protocol**
 (port-note §4): far-walk 200+ → wait ~1 min → return → cross (both directions, repeat step 7's

@@ -129,6 +129,16 @@ public class SecondaryWorldRenderCore {
     private static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
         cachedAtmosphericEnv;
 
+    /**
+     * S14.51 verify fold: called by the reload cascade on every MAIN-extractor allChanged —
+     * the viewArea/tracker replacement orphans the one-shot schedule-guard entries, which
+     * (with F1's uncompiled-only main arms) would block the fold from re-scheduling replaced
+     * sections. Worst cost of clearing: one duplicate compile per section.
+     */
+    public static void clearPortalCompileScheduled() {
+        portalCompileScheduled.clear();
+    }
+
     // S14.45: package-visible for TeleportFlashProbe's per-frame rainFogMultiplier read.
     static net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment
     getAtmosphericFogEnvironment() {
@@ -815,8 +825,12 @@ public class SecondaryWorldRenderCore {
                     portalCompileScheduled.computeIfAbsent(destDim, k -> new HashSet<>());
                 // FIX-10: post-extract read — see the Step-2 note.
                 SectionUpdateTracker sut = destExtractor.sectionUpdateTracker;
+                // S14.51 F1: a nested/return pass whose dest dim IS the main dim arms against
+                // the MAIN tracker — flag it so the fold compiles UNCOMPILED-only and never
+                // consumes the main extract's dirty marks (trace wf_1e07ce4b-f53 tracer B).
                 VisibleSectionDiscovery.armCompileScheduling(
-                    destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS
+                    destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS,
+                    destExtractor == mc.levelExtractor
                 );
                 // IP-verbatim call shape (IP:MixinLevelRenderer.java:252-257): the offset frustum is
                 // built from destFrustum (conventional-Z, I7). Discovery auto-disarms in its finally.
