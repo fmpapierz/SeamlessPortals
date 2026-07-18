@@ -62,6 +62,8 @@ public abstract class GameRendererMixin {
         // inside the flag gate, so a mid-session flag flip cannot strand pending buffers; byte-inert
         // flag-OFF (the list is only ever fed by flag-ON code paths — empty loop).
         qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.closeFrameTransientUbos();
+        // S14.31: dump the one-frame draw trace (single log write; no-op unless a capture ran).
+        qouteall.imm_ptl.core.render.DrawCallTrace.onFrameEnd();
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }

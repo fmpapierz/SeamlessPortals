@@ -104,6 +104,7 @@ public class RendererUsingStencil extends PortalRenderer {
                 // R5 Row 16 purpose: depth test OFF + FULL color write (depth-independent dest fog fill).
                 // COLOR_FILL selects PortalRenderTypes.portalCompositeBlit (depth-off), so the fill is never
                 // reversed-Z GEQUAL-gated by leftover portal-plane depth; the fog COLOR rides the draw.
+                qouteall.imm_ptl.core.render.DrawCallTrace.record("   [Row-16 COLOR_FILL next]");
                 MyRenderHelper.renderScreenTriangle(
                     // S14.24 lever (debug_dye_portal_fill, default OFF): dye the Row-16 backdrop
                     // fill MAGENTA — any on-screen residue that dyes with it is stencil-gated dest
@@ -287,6 +288,9 @@ public class RendererUsingStencil extends PortalRenderer {
 
         Profiler.get().push("render_view_area");
 
+        qouteall.imm_ptl.core.render.DrawCallTrace.record(
+            ">> doRenderPortal " + portal.getUUID() + " destDim=" + portal.getDestDim().identifier()
+            + " layer=" + PortalRendering.getPortalLayer() + " [aperture INCR draw next]");
         boolean anySamplePassed = PortalRenderInfo.renderAndDecideVisibility(portal, () -> {
             renderPortalViewAreaToStencil(portal, modelView);
         });

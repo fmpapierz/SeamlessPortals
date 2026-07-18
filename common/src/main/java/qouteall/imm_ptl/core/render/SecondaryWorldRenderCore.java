@@ -253,6 +253,9 @@ public class SecondaryWorldRenderCore {
         ResourceKey<Level> destDim = destLevel.dimension();
         Vec3 destCameraPos = newCamera.position();
 
+        DrawCallTrace.record(">>> renderDestWorld dim=" + destDim.identifier()
+            + " layer=" + PortalRendering.getPortalLayer());
+
         // ===== Step 2 — resolve the per-dim substrate (EXTRACTOR-IDENTITY router) ===============
         // DEFECT-1 fix (S13-H verifier 2, MAJOR): route the main-dim short-circuit by the TRUE main dim
         // (RenderStates.originalPlayerDimension), NEVER ClientWorldLoader.getWorldExtractor(destDim) here.
@@ -591,6 +594,8 @@ public class SecondaryWorldRenderCore {
                 // BEFORE the clip is armed (the dome spans both sides of the plane).
                 // S14.24 lever: debug_skip_portal_sky attributes residue to this draw.
                 if (WorldRenderInfo.getTopRenderInfo().doRenderSky && !IPGlobal.debugSkipPortalSky) {
+                    DrawCallTrace.record("   [renderPortalSky next, destSkybox="
+                        + (destLRS.skyRenderState != null ? destLRS.skyRenderState.skybox : "null") + "]");
                     renderPortalSky(destRenderer, destLRS, destFogBuffer, destViewMatrix);
                 }
 
@@ -712,6 +717,7 @@ public class SecondaryWorldRenderCore {
                 destCameraState.fogData = savedFogData;
                 destCameraState.fogType = savedFogType;
             }
+            DrawCallTrace.record("<<< renderDestWorld dim=" + destDim.identifier());
         }
     }
 

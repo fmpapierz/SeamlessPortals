@@ -636,6 +636,16 @@ public class ClientDebugCommand {
             "debug_skip_portal_entities",
             cond -> IPGlobal.debugSkipPortalEntities = cond
         );
+        // S14.31: _enable arms ONE frame capture (self-clears); _disable is a no-op.
+        registerSwitchCommand(
+            builder,
+            "debug_capture_frame",
+            cond -> {
+                if (cond) {
+                    qouteall.imm_ptl.core.render.DrawCallTrace.armed = true;
+                }
+            }
+        );
         registerSwitchCommand(
             builder,
             "cloud_optimization",

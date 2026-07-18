@@ -37,6 +37,8 @@
     "client.render.MixinFrustum_FixDeadLoop",
     "client.render.MixinGameRenderState",
     "client.render.MixinGameRenderer",
+    "client.render.MixinGlCommandEncoder_DrawTrace",
+    "client.render.MixinGlRenderPass_DrawTrace",
     "client.render.MixinGlStateManager",
     "client.render.MixinLevelExtractor",
     "client.render.MixinLevelExtractor_Reload",
