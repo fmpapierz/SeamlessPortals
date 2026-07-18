@@ -90,12 +90,17 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
         }
 
         Profiler.get().push("ip_terrain_setup");
+        // S14.47 zero-lag hunt: the synchronous override discovery's wall time (dMs= in the
+        // flash-probe row) — a promote-frame phase-cost suspect.
+        long discoveryT0 = System.nanoTime();
         VisibleSectionDiscovery.discoverVisibleSections(
             level, immPtlViewArea,
             Minecraft.getInstance().gameRenderer.mainCamera(),
             new Frustum(frustum).offsetToFullyIncludeCameraCube(8),
             ((IEWorldRenderer) levelRenderer).portal_getChunkInfoList()
         );
+        qouteall.imm_ptl.core.render.TeleportFlashProbe.discoveryNanosThisFrame +=
+            System.nanoTime() - discoveryT0;
         Profiler.get().pop();
     }
 }

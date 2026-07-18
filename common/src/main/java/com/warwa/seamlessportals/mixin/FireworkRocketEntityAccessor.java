@@ -24,4 +24,13 @@ public interface FireworkRocketEntityAccessor {
 
     @Invoker("isAttachedToEntity")
     boolean seamlessportals$isAttachedToEntity();
+
+    /**
+     * S14.47: the live attached-entity reference (private field, may be null even when the
+     * DATA_ATTACHED_TO_TARGET flag is set — vanilla lazily re-resolves it). Used by the
+     * player-crossing sweep to find and discard THIS player's boost rocket(s), whose reference
+     * survives the cross-dim swap under player reuse.
+     */
+    @org.spongepowered.asm.mixin.gen.Accessor("attachedToEntity")
+    net.minecraft.world.entity.LivingEntity seamlessportals$getAttachedToEntity();
 }

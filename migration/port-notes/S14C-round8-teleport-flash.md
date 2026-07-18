@@ -72,6 +72,46 @@ from deviations to confirmed IP-parity items for S18:
    Cross-portal block breaking works (server interaction fine) — only the dest-view outline
    visual is missing. S18: submit the transformed hit outline inside the dest pass.
 
+## 8. S14.47 — the phantom boost rocket (log-classified, THIRD crossing path + player-reuse orphan)
+
+**User:** "when i fly through portal with a rocket boost elytra, a phantom rocket shoots out in
+front of me." The 2026-07-08 fix had TWO halves (ProjectilePortalHandler + EntityMixin — both
+block-era paths) and its orphan analysis assumed the OLD player-recreate. Log evidence names two
+NEW mechanisms:
+
+1. **The IP path teleports the attached rocket:** `ServerTeleportationManager` — "Entity is too
+   far to teleport FireworkRocketEntity" (the rejected attempts; in-range attempts recreate it
+   DETACHED in the dest → vertical free-flight phantom exactly where the player emerges).
+   Neither old skip covers this path. Fix: the THIRD-half skip in `shouldEntityTeleport`
+   (covers both the local scan and the global-portal scan).
+2. **Player REUSE keeps the orphan's attachment LIVE:** vanilla `FireworkRocketEntity.tick`
+   glues the rocket to `attachedToEntity`'s coordinates AND injects elytra boost acceleration
+   into it, with NO level/removed check — under reuse the source-world orphan tracks the
+   player's DEST-world coordinates (60+ block per-tick moves = the "[ImmPtl] Skipping collision
+   calculation because entity moves too fast" stack spam) and keeps BOOSTING the cross-dim
+   player (a real gameplay bug, not just visual). Vanilla escapes only because its recreate
+   kills the reference. Fix: `changePlayerDimension` discards the player's attached rocket(s)
+   (bbox.inflate(8) sweep, predicate attachedToEntity == player) before the move — vanilla's
+   "the boost rocket is lost through a portal" outcome re-expressed under reuse; attached
+   rockets are invisible (shouldRender && !isAttachedToEntity) so the discard has zero visual.
+   New accessor: FireworkRocketEntityAccessor.seamlessportals$getAttachedToEntity.
+
+## 9. The zero-lag hunt (open — instrumented, awaiting the next capture)
+
+Post-flash-fix capture reading (user: "seems really good, but i want zero lag, i feel like a
+frame or 2 is getting dropped"): EVERY crossing costs one 15-29ms frame (the row after the
+PROMOTE marker; baseline 5-8ms) — 1-2 dropped frames at 60fps, matching the feel. Also
+occasional non-crossing spikes (one 54.91ms; 22-25ms clusters mid-flight — possibly the
+boost-rocket collision-spam server work, re-check after S14.47). S14.47 adds promote-frame
+phase timing to the kit rows: `pMs=` (the whole promoteAndDemoteOnPlayerDimensionChange body)
+and `dMs=` (the synchronous override discovery) — the next capture run names the dominant term,
+THEN we optimize that term (no guessing). Notes (S14.47 verify PASS, wf_a1b18604-e2c): part of
+the promote frame is the RenderChainProbe 1Hz write (`rcLog` rows) which is S20-removed
+diagnostic weight, and `pMs` ITSELF brackets the cutover LOGGER.info + probe arming — if pMs
+alone explains the spike, discount one log write before attributing to promote logic. Also: the
+discarded rocket's CLIENT replica may run 1-2 more invisible glue ticks until the remove packet
+lands — bounded, not a fix failure.
+
 ## 0. The observations (user, 2026-07-17, same round that closed the far-walk wipe)
 
 1. **Teleport flash:** appears ONLY on distant-fog/sky pixels — looking down at nearby terrain

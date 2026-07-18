@@ -808,6 +808,8 @@ public class ClientWorldLoader {
     public static void promoteAndDemoteOnPlayerDimensionChange(
         ClientLevel fromWorld, ClientLevel toWorld
     ) {
+        // S14.47 zero-lag hunt: whole-promote wall time, folded into the flash-probe row (pMs=).
+        long promoteT0 = System.nanoTime();
         ResourceKey<Level> fromDim = fromWorld.dimension();
         ResourceKey<Level> toDim = toWorld.dimension();
 
@@ -972,6 +974,8 @@ public class ClientWorldLoader {
         // S14.45: arm the teleport-flash/stutter capture (batched ring dump ~40 frames later).
         qouteall.imm_ptl.core.render.TeleportFlashProbe.armOnPromote(
             fromDim.identifier().getPath(), toDim.identifier().getPath(), coldPromote);
+        qouteall.imm_ptl.core.render.TeleportFlashProbe.promoteNanosThisFrame +=
+            System.nanoTime() - promoteT0;
     }
 
     public static Set<ResourceKey<Level>> getServerDimensions() {

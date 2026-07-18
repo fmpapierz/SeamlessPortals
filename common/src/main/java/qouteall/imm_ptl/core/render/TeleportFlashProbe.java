@@ -84,6 +84,13 @@ public class TeleportFlashProbe {
     public static int skyTargetHashA = 0;
     public static int skyTargetHashB = 0;
 
+    // S14.47 — promote-frame phase timing (the zero-lag hunt: every crossing costs one 15-29ms
+    // frame; these name what's inside it). Set by ClientWorldLoader (whole promote body) and
+    // MixinLevelExtractor_TerrainSetupOverride (the synchronous override discovery); sampled +
+    // reset each TAIL; printed only when nonzero.
+    public static long promoteNanosThisFrame = 0;
+    public static long discoveryNanosThisFrame = 0;
+
     // For the rcLog marker (did RenderChainProbe write a 1Hz line since the previous row?).
     private static long lastSeenRcLogMs = 0;
 
@@ -118,12 +125,17 @@ public class TeleportFlashProbe {
         int portalSkyDraws = portalSkyDrawsThisFrame;
         int targetA = skyTargetHashA;
         int targetB = skyTargetHashB;
+        long promoteNanos = promoteNanosThisFrame;
+        long discoveryNanos = discoveryNanosThisFrame;
         skyDrawsThisFrame = 0;
         portalSkyDrawsThisFrame = 0;
         skyTargetHashA = 0;
         skyTargetHashB = 0;
+        promoteNanosThisFrame = 0;
+        discoveryNanosThisFrame = 0;
         try {
-            ring[ringWrite] = collectRow(frameMs, skyDraws, portalSkyDraws, targetA, targetB);
+            ring[ringWrite] = collectRow(
+                frameMs, skyDraws, portalSkyDraws, targetA, targetB, promoteNanos, discoveryNanos);
         }
         catch (Throwable t) {
             // The probe must never take down the frame.
@@ -144,7 +156,8 @@ public class TeleportFlashProbe {
     }
 
     private static String collectRow(
-        double frameMs, int skyDraws, int portalSkyDraws, int targetA, int targetB
+        double frameMs, int skyDraws, int portalSkyDraws, int targetA, int targetB,
+        long promoteNanos, long discoveryNanos
     ) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.levelRenderer == null || mc.gameRenderer == null) {
@@ -210,6 +223,8 @@ public class TeleportFlashProbe {
             + " applyF=" + RenderChainProbe.applyFrustumCount
             + " visSec=" + renderer.visibleSections().size()
             + " compQ=" + (dispatcher == null ? -1 : dispatcher.getCompileQueueSize())
+            + (promoteNanos > 0 ? " pMs=" + String.format("%.2f", promoteNanos / 1.0e6) : "")
+            + (discoveryNanos > 0 ? " dMs=" + String.format("%.2f", discoveryNanos / 1.0e6) : "")
             + (rcLogged ? " rcLog" : "");
     }
 

@@ -96,6 +96,18 @@ public class ServerTeleportationManager {
     public static boolean shouldEntityTeleport(Portal portal, Entity entity) {
         if (entity.level() != portal.level()) {return false;}
         if (!portal.canTeleportEntity(entity)) {return false;}
+        // S14.47 — the attached-ELYTRA-BOOST-firework skip, THIRD half (log-proven: this IP path
+        // attempted these teleports — "Entity is too far to teleport FireworkRocketEntity" — and
+        // the in-range attempts recreated the rocket detached in the dest = the visible phantom
+        // "shooting out in front" of the emerging player; attachment is not persisted through the
+        // recreate). Same guard as ProjectilePortalHandler + EntityMixin (both block-era paths);
+        // the rocket is glued to the gliding player so its segment always crosses when the
+        // player's does. The player-crossing sweep in changePlayerDimension discards the orphan.
+        if (entity instanceof net.minecraft.world.entity.projectile.FireworkRocketEntity firework
+            && ((com.warwa.seamlessportals.mixin.FireworkRocketEntityAccessor) firework)
+                .seamlessportals$isAttachedToEntity()) {
+            return false;
+        }
         Vec3 lastEyePos = entity.getEyePosition(0);
         Vec3 nextEyePos = entity.getEyePosition(1);
         
@@ -436,7 +448,29 @@ public class ServerTeleportationManager {
         }
         
         Vec3 oldPos = player.position();
-        
+
+        // S14.47 — discard the player's attached boost firework(s) in the SOURCE world before the
+        // move. Under PLAYER REUSE the rocket's attachedToEntity reference stays LIVE across the
+        // dimension swap (vanilla's recreate breaks it), so the orphan (1) keeps injecting elytra
+        // boost acceleration into the now-cross-dim player every tick (FireworkRocketEntity.tick
+        // setDeltaMovement — a real gameplay bug), (2) glues itself to the player's DEST-world
+        // coordinates inside the source world (60+ block per-tick moves = the "[ImmPtl] Skipping
+        // collision calculation because entity moves too fast" stack spam), and (3) gets
+        // colliding-portal-tracked into more teleport attempts. Vanilla's outcome is "the boost
+        // rocket is lost through a portal" (its orphan freezes at a removed player and burns out
+        // invisibly) — discard re-expresses that outcome under reuse. The rocket is invisible
+        // while attached (shouldRender && !isAttachedToEntity), so the discard has zero visual.
+        for (net.minecraft.world.entity.projectile.FireworkRocketEntity rocket :
+            fromWorld.getEntitiesOfClass(
+                net.minecraft.world.entity.projectile.FireworkRocketEntity.class,
+                player.getBoundingBox().inflate(8),
+                r -> ((com.warwa.seamlessportals.mixin.FireworkRocketEntityAccessor) r)
+                    .seamlessportals$getAttachedToEntity() == player
+            )
+        ) {
+            rocket.discard();
+        }
+
         fromWorld.removePlayerImmediately(player, Entity.RemovalReason.CHANGED_DIMENSION);
         ((IEEntity) player).ip_unsetRemoved();
         
