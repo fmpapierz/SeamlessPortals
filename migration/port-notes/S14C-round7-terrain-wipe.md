@@ -1,7 +1,10 @@
 # S14-C round 7 — the far-walk terrain wipe: SOG loadedChunks net-drop (S14.42)
 
-**Status:** fix + probe implemented; **verify round 1 (`wf_723f7b39-bf4`) = FAIL, 3 findings
-FOLDED (S14.43)** — re-verify in flight, then READY + the user's confirming run.
+**Status:** fix + probe implemented; verify round 1 (`wf_723f7b39-bf4`) = FAIL, 3 BLOCKERs
+FOLDED (S14.43); **verify round 2 (`wf_4089f91b-610`) = PASS×2 lenses** with one MAJOR residual
+folded as the promote-time pre-resolve hardening (§0b); **hardening verify round
+(`wf_c9c7c2e1-b00`) = PASS×2** (§0c) — S14.44 committed, READY issued, awaiting the user's
+confirming far-walk run.
 
 ## 0. Verify round 1 catches (all folded — the round paid for itself)
 1. **BLOCKER — join crash:** the pump lacked the `ClientWorldLoader.getIsInitialized()` guard;
@@ -25,6 +28,65 @@ FOLDED (S14.43)** — re-verify in flight, then READY + the user's confirming ru
    remains a quantified-low residual (needs a forget+chunk packet same-pos in one ≤1-tick
    window; the resend-suppression/ACK discipline doesn't emit that; ledgered as an S17
    hardening candidate: route `SOG.update` through the resolver via mixin).
+## 0b. Verify round 2 (`wf_4089f91b-610`, re-run of the cutoff-killed `wf_1d640a79-2aa`) — PASS
+
+Both lenses PASS; all three round-1 BLOCKER fixes independently confirmed present + correct
+(gate one-shot-permanent; viewArea non-null ⇒ currentGraph non-null, set together at
+waitAndReset, so the gated pump cannot NPE). Findings and dispositions:
+
+1. **MAJOR (lens 2) — the COLD-PROMOTE residual is REACHABLE → FOLDED NOW as
+   `preResolvePromotedWindow`:** a never-rendered dest dim (pump gate never opened) keeps its
+   whole delta history in ONE window; that window is the SOLE loadedChunks seeder (cold promote
+   uses raw writes → reset flag stays false; `invalidateCompiledGeometry` ends in
+   `waitAndReset(non-null viewArea)` which PRESERVES the — empty — set) and the first
+   post-promote MAIN extract applies it UNRESOLVED (LevelRenderer:271 → SOG:406-409). One
+   collapse/re-arm cycle before a blind crossing net-evicts the portal-footprint arrival chunks
+   → parked-BFS wipe on the cold path. NOT a fix regression (pre-S14.42 every secondary dim had
+   this) and narrow (one rendered portal frame both de-colds the dim AND permanently opens the
+   pump gate), but the hardening was verdict-evaluated CORRECT + ship-now-low-risk, closes the
+   warm-instant residual too, and gives the live retest clean attribution → shipped: promote-time
+   in-place truth-resolution of the toDim's CURRENT window (resolution-ONLY — no SOG application,
+   no clear; the wholesale-seeder contract of round-1 BLOCKER 3 is preserved), called at the top
+   of `promoteAndDemoteOnPlayerDimensionChange`; idempotent for same-tick double-crossings.
+2. **MINOR (lens 2) — warm promote-instant residual re-confirmed LOW** (≤1-tick window; packet
+   re-delivery emits NO pair — `replaceWithPacketData` on a valid chunk takes the in-place
+   branch, no removed/added emission). Closed anyway by the same hardening.
+3. **MINOR (lens 1) — propagation-queue accumulation on ready-but-unrendered dims:** the pump's
+   `updateEmptySections` schedules propagation entries only vanilla's main path drains; bounded
+   (dedup at drain via sectionToNodeMap identity), discarded at the next rebuild/promote —
+   informational, no action.
+4. **MINOR (lens 1) — latent lifecycle landmine (UNREACHABLE today):** any FUTURE flag-ON caller
+   that re-arms `shouldResetLevelRenderData` mid-life while KEEPING the same ClientLevel would
+   under-seed loadedChunks (pump already drained the pre-re-arm adds; the post-re-arm window is
+   the only re-seed). Today's only armers: world creation + disposal (both safe). → S17 ledger:
+   assertion or wholesale re-seed helper if a new setLevel caller ever appears.
+5. **MINOR (lens 1) — never-ready dims accumulate monotonically by design:** bounded by DISTINCT
+   chunks ever churned (LongOpenHashSet dedup), ~O(100KB)/10k chunks; nothing else reads the
+   accumulating side. Accepted.
+
+## 0c. Hardening verify round (`wf_c9c7c2e1-b00`) — PASS×2, 4 MINORs, no code change
+
+Clean sweep on the load-bearing items: refactor bit-identical (incl. the copy-before-mutate
+contract for the frozen Step-5 window), the hook mutates only current-side set CONTENTS via live
+references (never flips/clears — identity guard + pump discipline untouched), nothing between
+the hook and the first extract touches the delta sets, reset-consume → capture → application
+ordering preserves the wholesale re-seed, warm promotes cost two isEmpty checks, and a repo-wide
+grep found no other consumer assuming unresolved semantics. Residuals (both lenses converged,
+ledgered not folded):
+
+- **The sub-tick re-poison race (pre-existing class, strictly narrowed):** the hook resolves at
+  the promote tick, but packets draining off the main-thread queue between that tick and the
+  first post-promote extract's capture can append a reload for a chunk still carrying an
+  accumulated `removed` entry — re-forming a pair vanilla nets to REMOVED-while-loaded. Provably
+  never-worse than pre-hardening (the pair existed or re-forms either way); exposure shrank from
+  the dim's ENTIRE accumulated history to this one tick→frame tail, reachable only by a re-arm
+  reload landing in exactly that gap during a blind cold crossing. Full closure = resolving at
+  the CAPTURE point (mixin at LevelExtractor's flip, :136-142) — the same mixin that would close
+  the main-dim §5(a) residual; folded into that S17 ledger item.
+- **Cold-path first-frame overhead from the unresolved emptySections leg:** every coalesced air
+  section costs one wasted compile + a spurious propagation seed, one frame only;
+  solid-marked-empty stays unreachable (addedE is air-only, removed wins). Benign, no action.
+
 **Defect (user, rung-2 steps 5+7):** walk far from a portal (loaders collapse), return (portal
 view perfect), cross → the promoted dim draws NO terrain (entities only), unrecoverable through
 minutes of movement/rotation/200-block flights; relog fully fixes. The dim the player walked
@@ -81,7 +143,12 @@ Restore the invariant at both ends:
   window) resolves by its CURRENT `hasChunk` state — the order-free semantics vanilla's
   one-frame windows get for free. Used by the pump (in-place) and the Step-5 feed (copy-on-
   intersection; the frozen LRS window backs the identity guard and must not be mutated).
-- **emptySections leg unchanged** (vanilla order) per the ranker's benign proof.
+- **emptySections leg unchanged** (vanilla order) per the ranker's benign proof (unload emits
+  removed for ALL sections, load emits added for AIR only ⇒ worst case one wasted compile).
+- **`preResolvePromotedWindow`** (round-2 fold, §0b-1): promote-time in-place truth-resolution of
+  the promoted dim's CURRENT window — covers the cold path the pump's readiness gate deliberately
+  never drains, plus the warm promote-instant window. Resolution-only; the window still applies
+  wholesale as the sole seeder.
 
 ## 3. Instrumentation shipped with it (NO-GUESSING kit, S20-ledgered)
 
@@ -104,9 +171,15 @@ Restore the invariant at both ends:
 
 ## 5. Ledger
 
-- S20 removal: the probe + dump switch + the promote-log enrichment (keep the PUMP + RESOLVER —
-  they are permanent substrate guards for the one-flip-per-frame invariant our secondary
-  extractors inherently break).
+- S20 removal: the probe + dump switch + the promote-log enrichment (keep the PUMP + RESOLVER +
+  `preResolvePromotedWindow` — they are permanent substrate guards for the one-flip-per-frame
+  invariant our secondary extractors inherently break).
+- S17 hardening items (rounds 1–3): (a) resolve at the CAPTURE point — a mixin at
+  LevelExtractor's window flip (:136-142) routing through the resolver — which closes BOTH the
+  main-dim quantified-LOW unresolved-application residual (round-1 §0-4) AND the §0c sub-tick
+  post-hook re-poison race in one move; (b) assertion or wholesale re-seed helper against any
+  future mid-life `setLevel` re-arm of `shouldResetLevelRenderData` on a kept ClientLevel (the
+  §0b-4 landmine, unreachable today).
 - Watch item for the retest: the MEDIUM amplifier predicts the portal-cone terrain may compile a
   beat later than the rest after a far-walk crossing (self-healing with a healthy SOG) — expected,
   not a defect.

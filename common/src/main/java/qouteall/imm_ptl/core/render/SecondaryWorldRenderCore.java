@@ -296,34 +296,76 @@ public class SecondaryWorldRenderCore {
         ClientLevel world, SectionOcclusionGraph sog,
         LongOpenHashSet added, LongOpenHashSet removed, boolean mayMutate
     ) {
-        if (!added.isEmpty() && !removed.isEmpty()) {
-            LongOpenHashSet intersection = null;
-            for (var it = added.iterator(); it.hasNext(); ) {
-                long p = it.nextLong();
-                if (removed.contains(p)) {
-                    if (intersection == null) {
-                        intersection = new LongOpenHashSet();
-                    }
-                    intersection.add(p);
-                }
+        LongOpenHashSet intersection = loadedIntersection(added, removed);
+        if (intersection != null) {
+            if (!mayMutate) {
+                added = new LongOpenHashSet(added);
+                removed = new LongOpenHashSet(removed);
             }
-            if (intersection != null) {
-                if (!mayMutate) {
-                    added = new LongOpenHashSet(added);
-                    removed = new LongOpenHashSet(removed);
-                }
-                for (var it = intersection.iterator(); it.hasNext(); ) {
-                    long p = it.nextLong();
-                    if (world.getChunkSource().hasChunk(ChunkPos.getX(p), ChunkPos.getZ(p))) {
-                        removed.remove(p);
-                    }
-                    else {
-                        added.remove(p);
-                    }
-                }
-            }
+            resolveByLiveTruth(world, intersection, added, removed);
         }
         sog.updateLoadedChunks(added, removed);
+    }
+
+    /** Chunks present in BOTH delta sets, or null if none (the common case). */
+    private static LongOpenHashSet loadedIntersection(
+        LongOpenHashSet added, LongOpenHashSet removed
+    ) {
+        if (added.isEmpty() || removed.isEmpty()) {
+            return null;
+        }
+        LongOpenHashSet intersection = null;
+        for (var it = added.iterator(); it.hasNext(); ) {
+            long p = it.nextLong();
+            if (removed.contains(p)) {
+                if (intersection == null) {
+                    intersection = new LongOpenHashSet();
+                }
+                intersection.add(p);
+            }
+        }
+        return intersection;
+    }
+
+    private static void resolveByLiveTruth(
+        ClientLevel world, LongOpenHashSet intersection,
+        LongOpenHashSet added, LongOpenHashSet removed
+    ) {
+        for (var it = intersection.iterator(); it.hasNext(); ) {
+            long p = it.nextLong();
+            if (world.getChunkSource().hasChunk(ChunkPos.getX(p), ChunkPos.getZ(p))) {
+                removed.remove(p);
+            }
+            else {
+                added.remove(p);
+            }
+        }
+    }
+
+    /**
+     * S14.43 round-2 fold (verify wf_4089f91b-610, the one MAJOR): promote-time pre-resolution of
+     * the promoted dim's CURRENT accumulating loadedChunks window. On the COLD promote path (a
+     * never-rendered dest dim: the pump's readiness gate never opened, so the window holds the
+     * dim's ENTIRE delta history) the first post-promote main extract captures+flips that window
+     * and vanilla applies it UNRESOLVED (addAll-then-removeAll) — one away-period loader
+     * collapse/re-arm cycle before a blind crossing leaves added∩removed pairs whose net-eviction
+     * can include the arrival camera chunk: the parked-BFS wipe, resurfaced on the cold path.
+     * RESOLUTION-ONLY on the pair sets: no SOG application, no clearing — the window must still
+     * apply WHOLESALE at the first extract (it is the sole loadedChunks re-seeder after the reset
+     * consume; round-1 BLOCKER 3's load-bearing-accumulation constraint). In-place mutation of the
+     * CURRENT side is the pump's proven same-thread pattern (nothing else references it until an
+     * extract flips), and re-running on an already-resolved window is idempotent (same-tick
+     * double-crossings). Also closes the warm promote-instant LOW residual (the ≤1-tick window at
+     * promote) as a side effect.
+     */
+    public static void preResolvePromotedWindow(ClientLevel world) {
+        var cache = world.getChunkSource();
+        LongOpenHashSet added = cache.addedLoadedChunks();
+        LongOpenHashSet removed = cache.removedLoadedChunks();
+        LongOpenHashSet intersection = loadedIntersection(added, removed);
+        if (intersection != null) {
+            resolveByLiveTruth(world, intersection, added, removed);
+        }
     }
 
     private static void cleanUp() {

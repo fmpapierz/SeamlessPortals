@@ -816,6 +816,14 @@ public class ClientWorldLoader {
         Validate.notNull(promotedRenderer, "no renderer for promoted dim %s", toDim.identifier());
         Validate.notNull(demotedRenderer, "no renderer for demoted dim %s", fromDim.identifier());
 
+        // S14.43 round-2 fold (verify wf_4089f91b-610 MAJOR): pre-resolve the promoted dim's
+        // CURRENT delta window by live chunk truth BEFORE the first post-promote main extract
+        // captures+flips it for vanilla's UNRESOLVED application — on the cold path (never-
+        // rendered dest, pump gate never opened) the accumulated window's added∩removed pairs
+        // would net-evict the arrival chunks (the parked-BFS wipe). Resolution-only: the window
+        // still applies wholesale as the sole loadedChunks re-seeder. See the hook's javadoc.
+        qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.preResolvePromotedWindow(toWorld);
+
         // ===== PROMOTE toDim: the global main extractor now drives the promoted renderer ========
         LevelExtractor toDimPerDimExtractor = WORLD_EXTRACTOR_MAP.get(toDim);
         com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor mainExt =

@@ -56,31 +56,31 @@ in code, verify round interrupted by the usage cutoff** — finishing it is THE 
   promote (`sogLoaded << ldChunks` = the poison signature) + one-shot switch
   `debug_dump_render_chain` + enriched promote log.
 
-## 2. THE RESUME TASK — finish the S14.42 verify round
+## 2. THE RESUME TASK — finish the S14.43 RE-verify round
 
-The Fable verify workflow was interrupted mid-run (3 lenses, no verdicts landed). Cross-session
-`resumeFromRunId` does NOT work — re-run fresh from the persisted script:
+**UPDATE:** verify round 1 COMPLETED before cutoff (FAIL — 3 BLOCKERs), folded at `4a53e0d`.
+**Round 2 re-run COMPLETED (`wf_4089f91b-610`): PASS×2 lenses** — all round-1 fixes confirmed;
+one MAJOR (the cold-promote residual is REACHABLE) **folded immediately** as
+`SecondaryWorldRenderCore.preResolvePromotedWindow` (promote-time in-place truth-resolution of
+the toDim's CURRENT window, resolution-only, called at the top of
+`promoteAndDemoteOnPlayerDimensionChange`; also closes the warm promote-instant LOW residual);
+3 MINORs ledgered. Full record: port-note `S14C-round7-terrain-wipe.md` §0/§0b.
 
-```
-Workflow({ scriptPath: "C:\\Users\\warwa\\.claude\\projects\\C--Users-warwa-ModDev-Portals-Portal-26-2\\c0dc8003-3d2b-477b-9db3-ff49c7419754\\workflows\\scripts\\s14-42-wipe-fix-verify-wf_723f7b39-bf4.js" })
-```
+**Hardening verify round (`wf_c9c7c2e1-b00`) COMPLETED: PASS×2** — 4 MINORs, no code change;
+the one real residual (sub-tick post-hook re-poison race, pre-existing class, strictly narrowed)
+is folded into the S17 capture-point-mixin ledger item (port-note §0c/§5). Compile gate GREEN.
+**S14.44 committed + pushed; READY was issued** — the resume point is now: await the user's
+far-walk retest verdict (§2 protocol below), then §3.
 
-(If that scratch path is gone, the three lens prompts are reconstructable from the script name +
-port-note §2: lens `closure` = does the fix close every poison path incl. the promote-instant
-≤1-tick window applied by VANILLA's main-dim consumer + the no-SOG drop branch + GUI-portal
-paths; lens `interplay` = double-apply/skip proofs across pump-clear/extract-read/flip/feed-apply,
-identity-guard preservation, in-place clear safety on BOTH cache impls (vanilla ClientChunkCache
-+ ImmPtlClientChunkMap), thread/phase safety, mayMutate correctness; lens `mechanism-recheck` =
-re-verify the 5 load-bearing vanilla claims (addAll-then-removeAll SOG:406-409; BFS seed-park
-kills the whole flood SOG:271-272; scheduleFullUpdate clones SOG:160-161; extract = only flip
-caller, read-then-flip; entity visibility ≠ octree) + the pump's main-dim skip condition across
-promote/demote map-update ordering.)
+Retest protocol (port-note §4): far-walk 200+ → wait ~1 min → return → cross (both directions,
+repeat step 7's long walks); expect NO wipe; any residue →
+`/imm_ptl_client_debug debug_dump_render_chain_enable` WHILE wiped → the log's `sogLoaded` vs
+`ldChunks` names it.
 
-Then: fold findings (BLOCKER/MAJOR = fix before READY; MINOR = fold or ledger) → commit
-"S14.42 verify fold" → push → **give the user READY + the retest protocol** (port-note §4):
-far-walk 200+ → wait ~1 min → return → cross (both directions, repeat step 7's long walks);
-expect NO wipe; if any residue: `/imm_ptl_client_debug debug_dump_render_chain_enable` WHILE
-wiped → read the log (`sogLoaded` vs `ldChunks`).
+Then: fold findings (BLOCKER/MAJOR before READY) → commit → push → **READY + retest protocol**
+(port-note §4): far-walk 200+ → wait ~1 min → return → cross (both directions, repeat step 7's
+long walks); expect NO wipe; residue → `/imm_ptl_client_debug debug_dump_render_chain_enable`
+WHILE wiped → the log's `sogLoaded` vs `ldChunks` names it.
 
 ## 3. Remaining S14 items after the retest passes
 1. **Teleport-flash classification** (open since round 2: "teleport flash is a little less") —
