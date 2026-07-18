@@ -427,7 +427,9 @@ public class SecondaryWorldRenderCore {
         boolean diffuseChangedToDest = false;
         try {
             // ===== Step 5 — dest EXTRACT + SOG delta feed + compileSections drain [cross-dim] =====
-            if (!sharedState) {
+            // S14.38 lever: skipping the extract shows STALE dest content in the window (expected)
+            // — attribution only.
+            if (!sharedState && !IPGlobal.debugSkipDestExtract) {
                 try {
                     destExtractor.extract(deltaTracker, newCamera, partialTick);
                 } finally {
@@ -530,6 +532,7 @@ public class SecondaryWorldRenderCore {
             GpuBufferSlice destFogBuffer = writeFogSlice(destFogData);
 
             // ===== Step 7 — dest PROJECTION set (inside the shell's save/restore bracket) =========
+            // S14.38 lever guard applies below at the install.
             // Always override, even with no oblique/scale transform: the main path pushed the BOBBED
             // projection before the dispatch fired. The shell brackets this with a PER-INVOCATION local
             // save of getProjectionMatrixBuffer()+getProjectionType() and a setProjectionMatrix(...)
@@ -539,10 +542,15 @@ public class SecondaryWorldRenderCore {
             // and the aperture. This is the ONE site that takes the bobbed matrix; the frustum (3.4) and
             // destCameraState.projectionMatrix stay on the un-bobbed base, exactly as vanilla bobs only
             // its local rasterization projection while cameraState.projectionMatrix stays bob-free.
-            RenderSystem.setProjectionMatrix(writeProjectionSlice(destDrawProjection), ProjectionType.PERSPECTIVE);
+            if (!IPGlobal.debugSkipProjectionInstall) {
+                RenderSystem.setProjectionMatrix(writeProjectionSlice(destDrawProjection), ProjectionType.PERSPECTIVE);
+            }
 
             // ===== Step 8 — Globals UBO for the dest pass ========================================
+            // S14.38 lever: skip BOTH globals writes (here + the finally restore) — dest draws see
+            // the main frame's globals (wrong dest gameTime/cameraPos while ON, expected).
             RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();
+            if (!IPGlobal.debugSkipGlobalsUbo)
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
                 mainRT.width, mainRT.height,
                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
@@ -589,7 +597,11 @@ public class SecondaryWorldRenderCore {
             ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix);
 
             GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
-            RenderSystem.setShaderFog(destFogBuffer);
+            // S14.38 lever: skip the dest fog INSTALL (dest draws use the ambient main fog — wrong
+            // fog in the window while ON, expected) — attribution only.
+            if (!IPGlobal.debugSkipDestFogInstall) {
+                RenderSystem.setShaderFog(destFogBuffer);
+            }
             try {
                 // 10.3 Row-16 background fill: the driver-invoked re-expression of IP's redirectClearing
                 // anchor (the decomposition has no clear to replace). RendererUsingStencil already
@@ -694,6 +706,7 @@ public class SecondaryWorldRenderCore {
             // Restore the Globals UBO with the SOURCE camera + game time (the main frame's remaining
             // passes — translucent-after-terrain, clouds, hand — read it).
             RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();
+            if (!IPGlobal.debugSkipGlobalsUbo)
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
                 mainRT.width, mainRT.height,
                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,

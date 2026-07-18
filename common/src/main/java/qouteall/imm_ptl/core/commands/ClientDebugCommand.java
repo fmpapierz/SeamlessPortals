@@ -671,6 +671,31 @@ public class ClientDebugCommand {
             "debug_aperture_no_color_write",
             cond -> IPGlobal.debugApertureNoColorWrite = cond
         );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_dest_extract",
+            cond -> IPGlobal.debugSkipDestExtract = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_dest_fog_install",
+            cond -> IPGlobal.debugSkipDestFogInstall = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_globals_ubo",
+            cond -> IPGlobal.debugSkipGlobalsUbo = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_dest_lightmap",
+            cond -> IPGlobal.debugSkipDestLightmap = cond
+        );
+        registerSwitchCommand(
+            builder,
+            "debug_skip_projection_install",
+            cond -> IPGlobal.debugSkipProjectionInstall = cond
+        );
         // S14.31: _enable arms ONE frame capture (self-clears); _disable is a no-op.
         registerSwitchCommand(
             builder,

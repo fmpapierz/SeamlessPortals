@@ -147,6 +147,13 @@ public class IPGlobal {
     public static boolean debugApertureNoStencilWrite = false;
     public static boolean debugApertureNoDepthWrite = false;
     public static boolean debugApertureNoColorWrite = false;
+    // S14.38: pass-interior STATE side-effect levers (every DRAW is lever-exonerated; the painter
+    // is a vanilla draw corrupted by pass state — bisect the state writers one by one).
+    public static boolean debugSkipDestExtract = false;
+    public static boolean debugSkipDestFogInstall = false;
+    public static boolean debugSkipGlobalsUbo = false;
+    public static boolean debugSkipDestLightmap = false;
+    public static boolean debugSkipProjectionInstall = false;
 
     public static boolean viewBobbingReduce = true;
     

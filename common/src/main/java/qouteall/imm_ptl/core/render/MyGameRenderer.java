@@ -337,7 +337,9 @@ public class MyGameRenderer {
 
         //update lightmap (G20: updateLightTexture(0) first-visit prime -> extract+render once via the
         // mod's proven per-dim Lightmap driver; virtual-camera config is S13 driver-core).
-        if (!RenderStates.isDimensionRendered(newDimension)) {
+        if (!RenderStates.isDimensionRendered(newDimension)
+            && !qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap // S14.38 lever
+        ) {
             helper.updateAndRender(newCamera, RenderStates.getPartialTick());
         }
 
