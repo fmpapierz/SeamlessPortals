@@ -39,6 +39,10 @@ public interface LevelExtractorAccessor {
     @Mutable
     void seamlessportals$setLevelRenderer(LevelRenderer levelRenderer);
 
+    /** S14.42 (render-chain probe): read the driven renderer for identity-coherence checks. */
+    @Accessor("levelRenderer")
+    LevelRenderer seamlessportals$getLevelRenderer();
+
     @Accessor("level")
     ClientLevel seamlessportals$getLevel();
 

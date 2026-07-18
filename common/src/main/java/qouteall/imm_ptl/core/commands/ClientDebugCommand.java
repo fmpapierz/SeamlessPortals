@@ -759,6 +759,17 @@ public class ClientDebugCommand {
             "debug_allow_dest_extract_gizmos",
             cond -> IPGlobal.debugAllowDestExtractGizmos = cond
         );
+        // S14.42: _enable fires ONE render-chain dump line (self-clears); _disable is a no-op.
+        // For the far-walk terrain-wipe hunt: run it WHILE the terrain is wiped.
+        registerSwitchCommand(
+            builder,
+            "debug_dump_render_chain",
+            cond -> {
+                if (cond) {
+                    qouteall.imm_ptl.core.render.RenderChainProbe.dumpOnce = true;
+                }
+            }
+        );
         // S14.31: _enable arms ONE frame capture (self-clears); _disable is a no-op.
         registerSwitchCommand(
             builder,

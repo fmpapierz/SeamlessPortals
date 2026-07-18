@@ -121,6 +121,9 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
     private void portal_onRenderLevelHead(DeltaTracker deltaTracker, CallbackInfo ci) {
         // S14.31: one-frame draw-trace bracket (armed by debug_capture_frame; dumped at render TAIL).
         qouteall.imm_ptl.core.render.DrawCallTrace.onFrameStart();
+        // S14.42: post-promote render-chain probe (self-armed by every promote; 1Hz; also the
+        // debug_dump_render_chain one-shot).
+        qouteall.imm_ptl.core.render.RenderChainProbe.onFrame();
         if (qouteall.imm_ptl.core.IPGlobal.debugFrameBoundaryProbe) {
             long now = System.currentTimeMillis();
             if (now - portal_lastBoundaryProbeMs > 1000) {

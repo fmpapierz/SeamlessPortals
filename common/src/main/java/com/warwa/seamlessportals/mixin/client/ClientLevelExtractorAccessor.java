@@ -30,4 +30,9 @@ public interface ClientLevelExtractorAccessor {
     @Accessor("levelExtractor")
     @Mutable
     void seamlessportals$setLevelExtractor(LevelExtractor levelExtractor);
+
+    /** S14.42 (render-chain probe): read the level's current extractor for the
+     *  writer/reader identity-coherence check (the nether-block-freeze invariant). */
+    @Accessor("levelExtractor")
+    LevelExtractor seamlessportals$getLevelExtractor();
 }

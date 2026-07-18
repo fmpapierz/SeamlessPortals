@@ -58,6 +58,11 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
 
     @Inject(method = "applyFrustum", at = @At("RETURN"))
     private void portal_onApplyFrustumReturn(Frustum frustum, CallbackInfo ci) {
+        // S14.42: probe counter — every MAIN-extractor applyFrustum since the last promote
+        // (counted before the override gates; the probe needs the raw firing count).
+        if ((Object) this == Minecraft.getInstance().levelExtractor) {
+            qouteall.imm_ptl.core.render.RenderChainProbe.applyFrustumCount++;
+        }
         if (MyGameRenderer.vanillaTerrainSetupOverride <= 0 && !IPGlobal.alwaysOverrideTerrainSetup) {
             return;
         }

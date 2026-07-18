@@ -947,11 +947,20 @@ public class ClientWorldLoader {
         qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.onDimensionMainStatusChanged(fromDim);
 
         // Per-crossing event, not per-frame — logging discipline holds. The (cold)/(warm) tag
-        // (S14.24) converts future first-frame reports into branch-attributed evidence.
+        // (S14.24) converts future first-frame reports into branch-attributed evidence. S14.42
+        // enrichment: the promote-instant state snapshot + probe arming (the far-walk terrain-wipe
+        // hunt — every promote now emits ~20s of 1Hz render-chain lines).
         LOGGER.info(
-            "[S14 crossing cutover] extract driver promoted {} -> {} ({})",
-            fromDim.identifier(), toDim.identifier(), coldPromote ? "cold" : "warm"
+            "[S14 crossing cutover] extract driver promoted {} -> {} ({}) dispNull={} sogNull={} "
+                + "viewAreaNull={} ldChunks={}",
+            fromDim.identifier(), toDim.identifier(), coldPromote ? "cold" : "warm",
+            promotedRenderer.sectionRenderDispatcher() == null,
+            promotedRenderer.sectionOcclusionGraph() == null,
+            ((qouteall.imm_ptl.core.ducks.IEWorldRenderer) promotedRenderer)
+                .ip_getBuiltChunkStorage() == null,
+            toWorld.getChunkSource().getLoadedChunksCount()
         );
+        qouteall.imm_ptl.core.render.RenderChainProbe.armOnPromote();
     }
 
     public static Set<ResourceKey<Level>> getServerDimensions() {

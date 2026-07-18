@@ -43,6 +43,7 @@ import net.minecraft.client.resources.model.sprite.AtlasManager;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.ARGB;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.material.FogType;
@@ -194,6 +195,119 @@ public class SecondaryWorldRenderCore {
     public static void init() {
         IPCGlobal.CLIENT_CLEANUP_EVENT.register(SecondaryWorldRenderCore::cleanUp);
         ClientWorldLoader.CLIENT_DIMENSION_DYNAMIC_REMOVE_EVENT.register(dim -> cleanUp());
+        // S14.42 (the far-walk terrain-wipe root fix, half 2): the secondary delta pump — see
+        // tickSecondaryDeltaPump. POST_CLIENT_TICK fires on the main thread after world tick,
+        // never mid-extract/mid-render (same-thread phase ordering).
+        IPGlobal.POST_CLIENT_TICK_EVENT.register(SecondaryWorldRenderCore::tickSecondaryDeltaPump);
+    }
+
+    /**
+     * S14.42 — the far-walk terrain-wipe ROOT FIX (workflow wf_20020335-d7c, all-tracer-converged
+     * HIGH verdict `sog-loadedchunks-netdrop`; port-note S14C-round7).
+     *
+     * <p><b>The broken invariant:</b> vanilla flips a dimension's chunk-delta double-buffer every
+     * frame ({@code LevelExtractor.extract} is the only flip caller), so one window can never
+     * contain both the unload AND the reload of the same chunk. A SECONDARY dim's extractor only
+     * runs while its portal is being rendered — walk away and the window freezes, accumulating the
+     * away period's loader-collapse unloads AND the return's reloads into ONE window. Vanilla's
+     * {@code SectionOcclusionGraph.updateLoadedChunks} applies {@code addAll THEN removeAll}
+     * (SOG:406-409), so every unload+reload-coalesced chunk nets to REMOVED — evicted from
+     * {@code loadedChunks} while actually loaded. The promote's invalidate-rebuild CLONES the
+     * poisoned set (SOG:160-161), the occlusion BFS seeds at the camera's (poisoned) chunk and
+     * parks with no propagation (SOG:271-272) → empty octree → empty visibleSections → ZERO
+     * terrain, unrecoverable (an already-loaded chunk emits no future add; empty visibleSections
+     * also starves the dirty compile scan). Entities render via the viewArea-mesh gate instead —
+     * the exact live signature.
+     *
+     * <p><b>The fix restores the invariant at both ends:</b> (1) this per-tick pump drains every
+     * secondary dim's accumulating window (apply-with-truth-resolution + clear IN PLACE — never
+     * flip: a second flip caller would alternate buffer identities under the Step-5 feed's
+     * window-identity guard and make it mis-skip legitimate windows), so windows stay ≤1 tick even
+     * while the portal is unrendered, and a backward/never-re-viewed crossing can no longer hand
+     * the first post-promote main extract a coalesced window; (2) the Step-5 feed and this pump
+     * both resolve any residual added∩removed intersection by the chunk's CURRENT loaded state
+     * ({@link #applyLoadedDeltasResolved}) — the order-free semantics vanilla's one-frame windows
+     * get for free. The emptySections leg keeps vanilla order: ranker-verified benign (unload
+     * emits removed for ALL sections, load emits added for AIR only ⇒ a coalesced window can at
+     * worst evict an air section = one wasted compile; a solid section can never persist).
+     */
+    private static void tickSecondaryDeltaPump() {
+        Minecraft mc = client;
+        if (mc.level == null) {
+            return;
+        }
+        for (ClientLevel world : ClientWorldLoader.getClientWorlds()) {
+            ResourceKey<Level> dim = world.dimension();
+            // The MAIN dim's window is vanilla-owned (extract flips it every frame).
+            if (ClientWorldLoader.WORLD_EXTRACTOR_MAP.get(dim) == mc.levelExtractor
+                || world == mc.level) {
+                continue;
+            }
+            var cache = world.getChunkSource();
+            LongOpenHashSet addedL = cache.addedLoadedChunks();
+            LongOpenHashSet removedL = cache.removedLoadedChunks();
+            LongOpenHashSet addedE = cache.addedEmptySections();
+            LongOpenHashSet removedE = cache.removedEmptySections();
+            if (addedL.isEmpty() && removedL.isEmpty() && addedE.isEmpty() && removedE.isEmpty()) {
+                continue;
+            }
+            LevelRenderer renderer = ClientWorldLoader.WORLD_RENDERER_MAP.get(dim);
+            SectionOcclusionGraph sog = renderer == null ? null : renderer.sectionOcclusionGraph();
+            if (sog != null) {
+                // Pump-owned window: mutation is safe (nothing else references the CURRENT side;
+                // the LRS only ever captures the FROZEN side at an extract's flip).
+                applyLoadedDeltasResolved(world, sog, addedL, removedL, true);
+                sog.updateEmptySections(addedE, removedE);
+            }
+            // else: no graph yet — its creation-time invalidate rebuilds loadedChunks from the
+            // live storage (SOG.waitAndReset with viewArea==null), so dropping the window is
+            // exactly correct.
+            addedL.clear();
+            removedL.clear();
+            addedE.clear();
+            removedE.clear();
+        }
+    }
+
+    /**
+     * S14.42: order-free loadedChunks delta application — any chunk in BOTH sets (only possible in
+     * a multi-frame accumulated window) resolves to its CURRENT loaded state instead of vanilla's
+     * addAll-then-removeAll last-writer-wins. {@code mayMutate}=false (the Step-5 feed: the sets
+     * belong to the frozen LRS window and back the identity guard) copies before resolving;
+     * true (the pump) resolves in place.
+     */
+    private static void applyLoadedDeltasResolved(
+        ClientLevel world, SectionOcclusionGraph sog,
+        LongOpenHashSet added, LongOpenHashSet removed, boolean mayMutate
+    ) {
+        if (!added.isEmpty() && !removed.isEmpty()) {
+            LongOpenHashSet intersection = null;
+            for (var it = added.iterator(); it.hasNext(); ) {
+                long p = it.nextLong();
+                if (removed.contains(p)) {
+                    if (intersection == null) {
+                        intersection = new LongOpenHashSet();
+                    }
+                    intersection.add(p);
+                }
+            }
+            if (intersection != null) {
+                if (!mayMutate) {
+                    added = new LongOpenHashSet(added);
+                    removed = new LongOpenHashSet(removed);
+                }
+                for (var it = intersection.iterator(); it.hasNext(); ) {
+                    long p = it.nextLong();
+                    if (world.getChunkSource().hasChunk(ChunkPos.getX(p), ChunkPos.getZ(p))) {
+                        removed.remove(p);
+                    }
+                    else {
+                        added.remove(p);
+                    }
+                }
+            }
+        }
+        sog.updateLoadedChunks(added, removed);
     }
 
     private static void cleanUp() {
@@ -498,7 +612,13 @@ public class SecondaryWorldRenderCore {
                         LongOpenHashSet removedLoaded = destDeltas.removedLoadedChunks;
                         LongOpenHashSet addedEmpty = destDeltas.addedEmptySections;
                         LongOpenHashSet removedEmpty = destDeltas.removedEmptySections;
-                        destSog.updateLoadedChunks(addedLoaded, removedLoaded);
+                        // S14.42: truth-resolved (the far-walk coalesced-window fix — see
+                        // tickSecondaryDeltaPump; mayMutate=false, these sets are the frozen LRS
+                        // window backing the identity guard above). With the pump running, windows
+                        // stay ≤1 tick and the intersection is almost always empty — this is the
+                        // residual-race guard.
+                        applyLoadedDeltasResolved(
+                            destLevel, destSog, addedLoaded, removedLoaded, false);
                         destSog.updateEmptySections(addedEmpty, removedEmpty);
                     }
                     // (c) compileSections drain (§5.1 / memory ow-holes-consumed-compile-queue):

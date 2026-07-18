@@ -36,4 +36,14 @@ public interface SectionOcclusionGraphAccessorMixin {
      */
     @Accessor("needsFrustumUpdate")
     AtomicBoolean seamlessportals$getNeedsFrustumUpdate();
+
+    /**
+     * S14.42 (render-chain probe): the graph's chunk-presence gate ({@code loadedChunks},
+     * SOG:60). The far-walk terrain wipe = this set poisoned UNDER-inclusive (a chunk absent
+     * here parks the occlusion BFS with no propagation, SOG:271-272) — the probe logs its size
+     * against the chunk source's live loaded count; {@code sogLoaded << ldChunks} is the
+     * poison signature.
+     */
+    @Accessor("loadedChunks")
+    it.unimi.dsi.fastutil.longs.LongOpenHashSet seamlessportals$getLoadedChunks();
 }
