@@ -1510,7 +1510,7 @@ its owning stage's port-note.
 | # | Item | Kind | Owning stage | Rationale / citation |
 |---|---|---|---|---|
 | F1 | `WorldInfoSender` time-half deleted (weather-only survives) | 26.2-forced | S9 | clock-map `ClientboundSetTimePacket`, no per-dim daylight boolean (R13j) |
-| F2 | Attached-firework skip in the unified crossing path | reproduce-then-patch | S15 | hazard persists in IP's `restoreFrom` recreate (current-mod-core §11.3); item 6; commit carries "reproduced <date>, applied" |
+| F2 | Attached-firework skip in the unified crossing path | reproduce-then-patch | S15 | hazard persists in IP's `restoreFrom` recreate (current-mod-core §11.3); item 6; commit carries "reproduced <date>, applied" — **DONE pre-completed S14.47**: reproduced 2026-07-18 (live capture, log-proven on the ported path), applied 2026-07-18 commit `63174f6`, Fable-verified + user-confirmed; register entry = port-note `S15-entity-traffic.md` §1 |
 | F3 | `preserveTransientHurtState` on the recreate branch | reproduce-then-patch | S15 | `restoreFrom` drops transient hurt state (§11.4); item 5; same evidence discipline |
 | F4 | Stencil substrate chain (GlBackend/GlConst/RenderTarget/GlStateManager mixins + StencilState) replaces porting-lib stencil enable | 26.2-forced | S12 (consumed) | no stencil at any 26.2 layer (R5); substrate runtime-proven (current-mod-render §3.1) |
 | F5 | Reversed-Z sign flips on every IP depth constant/comparison | 26.2-forced | S11 spec / S12 exec | clear 0.0 = far, GEQUAL default (R5); per-constant derivations mandatory (D4.4) |
