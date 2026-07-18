@@ -138,8 +138,11 @@ public interface LevelRendererAccessorMixin {
     /**
      * Invoke the renderer's private {@code submitFeatures(...)} — gathers the entity / block-entity
      * / particle render states (already extracted into {@code levelRenderState}) into the submit
-     * storage so {@code FeatureRenderDispatcher.renderAllFeatures} can draw them. {@code renderOutline}
-     * = false in the portal view (no glow outlines).
+     * storage so {@code FeatureRenderDispatcher.renderAllFeatures} can draw them.
+     * {@code renderOutline} gates the TARGETED-BLOCK outline ({@code submitBlockOutline} — not
+     * entity glow, which {@code shouldShowEntityOutlines} governs); since S18.5 the cross-dim dest
+     * pass passes vanilla's live {@code shouldRenderBlockOutline()} result so the portal view draws
+     * the remote-hit outline exactly as IP's nested renderLevel did.
      */
     @org.spongepowered.asm.mixin.gen.Invoker("submitFeatures")
     void seamlessportals$invokeSubmitFeatures(

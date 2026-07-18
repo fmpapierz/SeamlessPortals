@@ -241,3 +241,49 @@ at the plane (the recorded improvement vs IP side-by-side).
 
 **Gates:** compile green; 8-leg suite ALL LEGS PASS post-folds (chunk-ticket errors = the known
 IP-inherited S14.52 noise class).
+
+---
+
+## §4 — S18.5 + S18.6-instrument: dest block outline + the dpMs top-level-only fix
+
+**Dest targeted-block outline (S18.5a).** The pieces COMPOSED without new machinery — the missing
+link was ONE boolean: `renderPortalEntities` passed `false` as `submitFeatures`' `renderOutline`
+arg. Now: vanilla's own `shouldRenderBlockOutline()` per pass (new `@Invoker` on
+GameRendererAccessorMixin — exactly what IP's nested renderLevel recomputed per pass; IP had ZERO
+outline machinery). Verified end-to-end (`wf_8a0f8152-4d8`, PASS ×2): the shell's hit swap
+(remote hit, dest coords) + shouldRenderHitResult null-out precede the dest extract; vanilla
+`extractBlockOutline` (unlevered) reads the swapped hit against the DEST level;
+`submitBlockOutline` positions camera-relative to the portal camera; drawn in the pass's
+renderAllFeatures under clip + stencil; storage identity confirmed (the vanilla this-field quirk is
+identity-neutral); Mechanism B unaffected.
+
+**The flag-ON sliver re-bucket (S18.5b — the S17 sweep finding closed).**
+`LevelRendererBlockOutlineMixin`'s trigger keyed on the block-era tracker only (never fired for
+entity portals). Flag-ON branch now keys on IP's own `RenderStates.lastPortalRenderInfos`
+(non-empty ⇔ a portal rendered last frame; 1-frame hysteresis invisible for a bucket choice);
+flag-OFF byte-equivalent ternary; class-load neutrality verified at the bytecode level (lazy
+getstatic resolution).
+
+**dpMs instrument fix (S18.6, the S14C-round8 "KNOWN INSTRUMENT ARTIFACT").** The bracket in
+`switchAndRenderTheWorld` is depth-counted: only the OUTERMOST invocation accumulates
+`destPassNanosThisFrame` (nested passes were counted twice — own bracket + inside the parent's).
+Verified balanced under the S18.2 shell try/finally including throw paths. **The S14.52 parity
+read (dp=5 avg 21.6ms etc.) MUST BE RE-MEASURED on the corrected probe before any optimization
+work** — and note dp= still counts nested passes while dpMs= is now top-level-only (never divide
+old and new rows arithmetically).
+
+**IP-inherited corners recorded (NOT defects — verified byte-identical in IP 1.21.3):**
+(a) conditional-swap leak: pointing at a MAIN-dim block, the un-swapped main hit can pass
+shouldRenderHitResult's cross-space plane test by coordinate coincidence → phantom outline at
+main-hit coords in the dest view (IP identical; also reachable on the layer-0
+GuiPortal/cross-view passes); (b) the dest outline draws before dest translucent terrain
+(alpha-blended under dest water — the after-terrain deferral can't be reproduced in-pass; same
+ordering class as all dest-pass features) and before nested layers (the sliver class can recur one
+recursion level down); (c) `lastPortalRenderInfos` can be stale-true for ≤1-2 frames across
+relog/mid-packet frames (bucket-choice-only). Same-dim passes stay outline-less (the ledgered
+same-dim re-extract family).
+
+**S18.3 folds spot-checked in place by this round** (null-as-no-information mirror, !sharedState
+weather gate, markForRebuild-on-cloudRange) — the S18.3 re-verify obligation is closed.
+
+**Gates:** compile green; 8-leg suite ALL LEGS PASS.

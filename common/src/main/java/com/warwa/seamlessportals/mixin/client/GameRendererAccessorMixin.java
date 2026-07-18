@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.fog.FogRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.gen.Accessor;
+import org.spongepowered.asm.mixin.gen.Invoker;
 
 /**
  * Accessor mixin for GameRenderer private fields.
@@ -74,4 +75,14 @@ public interface GameRendererAccessorMixin {
     @Accessor("mainRenderTarget")
     @Mutable
     void seamlessportals$setMainRenderTarget(RenderTarget target);
+
+    /**
+     * S18.5: vanilla's per-frame targeted-block-outline predicate (HUD hidden, spectator
+     * menu-provider, adventure-mode can-break/can-place checks — 26.2:GameRenderer.java:501-523).
+     * The dest pass recomputes it per pass exactly as IP's nested renderLevel did; it reads
+     * {@code minecraft.hitResult}, which the shell has already swapped to the REMOTE hit (and
+     * nulled under shouldRenderHitResult) — so the dest-pass answer is remote-hit-correct.
+     */
+    @Invoker("shouldRenderBlockOutline")
+    boolean seamlessportals$invokeShouldRenderBlockOutline();
 }

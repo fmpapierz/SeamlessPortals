@@ -1342,7 +1342,22 @@ public class SecondaryWorldRenderCore {
             if (storage == null) {
                 return;
             }
-            acc.seamlessportals$invokeSubmitFeatures(destLRS, storage, false);
+            // S18.5 — dest targeted-block outline delivery: `true` routes vanilla's
+            // submitBlockOutline (LevelRenderer:288-290) for THIS pass. The pieces compose without
+            // new machinery: the shell already swapped mc.hitResult to the REMOTE hit (dest coords)
+            // and nulled it under shouldRenderHitResult; the dest extract's extractBlockOutline
+            // (LevelExtractor:336-361) read that swapped hit against the DEST level into
+            // destLRS.blockOutlineRenderState; submitBlockOutline positions it camera-relative to
+            // the portal camera → correct under destViewMatrix, drawn inside this pass's
+            // renderAllFeatures under the armed clip + stencil. The per-pass gate is vanilla's own
+            // shouldRenderBlockOutline predicate — exactly what IP's nested renderLevel recomputed
+            // per pass (IP had NO extra outline machinery; the outline was vanilla's, fed the
+            // remote-substituted hit). Same-dim passes stay outline-less (no submitFeatures there —
+            // the ledgered same-dim re-extract family).
+            boolean destRenderOutline =
+                ((GameRendererAccessorMixin) client.gameRenderer)
+                    .seamlessportals$invokeShouldRenderBlockOutline();
+            acc.seamlessportals$invokeSubmitFeatures(destLRS, storage, destRenderOutline);
             Matrix4fStack mv = RenderSystem.getModelViewStack();
             mv.pushMatrix();
             mv.mul(destViewMatrix);

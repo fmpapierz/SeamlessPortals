@@ -185,6 +185,10 @@ public class MyGameRenderer {
      * GPU buffers per use exactly like the per-secondary ones. Wired from {@code GameRenderer.render}
      * TAIL at S12/S13 — all sub-renders acquire/release within renderLevel, so the pool is idle here.
      */
+    // S18.6: dest-pass bracket nesting depth (render thread only) — see the dpMs bracket in
+    // switchAndRenderTheWorld. 0 = outermost; only the outermost interval accumulates.
+    private static int destPassBracketDepth = 0;
+
     public static void endFramePooled() {
         for (RenderBuffers renderBuffers : secondaryRenderBuffers) {
             renderBuffers.endFrame();
@@ -392,12 +396,28 @@ public class MyGameRenderer {
                 // layer-0 originals. At layer 1 these equal the originals (no rung-1 change).
                 // S14.52 zero-lag hunt (many-portal): whole-pass wall time, dpMs= in the kit rows —
                 // splits "the passes themselves are expensive" from "something BETWEEN passes is".
+                // S18.6 INSTRUMENT FIX (the S14C-round8 §"KNOWN INSTRUMENT ARTIFACT"): TOP-LEVEL-ONLY
+                // accumulation. A nested pass re-enters this bracket through renderDestWorld Step
+                // 10.10, so its interval was added BOTH by its own bracket AND inside the enclosing
+                // parent's (which doesn't return until the child finishes) — dp>=2 frames
+                // double-counted every nested layer, inflating dpMs superlinearly. The depth counter
+                // accumulates ONLY the outermost invocation's wall time (which already includes its
+                // children exactly once) — the probe's stated intent. The S14.52 parity read
+                // (dp=5 avg 21.6ms etc.) must be RE-MEASURED on this corrected probe before any
+                // optimization work (NO GUESSING).
                 long dpT0 = System.nanoTime();
-                SecondaryWorldRenderCore.renderDestWorld(
-                    newWorld, worldRenderer, newCamera, renderDistance,
-                    oldWorld, oldCamera);
-                qouteall.imm_ptl.core.render.TeleportFlashProbe.destPassNanosThisFrame +=
-                    System.nanoTime() - dpT0;
+                destPassBracketDepth++;
+                try {
+                    SecondaryWorldRenderCore.renderDestWorld(
+                        newWorld, worldRenderer, newCamera, renderDistance,
+                        oldWorld, oldCamera);
+                } finally {
+                    destPassBracketDepth--;
+                    if (destPassBracketDepth == 0) {
+                        qouteall.imm_ptl.core.render.TeleportFlashProbe.destPassNanosThisFrame +=
+                            System.nanoTime() - dpT0;
+                    }
+                }
                 profiler.pop();
             });
         } finally {
