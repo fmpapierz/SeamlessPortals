@@ -290,7 +290,8 @@ public class RendererUsingStencil extends PortalRenderer {
 
         qouteall.imm_ptl.core.render.DrawCallTrace.record(
             ">> doRenderPortal " + portal.getUUID() + " destDim=" + portal.getDestDim().identifier()
-            + " layer=" + PortalRendering.getPortalLayer() + " [aperture INCR draw next]");
+            + " layer=" + PortalRendering.getPortalLayer() + " [aperture INCR draw next] "
+            + qouteall.imm_ptl.core.render.DrawCallTrace.mvTop());
         boolean anySamplePassed = PortalRenderInfo.renderAndDecideVisibility(portal, () -> {
             renderPortalViewAreaToStencil(portal, modelView);
         });

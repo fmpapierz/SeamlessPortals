@@ -137,6 +137,9 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
                     + " skybox=" + (net.minecraft.client.Minecraft.getInstance().level != null
                         ? net.minecraft.client.Minecraft.getInstance().level.dimensionType().skybox()
                         : "null")
+                    // S14.34: the MV-stack top at frame boundary — the sky family multiplies its
+                    // pose onto this assuming identity; non-identity here = the wedge transform.
+                    + " " + qouteall.imm_ptl.core.render.DrawCallTrace.mvTop()
                 );
             }
         }

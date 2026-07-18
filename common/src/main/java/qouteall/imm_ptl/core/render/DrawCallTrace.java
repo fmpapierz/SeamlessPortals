@@ -53,6 +53,22 @@ public class DrawCallTrace {
     }
 
     /**
+     * S14.34 (v4): the global model-view stack TOP, compact — the sunrise fan/stars/sky disc
+     * multiply their pose onto THIS at execute time assuming identity; a non-identity top at
+     * sky-pass time IS the wedge transform. Logged at the frame boundary, every sky pass, and
+     * every mod choreography marker so the corrupting interval is bracketed exactly.
+     */
+    public static String mvTop() {
+        org.joml.Matrix4fStack mv = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
+        boolean identity = (mv.properties() & org.joml.Matrix4fc.PROPERTY_IDENTITY) != 0;
+        if (identity) {
+            return "MV=identity";
+        }
+        return String.format("MV=[m00=%.4f m11=%.4f m22=%.4f | t=%.3f,%.3f,%.3f]",
+            mv.m00(), mv.m11(), mv.m22(), mv.m30(), mv.m31(), mv.m32());
+    }
+
+    /**
      * S14.33 (v3, the NO-GUESSING rule): dump the given SkyRenderState's full numeric contents +
      * the current level's gameTime — called at every sky-family pass creation (main state) and at
      * the dest-pass marker (dest state). The wedge frame's numbers vs the control frame's ARE the
@@ -80,6 +96,7 @@ public class DrawCallTrace {
             + " sunriseSunsetColor=" + Integer.toHexString(s.sunriseAndSunsetColor)
             + " darkDisc=" + s.shouldRenderDarkDisc
             + " levelGameTime=" + (level != null ? level.getGameTime() : -1)
-            + " levelDim=" + (level != null ? level.dimension().identifier() : "null"));
+            + " levelDim=" + (level != null ? level.dimension().identifier() : "null")
+            + " " + mvTop());
     }
 }

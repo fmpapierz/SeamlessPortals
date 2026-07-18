@@ -254,7 +254,7 @@ public class SecondaryWorldRenderCore {
         Vec3 destCameraPos = newCamera.position();
 
         DrawCallTrace.record(">>> renderDestWorld dim=" + destDim.identifier()
-            + " layer=" + PortalRendering.getPortalLayer());
+            + " layer=" + PortalRendering.getPortalLayer() + " " + DrawCallTrace.mvTop());
         // S14.33 (v3): dest-side + main-side sky state at portal-pass entry (pollution timing:
         // if the MAIN state is already wrong HERE, the pollution predates the dest pass).
         DrawCallTrace.recordSkyState("    destSkyState@enter",
@@ -723,7 +723,8 @@ public class SecondaryWorldRenderCore {
                 destCameraState.fogData = savedFogData;
                 destCameraState.fogType = savedFogType;
             }
-            DrawCallTrace.record("<<< renderDestWorld dim=" + destDim.identifier());
+            DrawCallTrace.record("<<< renderDestWorld dim=" + destDim.identifier()
+                + " " + DrawCallTrace.mvTop());
         }
     }
 
