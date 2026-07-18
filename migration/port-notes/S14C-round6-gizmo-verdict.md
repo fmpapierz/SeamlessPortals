@@ -1,6 +1,7 @@
 # S14-C round 6 — the wedge verdict: ChunkCullingDebugRenderer's captured-frustum gizmos (S14.41)
 
-**Status:** fix committed (skip-by-default + inverse A/B lever), Fable-verified (3× PASS:
+**Status:** ✅ **CLOSED — user-confirmed live 2026-07-17 ("worked") at `fe48efc`.**
+Fix committed (skip-by-default + inverse A/B lever), Fable-verified (3× PASS:
 mechanism / regression / weave — workflow `wf_6bce6f3d-449`; 2 comment MINORs + 1 residue catch
 folded), awaiting the user's confirming run. The guard sweep (same workflow) audited every
 block-era-gated mixin: NO third inert shared-state guard — the other ~10 gated mixins are
