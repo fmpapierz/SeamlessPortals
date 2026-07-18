@@ -392,6 +392,29 @@ public class SecondaryWorldRenderCore {
         sameDimEntitiesSwallowLogged = false;
         sameDimEntityThrowCount = 0;
         closeFrameTransientUbos(); // S14.30: disposal path
+        // S18.3: dispose the per-dest-dim cloud isolation (AutoCloseable GPU ring buffers) + drop
+        // the mirrored texture (a new session's resource state re-mirrors at the first render TAIL).
+        for (net.minecraft.client.renderer.CloudRenderer cloudRenderer : destCloudRenderers.values()) {
+            try {
+                cloudRenderer.close();
+            } catch (Throwable t) {
+                // disposal is best-effort; never let one bad close strand the rest
+            }
+        }
+        destCloudRenderers.clear();
+        cloudsDrawnThisFrame.clear();
+        mainCloudTexture = null;
+        // S18.7: dispose the per-dest-dim weather isolation (AutoCloseable vertex buffer).
+        for (net.minecraft.client.renderer.WeatherEffectRenderer weatherRenderer
+            : destWeatherRenderers.values()
+        ) {
+            try {
+                weatherRenderer.close();
+            } catch (Throwable t) {
+                // disposal is best-effort
+            }
+        }
+        destWeatherRenderers.clear();
     }
 
     /**
@@ -959,25 +982,31 @@ public class SecondaryWorldRenderCore {
                     // is true, so the post-pass branch runs setStencilStateForWorldRendering (§5).
                     IPCGlobal.renderer.onBeforeTranslucentRendering(destViewMatrix);
 
-                    // 10.11 dest clouds — DELIBERATELY SKIPPED (S13-J DOCUMENTED DEVIATION, restore at
-                    // S18). The re-expression is preserved (renderPortalClouds below) but NOT called: on
-                    // 26.2 a same-dim portal has destRenderer == mc.levelRenderer, so
-                    // destRenderer.cloudRenderer() is the SAME CloudRenderer whose utb/ubo
-                    // MappableRingBuffers the MAIN pass's LevelRenderer.addCloudsPass draws into LATER in
-                    // the same framegraph submit. Drawing dest clouds here mid-submit rotates/fences those
-                    // ring-buffer slots inside the current submit, so the main pass's currentBuffer()
-                    // awaitCompletion sees a fence for the in-flight submit and throws
-                    // "Cannot wait on a fence for the current submit" (GlCommandEncoder.awaitSubmit) —
-                    // the deterministic crash-2026-07-16_11.50/11.58 (multiple portals multiply the
-                    // mid-frame rotations, making it fire). This is the SAME shared-WORLD-ring-buffer
-                    // hazard CUTOVER_SPEC §3.2 warned about for FOG (solved there with a core-owned
-                    // standalone buffer) manifesting in CLOUDS. IP isolates per-dim cloud geometry via
-                    // CloudContext, but that class's own header defers reconciling its per-dim cache
-                    // against 26.2's single CloudRenderer ring buffer to U10/S12 (still inert) — building
-                    // that isolation now is disproportionate at rung-1 triage, so dest clouds are OMITTED
-                    // exactly like the already-accepted weather + world-border omission (S13H design §6.3),
-                    // deviation-until-S18. Sky (Step 10.4) is unaffected: it uses the core-owned
-                    // portalSkyRenderer, not the shared main renderer's buffers.
+                    // 10.11 dest clouds — RESTORED at S18.3 (the S13-J deviation CLOSED). The original
+                    // hazard: the SHARED CloudRenderer's utb/ubo MappableRingBuffers rotated/fenced
+                    // mid-submit ("Cannot wait on a fence for the current submit", the deterministic
+                    // crash-2026-07-16_11.50/11.58 class). Solved by ISOLATION — mod-owned per-dest-dim
+                    // CloudRenderer instances that never touch the main renderer's ring buffers (the
+                    // fog-buffer/DimensionRenderHelper pattern; details + the once-per-dim-per-frame cap,
+                    // fabulous skip, texture mirror, endFrame walk, and close lifecycle at
+                    // renderPortalClouds' header below). Draws under the live stencil + armed clip into
+                    // the main target, at the decomposition's designed Step-10.11 slot.
+                    renderPortalClouds(
+                        destDim, destLRS, destCameraState, destViewMatrix, partialTick
+                    );
+
+                    // 10.12 dest weather — RESTORED at S18.7 (window rain, the S14-step-6 item;
+                    // vanilla order: clouds then weather). CROSS-DIM ONLY (verify fold
+                    // wf_3217b5a7-e5d): sharedState passes skip the dest extract, so destLRS IS the
+                    // main LRS whose weather columns are MAIN-camera-centric — rendering them at the
+                    // portal camera indexes the 32×32 column table out of range (>~16 blocks apart:
+                    // AIOOBE swallowed per frame, zero weather + wasted build work; closer: wrong
+                    // tilt). Same-dim window weather joins the same-dim block-entities/particles
+                    // ledgered gap (IP re-extracted per pass; ours needs a portal-camera weather
+                    // re-extract — the S18.4 family). Details at renderPortalWeather's header.
+                    if (!sharedState) {
+                        renderPortalWeather(destDim, destLRS, destCameraState, destViewMatrix);
+                    }
                 } finally {
                     FrontClipping.disableClipping();
                     if (PortalRendering.isRenderingOddNumberOfMirrors()) {
@@ -1112,15 +1141,43 @@ public class SecondaryWorldRenderCore {
         return portalSkyRenderer;
     }
 
-    // ===== §1 Step 10.11 — dest clouds (re-expresses renderPortalClouds:947) =====================
-    // INTENTIONALLY NOT CALLED (S13-J documented deviation — see the Step 10.11 skip note above). This
-    // faithful re-expression is retained ONLY as the S18 restoration reference; wiring it back requires
-    // per-dim cloud-buffer isolation first (CloudContext reconciled against 26.2's single CloudRenderer
-    // ring buffer), or it re-introduces the "Cannot wait on a fence for the current submit" crash. Do
-    // NOT re-add the call at rung 1.
-    @SuppressWarnings("unused")
+    // ===== §1 Step 10.11 — dest clouds (S18.3: the S13-J deviation CLOSED) =======================
+    // The shared-ring-buffer hazard is solved by ISOLATION, not by touching the shared instance:
+    // the mod owns ONE CloudRenderer per dest dimension (the DimensionRenderHelper per-dim pattern;
+    // IP's CloudContext intent realized against 26.2's ring-buffer model). Draws never touch the
+    // main renderer's utb/ubo MappableRingBuffers, so the main clouds pass's currentBuffer() never
+    // sees a mod-rotated fence ("Cannot wait on a fence for the current submit" —
+    // crash-2026-07-16_11.50/11.58 class). Constraints honored:
+    //  * ONE draw per dim per frame (cloudsDrawnThisFrame): a CloudRenderer.render whose camera cell
+    //    changed rotates its utb — two same-frame rotations on one instance re-create the same-frame
+    //    fence hazard on OUR buffer. Residual (recorded): the 2nd+ window to the SAME dim in one
+    //    frame draws no clouds — a 26.2-forced cap (IP 1.21.3 rebuilt immediate-mode per pass; no
+    //    fences existed).
+    //  * texture is mirrored from the reload-registered MAIN instance once per frame at the render
+    //    TAIL (endCloudFrames — client.levelRenderer is the true main there, no swap active); mod
+    //    instances are not reload listeners so their own texture would stay null forever (the exact
+    //    reason secondary renderers' cloudRenderers never drew).
+    //  * per-frame endFrame() on every mod instance (ubo.rotate — vanilla LevelRenderer:769 parity),
+    //    driven from MyGameRenderer.endFramePooled (the flag-ON GameRenderer.render TAIL walk).
+    //  * FABULOUS SKIP: CloudRenderer.render routes into levelRenderer.cloudsTarget() when non-null —
+    //    a framegraph-internal handle we must not touch from a mid-main-pass dest draw. Under
+    //    useShaderTransparency() dest clouds are skipped (ledgered residual; fabulous already
+    //    carries the mod's advisory).
+    //  * close() on cleanup (world unload + dynamic dim removal) — CloudRenderer is AutoCloseable
+    //    (GPU ring buffers).
+    //  * CLIP DEVIATION (ledgered, improvement-class): IP drew dest clouds UNCLIPPED (its
+    //    per-shader clip feed unset the uniform for every shader except cross-portal-entity +
+    //    weather — IP MixinRenderSystem_Clipping:37-55), so IP windows showed near-side cloud slabs
+    //    bleeding through. Our Step-10.5 arm + the patched clouds shader (rendertype_clouds.vsh
+    //    matches the canonical pattern) clip them at the portal plane — MORE clipping than IP,
+    //    same class as the S11-R3 §1.3 tighter-clip-scope registered improvement.
+    private static final Map<ResourceKey<Level>, net.minecraft.client.renderer.CloudRenderer>
+        destCloudRenderers = new java.util.HashMap<>();
+    private static final Set<ResourceKey<Level>> cloudsDrawnThisFrame = new HashSet<>();
+    private static net.minecraft.client.renderer.CloudRenderer.TextureData mainCloudTexture;
+
     private static void renderPortalClouds(
-        LevelRenderer destRenderer, LevelRenderState destLRS,
+        ResourceKey<Level> destDim, LevelRenderState destLRS,
         CameraRenderState destCameraState, Matrix4f destViewMatrix, float partialTick
     ) {
         var ors = client.gameRenderer.gameRenderState().optionsRenderState;
@@ -1134,11 +1191,26 @@ public class SecondaryWorldRenderCore {
         if (destCameraState.pos == null) {
             return;
         }
+        if (mainCloudTexture == null) {
+            return; // session start only — mirrored at the first render TAIL that sees a loaded
+                    // texture (a resource reload keeps the last-known record for the pre-TAIL frame)
+        }
+        if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+            return; // fabulous: cloudsTarget() is a framegraph-internal handle (see header)
+        }
+        if (!cloudsDrawnThisFrame.add(destDim)) {
+            return; // once per dim per frame (ring-buffer rotation budget, see header)
+        }
+        net.minecraft.client.renderer.CloudRenderer cloudRenderer =
+            destCloudRenderers.computeIfAbsent(
+                destDim, d -> new net.minecraft.client.renderer.CloudRenderer());
+        ((qouteall.imm_ptl.core.mixin.client.accessor.IECloudRenderer_Accessor) cloudRenderer)
+            .ip_setTexture(mainCloudTexture);
         Matrix4fStack mv = RenderSystem.getModelViewStack();
         mv.pushMatrix();
         mv.mul(destViewMatrix);
         try {
-            destRenderer.cloudRenderer().render(
+            cloudRenderer.render(
                 destLRS.cloudColor, cloudStatus, destLRS.cloudHeight, ors.cloudRange,
                 destCameraState.pos, destLRS.gameTime, partialTick
             );
@@ -1146,6 +1218,117 @@ public class SecondaryWorldRenderCore {
             // Clouds are non-critical.
         } finally {
             mv.popMatrix();
+        }
+    }
+
+    // ===== §1 Step 10.12 — dest weather (S18.7: window rain/snow, the S14-step-6 item) ==========
+    // IP renders dest-dim weather in portal views WITH the inner clip armed (IP MixinLevelRenderer
+    // :364-391 arms setupInnerClipping around the weather pass, adjustment 0); the decomposition's
+    // Step-10.5 clip is armed through this slot, so the draw inherits IP's clipped-weather
+    // semantics. The clip GENUINELY applies (verify wf_3217b5a7-e5d, statically proven): the
+    // WEATHER pipelines build on the particle vertex shader whose gl_Position line matches the
+    // canonical pattern → ShaderCodeTransformation patches it → the per-draw upload location-hits.
+    // Epsilon deviation (ledgered): our arm carries -FrontClipping.ADJUSTMENT where IP armed
+    // weather with adjustment 0 — a sub-block plane offset. Isolation: mod-owned per-dest-dim
+    // WeatherEffectRenderer instances (the clouds pattern) — NO ring buffer exists here (the vertex
+    // buffer is written via plain glBufferSubData, GL implicit sync — verified at
+    // GlCommandEncoder.writeToBuffer:254-258), so no per-frame cap and no endFrame are needed; the
+    // isolation is PURELY DEFENSIVE (avoids implicit-sync driver stalls + grow/shrink interplay
+    // with vanilla's same-frame weather pass; sharing would not have crashed on GL). Textures
+    // resolve per render via TextureManager (no reload mirror needed); the lightmap bound is
+    // gameRenderer.lightmap() — SWAPPED to the dest dim's during the pass, exactly right.
+    // OutputTarget.WEATHER_TARGET → main target when non-fabulous; fabulous keeps its
+    // framegraph-internal weather target un-touchable mid-main-pass, so dest weather is
+    // fabulous-skipped like clouds (ledgered). CROSS-DIM ONLY: the cross-dim dest extract populates
+    // destLRS.weatherRenderState around the PORTAL camera (LevelExtractor:181, levered by
+    // ip_leverExtractWeather); sharedState passes have NO portal-camera weather state (the caller
+    // gates — see Step 10.12). An empty state no-ops inside render() (columnCount==0).
+    private static final Map<ResourceKey<Level>, net.minecraft.client.renderer.WeatherEffectRenderer>
+        destWeatherRenderers = new java.util.HashMap<>();
+
+    private static void renderPortalWeather(
+        ResourceKey<Level> destDim, LevelRenderState destLRS,
+        CameraRenderState destCameraState, Matrix4f destViewMatrix
+    ) {
+        if (destLRS.weatherRenderState == null || destCameraState.pos == null) {
+            return;
+        }
+        if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+            return; // fabulous: WEATHER_TARGET is a framegraph-internal handle (see header)
+        }
+        net.minecraft.client.renderer.WeatherEffectRenderer weatherRenderer =
+            destWeatherRenderers.computeIfAbsent(
+                destDim, d -> new net.minecraft.client.renderer.WeatherEffectRenderer());
+        Matrix4fStack mv = RenderSystem.getModelViewStack();
+        mv.pushMatrix();
+        mv.mul(destViewMatrix);
+        try {
+            weatherRenderer.render(destCameraState.pos, destLRS.weatherRenderState);
+        } catch (Throwable t) {
+            // Weather is non-critical.
+        } finally {
+            mv.popMatrix();
+        }
+    }
+
+    /**
+     * S18.3 — per-frame cloud lifecycle, driven from {@link MyGameRenderer#endFramePooled()} (the
+     * flag-ON GameRenderer.render TAIL walk): resets the once-per-dim draw budget, mirrors the
+     * reload-registered MAIN CloudRenderer's texture (client.levelRenderer is the true main renderer
+     * at the render TAIL — no swap active), and endFrames every mod-owned instance (ubo.rotate —
+     * vanilla LevelRenderer:769 parity; without it the same ubo slot maps every frame and stalls on
+     * the prior frame's fence).
+     */
+    // S18.3 verify fold (wf_3217b5a7-e5d): the last-seen cloudRange, for the stale-utb hardening
+    // below (vanilla wires Cloud Distance changes to the MAIN instance's markForRebuild only —
+    // Options.java:201-204 → LevelRenderer:812; a mod instance with a resized-but-unrebuilt utb
+    // would drawIndexed over uninitialized texel memory).
+    private static int lastCloudRange = -1;
+
+    public static void endCloudFrames() {
+        cloudsDrawnThisFrame.clear();
+        if (client.levelRenderer != null) {
+            var freshTexture =
+                ((qouteall.imm_ptl.core.mixin.client.accessor.IECloudRenderer_Accessor)
+                    client.levelRenderer.cloudRenderer()).ip_getTexture();
+            // S18.3 verify BLOCKER fix (wf_3217b5a7-e5d): treat null as NO-INFORMATION, never as a
+            // change. After a cross-dim crossing client.levelRenderer is PERMANENTLY the per-dim
+            // renderer, whose CloudRenderer was registered only for FUTURE reloads and holds a null
+            // texture — the old null-means-changed branch disposed every instance AND nulled the
+            // mirror, so dest clouds never drew again for the whole stay in that dim. TextureData is
+            // dim-independent CPU cell data from clouds.png; retaining the last-known record is
+            // exactly correct.
+            if (freshTexture != null && freshTexture != mainCloudTexture) {
+                // Resource reload (or first sight of the texture): the mirrored set path does NOT
+                // trip the instances' needsRebuild, so a changed texture would leave stale cloud
+                // meshes until the camera crossed a cell. Dispose — instances lazily re-create with
+                // the new texture and rebuild from scratch (reloads are rare; cost is one re-alloc).
+                for (net.minecraft.client.renderer.CloudRenderer cloudRenderer
+                    : destCloudRenderers.values()
+                ) {
+                    try {
+                        cloudRenderer.close();
+                    } catch (Throwable t) {
+                        // best-effort
+                    }
+                }
+                destCloudRenderers.clear();
+                mainCloudTexture = freshTexture;
+            }
+        }
+        // Stale-utb hardening (verify fold): a Cloud Distance change resizes the utb inside the next
+        // render() but needsRebuild stays false on mod instances (vanilla's option hook reaches only
+        // the main instance) — a stationary camera would then draw stale quadCount over the fresh
+        // UNINITIALIZED ring. markForRebuild() on every instance when the option changes.
+        int cloudRange = client.gameRenderer.gameRenderState().optionsRenderState.cloudRange;
+        if (cloudRange != lastCloudRange) {
+            lastCloudRange = cloudRange;
+            for (net.minecraft.client.renderer.CloudRenderer cloudRenderer : destCloudRenderers.values()) {
+                cloudRenderer.markForRebuild();
+            }
+        }
+        for (net.minecraft.client.renderer.CloudRenderer cloudRenderer : destCloudRenderers.values()) {
+            cloudRenderer.endFrame();
         }
     }
 

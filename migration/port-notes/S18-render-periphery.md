@@ -176,3 +176,68 @@ portal + held cross view with a nested portal visible + FOV-change during hold �
 named scenarios).
 
 **Gates:** compile green ×2; 8-leg gametest ALL LEGS PASS post-folds.
+
+---
+
+## §3 — S18.3 + S18.7: dest clouds + dest weather (the S13-J deviation + S14-step-6 item CLOSED)
+
+**The isolation design (both items, one pattern):** mod-owned per-dest-dim renderer instances that
+NEVER touch the main renderer's shared buffers — the fog-buffer/DimensionRenderHelper shape.
+
+- **Clouds (S18.3):** per-dim `CloudRenderer` map in SecondaryWorldRenderCore; draw restored at the
+  decomposition's designed Step-10.11 slot (after nested portals, vanilla clouds→weather order).
+  Constraints: ONCE per dim per frame (a second same-frame render on one instance would rotate its
+  utb twice in one submit — the exact fence class); texture MIRRORED from the reload-registered main
+  instance at the render-TAIL `endCloudFrames` walk (mod instances are not reload listeners — their
+  own texture stays null forever, the same reason secondary renderers' cloudRenderers never drew);
+  per-instance `endFrame()` (ubo rotate, vanilla parity); `close()` on cleanup; FABULOUS SKIP
+  (cloudsTarget() would be a framegraph-internal handle). New accessor
+  `IECloudRenderer_Accessor` (texture get/set), registered in the ip-client mixin set.
+- **Weather (S18.7):** per-dim `WeatherEffectRenderer` map; draw at Step 10.12, CROSS-DIM ONLY.
+  No ring buffer exists in the weather path (plain `glBufferSubData`, GL implicit sync — verified at
+  GlCommandEncoder.writeToBuffer:254-258), so no cap/endFrame; the isolation is PURELY DEFENSIVE
+  (recorded truth per the verify round). Textures per-render via TextureManager; the bound lightmap
+  is the GameRenderer's — swapped to the dest dim's during the pass, exactly right. Fabulous skip.
+
+**Verify `wf_3217b5a7-e5d` (Fable ×2: gpu-lifecycle PASS / render-correctness FAIL) — folds:**
+
+1. **BLOCKER (folded): the post-crossing null-texture nuke.** After ANY cross-dim crossing,
+   `client.levelRenderer` is permanently the per-dim renderer whose CloudRenderer texture is null —
+   the change-detection treated null as "changed", disposed every instance AND nulled the mirror →
+   dest clouds never drew again for the stay in that dim (the flagship scenario!). FOLDED: null =
+   NO-INFORMATION; only dispose/re-mirror on a NON-NULL identity change (TextureData is
+   dim-independent CPU data — retaining last-known is exactly correct).
+2. **CORRECTION (folded): same-dim weather was broken as written.** sharedState passes skip the dest
+   extract — destLRS IS the main LRS, weather columns are MAIN-camera-centric; rendering them at the
+   portal camera indexed the 32×32 column table out of range (AIOOBE swallowed per frame → zero
+   weather + wasted build work). FOLDED: Step 10.12 gated `!sharedState`; same-dim window weather is
+   LEDGERED into the same-dim re-extract gap family (block entities/particles — the §4 item; IP
+   re-extracted per pass). The header's "around the PORTAL camera" claim corrected to cross-dim-only.
+3. **CORRECTION (folded): cloudRange stale-utb.** Vanilla wires Cloud Distance changes to the MAIN
+   instance's `markForRebuild` only; a mod instance would resize its utb and draw stale quadCount
+   over UNINITIALIZED texel memory. FOLDED: `endCloudFrames` tracks the option; on change,
+   `markForRebuild()` on every instance.
+
+**Verify-confirmed (recorded):** the fence-crash class is CLOSED with proof — the throw needs ≥3
+rotations of one 3-slot ring inside one submit; the cap holds each instance to ≤1 map + 1 rotate per
+frame; the main CloudRenderer is byte-untouched (texture READ only). TAIL-time close() after a
+same-frame draw is GL-safe (spec defers storage destruction; vanilla depends on the same property).
+TextureData sharing needs no defensive copy (record + never-written cells). CLIENT_CLEANUP fires on
+the render thread with the GL context current. Weather clip STATICALLY PROVEN live (WEATHER
+pipelines build on particle.vsh = canonical pattern → patched → per-draw upload hits).
+
+**Ledgered deviations/residuals (this section):** (a) 2nd+ window to the SAME dim in one frame draws
+no clouds (26.2-forced rotation budget; IP's immediate-mode had no fences); (b) fabulous skips both
+draws (framegraph-internal targets); (c) **clip deviation, improvement-class: IP drew dest clouds
+UNCLIPPED** (its per-shader feed unset the uniform for all but cross-portal-entity + weather) — ours
+clips them at the portal plane (same class as the S11-R3 §1.3 registered tighter-clip improvement);
+(d) weather clip epsilon: ours inherits -ADJUSTMENT where IP armed 0 (sub-block); (e) a mid-session
+flag flip to OFF strands live instances until the next cleanup (idle GPU memory only); (f) the
+renderLevel-HEAD-throw frame skips the TAIL walk (identical exposure to vanilla's own endFrame walk).
+
+**Live-round checks added:** window rain visible through a cross-dim portal in rain; dest clouds in
+the window (and: same-dim windows currently cloud-capped-once/rainless — expected); clouds clipped
+at the plane (the recorded improvement vs IP side-by-side).
+
+**Gates:** compile green; 8-leg suite ALL LEGS PASS post-folds (chunk-ticket errors = the known
+IP-inherited S14.52 noise class).

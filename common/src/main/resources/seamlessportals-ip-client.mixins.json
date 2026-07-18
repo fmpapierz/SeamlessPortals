@@ -16,6 +16,7 @@
     "client.accessor.IEAtmosphericFogEnvironment",
     "client.accessor.IEClientLevelData",
     "client.accessor.IEClientLevel_Accessor",
+    "client.accessor.IECloudRenderer_Accessor",
     "client.accessor.IEFogRenderer_Environments",
     "client.collisions.MixinLocalPlayer",
     "client.debug.MixinClientPacketListener_Debug",

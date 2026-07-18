@@ -193,6 +193,9 @@ public class MyGameRenderer {
         // per-frame endFrame (memory gpu-buffer-leak-endframe); this is the flag-ON
         // GameRenderer.render-TAIL site that already covers the pool above.
         ClientWorldLoader.endFrameOnSecondaryFeatureBuffers();
+        // S18.3: the dest-clouds isolation's per-frame lifecycle (draw-budget reset + main-texture
+        // mirror + per-instance ubo rotate) rides the same TAIL walk.
+        SecondaryWorldRenderCore.endCloudFrames();
     }
 
     public static void renderWorldNew(
