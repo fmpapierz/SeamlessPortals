@@ -102,3 +102,77 @@ reader (MixinRenderSystem_Clipping per-shader uniform refresh) is re-expressed b
 per-draw GlCommandEncoderClipMixin upload — no consumer needed.
 
 **Gates:** compile green; 8-leg crossing gametest ALL LEGS PASS on the full diff.
+
+---
+
+## §2 — S18.2: trailing periphery — map verdicts + the CrossPortalViewRendering re-home (LANDED)
+
+**Periphery map verdicts (state-map `wf_820d4837-a6d`, periphery mapper — 5 of 6 items are
+RUNTIME-WIRED already; each needs only a live-round check):**
+
+| Item | State | S18 live-round check |
+|---|---|---|
+| GuiPortalRendering | wired (tail drain at MixinGameRenderer `_onGameRenderEnd`); only the `/gui_portal` example drives it (IP-identical — it is a 3rd-party API) | drive `/gui_portal`, confirm a portal view renders into the example framebuffer |
+| OverlayRendering | wired via `PortalEntityRenderer.submit:78-79`; **the plan's "submitBlockModel re-expression still needed" note is STALE** — G33/G34 landed as `submitCustomGeometry` + `putBakedQuad` (deliberately NOT submitBlockModel: it cannot express IP's per-quad opacity), `RenderTypes.translucentMovingBlock()` for `translucentCullBlockSheet` | breakable portal → overlay renders at correct opacity/offset |
+| Mirror / BreakableMirror | both EntityTypes registered + PortalEntityRenderer bound (unconditional); NO dedicated renderer BY IP DESIGN (stencil path + `reflect()` transform + odd-mirror winding) | create a Mirror (`/portal` path), confirm reflection renders |
+| renderMode family | all four impls instantiated + live-switchable (`switchToCorrectRenderer` per frame); only `normal` gate-proven | flip normal/compatibility/debug/none per the (d) script |
+| A2 view-bob | LIVE, IP-verbatim (C5 BINDING behavior change — bob scales down near portals) | walk toward/away from a portal; bob scales and returns |
+| CrossPortalViewRendering | **was compiled-but-DEAD (zero call sites)** — the S13 re-home of IP's GameRenderer handlers missed handler ④ | third-person through a portal; bob-through crossing |
+
+**The handler-④ re-home (the §2 code work).** IP shape 1:1: `@WrapOperation` on
+`GameRenderer.render`'s `renderLevel(DeltaTracker)` INVOKE
+(`MixinGameRenderer.seamlessportals$redirectRenderingWorld`) — when the physical-head→camera segment
+crosses a teleportable portal, `renderCrossPortalView()` REPLACES the whole world render with the
+dest-side view (IP `MixinGameRenderer.redirectRenderingWorld:145-160`). Composes with the existing
+shift-AFTER lifecycle inject on the same instruction (IP composed three handlers there identically).
+26.2 adaptation (driver-re-home-forced): the prepare/finish bracket IP got from handlers ②/⑤ moved
+INSIDE `renderCrossPortalView` (`switchToCorrectRenderer` + `prepareRendering` + invoke in try /
+`finishRendering` in finally — the GuiPortalRendering trio), since those handlers now live in the
+AFTER_TRANSLUCENT_TERRAIN listener inside the SKIPPED renderLevel.
+
+**Verify round 1 `wf_b9fd9266-022` (Fable ×2) — FAIL: 2 BLOCKERs + 2 CORRECTIONs, ALL FOLDED.**
+The layer-0 exposure class: `renderDestWorld` had only ever run inside `doRenderPortal`'s
+`pushPortalLayer` bracket; this re-home created its first live LAYER-0 caller (and made the latent
+GuiPortalRendering layer-0 path's defects reachable too):
+
+1. **BLOCKER — EmptyStackException at Step 10.5:** `getActiveClippingPlane()` peeks the empty
+   portal-layer stack. FOLDED: gated `isRendering() ? plane : null` (IP gated EVERY such site;
+   `setupInnerClipping(null)` disables — a layer-0 full-frame render is unclipped, exactly IP).
+2. **BLOCKER — no try/finally around `switchAndRenderTheWorld`'s restore:** a dest-render throw
+   permanently stranded the swapped client context (level/renderer/camera/lightmap/particle-world/
+   renderBuffers/hitResult + MV/projection). FOLDED: invoke in try, whole restore block in finally
+   (re-verify confirmed byte-identical content+order via `git diff -w`; propagation-after-restore
+   judged FAITHFUL — no catch anywhere in IP's chain either).
+3. **CORRECTION — `mainChunkSampler` capture gate:** `==1` skipped the layer-0 entry (fresh-session
+   cross view drew ZERO terrain) and a nested portal inside a cross view captured the swapped
+   secondary's null sampler, poisoning the static (whole screen loses terrain while held). FOLDED:
+   gate widened to `<= 1` + `captureMainChunkSampler` REFUSES null candidates (a non-null sampler is
+   the true-main signature — secondaries never run `LevelRenderer.render`).
+4. **CORRECTION — frozen stale projection:** the S13-M bobbed-projection capture is written only
+   inside the skipped renderLevel → cross-view frames rendered with the LAST normal frame's frozen
+   base·bob·spin (stale FOV/aspect + a bob the pass disables). FOLDED: null the capture before the
+   trio — the getter falls back to the CURRENT frame's unbobbed `cameraState.projectionMatrix`
+   (extract still runs on cross-view frames); next normal frame recaptures. Verified sole-reader.
+5. Also folded: the S15 mid-packet skip guard at entry (player/level mismatch + null camera-entity/
+   originalCamera → return false), and the S14.29 stencil-exit hardening (`glDisable(GL_STENCIL_TEST)`
+   after `finishRendering` — the exact GuiPortalRendering precedent; without it the GUI pass drew
+   stencil-tested EQUAL(0)).
+
+**Re-verify `wf_7bd76af3-9ef` (Fable ×2) — PASS ×2.** Exhaustive layer-0 stack-peek sweep: 10.5 was
+the ONLY ungated site in `renderDestWorld`'s whole call tree (`getPortalLayer()` = stack size, safe;
+`setStencilLimitation(0)` over a zero-cleared buffer passes everywhere; every other peek site
+isRendering()-gated). Sampler-lifecycle audit: within a session a captured sampler can never
+dangle-closed (close only in the atomic recreate + teardown); cross-session cleared by cleanUp.
+Known benign residuals (recorded): an options-change anisotropy reset can be dropped during a HELD
+cross view (cosmetic); the pre-existing unbracketed `popRenderInfo` / GuiPortalRendering trio above
+the fixed shell (moot — a propagating throw is fatal by design, IP-parallel); the renderLevel-HEAD
+probes (DrawCallTrace/RenderChainProbe/frame-boundary row) do not fire on cross-view frames
+(debug-kit cadence gap, accepted + ledgered).
+
+**HONEST GATE NOTE:** the 8-leg suite runs first-person only — it CANNOT exercise the cross-view
+branch (the head→camera segment is ~zero-length). The suite passing proves the decision path is
+inert on normal frames; the TRUE branch is proven only at the live (d) round (third-person through a
+portal + held cross view with a nested portal visible + FOV-change during hold — the re-verify's
+named scenarios).
+
+**Gates:** compile green ×2; 8-leg gametest ALL LEGS PASS post-folds.

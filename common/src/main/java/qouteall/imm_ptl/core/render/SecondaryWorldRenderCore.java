@@ -155,10 +155,12 @@ public class SecondaryWorldRenderCore {
         return cachedAtmosphericEnv;
     }
 
-    // The block-atlas GpuSampler that ChunkSectionsToRender.renderGroup needs. Captured ONCE PER
-    // FRAME by the shell at the OUTERMOST portal entry (getPortalLayer()==1), while mc.levelRenderer
-    // is still the TRUE main renderer — NOT inside the invoke, where nested layers would resolve a
-    // secondary whose sampler is null (§2.2 / MOD:PortalContextSwitch.java:1382-1396). Plain
+    // The block-atlas GpuSampler that ChunkSectionsToRender.renderGroup needs. Captured by the shell
+    // at outermost entries (getPortalLayer() <= 1 since S18.2 — layer 0 covers the full-frame
+    // CrossPortalViewRendering / GuiPortalRendering paths), while mc.levelRenderer is still the TRUE
+    // main renderer. A nested entry after the shell already swapped the renderer resolves a secondary
+    // whose sampler is null — captureMainChunkSampler REFUSES null candidates, so such entries can
+    // never poison a good capture (§2.2 / the S18.2 verify fold wf_b9fd9266-022). Plain
     // CLAMP_TO_EDGE/LINEAR atlas sampler, not renderer-specific.
     private static GpuSampler mainChunkSampler;
 
@@ -427,15 +429,27 @@ public class SecondaryWorldRenderCore {
     }
 
     /**
-     * SHELL HOOK (§2.2). Called by {@link MyGameRenderer#switchAndRenderTheWorld} at the OUTERMOST
-     * portal entry ({@code PortalRendering.getPortalLayer()==1}), while {@code mc.levelRenderer} is
-     * still the TRUE main renderer, to capture the block-atlas sampler {@code renderGroup} needs. The
-     * caller passes the true main renderer; the sampler is read through the sanctioned com.warwa
-     * accessor (the RESULT is a vanilla {@link GpuSampler} — no com.warwa type in this signature).
+     * SHELL HOOK (§2.2). Called by {@link MyGameRenderer#switchAndRenderTheWorld} at outermost
+     * entries ({@code PortalRendering.getPortalLayer() <= 1} since S18.2 — layer 0 covers the
+     * full-frame CrossPortalViewRendering / GuiPortalRendering paths), while {@code mc.levelRenderer}
+     * is still the TRUE main renderer, to capture the block-atlas sampler {@code renderGroup} needs.
+     * Refuses null candidates (a nested entry after the renderer swap resolves a secondary whose
+     * sampler is always null — never poisons a good capture). The sampler is read through the
+     * sanctioned com.warwa accessor (the RESULT is a vanilla {@link GpuSampler} — no com.warwa type
+     * in this signature).
      */
     public static void captureMainChunkSampler(LevelRenderer trueMainRenderer) {
-        mainChunkSampler =
+        // S18.2 verify fix (wf_b9fd9266-022): NEVER overwrite a good capture with null. Secondary
+        // renderers always hold a null chunkLayerSampler (vanilla creates it only inside
+        // LevelRenderer.render, which never runs for the decomposed secondaries) — so a non-null
+        // candidate IS the true-main signature, and a null candidate (a nested pass entered after
+        // the shell already swapped client.levelRenderer, e.g. a portal inside the layer-0 cross
+        // view) must not poison the static that every pass's canDraw gates on.
+        var candidate =
             ((LevelRendererAccessorMixin) trueMainRenderer).seamlessportals$getChunkLayerSampler();
+        if (candidate != null) {
+            mainChunkSampler = candidate;
+        }
     }
 
     /**
@@ -872,8 +886,17 @@ public class SecondaryWorldRenderCore {
                 }
 
                 // 10.5 inner clip + portal draw state (IP's per-layer bracket).
+                // S18.2 verify BLOCKER fix (wf_b9fd9266-022, both lenses): gate on isRendering() —
+                // getActiveClippingPlane() peeks the portal-layer stack, and the LAYER-0 callers
+                // (CrossPortalViewRendering full-frame cross view; GuiPortalRendering's /gui_portal
+                // path) reach here with the stack EMPTY → EmptyStackException. IP gated EVERY
+                // getActiveClippingPlane site on isRendering() (IP MixinLevelRenderer:196-198/:372-374);
+                // the decomposition inlined the call without the gate — every pre-S18 caller happened
+                // to run inside doRenderPortal's pushPortalLayer bracket. setupInnerClipping(null)
+                // safely disables clipping (a layer-0 full-frame render is UNCLIPPED, exactly IP).
                 FrontClipping.setupInnerClipping(
-                    PortalRendering.getActiveClippingPlane(), destViewMatrix, -FrontClipping.ADJUSTMENT
+                    PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                    destViewMatrix, -FrontClipping.ADJUSTMENT
                 );
                 if (PortalRendering.isRenderingOddNumberOfMirrors()) {
                     MyRenderHelper.applyMirrorFaceCulling();

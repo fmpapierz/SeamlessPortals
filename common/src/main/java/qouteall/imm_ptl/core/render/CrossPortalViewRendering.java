@@ -20,8 +20,10 @@ import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
 import qouteall.imm_ptl.core.teleportation.ClientTeleportationManager;
 
 // S11-C port disposition: VERBATIM IP logic (IP:render/CrossPortalViewRendering.java) re-expressed onto
-// the mod's proven 26.2 render mechanics. Held/inert until S13 (ip_scc_closed filter). The class is the
-// third-person / bob-through-portal cross-portal view path pinned by MixinGameRenderer.java:33,:155 (U10/S12).
+// the mod's proven 26.2 render mechanics. LIVE since S18: the IP handler-④ redirect is re-homed as
+// MixinGameRenderer.seamlessportals$redirectRenderingWorld (@WrapOperation on render→renderLevel INVOKE —
+// the S13 re-home had missed this one handler; zero call sites until S18). The class is the
+// third-person / bob-through-portal cross-portal view path.
 //
 // The ONLY non-verbatim hunks are three api-map-sanctioned 26.2 renames + one GONE-API re-expression:
 //   1) client.cameraEntity FIELD is GONE on 26.2 -> client.getCameraEntity() (the exact translation already
@@ -45,6 +47,20 @@ public class CrossPortalViewRendering {
     // if rendered, return true
     public static boolean renderCrossPortalView() {
         if (!IPGlobal.enableCrossPortalView) {
+            return false;
+        }
+
+        // S18.2 verify fold (wf_b9fd9266-022): the standing skip-never-assert rule (26.2 renders
+        // frames MID-PACKET; the S15 pearl-freeze class). On a player/level mismatch frame the
+        // head→camera segment would be raytraced in wrong-dim coordinates; vanilla shields the
+        // hard-null cases at this call site, but the mismatch skip is the mod's own discipline
+        // (mirrors MinecraftFramePumpMixin's pre-render guard). Also closes the theoretical
+        // first-frame originalCamera-null window.
+        if (client.player == null || client.level == null
+            || client.player.level() != client.level
+            || client.getCameraEntity() == null
+            || RenderStates.originalCamera == null
+        ) {
             return false;
         }
 
@@ -122,7 +138,37 @@ public class CrossPortalViewRendering {
             .setEnableViewBobbing(false)
             .build();
 
-        IPCGlobal.renderer.invokeWorldRendering(worldRenderInfo);
+        // 26.2 ADAPTATION (S18, driver-re-home-forced — documented in port-note S18 §2): IP's per-frame
+        // switchToCorrectRenderer/prepareRendering/finishRendering ran from its GameRenderer handlers
+        // ②/⑤ AROUND the renderLevel INVOKE — so IP's cross-view frame was implicitly bracketed. On
+        // 26.2 those handlers were re-homed into the Fabric AFTER_TRANSLUCENT_TERRAIN listener, which
+        // lives INSIDE the renderLevel this path REPLACES — on a cross-view frame it never fires. The
+        // bracket therefore moves here (the exact GuiPortalRendering.renderWorldIntoFrameBuffer trio):
+        // prepare arms the frame's stencil substrate (nested portals inside the cross view render as
+        // portals from layer 0), finish in a finally mirrors IP's unconditional handler-⑤ order.
+        //
+        // S18.2 verify fold (wf_b9fd9266-022): the S13-M bobbed-projection capture is written only
+        // INSIDE renderLevel — which this path SKIPS — so getPortalDrawProjection would otherwise
+        // reuse the LAST NORMAL frame's frozen base*bob*spin (stale FOV/aspect + a bob offset this
+        // pass explicitly disables). Null the capture: the getter then falls back to the CURRENT
+        // frame's unbobbed cameraState.projectionMatrix (re-extracted every frame) — the correct,
+        // IP-faithful projection for a bob-free cross view. The next normal frame recaptures.
+        RenderStates.capturedMainPassBobbedProjection = null;
+
+        qouteall.imm_ptl.core.render.renderer.PortalRenderer.switchToCorrectRenderer();
+        IPCGlobal.renderer.prepareRendering();
+        try {
+            IPCGlobal.renderer.invokeWorldRendering(worldRenderInfo);
+        } finally {
+            IPCGlobal.renderer.finishRendering();
+            // S14.29 leak class (verify fold; the exact GuiPortalRendering.java:115-120 hardening):
+            // the dest core's defensive Step-10.13 finally re-enables GL_STENCIL_TEST with EQUAL(0),
+            // finishRendering() is IP-verbatim empty, and the renderLevel-HEAD frame-boundary guard
+            // never fires on a cross-view frame — without this line the entity outline, post-effects,
+            // and the whole GUI pass draw stencil-tested. 26.2 vanilla owns no stencil state to
+            // restore it; IP exited cross-view frames stencil-disabled.
+            org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
+        }
 
         return true;
     }

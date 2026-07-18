@@ -252,11 +252,15 @@ public class MyGameRenderer {
         ((com.warwa.seamlessportals.mixin.client.CameraInvokerMixin) newCamera)
             .seamlessportals$setInitialized(true);
 
-        // S13-H §2.2 — capture the block-atlas sampler renderGroup needs, ONCE per frame at the
-        // OUTERMOST portal entry, while client.levelRenderer is still the TRUE main renderer (the swap
-        // to the dest renderer is below). Nested layers (layer >= 2) resolve a secondary whose sampler
-        // is null, so guard on the outermost layer.
-        if (PortalRendering.getPortalLayer() == 1) {
+        // S13-H §2.2 — capture the block-atlas sampler renderGroup needs at the OUTERMOST entry,
+        // while client.levelRenderer is still the TRUE main renderer (the swap to the dest renderer
+        // is below). S18.2 verify fix (wf_b9fd9266-022): the gate is layer <= 1, not == 1 — the
+        // CrossPortalViewRendering / GuiPortalRendering full-frame paths enter at LAYER 0 (no
+        // pushPortalLayer) and must capture too, or a fresh session's first cross view draws zero
+        // terrain. Nested layers resolve a secondary whose sampler is null; captureMainChunkSampler
+        // itself now refuses null candidates (never poisons a good capture), so the layer gate is
+        // belt-and-braces, not the correctness boundary.
+        if (PortalRendering.getPortalLayer() <= 1) {
             SecondaryWorldRenderCore.captureMainChunkSampler(client.levelRenderer);
         }
 
@@ -362,73 +366,81 @@ public class MyGameRenderer {
         modelViewStack.identity();
 
         //invoke rendering
-        invokeWrapper.accept(() -> {
-            ProfilerFiller profiler = Profiler.get();
-            profiler.push("render_portal_content");
-            // S13-H THE DRIVER CORE (S13H-driver-core-design.md §0 ARCHITECTURE VERDICT): the bare
-            // `client.gameRenderer.renderLevel(...)` re-rendered the ALREADY-EXTRACTED MAIN-world
-            // state (WorldRenderInfo.cameraPos/cameraTransformation consumed by NOTHING → the window
-            // showed the player's own view). It is REPLACED by the re-expression of the runtime-proven
-            // stencil-direct dest-draw sequence: per-dim LevelExtractor.extract with the TRANSFORMED
-            // camera + compileSections drain + LevelRenderState re-point + armed VisibleSectionDiscovery
-            // + renderGroup, all masked by the live stencil, WITHOUT nesting a framegraph.
-            // V1-M2: thread the shell's PRE-SWAP source context (oldWorld/oldCamera — the immediate
-            // OUTER layer's world+camera, captured above before the swap) into the core so its
-            // Globals-UBO + diffuse-lighting restore targets the outer layer under nesting, not the
-            // layer-0 originals. At layer 1 these equal the originals (no rung-1 change).
-            // S14.52 zero-lag hunt (many-portal): whole-pass wall time, dpMs= in the kit rows —
-            // splits "the passes themselves are expensive" from "something BETWEEN passes is".
-            long dpT0 = System.nanoTime();
-            SecondaryWorldRenderCore.renderDestWorld(
-                newWorld, worldRenderer, newCamera, renderDistance,
-                oldWorld, oldCamera);
-            qouteall.imm_ptl.core.render.TeleportFlashProbe.destPassNanosThisFrame +=
-                System.nanoTime() - dpT0;
-            profiler.pop();
-        });
+        // S18.2 verify BLOCKER fix (wf_b9fd9266-022): try/finally around the invoke — a throw inside
+        // the dest render previously skipped the ENTIRE restore block below, permanently stranding
+        // client.level/levelRenderer/camera/lightmap/particle-world/renderBuffers/hitResult and the
+        // pushed model-view + projection on the DESTINATION as the exception unwound (pre-existing
+        // exposure; the S18 layer-0 callers made it live). The finally preserves the exact restore
+        // order; the throw still propagates after restoration (callers keep their own handling).
+        try {
+            invokeWrapper.accept(() -> {
+                ProfilerFiller profiler = Profiler.get();
+                profiler.push("render_portal_content");
+                // S13-H THE DRIVER CORE (S13H-driver-core-design.md §0 ARCHITECTURE VERDICT): the bare
+                // `client.gameRenderer.renderLevel(...)` re-rendered the ALREADY-EXTRACTED MAIN-world
+                // state (WorldRenderInfo.cameraPos/cameraTransformation consumed by NOTHING → the window
+                // showed the player's own view). It is REPLACED by the re-expression of the runtime-proven
+                // stencil-direct dest-draw sequence: per-dim LevelExtractor.extract with the TRANSFORMED
+                // camera + compileSections drain + LevelRenderState re-point + armed VisibleSectionDiscovery
+                // + renderGroup, all masked by the live stencil, WITHOUT nesting a framegraph.
+                // V1-M2: thread the shell's PRE-SWAP source context (oldWorld/oldCamera — the immediate
+                // OUTER layer's world+camera, captured above before the swap) into the core so its
+                // Globals-UBO + diffuse-lighting restore targets the outer layer under nesting, not the
+                // layer-0 originals. At layer 1 these equal the originals (no rung-1 change).
+                // S14.52 zero-lag hunt (many-portal): whole-pass wall time, dpMs= in the kit rows —
+                // splits "the passes themselves are expensive" from "something BETWEEN passes is".
+                long dpT0 = System.nanoTime();
+                SecondaryWorldRenderCore.renderDestWorld(
+                    newWorld, worldRenderer, newCamera, renderDistance,
+                    oldWorld, oldCamera);
+                qouteall.imm_ptl.core.render.TeleportFlashProbe.destPassNanosThisFrame +=
+                    System.nanoTime() - dpT0;
+                profiler.pop();
+            });
+        } finally {
+            SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
 
-        SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+            //recover
+            modelViewStack.popMatrix();
+            // V2-DEFECT-2: restore from the per-invocation locals (recursion-safe; equivalent to the field
+            // assignment restoreProjectionMatrix() does, but sourced from this frame's saved slice/type).
+            RenderSystem.setProjectionMatrix(savedProjectionBuffer, savedProjectionType);
 
-        //recover
-        modelViewStack.popMatrix();
-        // V2-DEFECT-2: restore from the per-invocation locals (recursion-safe; equivalent to the field
-        // assignment restoreProjectionMatrix() does, but sourced from this frame's saved slice/type).
-        RenderSystem.setProjectionMatrix(savedProjectionBuffer, savedProjectionType);
+            ((IEMinecraftClient) client).ip_setWorldRenderer(oldWorldRenderer);
+            client.level = oldWorld;
+            ieGameRenderer.ip_setLightmapTextureManager(oldLightmap);
+            client.player.noPhysics = oldNoClip;
 
-        ((IEMinecraftClient) client).ip_setWorldRenderer(oldWorldRenderer);
-        client.level = oldWorld;
-        ieGameRenderer.ip_setLightmapTextureManager(oldLightmap);
-        client.player.noPhysics = oldNoClip;
+            ((IEParticleManager) client.particleEngine).ip_setWorld(oldWorld);
+            client.hitResult = oldCrosshairTarget;
+            ieGameRenderer.ip_setCamera(oldCamera);
 
-        ((IEParticleManager) client.particleEngine).ip_setWorld(oldWorld);
-        client.hitResult = oldCrosshairTarget;
-        ieGameRenderer.ip_setCamera(oldCamera);
+            FogRendererContext.swappingManager.popSwapping();
 
-        FogRendererContext.swappingManager.popSwapping();
+            ((IEWorldRenderer) oldWorldRenderer).portal_setChunkInfoList(oldChunkInfoList);
+            VisibleSectionDiscovery.returnList(newChunkInfoList);
 
-        ((IEWorldRenderer) oldWorldRenderer).portal_setChunkInfoList(oldChunkInfoList);
-        VisibleSectionDiscovery.returnList(newChunkInfoList);
+            ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(oldRenderBuffers);
+            ((IEMinecraftClient) client).ip_setRenderBuffers(oldClientRenderBuffers);
+            if (newRenderBuffers != null) {
+                returnRenderBuffersObject(newRenderBuffers);
+            }
 
-        ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(oldRenderBuffers);
-        ((IEMinecraftClient) client).ip_setRenderBuffers(oldClientRenderBuffers);
-        if (newRenderBuffers != null) {
-            returnRenderBuffersObject(newRenderBuffers);
+            ((IEWorldRenderer) worldRenderer).portal_setFrustum(oldFrustum);
+
+            IrisInterface.invoker.setPipeline(worldRenderer, irisPipeline);
+
+            // EntityRenderDispatcher.prepare(Level,Camera,Entity) -> prepare(Camera,Entity) on 26.2.
+            client.getEntityRenderDispatcher()
+                .prepare(
+                    oldCamera,
+                    client.crosshairPickEntity
+                );
+
+            CHelper.checkGlError();
+
+            client.smartCull = true;
         }
-
-        ((IEWorldRenderer) worldRenderer).portal_setFrustum(oldFrustum);
-
-        IrisInterface.invoker.setPipeline(worldRenderer, irisPipeline);
-
-        // EntityRenderDispatcher.prepare(Level,Camera,Entity) -> prepare(Camera,Entity) on 26.2.
-        client.getEntityRenderDispatcher()
-            .prepare(
-                oldCamera,
-                client.crosshairPickEntity
-            );
-
-        CHelper.checkGlError();
-
-        client.smartCull = true;
     }
 
     /**

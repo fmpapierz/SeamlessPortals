@@ -23,6 +23,7 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.ducks.IEGameRenderer;
+import qouteall.imm_ptl.core.render.CrossPortalViewRendering;
 import qouteall.imm_ptl.core.render.GuiPortalRendering;
 import qouteall.imm_ptl.core.render.MyRenderHelper;
 import qouteall.imm_ptl.core.render.TransformationManager;
@@ -30,11 +31,12 @@ import qouteall.imm_ptl.core.render.context_management.RenderStates;
 
 /**
  * S12-B (render client-mixin half) — IP {@code MixinGameRenderer}
- * ({@code IP:mixin/client/render/MixinGameRenderer.java}), 26.2-RETARGETED. Held/UNREGISTERED until S13.
+ * ({@code IP:mixin/client/render/MixinGameRenderer.java}), 26.2-RETARGETED. REGISTERED + LIVE
+ * (seamlessportals-ip-client.mixins.json; weave-gated flag-ON) since S13.
  *
  * <p>IP's 1.21.3 {@code MixinGameRenderer} was an 11-handler frame driver + the {@link IEGameRenderer}
  * duck holder. On 26.2 most of it re-expresses onto MOD-OWNED / already-ported code, so this mixin keeps
- * only the three pieces that have NO other 26.2 home:
+ * only the pieces that have NO other 26.2 home:
  * <ul>
  *   <li><b>A2 — the view-bob scaling trio</b> (USER DECISION C5, BINDING; EXCLUSIVITY_LEDGER row A7).</li>
  *   <li><b>the {@link IEGameRenderer} ducks</b> — {@code ip_setCamera} / {@code ip_setLightmapTextureManager}
@@ -43,6 +45,8 @@ import qouteall.imm_ptl.core.render.context_management.RenderStates;
  *       {@code (IEGameRenderer) client.gameRenderer}, so the impl MUST live on a {@code GameRenderer} mixin
  *       or those casts CCE at runtime.</li>
  *   <li><b>R13k handler ⑪ — the view-rotation post-process</b> (see below).</li>
+ *   <li><b>handler ④ — the cross-portal-view redirect</b> (S18: the one lifecycle hook the S13 re-home
+ *       missed; {@code seamlessportals$redirectRenderingWorld} below).</li>
  * </ul>
  *
  * <p><b>Frame lifecycle hooks (IP handlers ②–⑥) are RE-HOMED, not re-ported.</b> IP drove the whole
@@ -285,6 +289,32 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         if (IPCGlobal.lateClientLightUpdate) {
             MyRenderHelper.lateUpdateLight();
         }
+    }
+
+    // S18 — IP handler ④ RE-HOMED (the one frame-lifecycle hook the S13 re-home MISSED; S18 periphery
+    // map finding: CrossPortalViewRendering compiled since S11 but renderCrossPortalView had ZERO call
+    // sites — third-person / bob-through-portal cross view never rendered). IP shape 1:1
+    // (IP MixinGameRenderer.redirectRenderingWorld:145-160): when the camera line from the player's
+    // physical head to the (third-person/bobbed) camera crosses a teleportable portal, the WHOLE world
+    // render is REPLACED by the dest-side view. @WrapOperation composes with the HEAD-side probe and
+    // the shift-AFTER lifecycle inject on this same INVOKE (IP composed three handlers on this exact
+    // instruction the same way). The prepare/finish bracket IP got from its handlers ②/⑤ moved INSIDE
+    // the 26.2 renderCrossPortalView body (they were re-homed into the AFTER_TRANSLUCENT_TERRAIN
+    // listener, which lives inside the SKIPPED renderLevel — see the adaptation note there).
+    @WrapOperation(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V"
+        )
+    )
+    private void seamlessportals$redirectRenderingWorld(
+        GameRenderer instance, DeltaTracker deltaTracker, Operation<Void> original
+    ) {
+        if (CrossPortalViewRendering.renderCrossPortalView()) {
+            return;
+        }
+        original.call(instance, deltaTracker);
     }
 
     // ==== IEGameRenderer ducks (LIVE-called by MyGameRenderer.switchAndRenderTheWorld) ====
