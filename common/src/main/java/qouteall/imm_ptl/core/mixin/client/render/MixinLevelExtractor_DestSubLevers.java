@@ -177,6 +177,27 @@ public class MixinLevelExtractor_DestSubLevers {
         original.call(instance, border, deltaPartialTick, cameraPos, renderDistance, state);
     }
 
+    // ===== S14.41: the gizmo family — SKIP IS THE DEFAULT for the dest-pass extract (the WEDGE
+    // FIX, user-attributed live via the S14.40 debug_skip_extract_gizmos lever). Mechanism, every
+    // link source-verified (port-note S14C-round6-gizmo-verdict.md): the driver sets a captured
+    // frustum on the virtual camera (SecondaryWorldRenderCore:388, the applyFrustum-skip trick) and
+    // the shell swaps it into gameRenderer.mainCamera (MyGameRenderer ip_setCamera); the dest
+    // extract's DebugRenderer.emitGizmos then hits ChunkCullingDebugRenderer — registered
+    // UNCONDITIONALLY, and its capturedFrustum branch has NO debug-screen gate — which emits six
+    // alpha-0.25 frustum-plane quads (one color per plane: cyan/red/yellow/blue/green/magenta) +
+    // twelve opaque black wireframe lines. Those land in the frame's gizmo collector, drain into
+    // the MAIN renderer's renderThreadGizmos, and draw in the main gizmo pass
+    // (pipeline/debug_filled_box + lines — the round-3 DrawCallTrace labels): translucent,
+    // depth-tested => paint ONLY far-depth (sky/fog) pixels, only while a portal is in view — the
+    // user's exact wedge signature (cyan left / washed middle / purple right / dark seams / apex
+    // top). Block-era precedent: DebugRendererPortalSkipMixin fixed the same emission for the
+    // block driver ("ghostly camera diagnostic") but its gate is block-era-only => inert flag-ON.
+    // Skipping extractGizmos() also stops the dest extract DUPLICATING client+integrated-server
+    // per-tick gizmos into the portal view (getPerTickGizmos is a non-consuming snapshot getter —
+    // the main view never lost them; the copies were wrong-dim diagnostics drawn inside the
+    // window). debug_allow_dest_extract_gizmos restores the corrupting vanilla emission live for
+    // A/B attribution (S20-removal-ledgered).
+
     @WrapOperation(
         method = "extract",
         at = @At(
@@ -189,7 +210,7 @@ public class MixinLevelExtractor_DestSubLevers {
         DebugRenderer instance, Frustum frustum, double camX, double camY, double camZ,
         float partialTicks, Operation<Void> original
     ) {
-        if (SecondaryWorldRenderCore.isDestExtracting && IPGlobal.debugSkipExtractGizmos) {
+        if (SecondaryWorldRenderCore.isDestExtracting && !IPGlobal.debugAllowDestExtractGizmos) {
             return;
         }
         original.call(instance, frustum, camX, camY, camZ, partialTicks);
@@ -205,7 +226,7 @@ public class MixinLevelExtractor_DestSubLevers {
     private void ip_leverGameTestGizmos(
         GameTestBlockHighlightRenderer instance, Operation<Void> original
     ) {
-        if (SecondaryWorldRenderCore.isDestExtracting && IPGlobal.debugSkipExtractGizmos) {
+        if (SecondaryWorldRenderCore.isDestExtracting && !IPGlobal.debugAllowDestExtractGizmos) {
             return;
         }
         original.call(instance);
@@ -221,7 +242,7 @@ public class MixinLevelExtractor_DestSubLevers {
     private void ip_leverExtractGizmos(
         LevelExtractor instance, Operation<Void> original
     ) {
-        if (SecondaryWorldRenderCore.isDestExtracting && IPGlobal.debugSkipExtractGizmos) {
+        if (SecondaryWorldRenderCore.isDestExtracting && !IPGlobal.debugAllowDestExtractGizmos) {
             return;
         }
         original.call(instance);

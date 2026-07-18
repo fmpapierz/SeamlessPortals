@@ -1,5 +1,12 @@
 # S14-C round 5 — the wedge corruptor named: the dest-pass `ParticleEngine.extract` (S14.40)
 
+> **SUPERSEDED (round 6): the wedge attribution below was REFUTED by the user's live run** —
+> the particle fix did not remove the wedges; the sub-lever kit attributed them to the GIZMO
+> family (`debug_skip_extract_gizmos`), verdict in `S14C-round6-gizmo-verdict.md`. The particle
+> guard itself STAYS (its shared-accumulator corruption is source-proven; its live symptom is
+> the main-world particle WIPE, the block-era-documented defect — not the wedges). §1's
+> enumeration and §2's mechanism remain correct as source facts.
+
 **Status:** fix + A/B lever + sub-lever kit committed, awaiting the user's confirming run.
 **Bisection input (user-verified, round 4):** "ONLY `debug_skip_extract_only_enable` removed wedges"
 — i.e. the corruptor is precisely `destExtractor.extract(deltaTracker, newCamera, partialTick)`

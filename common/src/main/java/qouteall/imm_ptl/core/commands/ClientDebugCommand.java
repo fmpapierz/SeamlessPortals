@@ -752,10 +752,12 @@ public class ClientDebugCommand {
             "debug_skip_extract_border",
             cond -> IPGlobal.debugSkipExtractBorder = cond
         );
+        // S14.41: skip-gizmos became the DEFAULT (the wedge fix); this inverse lever restores the
+        // corrupting vanilla emission for A/B attribution.
         registerSwitchCommand(
             builder,
-            "debug_skip_extract_gizmos",
-            cond -> IPGlobal.debugSkipExtractGizmos = cond
+            "debug_allow_dest_extract_gizmos",
+            cond -> IPGlobal.debugAllowDestExtractGizmos = cond
         );
         // S14.31: _enable arms ONE frame capture (self-clears); _disable is a no-op.
         registerSwitchCommand(

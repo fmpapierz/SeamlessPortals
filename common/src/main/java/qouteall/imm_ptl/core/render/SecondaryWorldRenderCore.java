@@ -462,6 +462,17 @@ public class SecondaryWorldRenderCore {
                         DrawCallTrace.record("   [pre-extract]  " + stateFingerprint());
                     }
                     if (!IPGlobal.debugSkipExtractOnly) {
+                        // S14.41 (verify-round catch): drop retained particle-group-state REFS
+                        // before extract — WITHOUT invoking their clear(). A demoted dim's LRS
+                        // still holds refs to the engine's SHARED per-group accumulators from its
+                        // prior main stint; vanilla's reset() inside extract() would clear() them
+                        // MID-FRAME while the current main LRS references the same objects (a
+                        // one-frame main-world particle blank on first look-back after crossing).
+                        // Emptying the LIST first makes reset()'s forEach a no-op on shared state.
+                        // Skipped under the A/B lever so vanilla corruption is restored faithfully.
+                        if (!IPGlobal.debugAllowDestParticleExtract) {
+                            destLRS.particlesRenderState.particles.clear();
+                        }
                         isDestExtracting = true;
                         try {
                             destExtractor.extract(deltaTracker, newCamera, partialTick);

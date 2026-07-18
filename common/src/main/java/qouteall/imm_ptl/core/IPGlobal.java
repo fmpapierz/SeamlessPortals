@@ -170,7 +170,11 @@ public class IPGlobal {
     public static boolean debugSkipExtractWeather = false;
     public static boolean debugSkipExtractSky = false;
     public static boolean debugSkipExtractBorder = false;
-    public static boolean debugSkipExtractGizmos = false;
+    // S14.41: the WEDGE FIX'S A/B lever — the dest-pass extract SKIPS the gizmo family by default
+    // (user-attributed live: the S14.40 skip lever removed the wedges); ON restores the corrupting
+    // vanilla emission (ChunkCullingDebugRenderer's captured-frustum rainbow visualization —
+    // mechanism in MixinLevelExtractor_DestSubLevers).
+    public static boolean debugAllowDestExtractGizmos = false;
 
     public static boolean viewBobbingReduce = true;
     
