@@ -307,8 +307,23 @@ restoring publish-before-consume for the batch; **(T)** tick-side poll→run adj
 secondaries (vanilla cadence; frame-end lateUpdateLight STAYS as the safety net — the FIX-3
 placement untouched); **(F1)** main-dim arms compile UNCOMPILED-only and never consume dirty
 marks (`isMainDimArm` through armCompileScheduling; the behind-player compile half preserved);
-**(F0)** `fs=M+D` fold-schedule attribution in the kit rows. Verify `wf_4f61536d-2e4` in
-flight.
+**(F0)** `fs=M+D` fold-schedule attribution in the kit rows. Verify `wf_4f61536d-2e4` PASS
+(folds: the promote-drain try/catch guard; portalCompileScheduled cleared on main allChanged;
+the flag-OFF block-era M1 split ledgered out-of-scope). S14.51 @ `95a31fa`.
+
+## 15. CLOSURE (user retest, 2026-07-18): **SHADOWS FIXED** + the churn classified IP-AUTHENTIC
+
+- **"shadows are fixed"** — the saga closes at four defects: the frontier gate (S14.50), the
+  phantom remesh wave (S14.48), the main-dim mark theft (S14.51 F1), and the root cadence split
+  (S14.51 P+T).
+- **The "churn" final characterization (user):** far OW chunks unload a couple seconds after
+  crossing away (player tickets leave; only the portal loaders' bounded radius persists —
+  vanilla ticket lifecycle × IP's graduated loader model) and re-stream on return; returning
+  before the grace keeps them. **User side-by-side: original IP behaves identically → CLOSED,
+  IP-authentic.** A block-era parity improvement (in-game toggle to keep the full 32-RD loaded
+  across crossings) is recorded as a planned deviation in the BRIEFING §5 backlog.
+- Round-8 remaining OPEN: the many-portal `dp=` cost regression (any multi-portal capture) +
+  the IP same-scene bar. Everything else in this note is CLOSED.
 2. **Many-portal steady-state lag** (142 non-promote frames ≥25ms with many portals; small
    visSec, empty compQ — the per-frame dest-pass scaling): `dp=` row field counts dest passes
    (incl. nesting layers) per frame — regressing ms against dp across a capture names the
