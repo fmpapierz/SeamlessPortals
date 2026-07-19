@@ -215,27 +215,26 @@ public class ClientPortalWandPortalCreation {
     private static final int colorOfSecondPortalArea = 0xff60f2fc;
     private static final int colorOfSecondPortalArea2 = 0xff60f2fc;
     
-    // 26.2 render SHELL (compile shell — S13-A): the wand-creation overlay drew through a
-    // MultiBufferSource.BufferSource (GONE — immediate-mode rendering removed; the overlay re-sites
-    // to the Gizmos API, api-map platform-compat-peripheral §1 GONE rows). The BufferSource param is
-    // dropped and the overlay draw (WireRenderingHelper + WandUtil.renderPortalAreaGrid on
-    // RenderType.lines()/debugLineStrip) is deferred to the S19 Gizmos redesign (C1). The original
-    // 1.21.3 body is retained verbatim below (commented) for that redesign. No in-tree caller until
-    // S19 (the MixinDebugRenderer draw site is itself GONE — DebugRenderer.emitGizmos on 26.2).
+    // S19-A2 — IP body restored (the S13-A shell is closed). 26.2-forced (F6): the caller
+    // (MixinLevelRenderer_PortalWand → PortalWandItem.clientRender) hands us ONE
+    // VertexConsumer from a single submitCustomGeometry(RenderTypes.lines()); IP's two
+    // getBuffer fetches (RenderType.lines() + debugLineStrip(1)) collapse onto it —
+    // debugLineStrip is GONE on 26.2; renderCircle re-expressed as discrete lines and
+    // renderPlane flipped to IP's own discrete branch (isLineStrip=false). Everything else
+    // is the IP 1.21.3 body verbatim.
     public static void render(
         PoseStack matrixStack,
+        VertexConsumer vertexConsumer,
         double camX, double camY, double camZ
     ) {
-        /* S19-Gizmos-deferred (MultiBufferSource/RenderType GONE):
         LocalPlayer player = Minecraft.getInstance().player;
 
         if (player == null) {
             return;
         }
-        
+
         ResourceKey<Level> currDim = player.level().dimension();
-        
-        VertexConsumer vertexConsumer = bufferSource.getBuffer(RenderType.lines());
+
         Vec3 cameraPos = new Vec3(camX, camY, camZ);
         
         WithDim<Circle> circle = protoPortal.getCursorConstraintCircle();
@@ -320,8 +319,10 @@ public class ClientPortalWandPortalCreation {
             }
         }
         
-        VertexConsumer debugLineStripConsumer = bufferSource.getBuffer(RenderType.debugLineStrip(1));
-        
+        // 26.2 (F6): debugLineStrip(1) is GONE — the strip primitives draw as discrete lines
+        // through the same lines() consumer.
+        VertexConsumer debugLineStripConsumer = vertexConsumer;
+
         // render the circle
         WithDim<Circle> renderedCircle = circle != null ?
             circle : renderedProtoPortal.getCursorConstraintCircle();
@@ -348,11 +349,11 @@ public class ClientPortalWandPortalCreation {
                     scale,
                     colorOfPlane,
                     matrixStack,
-                    true
+                    // 26.2 (F6): IP passed true (line strip); the discrete branch is IP's own
+                    false
                 );
             }
         }
-        */
     }
 
 }

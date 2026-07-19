@@ -114,8 +114,10 @@ public class WireRenderingHelper {
         float nx, float ny, float nz,
         float red, float green, float blue, float alpha
     ) {
-        consumer.addVertex(pose, ax, ay, az).setColor(red, green, blue, alpha).setNormal(pose, nx, ny, nz);
-        consumer.addVertex(pose, bx, by, bz).setColor(red, green, blue, alpha).setNormal(pose, nx, ny, nz);
+        // S19-A2: setLineWidth mandatory on the 26.2 lines() format (see putLine's javadoc)
+        float lw = appropriateLineWidth();
+        consumer.addVertex(pose, ax, ay, az).setColor(red, green, blue, alpha).setNormal(pose, nx, ny, nz).setLineWidth(lw);
+        consumer.addVertex(pose, bx, by, bz).setColor(red, green, blue, alpha).setNormal(pose, nx, ny, nz).setLineWidth(lw);
     }
     
     public static DQuaternion getRandomSmoothRotation(Random random) {
@@ -206,13 +208,15 @@ public class WireRenderingHelper {
                 putLineToLineStrip(vertexConsumer, color, planeY, matrix, lineStart, lineEnd);
             }
             else {
+                // S19-A2: width pinned 1.0 — the wand call sites flipped here from IP's
+                // strip mode, which drew at debugLineStrip(1) width (see putLine javadoc)
                 putLine(
                     vertexConsumer, color, planeY, matrix, matrixStack.last().normal(),
-                    lineStart, lineEnd
+                    lineStart, lineEnd, 1.0F
                 );
             }
         }
-        
+
         for (int iy = -lineNumPerSide; iy <= lineNumPerSide; iy++) {
             Vec3 lineStart = planeY.scale(iy * lineInterval)
                 .add(planeX.scale(-lineLenPerSide));
@@ -223,17 +227,19 @@ public class WireRenderingHelper {
                 putLineToLineStrip(vertexConsumer, color, planeX, matrix, lineStart, lineEnd);
             }
             else {
+                // S19-A2: width pinned 1.0 (see the ix loop above)
                 putLine(
                     vertexConsumer, color, planeX, matrix, matrixStack.last().normal(),
-                    lineStart, lineEnd
+                    lineStart, lineEnd, 1.0F
                 );
             }
         }
-        
+
         matrixStack.popPose();
     }
     
-    // NOTE it uses line strip
+    // IP NOTE: "it uses line strip" — since S19-A2 it emits discrete lines() pairs
+    // (26.2-forced, see the loop comment below); callers hand it a lines() consumer.
     public static void renderCircle(
         VertexConsumer vertexConsumer, Vec3 cameraPos,
         Circle circle,
@@ -269,43 +275,32 @@ public class WireRenderingHelper {
         Matrix4f matrix = matrixStack.last().pose();
         
         int vertexNum = Mth.clamp((int) Math.round(circleRadius * 40), 40, 400);
-        
+
+        // S19-A2 26.2-forced (F6; verify wf_88355dbb-8f3): IP emitted this as a
+        // DEBUG_LINE_STRIP (POSITION_COLOR — its setNormal(plane normal) was a no-op) with
+        // alpha-0 duplicate vertices to break the strip; debugLineStrip is GONE on 26.2, so
+        // the same arc-segment walk emits each segment as a discrete lines() pair via the
+        // canonical putLine (same vertexNum resolution; the alpha-0 jump vertices were
+        // strip-break plumbing with no discrete equivalent). Two lines()-format corrections
+        // vs the strip data: the NORMAL element is the shader's LINE DIRECTION on 26.2
+        // (the plane normal would collapse to NaN viewed face-on) — putLine derives it from
+        // the segment; and width is pinned 1.0 (IP's debugLineStrip(1)).
+        Matrix3f normalMatrix = matrixStack.last().normal();
         for (int i = 0; i < vertexNum; i++) {
             double angle = i * 2 * Math.PI / vertexNum;
             double nextAngle = (i + 1) * 2 * Math.PI / vertexNum;
-            boolean isBegin = i == 0;
-            boolean isEnd = i == vertexNum - 1;
-            
+
             Vec3 lineStart = planeX.scale(Math.cos(angle) * circleRadius)
                 .add(planeY.scale(Math.sin(angle) * circleRadius));
             Vec3 lineEnd = planeX.scale(Math.cos(nextAngle) * circleRadius)
                 .add(planeY.scale(Math.sin(nextAngle) * circleRadius));
-            
-            if (isBegin) {
-                vertexConsumer
-                    .addVertex(matrix, (float) (lineStart.x), (float) (lineStart.y), (float) (lineStart.z))
-                    .setColor(0)
-                    .setNormal((float) normal.x, (float) normal.y, (float) normal.z);
-                
-                vertexConsumer
-                    .addVertex(matrix, (float) (lineStart.x), (float) (lineStart.y), (float) (lineStart.z))
-                    .setColor(color)
-                    .setNormal((float) normal.x, (float) normal.y, (float) normal.z);
-            }
-            
-            vertexConsumer
-                .addVertex(matrix, (float) (lineEnd.x), (float) (lineEnd.y), (float) (lineEnd.z))
-                .setColor(color)
-                .setNormal((float) normal.x, (float) normal.y, (float) normal.z);
-            
-            if (isEnd) {
-                vertexConsumer
-                    .addVertex(matrix, (float) (lineEnd.x), (float) (lineEnd.y), (float) (lineEnd.z))
-                    .setColor(0)
-                    .setNormal((float) normal.x, (float) normal.y, (float) normal.z);
-            }
+
+            putLine(
+                vertexConsumer, color, lineEnd.subtract(lineStart), matrix, normalMatrix,
+                lineStart, lineEnd, 1.0F
+            );
         }
-        
+
         matrixStack.popPose();
     }
     
@@ -391,28 +386,59 @@ public class WireRenderingHelper {
     public static void putLine(VertexConsumer vertexConsumer, int color, Matrix4f matrix, Matrix3f normalMatrix, Vec3 lineStart, Vec3 lineEnd) {
         putLine(vertexConsumer, color, lineEnd.subtract(lineStart), matrix, normalMatrix, lineStart, lineEnd);
     }
-    
+
     public static void putLine(
         VertexConsumer vertexConsumer,
         int color, Vec3 normal, Matrix4f matrix, Matrix3f normalMatrix,
         Vec3 lineStart, Vec3 lineEnd
     ) {
+        putLine(
+            vertexConsumer, color, normal, matrix, normalMatrix, lineStart, lineEnd,
+            appropriateLineWidth()
+        );
+    }
+
+    /**
+     * S19-A2 26.2-forced (F6; verify wf_88355dbb-8f3 BLOCKER): the 26.2 {@code lines()}
+     * vertex format is POSITION_COLOR_NORMAL_LINE_WIDTH and BufferBuilder THROWS
+     * ("Missing elements in vertex") on any vertex missing an element — 1.21.3 carried the
+     * line width on the RenderType (LineStateShard OptionalDouble.empty() = the
+     * window-scaled default), not the vertices. Every discrete emission now sets it: the
+     * width-less overloads use {@link #appropriateLineWidth()} (the 26.2 successor of that
+     * window-scaled default — vanilla's own lines() emitters read it, e.g.
+     * FishingHookRenderer; the dest hit outline reads the same field); the explicit-width
+     * form exists for the debugLineStrip(1)-derived primitives (circle + discrete plane),
+     * which IP pinned to width 1.
+     */
+    public static void putLine(
+        VertexConsumer vertexConsumer,
+        int color, Vec3 normal, Matrix4f matrix, Matrix3f normalMatrix,
+        Vec3 lineStart, Vec3 lineEnd, float lineWidth
+    ) {
         Vector3f normalTemp = new Vector3f();
-        
+
         normalTemp.set(normal.x(), normal.y(), normal.z());
         normalMatrix.transform(normalTemp);
-        
+
         vertexConsumer
             .addVertex(matrix, (float) (lineStart.x), (float) (lineStart.y), (float) (lineStart.z))
             .setColor(color)
             .setNormal(normalTemp.x(), normalTemp.y(), normalTemp.z())
+            .setLineWidth(lineWidth)
             ;
-        
+
         vertexConsumer
             .addVertex(matrix, (float) (lineEnd.x), (float) (lineEnd.y), (float) (lineEnd.z))
             .setColor(color)
             .setNormal(normalTemp.x(), normalTemp.y(), normalTemp.z())
+            .setLineWidth(lineWidth)
             ;
+    }
+
+    /** See the explicit-width {@code putLine} javadoc — the window-scaled vanilla default. */
+    private static float appropriateLineWidth() {
+        return Minecraft.getInstance().gameRenderer.gameRenderState()
+            .windowRenderState.appropriateLineWidth;
     }
     
     private static void putLineToLineStrip(

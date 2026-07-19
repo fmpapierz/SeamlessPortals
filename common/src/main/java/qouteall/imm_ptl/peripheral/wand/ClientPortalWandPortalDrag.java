@@ -831,18 +831,15 @@ public class ClientPortalWandPortalDrag {
     
     private static final double renderedPreCircleRadius = 0.5;
     
-    // 26.2 render SHELL (compile shell — S13-A): the wand-drag overlay drew through a
-    // MultiBufferSource.BufferSource (GONE — immediate-mode rendering removed; the overlay re-sites
-    // to the Gizmos API, api-map platform-compat-peripheral §1). The BufferSource param is dropped
-    // and the overlay draw (WireRenderingHelper + the renderRect/renderWidthHeightLock/... helpers,
-    // which keep their VertexConsumer params) is deferred to the S19 Gizmos redesign (C1). The
-    // original 1.21.3 body is retained verbatim below (commented) for that redesign. No in-tree
-    // caller until S19 (the MixinDebugRenderer draw site is itself GONE on 26.2).
+    // S19-A2 — the S13-A shell is closed; IP body live below (F6 re-expression, caller =
+    // MixinLevelRenderer_PortalWand → PortalWandItem.clientRender).
     public static void render(
         PoseStack matrixStack,
+        VertexConsumer vertexConsumer,
         double camX, double camY, double camZ
     ) {
-        /* S19-Gizmos-deferred (MultiBufferSource/RenderType GONE):
+        // S19-A2 — IP body restored (see ClientPortalWandPortalCreation.render for the F6
+        // re-expression notes; the getBuffer fetches collapse onto the passed-in consumer).
         LocalPlayer player = Minecraft.getInstance().player;
 
         if (player == null) {
@@ -876,11 +873,9 @@ public class ClientPortalWandPortalDrag {
         );
         
         ResourceKey<Level> currDim = player.level().dimension();
-        
+
         Vec3 cameraPos = new Vec3(camX, camY, camZ);
-        
-        VertexConsumer vertexConsumer = bufferSource.getBuffer(RenderType.lines());
-        
+
         Vec3 renderedCursor = getCursorToRender();
         if (renderedCursor != null) {
             WireRenderingHelper.renderSmallCubeFrame(
@@ -962,8 +957,10 @@ public class ClientPortalWandPortalDrag {
             renderWidthHeightLineSegment(matrixStack, cameraPos, vertexConsumer, rect);
         }
         
-        VertexConsumer debugLineStripConsumer = bufferSource.getBuffer(RenderType.debugLineStrip(1));
-        
+        // 26.2 (F6): debugLineStrip(1) is GONE — strip primitives draw as discrete lines
+        // through the same lines() consumer.
+        VertexConsumer debugLineStripConsumer = vertexConsumer;
+
         RenderedPlane plane = renderedPlane.getCurrent();
         if (plane != null && plane.plane() != null && plane.plane().dimension() == currDim) {
             Plane planeValue = plane.plane().value();
@@ -978,10 +975,11 @@ public class ClientPortalWandPortalDrag {
                 debugLineStripConsumer, cameraPos, planeValue,
                 plane.scale(), colorOfPlane,
                 matrixStack,
-                true
+                // 26.2 (F6): IP passed true (line strip); the discrete branch is IP's own
+                false
             );
         }
-        
+
         // render the pre-plane as a circle
         RenderedPlane prePlane = renderedPrePlane.getCurrent();
         if (prePlane != null && prePlane.plane() != null
@@ -1004,7 +1002,6 @@ public class ClientPortalWandPortalDrag {
                 matrixStack
             );
         }
-        */
     }
 
     @Nullable

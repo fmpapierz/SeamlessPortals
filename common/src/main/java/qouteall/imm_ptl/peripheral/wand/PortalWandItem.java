@@ -1,6 +1,7 @@
 package qouteall.imm_ptl.peripheral.wand;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.serialization.Codec;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -326,15 +327,17 @@ public class PortalWandItem extends Item {
         }
     }
     
-    // 26.2 render SHELL (compile shell — S13-A): the wand overlay drew via
-    // MultiBufferSource.BufferSource (GONE — immediate-mode rendering removed; the overlay re-sites
-    // to the Gizmos API, api-map platform-compat-peripheral §1 GONE rows). The BufferSource param is
-    // dropped; the per-mode overlay draw is deferred to the S19 Gizmos redesign (C1). The dispatch
-    // shape is preserved for that redesign. The IP caller (MixinDebugRenderer.render injection) is
-    // itself GONE (DebugRenderer.emitGizmos on 26.2), so this has no in-tree caller until S19.
+    // S19-A2 — IP's dispatcher restored (the S13-A shell is closed). 26.2-forced (F6): IP's
+    // MultiBufferSource.BufferSource param becomes the ONE VertexConsumer the caller
+    // (MixinLevelRenderer_PortalWand's single submitCustomGeometry on RenderTypes.lines())
+    // hands us at execute time — the per-mode bodies' RenderType.lines()/debugLineStrip(1)
+    // getBuffer fetches collapse onto it (debugLineStrip is GONE on 26.2; strip primitives
+    // re-expressed as discrete lines — see WireRenderingHelper.renderCircle + the
+    // renderPlane isLineStrip=false flips). Dispatch + instructionInformed are IP-verbatim.
     @Environment(EnvType.CLIENT)
     public static void clientRender(
         LocalPlayer player, ItemStack itemStack, PoseStack poseStack,
+        VertexConsumer vertexConsumer,
         double camX, double camY, double camZ
     ) {
         if (!instructionInformed) {
@@ -345,13 +348,13 @@ public class PortalWandItem extends Item {
 
         switch (mode) {
             case CREATE_PORTAL -> ClientPortalWandPortalCreation.render(
-                poseStack, camX, camY, camZ
+                poseStack, vertexConsumer, camX, camY, camZ
             );
             case DRAG_PORTAL -> ClientPortalWandPortalDrag.render(
-                poseStack, camX, camY, camZ
+                poseStack, vertexConsumer, camX, camY, camZ
             );
             case COPY_PORTAL -> ClientPortalWandPortalCopy.render(
-                poseStack, camX, camY, camZ
+                poseStack, vertexConsumer, camX, camY, camZ
             );
         }
     }

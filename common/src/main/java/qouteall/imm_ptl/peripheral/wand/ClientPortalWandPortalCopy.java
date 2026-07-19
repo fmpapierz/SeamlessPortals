@@ -280,17 +280,15 @@ public class ClientPortalWandPortalCopy {
     private static final int colorOfPendingPlacement1 = 0xff00ffff;
     private static final int colorOfPendingPlacement2 = 0xffDC4BFF;
     
-    // 26.2 render SHELL (compile shell — S13-A): the wand-copy overlay drew through a
-    // MultiBufferSource.BufferSource (GONE — immediate-mode rendering removed; the overlay re-sites
-    // to the Gizmos API, api-map platform-compat-peripheral §1). The BufferSource param is dropped
-    // and the overlay draw (WireRenderingHelper) is deferred to the S19 Gizmos redesign (C1). The
-    // original 1.21.3 body is retained verbatim below (commented) for that redesign. No in-tree
-    // caller until S19 (the MixinDebugRenderer draw site is itself GONE on 26.2).
+    // S19-A2 — the S13-A shell is closed; IP body live below (F6 re-expression: the
+    // getBuffer(RenderType.lines()) fetch collapses onto the passed-in consumer; caller =
+    // MixinLevelRenderer_PortalWand → PortalWandItem.clientRender). Copy mode uses no
+    // strip primitives, so this body is IP-verbatim beyond the signature.
     public static void render(
         PoseStack matrixStack,
+        VertexConsumer vertexConsumer,
         double camX, double camY, double camZ
     ) {
-        /* S19-Gizmos-deferred (MultiBufferSource/RenderType GONE):
         LocalPlayer player = Minecraft.getInstance().player;
 
         if (player == null) {
@@ -300,11 +298,10 @@ public class ClientPortalWandPortalCopy {
         if (PortalRendering.isRendering()) {
             return;
         }
-        
+
         ResourceKey<Level> currDim = player.level().dimension();
         Vec3 cameraPos = new Vec3(camX, camY, camZ);
-        VertexConsumer vertexConsumer = bufferSource.getBuffer(RenderType.lines());
-        
+
         Vec3 cursorPos = null;
         RenderedPoint currentCursor = cursor.getCurrent();
         if (currentCursor != null) {
@@ -361,6 +358,5 @@ public class ClientPortalWandPortalCopy {
                 );
             }
         }
-        */
     }
 }

@@ -104,18 +104,66 @@ substrate (persisting hybrid state into the save).
 - 1.21.3 vanilla bytecode unavailable locally (1.21.1 used as comparison baseline for the mixin
   caller semantics).
 
-## §2 S19-A2 — wand overlay re-expression (design pinned at recon; lands next)
+## §2 S19-A2 — wand overlay re-expression (LANDED)
 
-Design (from recon wf_c0545c7c-56c overlay lens + pins): ONE new client mixin
+Design (recon wf_c0545c7c-56c overlay lens): ONE new client mixin
 `MixinLevelRenderer_PortalWand` @Inject(submitFeatures, RETURN) — the 26.2 re-site of IP's
 MixinDebugRenderer (DebugRenderer.render is GONE; submitFeatures is the same "after all features
-submitted" slot; it also runs for the mod's dest passes via invokeSubmitFeatures, faithfully
-reproducing IP's nested-pass overlay behavior; Drag/Copy self-guard via PortalRendering
-.isRendering() as in IP). The mixin does ONE
+submitted" slot; single exit, target bytecode-shape verified). The mixin does ONE
 `submitCustomGeometry(new PoseStack(), RenderTypes.lines(), (pose, buffer) -> clientRender(...))`
-(the proven PortalEntityRenderer:88-96 template; lines() carries TRANSLUCENT blend → translucent
-bucket → after-terrain draw, matching IP's late slot). clientRender + the three mode render()
-methods keep IP's body shape with `VertexConsumer` replacing `BufferSource`. 26.2-forced (F6
-class): `RenderType.debugLineStrip` is GONE — `WireRenderingHelper.renderCircle` re-expresses as
-discrete line pairs (the alpha-0 jump vertices were strip-break plumbing) and the two
-`renderPlane(..., isLineStrip=true)` call sites flip to IP's own discrete branch (false).
+— lines() carries TRANSLUCENT blend → translucent bucket → after-terrain draw, matching IP's
+late slot. clientRender + the three mode render() methods keep IP's body shape with
+`VertexConsumer` replacing `BufferSource` (verify: statement-for-statement IP modulo declared
+deltas; Drag/Copy keep their isRendering() guards, Creation has none — IP-exact). 26.2-forced
+(F6): `RenderType.debugLineStrip` is GONE — renderCircle re-expresses as discrete line pairs
+(verified visually lossless: the alpha-0 jump vertices only produced zero-length strip
+segments), and the two `renderPlane(isLineStrip=true)` call sites flip to IP's own discrete
+branch.
+
+### 2.1 Verify round 1 (wf_88355dbb-8f3, 2 Fable lenses) — FAIL → all fixed. TWO REAL CATCHES:
+
+1. **THE setLineWidth BLOCKER (both lenses independently):** 26.2 lines() vertex format is
+   POSITION_COLOR_NORMAL_LINE_WIDTH; BufferBuilder hard-THROWS "Missing elements in vertex" on
+   the next addVertex if an element is unfilled — NO mod line emitter set the width, so the
+   first frame the overlay had any geometry would crash the render thread inside prepareFrame
+   (and on dest passes: the throw escapes before PreparedFrame binds → "already in use" wedge
+   behind the swallow latch). The claimed "proven template" (renderPortalShapeMeshDebug) is
+   gated by default-FALSE `debugRenderPortalShapeMesh` and NEVER ran live — it carried the same
+   latent bug (**healed for free by the emitter-level fix**); the live S18 lines() user
+   (submitDestBlockOutline) goes through ShapeOutlineFeatureRenderer which sets width
+   explicitly — a different feature path. FIX: putLine gains an explicit-width form; the
+   width-less overloads read `windowRenderState.appropriateLineWidth` (the 26.2 successor of
+   1.21.3's LineStateShard OptionalDouble.empty() window-scaled default — IP's lines() visual);
+   boxEdge sets it inline; the debugLineStrip(1)-derived primitives (renderCircle + the flipped
+   renderPlane discrete calls) pin width 1.0 (IP's strip width).
+2. **The renderCircle NORMAL correction:** IP's strip format had no normal element —
+   setNormal(plane normal) was INERT data; on 26.2 lines() the Normal element is the shader's
+   LINE DIRECTION (rendertype_lines.vsh) — the plane normal (perpendicular to every segment)
+   collapses to NaN when the circle faces the camera (the normal usage angle) → circle
+   vanishes when looked at. FIX: route the loop through the canonical putLine (segment-direction
+   normal, normal-matrix transformed, width 1.0).
+
+Corrections folded: camPos null-refusal in the mixin (S18 null-is-no-information — sibling S18
+consumers refuse the same); mixin javadoc same-dim overclaim fixed.
+
+Substrate verdicts (all PASS, evidence in the verify record): translucent custom-geometry bucket
+DRAINED at every fill site (vanilla main :174/:176/:434; SecondaryWorldRenderCore :1387/:1398;
+PortalContextSwitch :988/:993 — no S14.40-class leak); per-pass cameras + isRendering()
+semantics IP-parity across main / in-frame dest / FBO / layer-0 (layer-0 un-bracketed =
+IP-parity too); drain window same-frame (no Animated/partialTick drift); mid-packet-frame safe
+(player-null guard suffices; level use is dimension()-key comparison only); FABULOUS routing
+vanilla-consistent (ITEM_ENTITY_TARGET, the block-outline precedent).
+
+### 2.2 Named deviations + ledger (S19-A2)
+
+- **Same-dim portal views: wand overlay ABSENT** (renderPortalEntitiesSameDim never calls
+  submitFeatures; IP's nested renderLevel showed the overlay in every pass class; cross-dim
+  views have it). Polish candidate, LOW — the spectral-glow residual class.
+- Strip cosmetics: discrete joints vs strip joints at 40-400 segments — negligible.
+- `putLineToLineStrip` + `renderSphere` retained-but-unreachable (renderSphere also still
+  carries strip semantics + no width) — **B11 reachability class for the S20 sweep**; any
+  future revival must fix both before use. `WandUtil.renderPortalAreaGridNew` is likewise
+  caller-less (round-2 verify note) but routes through putLine — correct if revived; same
+  sweep list, bookkeeping only.
+- PortalEntityRenderer's debug-mesh path healed by the emitter fix (was the same latent crash
+  behind the debug flag).
