@@ -1516,8 +1516,18 @@ increment Fable-verified, folded, gametest-gated, pushed):
   questions, §5); VEHICLE classified IP-INHERITED with the instrument-first capture plan (§5).
 - **S18.9:** item-9 condition NOT triggered (grep-proven); F18 Vulkan = no capable run this
   session (optional at (d)); row-4 fuse-view = (d) item.
-- **REMAINING for S18 CLOSE:** the (d) live round per port-note §6 (C4 A/B verdict is THE stage
-  decision) + the §5 next-increment items (dest/same-dim particles; vehicle fix post-captures).
+- **S18 CLOSED — USER-SIGNED-OFF 2026-07-18 ("ALL those things work").** The (d) round ran in
+  three sittings: round 1 (rain/clouds/outlines/entities good; the log audit caught + fixed the
+  fabric-hook NPE `488f143`; hand sliver → polish), the C4 A/B round (`e70fe6a`: "SAME EXACT
+  RESULTS" → **C4 DECIDED, SUBMIT_ORDER_UNIFORM stays**, B live-proven strike-free as fallback;
+  glow-in-portal-views ledgered decomposition residual; melee-through-portal classified
+  IP-inherited-blocks-only), and the final round (particles ✔ outline ✔ cross-view ✔ mirror ✔
+  renderModes ✔ view-bob ✔ minecart ✔). DEST+SAME-DIM PARTICLES landed mid-round (`dcb7583` —
+  the isolated world-filtered extract; the per-dim-engine plan overturned by trace). VEHICLE
+  CAPTURE: the passenger-guard warn fired ZERO times → the discard-recreate axis is implicated;
+  fix starts from the adopt-in-place candidate (port-note §10). Carried minors: row-4 fuse-view
+  spot-check, dpMs re-measure (only-if-lag), F18 Vulkan optional. Ledger of record = port-note
+  `S18-render-periphery.md` §1-§10. NEXT: S19 via `migration/S19_HANDOFF.md`.
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 

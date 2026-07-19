@@ -545,3 +545,31 @@ rain ✔; clouds ✔; source outline ✔; entities ✔. Still open: dest-outline
 (item 10), particles re-check post-`dcb7583` (§8), third-person cross view (2), mirrors (3),
 renderMode flips (4), view-bob (5), overlay (6), /gui_portal (7), dpMs re-measure (12), vehicle
 captures (13), row-4 fuse-view (14).
+
+---
+
+## §10 — S18 CLOSED (USER-SIGNED-OFF 2026-07-18: "ALL those things work")
+
+**Final round confirmations (all remaining (d) items):** break particles + fire particles through
+portals ✔ (the §8 delivery live-proven); dest-side block outline through the portal ✔ (the §7
+fabric-hook fix live-proven); third-person cross view ✔ (the §2 re-home + 5 folds live-proven);
+mirror ✔; renderMode flips ✔ (all four modes); view-bob ✔ (C5 behavior live); minecart ride ✔
+(no crash; the presentation gap remains IP-inherited backlog per §5).
+
+**VEHICLE CAPTURE RESULT (the §5 instrument-first discriminator):** the
+"[ImmPtl] Entity already exists and has passengers" warn fired ZERO times across every round
+session INCLUDING the minecart ride — the passenger-guard did NOT cancel the recreate's
+add-entity. Evidence points at the DISCARD-RECREATE axis (the client copy lacked its passenger at
+add-entity arrival, or no prompt id-collision add arrived) rather than the pure EntitySync freeze.
+The S19+/polish vehicle fix should START from the adopt-in-place candidate (vehicle-scoped
+predicate on the block-era adopt mixin, per §5) + one dedicated instrumented ride to bisect.
+
+**Carried opens (minor, to the S19 handoff):** row-4 fuse-view write-mask spot-check (S17
+residual — never explicitly exercised, carry); the dpMs multi-portal re-measure (only-if-lag —
+unexercised; the corrected probe stands ready); F18 Vulkan optional run.
+
+**S18 totals:** 11 commits (`32a93b4`→`e70fe6a`), 10 Fable-verify rounds (2 FAILs caught real
+crash classes pre-ship; 1 defect caught post-ship by the round-1 log audit), 8-leg suite green at
+every increment, every increment pushed. The stage closed with the C4 checkpoint DECIDED and every
+EXECUTION_PLAN §S18(a) content + every handoff §2 ledgered item either LANDED, classified
+IP-inherited, or explicitly ledgered with a routing.
