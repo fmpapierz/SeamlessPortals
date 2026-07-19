@@ -15,4 +15,16 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface IEParticle {
     @Accessor("level")
     ClientLevel portal_getWorld();
+
+    // S18 (dest particles): position reads for the isolated world-filtered extract's frustum cull
+    // (Particle.x/y/z are protected cross-package — 26.2:Particle.java:26-28; vanilla's own cull
+    // reads them same-package in QuadParticleGroup.extractRenderState:26).
+    @Accessor("x")
+    double portal_getX();
+
+    @Accessor("y")
+    double portal_getY();
+
+    @Accessor("z")
+    double portal_getZ();
 }

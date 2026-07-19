@@ -706,6 +706,29 @@ public class SecondaryWorldRenderCore {
                         finally {
                             isDestExtracting = false;
                         }
+                        // S18 DEST PARTICLES (the §5 designed item LANDED — user-reported gap:
+                        // break/fire particles absent in windows): the flag-ON global engine already
+                        // HOLDS dest-tagged particles (IP's architecture — remote animateTick +
+                        // redirected level events spawn them level-tagged); they never rendered
+                        // because the vanilla dest extract is corruption-cancelled above. Fill
+                        // destLRS.particlesRenderState AFTER the extract (its internal reset()
+                        // cleared the list) via the ISOLATED world-filtered extract — fresh
+                        // caller-owned states, the shared accumulators untouched, so the S14.40
+                        // guard stays fully armed. Frustum mirrors vanilla's extract form
+                        // (new Frustum(cull).offset(-3), LevelExtractor:199). Skipped under the
+                        // A/B lever (which restores the corrupting vanilla path instead) and under
+                        // FABULOUS (verify fold: the translucent particle group targets
+                        // levelRenderer.particlesTarget() when non-null — the clouds/weather
+                        // framegraph-internal-handle class; cross-dim resolves null structurally,
+                        // gated anyway for uniformity — fabulous is the ledgered degradation mode).
+                        if (!IPGlobal.debugAllowDestParticleExtract
+                            && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                            ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
+                                .ip_extractIsolated(
+                                    destLRS.particlesRenderState,
+                                    new Frustum(destFrustum).offset(-3.0F),
+                                    newCamera, partialTick, destLevel);
+                        }
                     }
                     if (DrawCallTrace.capturing) {
                         DrawCallTrace.record("   [post-extract] " + stateFingerprint());
@@ -1524,8 +1547,10 @@ public class SecondaryWorldRenderCore {
      *
      * <p>Same-dim BLOCK ENTITIES landed at S18.4 (the "per-pass visibleSections" gap closed — the
      * Step-9 portal-camera discovery list IS that list; see the in-body S18.4 note). Same-dim
-     * PARTICLES remain omitted (the isolation design needs the per-dim ParticleEngine adoption —
-     * port-note S18 §5). Runs inside the armed 10.5 inner clip + live stencil, like cross-dim.
+     * PARTICLES landed at S18 too (the isolated world-filtered extract — NOT per-dim engines; the
+     * shipped design keeps IP's single global engine + the revived shouldRenderParticle predicate;
+     * see the in-body S18 particles note). Runs inside the armed 10.5 inner clip + live stencil,
+     * like cross-dim.
      */
     private static void renderPortalEntitiesSameDim(
         LevelRenderer destRenderer, Matrix4f destViewMatrix,
@@ -1605,6 +1630,30 @@ public class SecondaryWorldRenderCore {
                 ((LevelRendererAccessorMixin) destRenderer).seamlessportals$invokeSubmitBlockEntities(
                     new com.mojang.blaze3d.vertex.PoseStack(), sameDimScratchLRS, sameDimSubmitStorage);
 
+                // S18 SAME-DIM PARTICLES (the same isolated world-filtered extract as the cross-dim
+                // Step-5 fill; worldFilter = the shared level — loop-back views show the SAME world's
+                // particles from the portal camera, exactly IP's nested pass did). Extract into the
+                // scratch LRS's own ParticlesRenderState + submit explicitly (the same-dim pipeline
+                // never calls submitFeatures; ParticlesRenderState.submit is public). Fresh states —
+                // the main pass's shared accumulators untouched. FABULOUS SKIP is LOAD-BEARING here
+                // (verify fold, the FAIL finding): same-dim mc.levelRenderer IS the main renderer
+                // mid-framegraph — under fabulous its particlesTarget() is a live framegraph-internal
+                // handle, and the translucent particle group would draw into it (own depth, no
+                // stencil) and composite FULL-SCREEN over the main view. The clouds/weather class.
+                if (!IPGlobal.debugAllowDestParticleExtract
+                    && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                    sameDimScratchLRS.particlesRenderState.particles.clear();
+                    ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
+                        .ip_extractIsolated(
+                            sameDimScratchLRS.particlesRenderState,
+                            new Frustum(destFrustum).offset(-3.0F),
+                            newCamera,
+                            deltaTracker.getGameTimeDeltaPartialTick(false),
+                            (net.minecraft.client.multiplayer.ClientLevel) client.level);
+                    sameDimScratchLRS.particlesRenderState.submit(
+                        sameDimSubmitStorage, destCameraState);
+                }
+
                 Matrix4fStack mv = RenderSystem.getModelViewStack();
                 mv.pushMatrix();
                 mv.mul(destViewMatrix);
@@ -1622,6 +1671,7 @@ public class SecondaryWorldRenderCore {
                 erd.prepare(client.gameRenderer.mainCamera(), client.crosshairPickEntity);
                 sameDimScratchLRS.entityRenderStates.clear();
                 sameDimScratchLRS.blockEntityRenderStates.clear(); // S18.4
+                sameDimScratchLRS.particlesRenderState.particles.clear(); // S18 particles
             }
         } catch (Throwable t) {
             // Entities are non-critical; terrain + sky already drew. One-shot swallow visibility

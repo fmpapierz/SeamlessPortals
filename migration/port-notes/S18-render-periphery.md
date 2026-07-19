@@ -446,3 +446,55 @@ pre-existing).
 dest-side outline re-check (item 10, now actually reachable post-fix), third-person cross view
 (item 2), mirrors (3), renderMode flips (4), view-bob (5), overlay (6), /gui_portal (7),
 dpMs re-measure (12), vehicle captures (13), row-4 fuse-view (14).
+
+---
+
+## §8 — DEST + SAME-DIM PARTICLES LANDED (user round-1 report: "block breaking particles dont
+render and fire particles dont show" — the §5 designed item, shipped)
+
+**The trace round (`wf_fac8e071-f52`) OVERTURNED the §5 per-dim-engine plan.** Ground truth:
+flag-ON, dest particles ALREADY SPAWN — fire/flame/lava ambient via IP's own
+`ClientWorldLoader.tickRemoteWorldRandomTicksClient → animateTick` (camera fake-moved for the
+spawn gate), and the player's own cross-portal break via `BlockManipulationServer.withForceRedirect`
+(the 2001 level event applied under the `withSwitchedWorld` swap) — all into the SINGLE global
+engine, level-tagged. That IS IP's architecture; per-dim engines would have deviated. The only
+26.2 obstacle was rendering them: a second vanilla extract corrupts the shared per-group
+accumulators (S14.40).
+
+**The shipped design: IP's per-particle world filter, re-sited corruption-free.**
+`IEParticleManager.ip_extractIsolated` (on the existing MixinParticleEngine) replicates vanilla's
+RENDER_ORDER walk but extracts world-matching + frustum-passing particles into FRESH caller-owned
+`QuadParticleRenderState`s — the shared accumulators are never touched, so the S14.40 HEAD-cancel
+stays fully armed on the vanilla path. The filter predicate is the REVIVED
+`RenderStates.shouldRenderParticle` (ported verbatim at S12-B, dead until now): world match + IP's
+isRendering spatial clause (`isOnDestinationSide` 0.5). The MAIN-pass half of IP's filter landed
+too: `MixinQuadParticleGroup` (WrapOperation on the per-particle extract) — closes the
+phantom-leak corner structurally. NEW: `IEParticleGroup` accessor + `portal_getX/Y/Z` on
+IEParticle. Call sites: cross-dim = post-extract Step-5 fill of `destLRS.particlesRenderState`;
+same-dim = fill + explicit `ParticlesRenderState.submit` in `renderPortalEntitiesSameDim`.
+**The S12-B deferred item ② is CLOSED** (item ③ tick-skip stays deferred/mitigated).
+
+**Verify `wf_aa5ce459-4af` (Fable ×2: mechanism PASS / integration FAIL) — all folds applied:**
+(1) FABULOUS gate on both fills — the same-dim case was a REAL hazard (mc.levelRenderer is the
+main renderer mid-framegraph; under fabulous the translucent particle group would draw into the
+live framegraph-internal particlesTarget and composite full-screen — the clouds/weather class);
+(2) IP's >4-rendered-portals particle skip re-sited onto `ip_extractIsolated`'s head (the ported
+extract-cancel became unreachable for portal passes — IP drew NO portal-pass particles beyond 4);
+(3) the spatial clause via the revived shouldRenderParticle; (4) empty-group vanilla-walk parity;
+(5) doc corrections (the stale "remain omitted" header, the far-portal-skip re-site note, the
+lever-ON A/B semantics note — the lever restores the corruption MECHANISM, not the pre-S18 bytes).
+
+**Verify-proven (recorded):** extract overrides audited idempotent (double extraction per frame
+safe); dest particles light from their OWN level (correct dest lighting); camera identity
+extract↔submit proven; Mechanism B non-interference; flag-OFF byte-neutral (weave-gated); zero
+cost with no portal visible. **Ledgered residuals:** item-pickup/elder-guardian groups skipped
+(bespoke state types); per-pass fresh-state allocation churn (~57KB/layer worst case — an S20
+pooling candidate); fabulous skips portal-pass particles (the ledgered degradation family);
+**IP-INHERITED server gap: block breaks by OTHER actors (mobs/TNT/other players) in a dest dim
+send NO 2001 packet to the portal-viewer at all** (no general ServerLevel.levelEvent redirect —
+byte-identical in IP; polish-backlog candidate). ParticleEnginePortalSkipMixin flagged as a
+B11-class dormant-reachability item for the S20 sweep.
+
+**Live-round check:** break a block YOURSELF through a portal → break particles in the window;
+fire/lava-adjacent dest scenery → flame/smoke particles in the window (non-fabulous). Note a
+mob/TNT breaking a dest block shows nothing — IP-identical (the server gap above).
