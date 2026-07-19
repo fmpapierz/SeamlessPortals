@@ -97,3 +97,12 @@ accessible field com/mojang/blaze3d/systems/GpuDevice backend Lcom/mojang/blaze3
 # class-literal @Mixin target needs it accessible (IP precedent: imm_ptl.accesswidener carries
 # the same transitive-accessible line for this exact class).
 accessible class net/minecraft/client/gui/screens/worldselection/CreateWorldScreen$MoreTab
+
+# S19 commons tail (MixinItemStackComponentizationFix): 26.2 keeps ItemStackComponentizationFix.ItemStackData
+# a `private static class` (ItemStackComponentizationFix.java:709). The mixin names it as an injected-handler
+# param type and calls its public is()/removeTag()/setComponent()/moveTagToComponent(). IP's own
+# imm_ptl.accesswidener widens exactly this type (transitive-accessible class ...ItemStackData) — this is the
+# faithful port of that entry (plain non-transitive `accessible`, this mod's AW convention). Compile-time only:
+# the injected handler is merged into the OUTER class ItemStackComponentizationFix, which can already reach
+# its own private nested class at runtime. Paired with the accesstransformer.cfg `public` entry.
+accessible class net/minecraft/util/datafix/fixes/ItemStackComponentizationFix$ItemStackData
