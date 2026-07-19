@@ -9,6 +9,23 @@ repositories {
         name = 'TerraformersMC'
         url = 'https://maven.terraformersmc.com/releases'
     }
+    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 for MC 26.2 (see dependencies).
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
+    // S19-E: real Cloth Config 26.2.155 (retires the F21 me.shedaniel.autoconfig
+    // no-op). IP's own build.gradle:34 resolves cloth from this same maven.
+    maven {
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+        content {
+            includeGroupByRegex 'me\\.shedaniel.*'
+        }
+    }
     mavenCentral()
 }
 
@@ -23,6 +40,52 @@ dependencies {
     // NOT a hard runtime dependency (no "modmenu" entry in fabric.mod.json
     // depends) — the "modmenu" entrypoint is ignored when Mod Menu is absent.
     implementation "com.terraformersmc:modmenu:20.0.0-beta.4"
+
+    // S19-E: real Cloth Config 26.2.155 on :fabric, replacing the retired F21
+    // me.shedaniel.autoconfig functional no-op (common/src/main/java/me/shedaniel/**,
+    // deleted this stage). `implementation` (NOT compileOnly): the config GUI
+    // (IPConfigGUI.createClothConfigScreen → AutoConfig.getConfigScreen) is real
+    // runtime code, and cloth-config is a real Fabric mod loom must LOAD into the dev
+    // runtime for that screen to build. IP's own build.gradle:84-87 declares this as
+    // modApi + `include` (JiJ). This repo ships no JiJ yet and is remap-free (26.2
+    // unobfuscated) → plain `implementation` (same convention as fabric-api/modmenu),
+    // no loom mod-remapping. TODO release packaging: bundle cloth (loom `include`/JiJ)
+    // or declare a hard "cloth-config" dependency in fabric.mod.json so end users have
+    // it at runtime. Excludes mirror IP build.gradle:85 (fabric-api) + drop cloth's
+    // transitive fabric-loader 0.19.3 — this project pins both itself above. Kept:
+    // me.shedaniel.cloth:basic-math + runtime jankson/toml4j/snakeyaml.
+    implementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        exclude(group: 'net.fabricmc.fabric-api')
+        exclude(group: 'net.fabricmc', module: 'fabric-loader')
+    }
+
+    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 on the :fabric compile classpath. The loader
+    // recompiles :common's raw source, which now references the real sodium/iris types after
+    // the F21 stub retirement, so these types must be visible here too. compileOnly ONLY —
+    // the compat code is runtime-dead today (On*Present invokers unwired until C2), so neither
+    // jar enters the shipped/runtime classpath by default. To actually LOAD them in a dev run,
+    // opt in via the -PsodiumRuntime / -PirisRuntime properties handled below (used by the
+    // runClientSodium run config). Empty POMs (no transitives). Remap-free build → plain
+    // compileOnly, never modCompileOnly.
+    compileOnly "maven.modrinth:sodium:${project.sodium_version}"
+    compileOnly "maven.modrinth:iris:${project.iris_version}"
+
+    // S19-E OPT-IN runtime scoping. By default sodium/iris are compile-only and never load;
+    // pass a property to add them to the runtime for a live compat test:
+    //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true   (Sodium alone)
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true     (Iris + its required Sodium)
+    // Iris's loader metadata requires sodium "0.9.x" at runtime (its fabric.mod.json depends);
+    // both POMs are EMPTY so gradle pulls nothing transitively — the explicit second runtimeOnly
+    // line below is what adds the matching sodium build. With no property set,
+    // `:fabric:compileJava` resolves neither into any runtime configuration (the deps stay
+    // compileOnly). Retired at C2 when the invokers are wired for real.
+    if (project.hasProperty('sodiumRuntime')) {
+        runtimeOnly "maven.modrinth:sodium:${project.sodium_version}"
+    }
+    if (project.hasProperty('irisRuntime')) {
+        runtimeOnly "maven.modrinth:sodium:${project.sodium_version}"
+        runtimeOnly "maven.modrinth:iris:${project.iris_version}"
+    }
 }
 
 loom {
@@ -52,6 +115,21 @@ loom {
             server()
             setConfigName('Fabric Server')
             runDir('runs/server')
+        }
+        // S19-E live Sodium/Iris compat run. Sodium/Iris are compileOnly by default (see the
+        // dependencies block), so this run only actually LOADS them when the matching runtime
+        // property is passed on the command line:
+        //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true   (Sodium alone)
+        //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true     (Iris + required Sodium)
+        // Without a property it launches identically to the plain client run (no compat mod on
+        // the runtime). Carries the same Temurin 25.0.2 C2 JIT mitigation as the client run.
+        clientSodium {
+            client()
+            setConfigName('Fabric Client + Sodium')
+            runDir('runs/client-sodium')
+            // Same Temurin 25.0.2 HotSpot C2 defect mitigation as the `client` run above
+            // (EXCEPTION_ACCESS_VIOLATION JIT-compiling PortalRenderInfo::renderAndDecideVisibility).
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,

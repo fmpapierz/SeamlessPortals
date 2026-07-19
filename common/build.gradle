@@ -5,13 +5,18 @@ plugins {
 
 // F21 compileOnly stub-classpath source set (entity-portal migration —
 // migration/EXECUTION_PLAN.md §3 S4(a) "Sodium/Iris compile reality"; S00-U0-decisions
-// F21; S04-compat.md §3). IP's HELD compat files reference third-party mod types
-// (net.caffeinemc.mods.sodium.*, net.irisshaders.iris.*, gravity_changer.*) that have no
-// MC 26.2 build. This source set holds EMPTY shells of exactly those types (correct
-// FQN/kind + only the members IP touches). It is compileOnly ONLY — never shipped: it is
-// wired onto :common's and the loaders' COMPILE classpaths (the loaders recompile the raw
-// common source, so the -Pip_scc_closed=true probe there also needs the shells) but never
-// onto runtime/implementation. Deleted at S20 with the rest of the holding machinery.
+// F21; S04-compat.md §3). IP's HELD compat files reference third-party mod types that had
+// no MC 26.2 build at F21. This source set holds EMPTY shells of exactly those types
+// (correct FQN/kind + only the members IP touches). It is compileOnly ONLY — never shipped:
+// it is wired onto :common's and the loaders' COMPILE classpaths (the loaders recompile the
+// raw common source, so the -Pip_scc_closed=true probe there also needs the shells) but
+// never onto runtime/implementation. Deleted at S20 with the rest of the holding machinery.
+//
+// S19-E UPDATE: the sodium (net.caffeinemc.mods.sodium.*) and iris (net.irisshaders.iris.*)
+// shells were RETIRED this stage — real Sodium 0.9.1 + Iris 1.11.2 DO ship for 26.2 and are
+// now on all three modules' compile classpaths as compileOnly (see the dependencies block),
+// so the held compat files compile against the real types. Only gravity_changer.* remains in
+// this source set (still no 26.2 build). The rest of the F21 machinery is otherwise unchanged.
 sourceSets {
     ipStubs
     // S10-A loader-seam foundation (migration/EXECUTION_PLAN.md §3 S10; port-note
@@ -63,6 +68,30 @@ repositories {
     // plugin-provided repositories, so existing dependency resolution is
     // unchanged.
     mavenCentral()
+
+    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 for MC 26.2 (retires the F21
+    // sodium/iris stubs). Both publish to Modrinth's maven with EMPTY POMs
+    // (no transitives). compileOnly below — see the dependency comment.
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
+
+    // S19-E: real Cloth Config 26.2.155 for MC 26.2 (retires the F21
+    // me.shedaniel.autoconfig no-op deleted from this module's source this stage).
+    // compileOnly below — the me.shedaniel.autoconfig imports in the held IP config
+    // tree must resolve against the real API here. IP build.gradle:34 resolves cloth
+    // from this same maven.
+    maven {
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+        content {
+            includeGroupByRegex 'me\\.shedaniel.*'
+        }
+    }
 }
 
 dependencies {
@@ -71,6 +100,36 @@ dependencies {
     // signatures (org.objectweb.asm.tree.ClassNode). Mixin itself depends on
     // them at runtime; we just need them on the compile classpath.
     compileOnly group: 'org.ow2.asm', name: 'asm-tree', version: '9.7'
+
+    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 on :common:compileJava's compile classpath,
+    // replacing the retired F21 sodium/iris stubs (ipStubs net.caffeinemc/** + net.irisshaders/**
+    // deleted this stage). The held IP compat files (SodiumInterface/SodiumRenderingContext/
+    // IESodiumWorldRenderer/IrisInterface/ExperimentalIrisPortalRenderer) now compile against
+    // the REAL types. compileOnly, NOT plain implementation: the compat code is RUNTIME-DEAD
+    // today (the On*Present invokers are never wired — that activation is C2), so the jars must
+    // never enter any runtime/shipped configuration unless explicitly opted in (see
+    // fabric/build.gradle -PsodiumRuntime / -PirisRuntime). Both POMs are empty (no transitives).
+    // NOT modCompileOnly: this build is remap-free (26.2 unobfuscated) — plain compileOnly, same
+    // convention as fabric-api/modmenu. Retired with the rest of the compat holding at S20/C2.
+    compileOnly "maven.modrinth:sodium:${project.sodium_version}"
+    compileOnly "maven.modrinth:iris:${project.iris_version}"
+
+    // S19-E: real Cloth Config 26.2.155 on :common:compileJava's compile classpath,
+    // replacing the retired F21 me.shedaniel.autoconfig no-op (the 8 in-tree
+    // me.shedaniel.autoconfig.** files deleted this stage — they would SHADOW the real
+    // jar on this compile AND in the shipped jar). The held IP config tree (IPModMain,
+    // IPGlobal, IPConfig, IPConfigGUI, IPModMenuConfigEntry) imports
+    // me.shedaniel.autoconfig.* — those now resolve against the REAL API here.
+    // compileOnly, NOT implementation: :common ships no runtime classpath of its own
+    // (the loaders recompile its raw source); cloth's actual runtime presence is
+    // arranged on :fabric (see fabric/build.gradle — plain `implementation` there).
+    // Excludes mirror IP build.gradle:85 (fabric-api) + drop cloth's transitive
+    // fabric-loader (this project supplies both). Remap-free build → plain compileOnly,
+    // same convention as sodium/iris/mixin above. Retired at S20/C2.
+    compileOnly("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        exclude(group: 'net.fabricmc.fabric-api')
+        exclude(group: 'net.fabricmc', module: 'fabric-loader')
+    }
 
     // Entity-portal migration S10-C: MixinExtras on :common:compileJava's compile classpath.
     // The IP common mixins use com.llamalad7.mixinextras (@WrapOperation / @Local / Operation /

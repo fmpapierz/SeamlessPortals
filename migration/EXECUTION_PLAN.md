@@ -1531,6 +1531,30 @@ increment Fable-verified, folded, gametest-gated, pushed):
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**S19-E PROGRESS (2026-07-19, second session): WIRING LANDED + C2 DECIDED-ENTER-NOW.**
+At the §2.5 C2-depth question the user chose **"Enter C2 now"** — full-depth Sodium 0.9.1
+render-path compat comes immediately after the wiring + commons tail, BEFORE S20 + polish
+(supersedes the 2026-07-16 "C2 after S20" ordering; memory updated). LANDED (workflow
+wf_42ef6a93-470, 3 Fable verify lenses all PASS_WITH_CORRECTIONS, folds applied, compile
+green x3, 8-leg suite ALL LEGS PASS): real deps pinned + proven (sodium mc26.2-0.9.1-fabric
++ iris 1.11.2+26.2-fabric compileOnly x3 modules, runtime only via -PsodiumRuntime/-PirisRuntime
++ the new clientSodium loom run; cloth-config-fabric 26.2.155 implementation on :fabric with
+fabric-api/loader excludes); F21 sodium/iris ipStubs RETIRED (14 shells; ZERO consumer
+retargets needed — 0.9.1/1.11.2 kept the exact modelled surface, SodiumInterface/IrisInterface
+byte-identical to IP); the F21 me.shedaniel autoconfig no-op DELETED for real cloth (sole API
+drift: getConfigScreen moved to AutoConfigClient — one-line IPConfigGUI fix; config-file
+survival bytecode-proven); ModMenu entrypoint = D3 flag-switch in ModMenuIntegration (IP
+screen flag-ON / block-era flag-OFF; collapses to IPModMenuConfigEntry at S20); On*Present
+detection IP-1:1 behind ExperimentalCompatGate (default false) + honest gating (loud log +
+one-shot chat + session-only renderMode=none force when sodium/iris present pre-C2). NEW
+LEDGER: C7 landmine — NeoForge lost the in-tree me.shedaniel classes (qouteall config tree
+NCDFE-if-reached there); release packaging now REQUIRES cloth JiJ (flag-ON boot dies without
+cloth); cloth's example entrypoints run in dev runs (not regressions). C2 phase-1 ground
+truth = migration/C2_IP_COMPAT_DEPTH.md (wf_eb56ca0c-52c — the COVERAGE INFO-3 full-depth
+27-file pass). Ledger of record = port-note §8. LIVE-ROUND ITEMS OUTSTANDING: the config
+screen click (Mods → Seamless Portals → config = the real IP cloth screen) + optional
+runClientSodium warn/force check. Prior progress record follows:**
+
 **S19 PROGRESS UPDATE (2026-07-19): A/C/D CLOSED LIVE-PROVEN, B re-opened by ground truth,
 E re-directed.** S19-A live round: tab ✓ all wand modes ✓ crossing ✓ (the teleport crash =
 a Temurin C2 JIT defect, mitigated with CompileCommand-exclude on both run configs — NOT

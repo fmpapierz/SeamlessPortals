@@ -34,6 +34,57 @@ neoForge {
     }
 }
 
+repositories {
+    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 for MC 26.2 (see dependencies). Modrinth's
+    // maven publishes both with EMPTY POMs (no transitives). This module had no repositories
+    // block before — added solely for these compileOnly compat types.
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
+    // S19-E: real Cloth Config 26.2.155 for MC 26.2 (retires the F21
+    // me.shedaniel.autoconfig no-op). This loader recompiles :common's raw source,
+    // which imports me.shedaniel.autoconfig.* — so the real API must be visible on
+    // THIS compile too. compileOnly below. IP build.gradle:34 resolves cloth from
+    // this same maven.
+    maven {
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+        content {
+            includeGroupByRegex 'me\\.shedaniel.*'
+        }
+    }
+}
+
+dependencies {
+    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 on the :neoforge compile classpath. This loader
+    // recompiles :common's raw source (multiloader-loader.gradle `source(configurations.commonJava)`),
+    // which now references the real sodium/iris types after the F21 stub retirement — so those
+    // types must be visible on THIS compile too, exactly as they are on :common and :fabric.
+    // compileOnly ONLY: the compat code is runtime-dead today (On*Present invokers unwired until
+    // C2) and these are Fabric-published jars — they must NEVER enter the NeoForge runtime.
+    // Empty POMs (no transitives). Remap-free build → plain compileOnly. Retired at S20/C2.
+    compileOnly "maven.modrinth:sodium:${project.sodium_version}"
+    compileOnly "maven.modrinth:iris:${project.iris_version}"
+
+    // S19-E: real Cloth Config 26.2.155 on the :neoforge compile classpath, replacing the
+    // retired F21 me.shedaniel.autoconfig no-op. This loader recompiles :common's raw source
+    // (multiloader-loader.gradle `source(configurations.commonJava)`), which imports
+    // me.shedaniel.autoconfig.* — so the real API must resolve on THIS compile too, exactly as
+    // on :common and :fabric. compileOnly ONLY: cloth-config-fabric is a FABRIC-published jar
+    // and the flag is force-OFF on NeoForge (EntityPortalsFlag S13-B P4) — it must NEVER enter
+    // the NeoForge runtime. Excludes mirror IP build.gradle:85 (fabric-api) + drop cloth's
+    // transitive fabric-loader (never wanted on NeoForge). Remap-free build → plain compileOnly.
+    // Retired at S20/C2.
+    compileOnly("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        exclude(group: 'net.fabricmc.fabric-api')
+        exclude(group: 'net.fabricmc', module: 'fabric-loader')
+    }
+}
+
 sourceSets.main.resources {
     srcDir('src/generated/resources')
 }

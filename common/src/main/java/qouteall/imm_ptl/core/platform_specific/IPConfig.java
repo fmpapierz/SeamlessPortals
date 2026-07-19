@@ -182,6 +182,16 @@ public class IPConfig implements ConfigData {
         }
 
         IPGlobal.renderMode = compatibilityRenderMode ? IPGlobal.RenderMode.compatibility : IPGlobal.RenderMode.normal;
+        // S19-E increment 3 — NAMED DEVIATION guard (removed at C2; see ExperimentalCompatGate).
+        // When the fabric client detected Sodium/Iris flag-ON while the compat gate is off, portal
+        // views were force-disabled for the session. onConfigChanged re-derives renderMode from the
+        // config above and can re-fire at runtime (an in-game config save), which would resurrect
+        // portal rendering against the un-C2-verified compat path. Re-apply the session force here
+        // so the disable survives config reloads. Session-scoped only (never persisted) and
+        // false-by-default, so this is a no-op on dedicated servers and in the flag-OFF baseline.
+        if (qouteall.imm_ptl.core.compat.ExperimentalCompatGate.forcePortalRenderingOffThisSession) {
+            IPGlobal.renderMode = IPGlobal.RenderMode.none;
+        }
         IPGlobal.enableWarning = enableWarning;
         IPGlobal.enableMirrorCreation = enableMirrorCreation;
         IPGlobal.doCheckGlError = doCheckGlError;

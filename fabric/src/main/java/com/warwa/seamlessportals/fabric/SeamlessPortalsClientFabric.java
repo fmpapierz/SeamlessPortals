@@ -8,11 +8,22 @@ import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.EntityType;
 import org.joml.Matrix4f;
+import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPCGlobal;
+import qouteall.imm_ptl.core.IPGlobal;
+import qouteall.imm_ptl.core.IPMcHelper;
+import qouteall.imm_ptl.core.compat.ExperimentalCompatGate;
+import qouteall.imm_ptl.core.compat.iris_compatibility.ExperimentalIrisPortalRenderer;
+import qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface;
+import qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface;
+import qouteall.imm_ptl.core.platform_specific.IPConfig;
 import qouteall.imm_ptl.core.portal.BreakableMirror;
 import qouteall.imm_ptl.core.portal.EndPortalEntity;
 import qouteall.imm_ptl.core.portal.LoadingIndicatorEntity;
@@ -27,6 +38,7 @@ import qouteall.imm_ptl.core.render.LoadingIndicatorRenderer;
 import qouteall.imm_ptl.core.render.PortalEntityRenderer;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
 import qouteall.imm_ptl.core.render.renderer.PortalRenderer;
+import qouteall.q_misc_util.my_util.MyTaskList;
 
 public class SeamlessPortalsClientFabric implements ClientModInitializer {
 
@@ -67,6 +79,13 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // IP-faithful imm_ptl_state.json read/upgrade, which only touches the lazy
             // IPConfig (already loaded flag-ON) — nothing here depends on core client init.
             qouteall.imm_ptl.peripheral.PeripheralModMain.initClient();
+
+            // ===== S19-E: Sodium/Iris detection + HONEST incompat gating (NAMED DEVIATION) =========
+            // Runs at IP's corresponding slot (IPModEntryClient.onInitializeClient:71-108, right
+            // after the core client init). Flag-ON only (this whole branch), and only after
+            // IPModMainClient.init above has loaded IPConfig — so the force below wins over the
+            // config-derived renderMode. See ExperimentalCompatGate / detectAndGateRenderCompat.
+            detectAndGateRenderCompat();
 
             // ===== WIRE 3 (S13-G): flag-ON render-DISPATCH — the REPLACE-BY of the block-era driver =====
             // CUTOVER_SPEC §6.2 item 2 / EXCLUSIVITY_LEDGER rows 14/15 / ported MixinGameRenderer.java:
@@ -219,5 +238,117 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
 
         platformHelper.registerEntityRenderer(
             LoadingIndicatorEntity.entityType, LoadingIndicatorRenderer::new);
+    }
+
+    /**
+     * S19-E increment 3 — Sodium/Iris presence detection + the HONEST incompat gate (a NAMED
+     * DEVIATION removed at C2; see {@link ExperimentalCompatGate}).
+     *
+     * <p>1:1 re-site of IP's {@code IPModEntryClient.onInitializeClient:71-108}: the
+     * {@code FabricLoader.isModLoaded("sodium"/"iris")} checks, the {@code On*Present} invoker swap,
+     * {@code ExperimentalIrisPortalRenderer.init()}, and the one-shot Iris shaderpack warning. IP
+     * runs this in the fabric client entrypoint right after its core client init; this method runs
+     * at the corresponding point (after {@code PeripheralModMain.initClient}), flag-ON only.
+     *
+     * <p>DEVIATION vs IP: the invoker swap is gated behind
+     * {@link ExperimentalCompatGate#ENABLE_SODIUM_IRIS_COMPAT} (default {@code false}). Detection
+     * always runs (cheap, side-effect-free). While the gate is off and Sodium/Iris IS present,
+     * instead of swapping the invoker — which would drive the un-C2-verified IP render paths — the
+     * mod warns loudly and force-disables portal views for the session
+     * ({@link #warnAndForcePortalRenderingOff}).
+     *
+     * <p>IP's lazy-classload discipline is PRESERVED exactly: the {@code new *.On*Present()} and
+     * {@code ExperimentalIrisPortalRenderer.init()} references only execute inside the
+     * {@code isModLoaded} branch AND the gate-on sub-branch, so no {@code net.caffeinemc.*} /
+     * {@code net.irisshaders.*} implementation class loads unless the mod is present AND the gate
+     * is flipped. (With the gate {@code false} at runtime, that whole sub-branch is never taken.)
+     */
+    private static void detectAndGateRenderCompat() {
+        boolean isSodiumPresent = FabricLoader.getInstance().isModLoaded("sodium");
+        boolean isIrisPresent = FabricLoader.getInstance().isModLoaded("iris");
+
+        // IP IPModEntryClient logs "Sodium is present"/"is not present" (Helper.log) — kept.
+        SeamlessPortalsConstants.LOGGER.info("Sodium is {}present", isSodiumPresent ? "" : "not ");
+        SeamlessPortalsConstants.LOGGER.info("Iris is {}present", isIrisPresent ? "" : "not ");
+
+        if (ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT) {
+            // ===== C2 PATH (gate flipped) — IP IPModEntryClient:73-105 behavior verbatim =====
+            // Never taken today (gate default false). NOTE the C2 flip is NOT just this gate:
+            // none of IP's imm_ptl_compat mixin set (9 sodium + 7 iris mixins, incl. the
+            // IESodiumWorldRenderer accessor and the IESodiumRenderSectionManager duck impl) is
+            // ported/registered yet — flipping the gate with Sodium present would CCE at the
+            // OnSodiumPresent duck casts. C2 ports + registers that set FIRST (see
+            // migration/C2_IP_COMPAT_DEPTH.md), then flips/deletes the gate.
+            // The On*Present classes classload only here.
+            if (isSodiumPresent) {
+                SodiumInterface.invoker = new SodiumInterface.OnSodiumPresent();
+            }
+            if (isIrisPresent) {
+                IrisInterface.invoker = new IrisInterface.OnIrisPresent();
+                ExperimentalIrisPortalRenderer.init();
+
+                IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {
+                    if (IPConfig.getConfig().shouldDisplayWarning("iris")) {
+                        CHelper.printChat(
+                            Component.translatable("imm_ptl.iris_warning")
+                                .append(IPMcHelper.getDisableWarningText("iris"))
+                        );
+                    }
+                }));
+            }
+        }
+        else if (isSodiumPresent || isIrisPresent) {
+            // ===== HONEST-GATING DEVIATION (gate off + an incompatible renderer present) =====
+            // Iris implies Sodium at runtime, so a single warn+force covers both; the subject just
+            // names what was detected (Iris named too, so a shader user knows shaders are the issue).
+            String subject = isIrisPresent
+                ? (isSodiumPresent ? "Sodium + Iris (shaders)" : "Iris (shaders)")
+                : "Sodium";
+            warnAndForcePortalRenderingOff(subject);
+        }
+    }
+
+    /**
+     * The user-facing half of the S19-E honest-gating deviation: a loud init log, a one-shot
+     * world-join chat message, and a session-only force of {@code IPGlobal.renderMode = none}.
+     * {@code subject} names the incompatible renderer(s) detected. See {@link ExperimentalCompatGate}.
+     */
+    private static void warnAndForcePortalRenderingOff(String subject) {
+        // (a) loud, multi-line log at init.
+        SeamlessPortalsConstants.LOGGER.error(
+            "\n============================================================\n"
+                + "[Seamless Portals] {} detected, but the ported {}-compatible portal\n"
+                + "rendering layer is NOT enabled yet (still being ported — C2).\n"
+                + "Portal VIEWS are disabled for this session to avoid rendering errors.\n"
+                + "(Teleportation and portal creation still work.)\n"
+                + "This is temporary; a future update will restore portal rendering with {}.\n"
+                + "============================================================",
+            subject, subject, subject
+        );
+
+        // (c) force portal rendering off for THIS SESSION only. Applied AFTER config load (this
+        // runs post-IPModMainClient.init, flag-ON, where IPConfig is already loaded) so it wins
+        // over the config's compatibilityRenderMode-derived renderMode value. The session flag
+        // makes it survive any runtime config reload (in-game config save) via the guard in
+        // IPConfig.onConfigChanged. NEVER written to disk (no saveConfigFile call) — the user's
+        // persisted renderMode preference is untouched.
+        ExperimentalCompatGate.forcePortalRenderingOffThisSession = true;
+        IPGlobal.renderMode = IPGlobal.RenderMode.none;
+
+        // (b) one-shot chat on world join. IP's Iris-warning idiom (IPModEntryClient:97 — bare
+        // oneShotTask added at client init; CLIENT_TASK_LIST is processed on POST_CLIENT_TICK,
+        // i.e. the first client-world tick after join, and only force-cleared on disconnect).
+        // Unconditional (not gated by shouldDisplayWarning): portal views being off is a functional
+        // state change the user must be told about, not a suppressible cosmetic warning.
+        final String subjectFinal = subject;
+        IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {
+            CHelper.printChat(
+                Component.literal(
+                    "[Seamless Portals] " + subjectFinal + " detected: portal views are disabled "
+                        + "this session (rendering not compatible with it yet). "
+                        + "Teleportation still works."
+                ).withStyle(ChatFormatting.RED)
+            );
+        }));
     }
 }

@@ -456,3 +456,137 @@ SHADOWING hazard); moved to fabricStubs (:common-only + neoforge fabricStubsClas
 `IPModMenuConfigEntry` into the fabric.mod.json "modmenu" list → live-test the screen.
 S19-B otherwise CLOSED into C2. Zero runtime reachability today (grep-proven: no callers, no
 entrypoint reference).
+
+## §8 S19-E — REAL Sodium 0.9.1 / Iris 1.11.2 / Cloth Config 26.2.155 wiring (LANDED)
+
+**C2 DECIDED BY THE USER at stage open (2026-07-19): ENTER NOW** — after this wiring + the
+commons tail, full-depth Sodium 0.9.1 render-path compat comes BEFORE S20 + polish (the
+2026-07-16 "C2 only after S20" ordering is superseded; memory updated). The user was shown
+the trade-off (warn-only now vs make-it-work now) and picked make-it-work.
+
+Impl: workflow `wf_42ef6a93-470` (3 sequential Opus agents A/B/C). Verify: 3 Fable lenses,
+ALL PASS_WITH_CORRECTIONS (no blocker; all folds applied by the orchestrator). C2 phase-1
+ground truth: workflow `wf_eb56ca0c-52c` → **`migration/C2_IP_COMPAT_DEPTH.md`** (the
+COVERAGE INFO-3 full-depth injection-level pass over IP's 27 compat files, run against the
+IP tree in parallel with the impl).
+
+### 8.1 What landed
+
+- **Maven pins (all proven resolvable by POM fetch)**: `maven.modrinth:sodium:mc26.2-0.9.1-fabric`
+  + `maven.modrinth:iris:1.11.2+26.2-fabric` (Modrinth maven, both POMs EMPTY — no transitives)
+  and `me.shedaniel.cloth:cloth-config-fabric:26.2.155` (shedaniel maven; POM pulls
+  fabric-loader 0.19.3 + 4 fabric-api split modules → BOTH excluded, IP's own exclude
+  precedent; kept basic-math + jankson/toml4j/snakeyaml). gradle.properties: `sodium_version`,
+  `iris_version`, `cloth_config_version`. Repos added to all three modules (Modrinth with
+  includeGroup, shedaniel with includeGroupByRegex content filters).
+- **Sodium/Iris = compileOnly on all three modules** (the loaders recompile :common's raw
+  source). RUNTIME only via `-PsodiumRuntime` / `-PirisRuntime` (iris branch adds sodium too —
+  iris's fabric.mod.json depends pins sodium "0.9.x"; the empty POMs pull nothing, the explicit
+  runtimeOnly line does the work). New loom run `clientSodium` (runs/client-sodium, carries the
+  Temurin C2 JIT CompileCommand mitigation). Launch:
+  `.\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true`.
+  Empirically proven: no property → NEITHER on any runtimeClasspath (suite unaffected).
+- **F21 sodium/iris ipStubs RETIRED**: all 14 shells deleted (8 net.caffeinemc + 6
+  net.irisshaders); gravity_changer shells stay (no 26.2 build). ipStubs machinery intact.
+- **ZERO consumer retargets needed**: the real 0.9.1/1.11.2 jars preserve the EXACT API
+  surface the stubs modelled — all 5 stub-consuming IP files (SodiumInterface,
+  SodiumRenderingContext, IESodiumWorldRenderer, IrisInterface, ExperimentalIrisPortalRenderer)
+  compiled unchanged on the first attempt; SodiumInterface/IrisInterface verified
+  BYTE-IDENTICAL to IP upstream. javap deltas (compile-transparent): SpriteUtil.markSpriteActive
+  still static but @Deprecated(forRemoval) in 0.9.1 (C2 activation item);
+  ChunkTrackerHolder.get takes ClientLevel (narrower, binds); ChunkStatus.FLAG_HAS_BLOCK_DATA
+  = 1 (stub had 0 — inlined from the REAL jar now, consistent); SystemTimeUniforms.COUNTER's
+  real nested type is FrameCounter (access pattern transparent). C2-HELD: NONE.
+- **Cloth swap (the runtime migration)**: the 8-file F21 `me.shedaniel.autoconfig` no-op
+  DELETED from common main source; real cloth on :fabric as `implementation` (runtime — the
+  GUI is runtime code), compileOnly on :common/:neoforge. THE SOLE API DRIFT of the whole
+  swap: 26.2.155 split the screen entry out of AutoConfig → `AutoConfigClient.getConfigScreen`
+  (javap: AutoConfig = register/getConfigHolder only) — IPConfigGUI one-line owner swap,
+  same signature/`Supplier<Screen>` chain. Everything else (register/Factory/
+  registerSaveListener→InteractionResult/ConfigData.validatePostLoad default) binds the
+  IP-verbatim call shapes.
+- **CONFIG-FILE SURVIVAL PROVEN at bytecode level**: real GsonConfigSerializer resolves the
+  identical `config/immersive_portals.json`; identical Gson reflective field mapping; missing
+  fields keep defaults; corrupt file → resetToDefault WITHOUT overwriting. Real save() fires
+  the listener BEFORE serialize (F21 fired after) → clamped values now persist on save —
+  toward-IP improvement. The register→listener→manual-onConfigChanged ordering is preserved
+  (ctor load+save runs with an empty listener list). Server-dist safe (register's reachable
+  set never touches client classes).
+- **ModMenu entrypoint = D3 flag-switch** in the block-era `ModMenuIntegration` (fabric.mod.json
+  UNCHANGED): flag-ON → `IPConfigGUI.createClothConfigScreen` (the live IP cloth screen);
+  flag-OFF → block-era `SeamlessConfigScreen`. Ternary evaluates only the selected branch
+  (flag-OFF never forms the client-only lambda; IPConfigGUI has no static init). Collapses to
+  IPModMenuConfigEntry verbatim at S20; that class stays 1:1 + unwired (javadoc updated).
+- **On*Present detection + HONEST GATING (named deviation, dies at C2)**: detection = IP
+  IPModEntryClient:71-108 1:1 (isModLoaded "sodium"/"iris", presence logs) at the
+  IP-corresponding slot (SeamlessPortalsClientFabric flag-ON branch, after
+  PeripheralModMain.initClient). The invoker swap + ExperimentalIrisPortalRenderer.init +
+  iris one-shot sit IP-verbatim behind `ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT`
+  (default false; lazy-classload discipline preserved — On*Present classloads ONLY in the
+  gate-on sub-branch, grep-proven sole invoker assignments). Gate OFF + sodium/iris present
+  flag-ON → loud multi-line log.error + unconditional one-shot world-join RED chat + session-only
+  `IPGlobal.renderMode = none` force (`forcePortalRenderingOffThisSession` volatile +
+  re-apply guard in IPConfig.onConfigChanged; NEVER persisted — renderMode is not a config
+  field; verified none→rendererDummy in both renderer switches). The one-shot chat mechanism
+  traced end-to-end (POST_CLIENT_TICK via MixinMinecraft after ClientLevel.tick — fires on
+  first world tick, not title screen, not mid-packet-frame; cleared only on disconnect).
+
+### 8.2 Verify record (3 Fable lenses, all PASS_WITH_CORRECTIONS; folds applied post-workflow)
+
+- **Folded CORRECTIONS**: (1) en_us.json was missing the autoconfig lang pair for the
+  port-added `crossPortalEntityClipMechanism` (raw key would show on the FIRST-ever live
+  config screen — the F21 null-screen era masked it) → added option + @Tooltip; (2)
+  ModMenuIntegration javadoc named `AutoConfig.getConfigScreen` — the exact method this stage
+  proved gone → AutoConfigClient; (3) IPModMenuConfigEntry's stale F21-NPE javadoc → RESOLVED
+  note; (4) fabric/build.gradle iris-comment overclaim ("Modrinth metadata pins EXACTLY") →
+  honest wording (loader depends 0.9.x; explicit runtimeOnly does the work); (5) the gate-on
+  "one-line change" comment → honest statement that C2 must port + register the
+  imm_ptl_compat mixin set FIRST (gate-on with sodium present today would CCE at the
+  IESodiumWorldRenderer/duck casts — none of the 9-sodium/7-iris mixin set exists here yet);
+  (6) shedaniel repo content filters; (7) empty me/ dir removed.
+- **CORRECTED RECORD (agent B's claim inverted by two lenses)**: the autoconfig classes ship
+  IN the FAT `cloth-config-fabric-26.2.155.jar` (71 autoconfig + 273 clothconfig2 classes);
+  the platform-independent `cloth-config` artifact is on NO classpath (cache-only). Debug
+  sessions must target the -fabric jar.
+- **Verified-clean highlights**: zero duplicate FQNs anywhere (shadowing fully cleared);
+  cloth's excludes empirically effective (single fabric-loader 0.19.3, no split modules);
+  suite runs get cloth but never sodium/iris; D3 flag-OFF walk sound (title-card leg incl.);
+  save-flip untouched; GUI annotation set fully supported by 26.2.155
+  (Category/BoundedDiscrete/Tooltip/Excluded/EnumHandler all live; non-excluded field types
+  all standard providers).
+
+### 8.3 New ledger items
+
+- **C7 LANDMINE (NEW, lens-1)**: NeoForge runtime LOST the me.shedaniel.* classes it used to
+  ship in-tree — the whole qouteall config tree is now NCDFE-on-classload on NeoForge
+  (IPConfig's ConfigData SUPERTYPE resolves at class load; IPModMain.loadConfig, IPConfigGUI,
+  IPModMenuConfigEntry same class). Latent ONLY because EntityPortalsFlag is force-OFF there.
+  C7 needs a cloth-config-neoforge dep (or equivalent) before any IP init path runs.
+- **RELEASE-PACKAGING GATE ITEM (upgraded)**: flag-ON (the shipping default) now
+  HARD-REQUIRES cloth at runtime — a release fabric jar without cloth dies with NCDFE at MOD
+  INIT (worse than the old null screen). Fix at packaging: loom `include` JiJ (IP's
+  modApi+include precedent). A fabric.mod.json hard depends would be WRONG (flag-OFF never
+  touches autoconfig).
+- **Dev-runtime environment delta**: cloth ships LIVE example entrypoints
+  (ExampleInits::exampleCommonInit + a ModMenu demo) → every dev run (incl. both gametest
+  runs) registers cloth's example config into the run dir's config/ and ModMenu shows a
+  "Cloth Config" entry. NOT mod regressions; don't chase them at live rounds.
+- **Forensics note (IP-faithful)**: an EMPTY/null config/immersive_portals.json now
+  hard-crashes flag-ON boot (NPE in ConfigManager ctor — upstream cloth behavior, identical
+  on IP 1.21.3). "Boot NPE in ConfigManager" reports = delete/repair the config file.
+- **Watch items**: the warn text "teleportation still works" under sodium-present flag-ON is
+  UNVERIFIED until a runClientSodium live round (renderMode=none only silences PortalRenderer;
+  the flag-ON per-tick machinery coexisting with Sodium's replaced terrain pipeline is
+  untested); ClientDebugCommand writes IPGlobal.renderMode directly and bypasses the session
+  force (deliberate debug escape hatch); the -P runtime properties are PROJECT-WIDE — never
+  pass them when invoking the 8-leg suite.
+- **C2-HELD (deleted together at C2 completion)**: ExperimentalCompatGate (gate lever +
+  session-force flag) + the IPConfig.onConfigChanged guard + the warn/force branch.
+- **SodiumBridge reflection validation vs real 0.9.1 (agent A bonus report)**: most targets
+  EXISTS-IDENTICAL; `gl.device.RenderDevice` is GONE in 0.9.1 (replaced by gpu/device/*) —
+  the warwa-side block-era bridge's RenderDevice path will no-op/fail under real Sodium;
+  block-era-only concern (C2 re-verifies; the bridge is reflection-guarded).
+- **Suite honesty**: the 8-leg gate CANNOT exercise the config SCREEN (GUI — live-round
+  only), any sodium/iris-present path (not in the suite runtime), or the ModMenu entry.
+  It DOES newly prove: cloth loads as a mod in every leg + the flag-OFF title-card leg.
+  Post-fold suite run: ALL LEGS PASS (2026-07-19).
