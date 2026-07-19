@@ -32,18 +32,34 @@ mechanical agent work, Fable for verify/design) — see the decision in §4.
 **never faced an adversarial verify lens**. Standing rule 4 is unsatisfied → **no READY may be
 issued and no live round may include this code until the verify runs.**
 
-**NOTE — `resumeFromRunId` is SAME-SESSION ONLY**, so the dead workflows cannot be resumed from a
-fresh session (the impl agent would re-run and redo landed work). Instead, a **verify-only**
-workflow has been pre-staged in-repo:
+### PATH A — resuming INSIDE the original session (preferred; `resumeFromRunId` works)
+
+The dead workflow's script has been **edited in place** so the verify phase now (a) points at the
+COMMITTED diffs instead of the working tree — `git diff` is clean now, the original prompts would
+have shown the lenses nothing — and (b) carries a **third lens** auditing the hand-applied S19-E
+folds. The impl agent's call is byte-identical, so it replays from cache; only the three verify
+agents run live.
+
+```
+Workflow({scriptPath: "C:/Users/warwa/.claude/projects/C--Users-warwa-ModDev-Portals-Portal-26-2/915d183a-1c49-4264-988a-fa8b826ff815/workflows/scripts/s19-commons-tail-wf_d2838b99-db8.js",
+          resumeFromRunId: "wf_d2838b99-db8"})
+```
+
+### PATH B — from a FRESH session (`resumeFromRunId` is same-session-only)
+
+Use the standalone verify-only twin pre-staged in-repo (same three lenses, no impl agent):
 
 ```
 Workflow({scriptPath: "C:/Users/warwa/ModDev/Portals/Portal 26.2/migration/workflows/s19-commons-tail-verify.js"})
 ```
-Three Fable lenses over the COMMITTED diffs (`git show 28999ce` / `git show b2187ad`): mixin-target
-soundness, IP-fidelity + the D3 carve-out, and — new — an audit of the **hand-applied S19-E folds**,
-which were never machine-verified (the orchestrator applied the first round's corrections itself and
-committed without re-verifying its own edits; the gradle `includeGroupByRegex` escaping in particular
-was edited twice and has never been resolved from a clean cache).
+
+Either way the three lenses are: mixin-target soundness; IP-fidelity + the D3 carve-out; and the
+audit of the **hand-applied S19-E folds**, which were never machine-verified (the orchestrator
+applied the first round's corrections itself and committed without re-verifying its own edits — the
+gradle `includeGroupByRegex` escaping in particular was written wrong, patched, and has never been
+resolved from a clean cache, so a warm cache is currently hiding whether it works).
+
+Both scripts are syntax-checked (node --check, wrapped as the harness wraps them).
 
 **The PRIORITY verify target** (flag it explicitly to the lens): the **D3 carve-out**. The impl
 agent added `D3_UNCONDITIONAL_ITEM_DATAFIX` to `SeamlessMixinConfigPlugin`, making the legacy-item
@@ -73,8 +89,14 @@ numbers; nobody re-derived them independently).
      "teleportation still works" claim in that warning is **UNVERIFIED** — this is its test.
 3. **C2** (user-directed to run BEFORE S20 + polish — decided this session, see §4 of
    `c3-c4-checkpoint-decisions` memory). Both ground-truth docs are on disk and committed; the
-   **design round is what's missing**. The design-panel script is pre-staged in-repo:
+   **design round is what's missing**. Nothing is cached (all four agents errored), so resuming and
+   running fresh are equivalent. In-session:
 
+   ```
+   Workflow({scriptPath: "C:/Users/warwa/.claude/projects/C--Users-warwa-ModDev-Portals-Portal-26-2/915d183a-1c49-4264-988a-fa8b826ff815/workflows/scripts/c2-design-panel-wf_ecdedcf8-4dd.js",
+             resumeFromRunId: "wf_ecdedcf8-4dd"})
+   ```
+   From a fresh session, use the in-repo twin:
    ```
    Workflow({scriptPath: "C:/Users/warwa/ModDev/Portals/Portal 26.2/migration/workflows/c2-design-panel.js"})
    ```
