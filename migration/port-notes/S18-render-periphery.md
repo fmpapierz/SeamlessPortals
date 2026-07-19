@@ -401,3 +401,48 @@ Record the verdict — C4 is re-confirmed on it.
     rain/particle scenes; the MEDIUM amplifier (portal-cone compiles a beat late after far-walk
     crossings — expected, self-healing); dest break particles still absent (the §5 designed-next
     item — expected).
+
+---
+
+## §7 — S18 (d) ROUND 1 (partial, 2026-07-18 evening) + THE LOG AUDIT + the fabric-hook fix
+
+**User verdicts (round 1):** rain WORKS; clouds WORK; block outlines WORK (see the audit caveat
+below); entities work (pre-existing). **Hand/hand-item sliver at a straddle still clips — USER
+ROUTED TO POLISH** (recorded: the first-person HAND is not the entity pipeline — it renders via
+renderItemInHand outside the R3 seam; joins the polish backlog).
+
+**LOG AUDIT (latest.log = the 19:16–19:25 S18 session; the 19:16-rotated file is the PRE-S18
+afternoon session — audited too, nothing new: 64 chunk-ticket noise + 2 IP-faithful
+already-removed-item errs + the fresh-arrow WARNs).** S18-session classification: 42×
+ImmPtlChunkTickets = the KNOWN IP-inherited S14.52 class; auth/Realms/perf-counter = dev-env
+chatter; empty-soundEvent WARNs = vanilla noise. **ZERO occurrences of every S18 hazard-class
+signature** (bracket-fence strikes, sameDim swallows, fence crash, EmptyStackException,
+PreparedFrame-in-use, the vehicle passenger-guard warn — vehicles untested). **ONE NEW CLASS =
+ONE REAL DEFECT, caught by the S14.28 swallow latch (19:19:28):**
+
+> **The fabric-hook NPE:** the S18.5 outline delivery via `submitFeatures(renderOutline=true)`
+> reached vanilla `submitBlockOutline` — which carries Fabric API's injected
+> BEFORE_BLOCK_OUTLINE handler. Its bytecode EAGERLY derefs `levelState()` (even with zero
+> registered handlers), and Fabric's per-frame context is prepared only by the REAL framegraph
+> render — null on the decomposed dest pass → NPE → **the whole renderPortalEntities (entities +
+> BEs + outline) aborted on every outline-attempt frame**. Consequence for round 1: the user's
+> "outlines work" observation was the SOURCE-side half (the S18.5b sliver re-bucket — working);
+> the THROUGH-portal dest outline could not have rendered this round. FIX (verify
+> `wf_c0470ee3-14a` PASS; the diagnosis independently confirmed from the bundled
+> fabric-rendering-v1-25.1.6 bytecode): `renderOutline` stays false everywhere; the outline is
+> submitted MOD-SIDE (`submitDestBlockOutline` — a byte-faithful copy of vanilla
+> :705-761 through the PUBLIC `submitShapeOutline` collector API; no fabric-hooked method
+> touched). DEVIATION ledgered: Fabric's block-outline events don't fire for dest-pass outlines
+> (correct-by-construction — fabric's context doesn't exist there).
+
+**New ledger entries from the fix round:** (a) LATENT third-party-compat exposure (pre-existing,
+NOT this diff): `submitFeatures(false)` still fires Fabric's COLLECT_SUBMITS event with an
+UNPREPARED context on every portal pass — zero handlers in this dev env, but a third-party mod
+registering it could NPE into the swallow latch. Ledger for C2/compat. (b) In-pass afterTerrain
+outlines drain before dest translucent terrain (cosmetic, inherent to the decomposition,
+pre-existing).
+
+**Round-1 REMAINING (d) items:** the C4 A/B verdict (THE stage decision — not yet run), the
+dest-side outline re-check (item 10, now actually reachable post-fix), third-person cross view
+(item 2), mirrors (3), renderMode flips (4), view-bob (5), overlay (6), /gui_portal (7),
+dpMs re-measure (12), vehicle captures (13), row-4 fuse-view (14).

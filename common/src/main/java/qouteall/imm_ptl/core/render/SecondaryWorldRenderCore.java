@@ -1342,22 +1342,32 @@ public class SecondaryWorldRenderCore {
             if (storage == null) {
                 return;
             }
-            // S18.5 — dest targeted-block outline delivery: `true` routes vanilla's
-            // submitBlockOutline (LevelRenderer:288-290) for THIS pass. The pieces compose without
-            // new machinery: the shell already swapped mc.hitResult to the REMOTE hit (dest coords)
-            // and nulled it under shouldRenderHitResult; the dest extract's extractBlockOutline
-            // (LevelExtractor:336-361) read that swapped hit against the DEST level into
-            // destLRS.blockOutlineRenderState; submitBlockOutline positions it camera-relative to
-            // the portal camera → correct under destViewMatrix, drawn inside this pass's
-            // renderAllFeatures under the armed clip + stencil. The per-pass gate is vanilla's own
-            // shouldRenderBlockOutline predicate — exactly what IP's nested renderLevel recomputed
-            // per pass (IP had NO extra outline machinery; the outline was vanilla's, fed the
-            // remote-substituted hit). Same-dim passes stay outline-less (no submitFeatures there —
-            // the ledgered same-dim re-extract family).
+            // S18.5 — dest targeted-block outline delivery (S18 (d)-round log-audit CORRECTION,
+            // 2026-07-18 19:19:28 latest.log): the first form routed the outline via
+            // submitFeatures(renderOutline=true) → vanilla submitBlockOutline — but FABRIC API
+            // injects its BEFORE_BLOCK_OUTLINE handler into that method, and the handler reads
+            // Fabric's per-frame LevelRenderContextImpl.levelState(), which is populated only
+            // during the REAL framegraph render — null on the decomposed dest pass → NPE → the
+            // S14.28 swallow latch fired and the WHOLE renderPortalEntities (entities + BEs +
+            // outline) aborted on every outline-attempt frame. Fix: keep renderOutline=false and
+            // re-express submitBlockOutline's body MOD-SIDE below (submitDestBlockOutline — the
+            // collector API is public; no invoker, no fabric-hooked method touched). The rest of
+            // the chain is unchanged and verified (wf_8a0f8152-4d8): the shell's remote-hit swap +
+            // shouldRenderHitResult null-out precede the dest extract; extractBlockOutline read
+            // the swapped hit against the DEST level into destLRS.blockOutlineRenderState; the
+            // per-pass gate is vanilla's own shouldRenderBlockOutline predicate (exactly what IP's
+            // nested renderLevel recomputed per pass). DEVIATION (ledgered): Fabric's
+            // BEFORE/AFTER block-outline events do not fire for dest-pass outlines —
+            // correct-by-construction (Fabric's own context does not exist outside the framegraph;
+            // that absence IS the NPE we are fixing). Same-dim passes stay outline-less (the
+            // ledgered same-dim re-extract family).
+            acc.seamlessportals$invokeSubmitFeatures(destLRS, storage, false);
             boolean destRenderOutline =
                 ((GameRendererAccessorMixin) client.gameRenderer)
                     .seamlessportals$invokeShouldRenderBlockOutline();
-            acc.seamlessportals$invokeSubmitFeatures(destLRS, storage, destRenderOutline);
+            if (destRenderOutline) {
+                submitDestBlockOutline(destLRS, storage);
+            }
             Matrix4fStack mv = RenderSystem.getModelViewStack();
             mv.pushMatrix();
             mv.mul(destViewMatrix);
@@ -1388,6 +1398,73 @@ public class SecondaryWorldRenderCore {
 
     // S14.28: one-shot latch for the renderPortalEntities swallow log.
     private static boolean portalEntitiesSwallowLogged = false;
+
+    /**
+     * S18.5 (corrected form) — the dest-pass targeted-block outline submit: an @IPVanillaCopy-class
+     * re-expression of vanilla {@code LevelRenderer.submitBlockOutline} + {@code submitHitOutline}
+     * (26.2 LevelRenderer.java:705-761), byte-faithful, writing through the PUBLIC
+     * {@code SubmitNodeCollector.submitShapeOutline} API into the pass's own storage. Exists
+     * because the vanilla method carries Fabric API's injected BEFORE_BLOCK_OUTLINE handler, which
+     * NPEs outside the real framegraph render (its per-frame context is null there) — see the
+     * call-site note. {@code afterTerrain} = {@code state.isTranslucent()} exactly as vanilla
+     * passes it (the LevelRendererBlockOutlineMixin re-bucket does not apply to this copy —
+     * irrelevant in-pass: both buckets drain in the same renderAllFeatures, verified
+     * wf_8a0f8152-4d8).
+     */
+    private static void submitDestBlockOutline(
+        LevelRenderState destLRS, SubmitNodeStorage storage
+    ) {
+        net.minecraft.client.renderer.state.level.BlockOutlineRenderState state =
+            destLRS.blockOutlineRenderState;
+        if (state == null || destLRS.cameraRenderState.pos == null) {
+            return;
+        }
+        Vec3 cameraPos = destLRS.cameraRenderState.pos;
+        net.minecraft.core.BlockPos pos = state.pos();
+        PoseStack poseStack = new PoseStack();
+        poseStack.pushPose();
+        poseStack.translate(
+            pos.getX() - cameraPos.x, pos.getY() - cameraPos.y, pos.getZ() - cameraPos.z);
+        if (state.highContrast()) {
+            submitDestHitOutline(
+                poseStack, storage,
+                net.minecraft.client.renderer.rendertype.RenderTypes.secondaryBlockOutline(),
+                state, -16777216, 7.0F, state.isTranslucent());
+        }
+        int outlineColor = state.highContrast() ? -11010079 : ARGB.black(102);
+        submitDestHitOutline(
+            poseStack, storage,
+            net.minecraft.client.renderer.rendertype.RenderTypes.lines(),
+            state, outlineColor,
+            client.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth,
+            state.isTranslucent());
+        poseStack.popPose();
+    }
+
+    private static void submitDestHitOutline(
+        PoseStack poseStack, SubmitNodeStorage storage,
+        net.minecraft.client.renderer.rendertype.RenderType renderType,
+        net.minecraft.client.renderer.state.level.BlockOutlineRenderState state,
+        int color, float width, boolean afterTerrain
+    ) {
+        if (net.minecraft.SharedConstants.DEBUG_SHAPES) {
+            storage.submitShapeOutline(poseStack, state.shape(), renderType, -1, width, afterTerrain);
+            if (state.collisionShape() != null) {
+                storage.submitShapeOutline(poseStack, state.collisionShape(), renderType,
+                    ARGB.colorFromFloat(0.4F, 0.0F, 0.0F, 0.0F), width, afterTerrain);
+            }
+            if (state.occlusionShape() != null) {
+                storage.submitShapeOutline(poseStack, state.occlusionShape(), renderType,
+                    ARGB.colorFromFloat(0.4F, 0.0F, 1.0F, 0.0F), width, afterTerrain);
+            }
+            if (state.interactionShape() != null) {
+                storage.submitShapeOutline(poseStack, state.interactionShape(), renderType,
+                    ARGB.colorFromFloat(0.4F, 0.0F, 0.0F, 1.0F), width, afterTerrain);
+            }
+        } else {
+            storage.submitShapeOutline(poseStack, state.shape(), renderType, color, width, afterTerrain);
+        }
+    }
 
     // ===== S15 — same-dim (loop-back) entity pass: the isolated pipeline trio ====================
     // Core-owned because the sharedState destRenderer IS the main renderer: its

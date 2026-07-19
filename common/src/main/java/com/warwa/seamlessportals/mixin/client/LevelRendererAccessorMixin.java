@@ -140,9 +140,12 @@ public interface LevelRendererAccessorMixin {
      * / particle render states (already extracted into {@code levelRenderState}) into the submit
      * storage so {@code FeatureRenderDispatcher.renderAllFeatures} can draw them.
      * {@code renderOutline} gates the TARGETED-BLOCK outline ({@code submitBlockOutline} — not
-     * entity glow, which {@code shouldShowEntityOutlines} governs); since S18.5 the cross-dim dest
-     * pass passes vanilla's live {@code shouldRenderBlockOutline()} result so the portal view draws
-     * the remote-hit outline exactly as IP's nested renderLevel did.
+     * entity glow, which {@code shouldShowEntityOutlines} governs). ALWAYS {@code false} from mod
+     * call sites: vanilla's submitBlockOutline carries Fabric API's injected BEFORE_BLOCK_OUTLINE
+     * handler, which NPEs outside the real framegraph (its per-frame context is unprepared on the
+     * decomposed portal passes — the S18 (d)-round log-audit finding). The dest-pass outline is
+     * instead submitted mod-side ({@code SecondaryWorldRenderCore.submitDestBlockOutline}, a
+     * byte-faithful vanilla copy through the public collector API).
      */
     @org.spongepowered.asm.mixin.gen.Invoker("submitFeatures")
     void seamlessportals$invokeSubmitFeatures(
