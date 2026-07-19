@@ -32,13 +32,18 @@ mechanical agent work, Fable for verify/design) — see the decision in §4.
 **never faced an adversarial verify lens**. Standing rule 4 is unsatisfied → **no READY may be
 issued and no live round may include this code until the verify runs.**
 
-Re-run the two lenses that died (the workflow script is preserved and resumable):
+**NOTE — `resumeFromRunId` is SAME-SESSION ONLY**, so the dead workflows cannot be resumed from a
+fresh session (the impl agent would re-run and redo landed work). Instead, a **verify-only**
+workflow has been pre-staged in-repo:
 
 ```
-Workflow({scriptPath: "…/workflows/scripts/s19-commons-tail-wf_d2838b99-db8.js",
-          resumeFromRunId: "wf_d2838b99-db8"})
+Workflow({scriptPath: "C:/Users/warwa/ModDev/Portals/Portal 26.2/migration/workflows/s19-commons-tail-verify.js"})
 ```
-The impl agent replays from cache instantly; only the two verify agents re-run.
+Three Fable lenses over the COMMITTED diffs (`git show 28999ce` / `git show b2187ad`): mixin-target
+soundness, IP-fidelity + the D3 carve-out, and — new — an audit of the **hand-applied S19-E folds**,
+which were never machine-verified (the orchestrator applied the first round's corrections itself and
+committed without re-verifying its own edits; the gradle `includeGroupByRegex` escaping in particular
+was edited twice and has never been resolved from a clean cache).
 
 **The PRIORITY verify target** (flag it explicitly to the lens): the **D3 carve-out**. The impl
 agent added `D3_UNCONDITIONAL_ITEM_DATAFIX` to `SeamlessMixinConfigPlugin`, making the legacy-item
@@ -68,12 +73,17 @@ numbers; nobody re-derived them independently).
      "teleportation still works" claim in that warning is **UNVERIFIED** — this is its test.
 3. **C2** (user-directed to run BEFORE S20 + polish — decided this session, see §4 of
    `c3-c4-checkpoint-decisions` memory). Both ground-truth docs are on disk and committed; the
-   **design round is what's missing**. The design-panel workflow script is preserved:
-   `…/workflows/scripts/c2-design-panel-wf_ecdedcf8-4dd.js` — it takes the two docs as input and
-   writes `migration/C2_DESIGN.md` (§0 decision record, §1 stage ladder, §2 the 27-file
-   disposition table, §3 the three redesign specs, §4 open questions/probes, §5 deviation ledger,
-   §6 D3/C7/S20 interactions). Resuming it re-runs all four agents (none completed, so nothing is
-   cached).
+   **design round is what's missing**. The design-panel script is pre-staged in-repo:
+
+   ```
+   Workflow({scriptPath: "C:/Users/warwa/ModDev/Portals/Portal 26.2/migration/workflows/c2-design-panel.js"})
+   ```
+   Three independent Fable designers (staging-ladder / redesign-mechanism / substrate-fidelity
+   angles) + an xhigh synthesis judge that writes `migration/C2_DESIGN.md` (§0 decision record,
+   §1 stage ladder, §2 the 27-file disposition table, §3 the three redesign specs, §4 open
+   questions + their discriminating probes, §5 deviation ledger, §6 D3/C7/S20 interactions).
+   Nothing is cached — all four run fresh. Run it AFTER the verify above, so C2 does not build on
+   an unaudited base.
 4. **S20** (block-era deletion + survivor audit + 12-point regression), then **polish** — top item
    remains the **dim-persistence gap** (alt dims don't survive world reopen; the un-ported DimLib
    persistence half; diagnosis in port-note §6.2).
