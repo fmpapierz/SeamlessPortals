@@ -18,9 +18,13 @@ config = "seamlessportals-ip-core-common.mixins.json"
 [[mixins]]
 config = "seamlessportals-ip-client.mixins.json"
 
-# S16 consistency (verify wf_91b049a9-0c1 minor): listed like the other IP configs. Inert on
-# NeoForge in practice — EntityPortalsFlag force-falses off Fabric (S13-B P4), so the plugin
-# skips every qouteall.* mixin; flag-ON NeoForge remains deferred (C7).
+# S16 consistency (verify wf_91b049a9-0c1 minor): listed like the other IP configs. NEAR-inert on
+# NeoForge — EntityPortalsFlag force-falses off Fabric (S13-B P4), so the plugin skips every
+# qouteall.* mixin EXCEPT the two D3 carve-out sets, which bypass the flag and weave here too:
+# the worldgen accessors (S19-D; pure @Accessor/@Invoker) and the wand/stick legacy-item datafix
+# (S19 commons tail; additive @Inject(RETURN), references only DFU/guava/log4j — audited benign on
+# NeoForge, where the peripheral items are C7-deferred; converting the NBT preserves the data for a
+# later world move to Fabric). All behavioral qouteall mixins remain skipped; flag-ON NeoForge is C7.
 [[mixins]]
 config = "seamlessportals-ip-peripheral.mixins.json"
 

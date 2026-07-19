@@ -76,11 +76,15 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
      * PRE-1.20.5 (pre-componentization) save; IP's addition moves a legacy
      * {@code immersive_portals:command_stick} / {@code portal_wand} stack's {@code tag} data into the
      * {@code iportal:command_stick_data} / {@code iportal:portal_wand_data} components. Those items —
-     * and their DataComponentTypes — are registered UNCONDITIONALLY (D3 save-parity, port-note §1.1),
-     * so a flag-OFF world can carry them. And flag-OFF is the SHIPPING DEFAULT: gating this datafix
-     * flag-ON would skip it on the PRIMARY migration path (an Immersive-Portals 1.20.4 world opened in
-     * this mod), silently sweeping the stored command/mode into {@code minecraft:custom_data} and
-     * breaking the item if the flag is later flipped ON. The handler is a pure additive
+     * and their DataComponentTypes — are registered UNCONDITIONALLY on Fabric (D3 save-parity,
+     * port-note §1.1), so a flag-OFF world can carry them. The flag has defaulted ON since the S17
+     * cutover, but EXPLICIT {@code entityPortals=false} remains a supported two-way switch until S20 —
+     * gating this datafix flag-ON would mean a flag-OFF user opening a legacy pre-1.20.5 IP world gets
+     * the stored command/mode silently swept into {@code minecraft:custom_data} (permanent item-data
+     * loss if the flag is later flipped ON). NOTE the carve-out also weaves on NeoForge (where the flag
+     * is force-false and the peripheral items are C7-deferred) — audited benign: the handler references
+     * only DFU/guava/log4j, and converting the on-disk NBT there preserves the data for a later world
+     * move to Fabric (S19 verify, recorded decision). The handler is a pure additive
      * {@code @Inject(RETURN)} guarded by {@code is("immersive_portals:...")} — byte-neutral for every
      * other item, zero engine dependency — so weaving it flag-OFF is harmless AND required for D3
      * item-data parity. Exactly parallel to {@link #D3_UNCONDITIONAL_WORLDGEN_ACCESSORS} (an
@@ -144,7 +148,8 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         // D3 EXCLUSIVITY GATE (entity-portal migration, migration/EXCLUSIVITY_LEDGER.md §4):
         // the ported Immersive-Portals mixin set lives in the qouteall.* packages. It is woven
-        // ONLY when the entity-portal engine is ON. Flag OFF (the shipping default) → every IP
+        // ONLY when the entity-portal engine is ON. Flag OFF (the explicit opt-out; the default
+        // has been ON since the S17 cutover) → every IP
         // mixin is skipped here, so the block-era com.warwa mixins are the only portal driver set
         // applied. This is the load-time half of the one-driver-per-session contract; the runtime
         // half is the `!entityPortals` gates in the block-era mod driver code.
@@ -161,8 +166,9 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
             //
             // S19 COMMONS-TAIL carve-out: D3_UNCONDITIONAL_ITEM_DATAFIX joins the same both-states
             // rule — the wand/command-stick legacy-item datafix is the load-time counterpart of the
-            // UNCONDITIONALLY-registered item DataComponentTypes; the shipping default is flag-OFF, so
-            // the datafix must run there to preserve migrated IP item data (see that set's javadoc).
+            // UNCONDITIONALLY-registered item DataComponentTypes. The flag defaults ON since S17,
+            // but explicit flag-OFF stays a supported two-way switch until S20, and a flag-OFF
+            // legacy-world load must still convert the item data (see that set's javadoc).
             if (!D3_UNCONDITIONAL_WORLDGEN_ACCESSORS.contains(mixinClassName)
                 && !D3_UNCONDITIONAL_ITEM_DATAFIX.contains(mixinClassName)
                 && !EntityPortalsFlag.isOn()) {

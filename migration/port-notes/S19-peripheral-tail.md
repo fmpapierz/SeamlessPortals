@@ -590,3 +590,85 @@ IP tree in parallel with the impl).
   only), any sodium/iris-present path (not in the suite runtime), or the ModMenu entry.
   It DOES newly prove: cloth loads as a mod in every leg + the flag-OFF title-card leg.
   Post-fold suite run: ALL LEGS PASS (2026-07-19).
+
+## §9 S19 COMMONS TAIL — VERIFIED (the resumed round) + S19 CLOSE
+
+The four held-out mixins landed at `28999ce` marked **FABLE-VERIFY PENDING** (the original
+lenses died on the 2026-07-19 usage limit). The verify ran on resume (workflow
+`wf_d2838b99-db8` resumed by run ID — impl replayed from cache, THREE live Fable lenses:
+targets / fidelity+D3 / the S19-E hand-folds). Verdicts: **A PASS, B PASS_WITH_CORRECTIONS,
+C PASS_WITH_CORRECTIONS — zero blockers, all folds applied**, compile x3 +
+--refresh-dependencies + 8-leg suite ALL LEGS PASS after folds.
+
+### 9.1 What the lenses proved (highlights)
+
+- Every target re-derived from the REAL 26.2 merged jar + mc262-ref: useOn anchor unique;
+  fixItemStack RETURN-count exactly 1; the splash `apply` bridge-method selection unambiguous
+  (full descriptor selects the real method); both vanilla splash strings CONFIRMED in the
+  26.2 client jar's splashes.txt (line 64 / line 191) — the removals are live.
+- The AW/AT pair for `ItemStackComponentizationFix$ItemStackData` is LIVE (class still
+  private-static at :709), valid v2 syntax, and mirrors IP's own transitive twin.
+- DFU early-classload legality: the carve-out `contains()` short-circuits BEFORE
+  `EntityPortalsFlag.isOn()`, and isOn() is nio+reflection-only with all failures → false —
+  safe at datafixer classload on any thread; IP hits the identical constraint.
+- The datafix mechanism proven end-to-end: the custom_data sweep lives in
+  `ItemStackData.write()` (:777-781), called AFTER `fixItemStack` returns — the RETURN
+  inject removes the tags before the sweep. Output keys match the receiving codecs
+  (CommandStickItem.DATA_CODEC / portal_wand MODE) field-for-field. Fix registered at the
+  1.20.5 componentization schema — cannot fire on modern saves.
+- Inverse-risk audit CLEAN: the handler references only DFU/guava/log4j — no qouteall,
+  no IPGlobal, no fabric classes → no flag-OFF (or NeoForge) NCDFE/NPE path during
+  datafixing.
+
+### 9.2 THE CORRECTION (lens B): the carve-out's stated premise was FALSE
+
+The new javadoc claimed "flag-OFF is the SHIPPING DEFAULT" — **wrong since the S17 cutover
+flip** (EntityPortalsFlag defaults TRUE on Fabric; the impl agent copied the stale pre-S17
+comment at the top of shouldApplyMixin, which itself dated from before the flip). **The
+carve-out DECISION still stands** on the verified corrected rationale: explicit
+`entityPortals=false` remains a supported two-way switch until S20, the items +
+DataComponentTypes ARE registered flag-OFF on Fabric, so a flag-OFF legacy-world load must
+still convert the item data (else permanent sweep into `minecraft:custom_data`). FOLDED:
+all three new comment sites + the stale pre-existing source comment rewritten; the commit
+message of `28999ce` carries the false premise immutably — THIS section is the correction
+of record.
+
+### 9.3 The lens-C hand-fold audit (b2187ad's unaudited surface)
+
+- **Lang keys re-derived byte-exact from cloth 26.2.155 bytecode** (ConfigScreenProvider
+  "text.autoconfig.%s" + "%s.option.%s" from Field.getName(), category NOT in the key;
+  tooltip "%s.@Tooltip" for count==1) — the fold DOES fix the raw-key defect; full sweep:
+  all 27 non-excluded fields labeled, all 11 tooltips present. DEFECT CAUGHT + FIXED: the
+  tooltip TEXT named a nonexistent "STENCIL" option — the enum is SUBMIT_ORDER_UNIFORM /
+  ISOLATED_STORAGE_BRACKET (cloth shows raw constant names) → reworded.
+- **The shedaniel content-filter escaping verified on disk** (`'me\\.shedaniel.*'` → regex
+  `me\.shedaniel.*`, full-matches me.shedaniel.cloth; the earlier Grep rendering scare was
+  tool-side) AND settled empirically: compile x3 with `--refresh-dependencies` GREEN.
+- AutoConfigClient.getConfigScreen signature, the CCE claim, the iris depends-range comment,
+  the deleted me/ dir: all confirmed accurate. One wording fold: the gate-on comment now
+  says the IESodiumWorldRenderer accessor exists in-tree but is UNREGISTERED (was
+  "ported/registered yet" — imprecise).
+
+### 9.4 New ledger entries
+
+- **EnderEye inherited delta (toward-IP, DO-NOT-FIX unless user-routed)**: 26.2 vanilla's
+  useOn now `destroyBlock(pos, true, null)`s blocks inside the 3x3 portal interior (drops
+  them) before filling; IP's reimplementation (ported 1:1) setBlock-overwrites without
+  drops. Flag-ON + endPortalMode != vanilla only.
+- **NeoForge datafix weave = a RECORDED DECISION**: the carve-out bypasses the force-false
+  flag, so the datafix weaves on NeoForge where the peripheral items are C7-deferred.
+  Audited benign-to-beneficial (no fabric-class refs; item ids fail decode there regardless;
+  converting the NBT preserves data for a later move to Fabric). neoforge.mods.toml comment
+  updated to name both carve-out sets as the exception.
+- Suite honesty: the suite cannot exercise any of the four mixins' behavior (end-portal
+  creation, a real legacy-save DFU pass, boss fog, the title-screen splash flip) — all
+  live-round or IP-side-by-side territory. It proves the weave/startup surface only.
+
+### 9.5 S19 CLOSED
+
+With §8 (S19-E wiring) + this section, S19's code surface is COMPLETE: A (wand+tab,
+live-proven) / B→E (config GUI, live via the cloth swap — screen click pending) / C (dim
+stack, live-proven) / D (alternate dims, live-proven core) / E (real compat wiring +
+detection/gating) / commons tail (verified). Outstanding S19-E live items ride the next
+READY: the config-screen click + the optional runClientSodium gating check. The stage
+ladder now runs C2 (user-directed) → S20 → polish.

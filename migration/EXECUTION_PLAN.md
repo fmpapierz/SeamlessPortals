@@ -1531,6 +1531,23 @@ increment Fable-verified, folded, gametest-gated, pushed):
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**S19 CLOSED (2026-07-19, code-complete + verified; two live-round items ride the next READY).**
+The commons tail (EnderEye CVB / dfu legacy-item datafixer + AW/AT / BossBar fog / Splash rewrite)
+landed at `28999ce` (initially VERIFY-PENDING — the lenses died on the Fable usage limit) and was
+VERIFIED on resume (`wf_d2838b99-db8` resumed by run ID: 3 Fable lenses — A PASS / B+C
+PASS_WITH_CORRECTIONS, zero blockers). THE B-LENS CATCH: the new D3 carve-out's stated premise
+"flag-OFF is the shipping default" was FALSE (flag defaults ON since S17; copied from a stale
+pre-S17 comment) — the carve-out STANDS on the corrected rationale (explicit flag-OFF stays a
+supported two-way switch until S20; items/components registered flag-OFF ⇒ the legacy datafix
+must weave there too); all comment sites rewritten. THE C-LENS CATCH: the hand-folded tooltip
+named a nonexistent "STENCIL" option (enum = SUBMIT_ORDER_UNIFORM / ISOLATED_STORAGE_BRACKET) —
+fixed; the lang keys themselves re-derived byte-exact from cloth bytecode; the shedaniel
+content-filter escaping settled empirically (--refresh-dependencies green). NEW LEDGER: EnderEye
+inherited no-drops delta (toward-IP); the datafix weaves on NeoForge (recorded decision, audited
+benign); neoforge.mods.toml carve-out comment updated. Ledger of record = port-note §9. Compile
+green x3; suite ALL LEGS PASS post-folds. S19 outstanding live items (next READY): the config
+screen click + optional runClientSodium gating check. NEXT: C2 (user-directed) → S20 → polish.
+
 **S19-E PROGRESS (2026-07-19, second session): WIRING LANDED + C2 DECIDED-ENTER-NOW.**
 At the §2.5 C2-depth question the user chose **"Enter C2 now"** — full-depth Sodium 0.9.1
 render-path compat comes immediately after the wiring + commons tail, BEFORE S20 + polish

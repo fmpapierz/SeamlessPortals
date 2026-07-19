@@ -274,11 +274,11 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         if (ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT) {
             // ===== C2 PATH (gate flipped) — IP IPModEntryClient:73-105 behavior verbatim =====
             // Never taken today (gate default false). NOTE the C2 flip is NOT just this gate:
-            // none of IP's imm_ptl_compat mixin set (9 sodium + 7 iris mixins, incl. the
-            // IESodiumWorldRenderer accessor and the IESodiumRenderSectionManager duck impl) is
-            // ported/registered yet — flipping the gate with Sodium present would CCE at the
-            // OnSodiumPresent duck casts. C2 ports + registers that set FIRST (see
-            // migration/C2_IP_COMPAT_DEPTH.md), then flips/deletes the gate.
+            // none of IP's imm_ptl_compat mixin set (9 sodium + 7 iris mixins) is REGISTERED yet —
+            // the IESodiumWorldRenderer accessor source exists in-tree but no compat mixins json
+            // registers it (the rest are unported) — so flipping the gate with Sodium present
+            // would CCE at the OnSodiumPresent duck casts. C2 ports + registers that set FIRST
+            // (see migration/C2_IP_COMPAT_DEPTH.md), then flips/deletes the gate.
             // The On*Present classes classload only here.
             if (isSodiumPresent) {
                 SodiumInterface.invoker = new SodiumInterface.OnSodiumPresent();

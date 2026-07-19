@@ -23,8 +23,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 // D3 GATING: this datafix WEAVES IN BOTH FLAG STATES via the D3_UNCONDITIONAL_ITEM_DATAFIX carve-out
 // in SeamlessMixinConfigPlugin — it is the on-load counterpart of the unconditionally-registered
 // wand/command-stick DataComponentTypes (port-note §1.1). See that carve-out's javadoc for the full
-// rationale (shipping default is flag-OFF, so gating it flag-ON would skip the datafix on the primary
-// legacy-migration path).
+// rationale: the flag defaults ON since S17, but explicit entityPortals=false stays a supported
+// two-way switch until S20, and a flag-OFF legacy-world load must still convert the item data (else
+// the pre-1.20.5 command/mode tags get swept into minecraft:custom_data — permanent data loss).
 @Mixin(ItemStackComponentizationFix.class)
 public class MixinItemStackComponentizationFix {
     @Unique
