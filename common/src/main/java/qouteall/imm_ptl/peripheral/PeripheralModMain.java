@@ -88,12 +88,25 @@ public class PeripheralModMain {
         .build();
 
     public static void init() {
+        // S19-D: IP init order restored (IP PeripheralModMain:62-71) — FormulaGenerator
+        // FIRST (seeds the chaos-terrain expression selectors before any generator use).
+        qouteall.imm_ptl.peripheral.alternate_dimension.FormulaGenerator.init();
+
         IntrinsicPortalGeneration.init();
 
         // S19-C: dim-stack runtime (IP init order — DimStackManagement sits between
         // IntrinsicPortalGeneration and the wand inits, IP PeripheralModMain:66-67; the
         // dimension-load-event registration + the dedicated-server preset path live inside).
         qouteall.imm_ptl.peripheral.dim_stack.DimStackManagement.init();
+
+        // S19-D: alternate dims (IP :69) — registers the dim-stack candidate list, the
+        // PRE_UPDATE fan-out that creates referenced alt dims inside the dimlib load window,
+        // the weather-sync tick, and the dimension templates. Then IP :71 — the
+        // experimental-warning namespace suppression (consumed by the dimlib
+        // MixinWorldDimensions chain).
+        qouteall.imm_ptl.peripheral.alternate_dimension.AlternateDimensions.init();
+        qouteall.dimlib.api.DimensionAPI.suppressExperimentalWarningForNamespace(
+            "immersive_portals");
 
         // S19-A: IP's init order (PeripheralModMain:76-80) — wand + command stick + wand
         // interaction; registerCommandStickTypes LAST (displayItems runs lazily at GUI-open,
@@ -151,6 +164,35 @@ public class PeripheralModMain {
         regFunc.accept(
             McHelper.newResourceLocation("immersive_portals", "general"),
             TAB
+        );
+    }
+
+    // S19-D / IP PeripheralModMain:107-127 — the alt-dim generator/biome-source codecs.
+    // UNCONDITIONAL seam (D3 save-parity): level.dat serializes each dimension's generator
+    // through these codecs; a flag-ON-created alt-dim world must deserialize flag-OFF.
+    // 26.2: the registries dispatch on MapCodec (ChunkGenerator.codec()/BiomeSource.codec()
+    // return MapCodec — recon wf_528b5c3b-7d1).
+    public static void registerChunkGenerators(
+        BiConsumer<Identifier, com.mojang.serialization.MapCodec<
+            ? extends net.minecraft.world.level.chunk.ChunkGenerator>> regFunc
+    ) {
+        regFunc.accept(
+            McHelper.newResourceLocation("immersive_portals", "error_terrain_generator"),
+            qouteall.imm_ptl.peripheral.alternate_dimension.ErrorTerrainGenerator.MAP_CODEC
+        );
+        regFunc.accept(
+            McHelper.newResourceLocation("immersive_portals", "normal_skyland_generator"),
+            qouteall.imm_ptl.peripheral.alternate_dimension.NormalSkylandGenerator.MAP_CODEC
+        );
+    }
+
+    public static void registerBiomeSources(
+        BiConsumer<Identifier, com.mojang.serialization.MapCodec<
+            ? extends net.minecraft.world.level.biome.BiomeSource>> regFunc
+    ) {
+        regFunc.accept(
+            McHelper.newResourceLocation("immersive_portals", "chaos_biome_source"),
+            qouteall.imm_ptl.peripheral.alternate_dimension.ChaosBiomeSource.MAP_CODEC
         );
     }
 }

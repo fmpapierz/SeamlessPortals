@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "qouteall.dimlib.mixin",
+  "plugin": "com.warwa.seamlessportals.mixin.SeamlessMixinConfigPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "minVersion": "0.8",
+  "mixins": [
+    "common.MixinMappedRegistry",
+    "common.MixinMinecraftServer_DimLib",
+    "common.MixinPrimaryLevelData",
+    "common.MixinWorldDimensions"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

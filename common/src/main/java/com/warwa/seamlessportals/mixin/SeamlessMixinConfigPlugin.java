@@ -58,6 +58,18 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         "com.warwa.seamlessportals.mixin.client.ClientPacketListenerLocalPlayerFallbackMixin"
     );
 
+    /**
+     * S19-D D3 CARVE-OUT (see the shouldApplyMixin comment): the alt-dim worldgen ACCESSOR
+     * mixins that must weave in BOTH flag states so a flag-ON-created alternate-dimension
+     * world reopens flag-OFF (level.dat → unconditional codec seam → these accessors at
+     * generation time). Pure additive accessors/invokers — no injections, no behavior.
+     */
+    private static final Set<String> D3_UNCONDITIONAL_WORLDGEN_ACCESSORS = Set.of(
+        "qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension.IEChunkAccess_AlternateDim",
+        "qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension.IEChunkGenerator_AlternateDim",
+        "qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension.IENoiseRouterData"
+    );
+
     private static volatile Boolean sodiumLoaded = null;
 
     private static boolean isSodiumPresent() {
@@ -117,7 +129,17 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         // applied. This is the load-time half of the one-driver-per-session contract; the runtime
         // half is the `!entityPortals` gates in the block-era mod driver code.
         if (mixinClassName != null && mixinClassName.startsWith("qouteall.")) {
-            if (!EntityPortalsFlag.isOn()) {
+            // S19-D D3 CARVE-OUT (port-note S19 §6/§8): the three alt-dim WORLDGEN ACCESSOR
+            // mixins weave in BOTH flag states. Rationale = save-parity symmetry with the
+            // UNCONDITIONAL chunk-generator/biome-source codec seam: a flag-ON-created world
+            // containing an alternate dimension persists its generator in level.dat; a
+            // flag-OFF reopen deserializes it through those codecs and GENERATES through
+            // these accessors — gating them flag-OFF would crash the reopen (the exact D3
+            // scenario the unconditional seams exist to protect). All three are pure
+            // additive @Accessor/@Invoker on vanilla classes: zero behavior, zero injection,
+            // byte-neutral for a world that never references the generators.
+            if (!D3_UNCONDITIONAL_WORLDGEN_ACCESSORS.contains(mixinClassName)
+                && !EntityPortalsFlag.isOn()) {
                 return false;
             }
         }

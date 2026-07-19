@@ -79,6 +79,21 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         qouteall.imm_ptl.peripheral.PeripheralModMain.registerItems(
             (id, item) -> Registry.register(BuiltInRegistries.ITEM, id, item));
         qouteall.imm_ptl.peripheral.PeripheralModMain.registerDataComponents();
+        // S19-D: the alt-dim generator/biome-source codecs ride the SAME unconditional D3
+        // seam — level.dat serializes generators through them, so a flag-ON-created alt-dim
+        // world must deserialize flag-OFF (their worldgen ACCESSOR mixins carry a matching
+        // D3 carve-out in SeamlessMixinConfigPlugin). NeoForge: deliberately NOT wired —
+        // consistent with the whole peripheral surface being C7-deferred there.
+        qouteall.imm_ptl.peripheral.PeripheralModMain.registerChunkGenerators(
+            (id, codec) -> Registry.register(BuiltInRegistries.CHUNK_GENERATOR, id, codec));
+        qouteall.imm_ptl.peripheral.PeripheralModMain.registerBiomeSources(
+            (id, codec) -> Registry.register(BuiltInRegistries.BIOME_SOURCE, id, codec));
+        // S19-D verify catch (wf_c18735d7-449 BLOCKER): the chaos generator's math tables
+        // (FormulaGenerator selectors) must init on the SAME unconditional seam as its codec —
+        // a flag-ON-created chaos world deserializes flag-OFF through the codec above, and
+        // generation NPEs if the tables are empty (init was flag-ON-only). Pure static math,
+        // zero registry/behavior surface; the IP-faithful flag-ON init call remains (idempotent).
+        qouteall.imm_ptl.peripheral.alternate_dimension.FormulaGenerator.init();
 
         // ===== S13-F (crash-1 fix): imm_ptl chunk-ticket TYPE registration — UNCONDITIONAL =====
         // 26.2 TicketType is a BuiltInRegistries.TICKET_TYPE-registered record (api-map chunk-loading

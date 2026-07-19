@@ -23,7 +23,6 @@ import org.jetbrains.annotations.Nullable;
 import qouteall.dimlib.DimensionTemplate;
 import qouteall.dimlib.api.DimensionAPI;
 import qouteall.imm_ptl.core.McHelper;
-import qouteall.imm_ptl.core.ducks.IEWorld;
 import qouteall.imm_ptl.peripheral.dim_stack.DimStackInfo;
 import qouteall.imm_ptl.peripheral.dim_stack.DimensionStackAPI;
 
@@ -237,9 +236,13 @@ public class AlternateDimensions {
     private static void syncWeatherFromOverworld(
         ServerLevel world, ServerLevel overworld
     ) {
-        ((IEWorld) world).portal_setWeather(
-            overworld.getRainLevel(1), overworld.getRainLevel(1),
-            overworld.getThunderLevel(1), overworld.getThunderLevel(1)
-        );
+        // S19-D toward-vanilla: IP wrote the weather fields via the IEWorld.portal_setWeather duck
+        // (oRainLevel/rainLevel/oThunderLevel/thunderLevel direct writes, with equal prev==current
+        // args). 26.2 Level now exposes public setRainLevel(float)/setThunderLevel(float)
+        // (Level.java:851,841) that set BOTH the "old" and current field to the same clamped value —
+        // identical to the duck's equal-args behavior (getRainLevel/getThunderLevel(1) are already in
+        // [0,1], so the added clamp is a no-op). Use the vanilla setters and drop the duck dependency.
+        world.setRainLevel(overworld.getRainLevel(1));
+        world.setThunderLevel(overworld.getThunderLevel(1));
     }
 }

@@ -30,8 +30,11 @@ import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.LightChunkGetter;
 import net.minecraft.world.level.entity.ChunkStatusUpdateListener;
 import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.world.level.levelgen.DensityFunctions;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
+import net.minecraft.world.level.levelgen.NoiseRouter;
+import net.minecraft.world.level.levelgen.Noises;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.blending.Blender;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
@@ -129,7 +132,10 @@ public class NormalSkylandGenerator extends NoiseBasedChunkGenerator {
             intrinsicSkylandNGS.noiseSettings(),
             intrinsicSkylandNGS.defaultBlock(),
             intrinsicSkylandNGS.defaultFluid(),
-            IENoiseRouterData.ip_noNewCaves(
+            // S19-D: re-derived noNewCaves (26.2 deleted NoiseRouterData.noNewCaves — see
+            // ip_noNewCaves javadoc below). The postProcessor input is unchanged 1:1 from IP:
+            // slideEndLike(getFunction(BASE_3D_NOISE_END), 0, 128).
+            ip_noNewCaves(
                 densityFunctionHolderGetter,
                 noiseParametersHolderGetter,
                 IENoiseRouterData.ip_slideEndLike(IENoiseRouterData.ip_getFunction(
@@ -177,7 +183,72 @@ public class NormalSkylandGenerator extends NoiseBasedChunkGenerator {
         
         return result;
     }
-    
+
+    /**
+     * S19-D noNewCaves RE-DERIVATION (derivation chain 1.21.3 -> 1.21.11 -> 26.2).
+     *
+     * <p>IP's skyland {@link NoiseGeneratorSettings} builds its noise router from vanilla
+     * {@code NoiseRouterData.noNewCaves(functions, noises, postProcessorInput)}. That private method
+     * survived UNCHANGED through 1.21.11 (verified against mc-sources-1.21.11 NoiseRouterData:377-402;
+     * the 1.21.11 IP port kept the {@code @Invoker("noNewCaves")} verbatim). 26.2 DELETED it: the
+     * noNewCaves callers were refactored so {@code caves()}/{@code floatingIslands()} now go through
+     * {@code simpleRouter(...)} — which ZEROES temperature &amp; vegetation — and {@code nether()}
+     * inlines with the {@code _NETHER} noise variants + zero shift. None of the surviving 26.2 routers
+     * reproduce noNewCaves, which sets temperature/vegetation to real {@code SHIFT_X}/{@code SHIFT_Z}
+     * -based 2D noise while zeroing everything else except finalDensity.
+     *
+     * <p>IP's skyland needs those non-zero: its biome source is the OVERWORLD
+     * {@code MultiNoiseBiomeSource}, so the router's temperature/vegetation drive biome variety
+     * (with simpleRouter's zeros the whole skyland would collapse to a single climate point). So we
+     * re-derive noNewCaves here 1:1 with the 1.21.11 body, composed from the 26.2 primitives that DO
+     * survive (all verified present in mc262-ref NoiseRouterData): {@code SHIFT_X}/{@code SHIFT_Z}
+     * keys ({@link IENoiseRouterData#get_SHIFT_X()}/{@link IENoiseRouterData#get_SHIFT_Z()}),
+     * {@code getFunction} ({@link IENoiseRouterData#ip_getFunction}), {@code postProcess}
+     * ({@link IENoiseRouterData#ip_postProcess}), the 15-arg {@link NoiseRouter} record ctor,
+     * {@link DensityFunctions#shiftedNoise2d} and {@link Noises#TEMPERATURE}/{@link Noises#VEGETATION}.
+     * Argument order below matches the {@link NoiseRouter} record fields (mc262-ref NoiseRouter:7-23).
+     *
+     * <p>26.2 DELTA (inherited, toward-vanilla): 26.2's {@code postProcess} reorders
+     * {@code interpolated()}/{@code mul()} vs 1.21.11's; using 26.2's own (via the invoker) keeps the
+     * skyland terrain consistent with how 26.2 generates its own end/nether terrain.
+     */
+    private static NoiseRouter ip_noNewCaves(
+        HolderGetter<DensityFunction> densityFunctions,
+        HolderGetter<NormalNoise.NoiseParameters> noiseParameters,
+        DensityFunction postProcessorInput
+    ) {
+        DensityFunction shiftX = IENoiseRouterData.ip_getFunction(
+            densityFunctions, IENoiseRouterData.get_SHIFT_X()
+        );
+        DensityFunction shiftZ = IENoiseRouterData.ip_getFunction(
+            densityFunctions, IENoiseRouterData.get_SHIFT_Z()
+        );
+        DensityFunction temperature = DensityFunctions.shiftedNoise2d(
+            shiftX, shiftZ, 0.25, noiseParameters.getOrThrow(Noises.TEMPERATURE)
+        );
+        DensityFunction vegetation = DensityFunctions.shiftedNoise2d(
+            shiftX, shiftZ, 0.25, noiseParameters.getOrThrow(Noises.VEGETATION)
+        );
+        DensityFunction finalDensity = IENoiseRouterData.ip_postProcess(postProcessorInput);
+        return new NoiseRouter(
+            DensityFunctions.zero(), // barrierNoise
+            DensityFunctions.zero(), // fluidLevelFloodednessNoise
+            DensityFunctions.zero(), // fluidLevelSpreadNoise
+            DensityFunctions.zero(), // lavaNoise
+            temperature,
+            vegetation,
+            DensityFunctions.zero(), // continents
+            DensityFunctions.zero(), // erosion
+            DensityFunctions.zero(), // depth
+            DensityFunctions.zero(), // ridges
+            DensityFunctions.zero(), // preliminarySurfaceLevel
+            finalDensity,
+            DensityFunctions.zero(), // veinToggle
+            DensityFunctions.zero(), // veinRidged
+            DensityFunctions.zero()  // veinGap
+        );
+    }
+
     private final NoiseBasedChunkGenerator delegate;
     
     @Override

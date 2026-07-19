@@ -277,6 +277,128 @@ PASS_WITH_CORRECTIONS / server PASS; folds applied)
   serverRemoveDimStack/clearDimStackPortals + fresh-world bedrock replacement statically
   sound but not live-exercised (one-command live checks, polish-round candidates).
 
+## §6 S19-D — THE R13g DESIGN (DECIDED): load-window static, dynamic half deferred
+
+Recon `wf_528b5c3b-7d1` (4 tracers; the REAL DimLib v1.1.0+mc1.21.11 source found on disk at
+`C:\Users\warwa\ModDev\Immersive Portals\ImmersivePortals1.21.11\dimlib-source` + a 1.21.11
+IP PORT with an adapted IENoiseRouterData at `...\immersive-portals-port` — the noNewCaves
+re-derivation source).
+
+**THE MECHANISM (IP ground truth)**: alt dims are created ON DEMAND — DimLib's
+SERVER_DIMENSIONS_LOAD fires at createLevels HEAD inside a direct-registration window
+(unfreeze the LEVEL_STEM MappedRegistry → register → refreeze; the stems become ServerLevels
+in the SAME createLevels pass). DimStackManagement's load-event handler fires
+DIMENSION_STACK_PRE_UPDATE(dimStackToApply) → AlternateDimensions.addAltDimsIfUsedInDimStack
+→ addDimensionIfNotExists per referenced dim. Post-createLevels, IP routes adds to
+addDimensionDynamically (runtime ServerLevel construction + client resync).
+
+**26.2 CONSTRAINTS (pinned)**: dims fixed at world open (no vanilla runtime-add);
+LEVEL_STEM/DIMENSION_TYPE load at world open; DIMENSION_TYPE syncs to clients at
+LOGIN only. The load-window path is 26.2-compatible (it runs AT world open, before the
+createLevels iteration; clients join after → login sync covers everything; the existing
+join-time DimIdSyncPacket needs zero new machinery).
+
+**DECIDED: land the LOAD-WINDOW half now (S19-D); DEFER the dynamic half.**
+- Landed: real DimensionTemplate (record + VOID_TEMPLATE) + DimensionAPI.addDimensionIfNotExists
+  with the direct-window path (ported from the on-disk DimLib, re-derived vs 26.2
+  MappedRegistry) + the createLevels-HEAD load-event mixin + suppress-experimental-warning
+  chain + codecs (UNCONDITIONAL seam — level.dat serializes generator configs = D3
+  save-parity) + AlternateDimensions/FormulaGenerator init wiring (flag-ON) + dimension_type
+  JSONs + icons + the client mixins (horizon 1:1 SAME; fog re-sited — 26.2 FogRenderer
+  rewritten) + the 4 IE worldgen mixins (noNewCaves re-derived from the 1.21.11 port).
+- **NAMED DEVIATION (R13g-PHASE-2, backlog)**: runtime `/portal dimension_stack` with a
+  NOT-YET-EXISTING alt dim will NOT create it (IP does, via addDimensionDynamically — pinned:
+  updateDimStack:271-273 fires PRE_UPDATE with the REAL info). Our addDimensionIfNotExists
+  logs + skips outside the window → DimStackInfo.apply's missing-dim guard aborts with chat
+  feedback; the create-world path (IP's primary UX) fully works. PHASE-2 analysis recorded:
+  both dimension_types ALWAYS ship (login-synced), so phase-2 needs "only" LevelStem
+  registry mutation + mid-session ServerLevel construction (border/savedData/LevelLoadListener
+  coupling — the real risk) + the EXISTING DimensionIntId.onServerDimensionChanged resync.
+- Weather-sync tick: check IEWorld.portal_setWeather vs 26.2's public setRainLevel/
+  setThunderLevel (toward-vanilla candidate) at implementation.
+
+### 6.1 S19-D IMPLEMENTED (3 scoped agents wf_25f5c69b-983 + orchestrator wiring) + VERIFY
+(wf_c18735d7-449, 3 Fable lenses: core PASS_WITH_CORRECTIONS / worldgen FAIL→fixed /
+assets PASS_WITH_CORRECTIONS — all folds applied)
+
+**Landed**: the real dimlib load-window (DimensionTemplate record + VOID_TEMPLATE;
+DimensionAPI with a REAL SERVER_DIMENSIONS_LOAD_EVENT + window-gated addDimensionIfNotExists;
+DimensionImpl unfreeze→register→refreeze via MixinMappedRegistry frozen-flag duck — 26.2
+frozen is non-final private, no AW needed; MixinMinecraftServer_DimLib createLevels-HEAD;
+static-volatile latch simplification, documented); the noNewCaves MOD-SIDE re-derivation
+(26.2 deleted it; simpleRouter zeroes temperature/vegetation which skyland's OVERWORLD
+MultiNoiseBiomeSource needs → field-for-field 1.21.11 reproduction via new
+postProcess/SHIFT_X/SHIFT_Z invokers; the 26.2 postProcess ordering delta = inherited
+toward-vanilla, value-equivalent per verify); weather duck → 26.2 public
+setRainLevel/setThunderLevel (toward-vanilla, behavior-identical per verify); the
+dimension_type JSONs TRANSLATED to the wholesale-rewritten 26.2 codec (every field grounded
+vs DimensionType DIRECT_CODEC + EnvironmentAttributes defaults); 5 icons sha1-copied;
+MixinClientLevelData_CVB 1:1 (target :1210 SAME); MixinFogRenderer_A_CVB re-sited to
+computeFogColor's unique camera-y void-darkness read (clamp 32 exactly zeroes the term);
+MixinWorldDimensions+MixinPrimaryLevelData suppress chain (bake has exactly ONE
+Lifecycle.experimental — redirect require=1 sound); new seamlessportals-ip-dimlib.mixins.json
+(4 entries) + full wiring; the D3_UNCONDITIONAL_WORLDGEN_ACCESSORS carve-out in the weave
+plugin; codecs + FormulaGenerator.init on the UNCONDITIONAL seam.
+
+**VERIFY CATCHES (fixed)**: (1) BLOCKER — flag-OFF reopen of a CHAOS world NPE'd at first
+chunk gen (FormulaGenerator tables flag-ON-only vs the unconditional codec) → init moved to
+the unconditional seam (pure math; IP-faithful flag-ON call kept, idempotent). (2) the
+dimension_type JSONs omitted the 26.2-RELOCATED overworld ambience attributes → black
+horizon fog + invisible clouds + silence + darker nights in ALL alt dims → the vanilla
+overworld attribute block added to both (fog #c0d8ff, clouds, ambient-light color, music,
+mood sounds, sky color, cloud height). (3) natural=true half-translation →
+nether_portal_spawns_piglin:true added (IP parity). (4) fog-comment overclaim softened.
+
+**LEDGERED**:
+- **THE UNBOUND-HOLDER DEPENDENCY (empirically proven)**: pure-vanilla
+  unfreeze→register→refreeze leaves the LevelStem Holder UNBOUND (26.2 register never binds;
+  only freeze() does, and it early-returns when already frozen) → createLevels would throw
+  "Trying to access unbound value". IT WORKS because fabric-registry-sync's
+  MappedRegistryMixin binds at register RETURN (bytecode-verified; NeoForge's patched
+  register also binds). Upstream DimLib has the IDENTICAL dependency (1.21.1/1.21.11
+  javap'd) — IP-faithful, not a port bug. WATCH ITEM: fabric-api registry-sync must stay in
+  the runtime; S20 hardening candidate = explicit bindValue after register.
+- Flag-OFF reopen of an alt-dim world: experimental/backup screen appears (suppression
+  chain flag-gated; world opens after confirm — recoverable), alt dims render with void
+  darkness + no weather mirror (client CVBs + tick flag-ON) — the D3 degradation family.
+- NeoForge C7: MixinMinecraftServer_DimLib → DimensionAPI static-init EventFactory →
+  NoClassDefFoundError at createLevels flag-ON — MIXIN-reachable, named on the C7 list.
+- Dedicated-server fresh-world PRESET can't create alt dims (preset read AFTER the load
+  window) — verified IP-PARITY (upstream-identical), not a port gap.
+- Third createLevels injector coexistence verified sound; the RETURN-handler order
+  nondeterminism (Misc int-ids vs DimStack apply) re-checked benign with 3 configs.
+- Live-round additions: skyland-through-a-portal fog/horizon check (S18 decomposed passes
+  vs the Minecraft.level gate); the suite CANNOT prove alt-dim creation/generation/visuals
+  (dimension_type DECODE is suite-proven — every world open decodes the JSONs).
+
+## §7 S19-E GROUND-TRUTH UPDATE (USER-SUPPLIED 2026-07-18) + the directed design
+
+**The "dead on 26.2" premise behind C2/F21 is OVERTURNED — user-supplied CurseForge links,
+versions pinned by fetch:**
+- **Sodium 0.9.1 for Fabric 26.2** — full RELEASE, Jul 8 2026 (0.9.0 release Jun 16).
+- **Iris 1.11.2 for Fabric 26.2** — full RELEASE, Jul 8 2026.
+- **ModMenu 20.0.0-beta.4** — already a real :fabric dep (§4).
+- **Cloth Config 26.2.155+fabric** — RELEASE Jun 18 2026 (found in the follow-up sweep) —
+  **the §4 S19-B blocker is GONE**: real cloth (bundling me.shedaniel.autoconfig) can replace
+  the F21 AutoConfig functional no-op → the IP config screen + the fabric.mod.json "modmenu"
+  entrypoint swap become landable. NOTE: the F21 AutoConfig surface is SHIPPED RUNTIME code
+  (IPConfig.register runs through it) — replacing it is a real migration step with its own
+  verify, not a dep swap.
+
+**USER DIRECTIVE for S19-E: use the REAL Sodium/Iris 26.2 wiring, not the old stub stuff.**
+Design consequences:
+1. Real artifacts on the compile classpath (the modmenu-20.0.0 implementation-dep precedent;
+   TerraformersMC/shedaniel/Modrinth mavens); **RETIRE the F21 sodium/iris ipStubs** — real
+  mods + stubs on one classpath = the §4 SHADOWING hazard class (the exact S19-B catch).
+2. On*Present detection against the real mod ids; the flag-ON+Sodium interaction becomes
+   TESTABLE in dev (expectation: the renderer substrate conflicts — the S18-era warning
+   "users must NOT run Sodium with entityPortals ON" stands until real compat lands).
+3. HONEST DEPTH LIMIT: IP's sodium compat targets 0.6-era internals; upstream IP never
+   ported to 26.2/0.9.x — there is NO 1:1 ground truth for Sodium 0.9.1 compat. Landing the
+   wiring/detection/gating = S19-E; the compat DEPTH (re-engineering IP's sodium render-path
+   integration against 0.9.1) = C2 (ask-first; COVERAGE INFO-3 full-depth 27-file pass).
+   Surface the C2-entry question at S19-E open with the wiring landed.
+
 ## §4 S19-B — ModMenu config GUI: CLOTH-CONFIG-BLOCKED, compile shape landed
 
 **Scout correction (the first scout claim "ModMenu has no verified 26.2 build" was WRONG —

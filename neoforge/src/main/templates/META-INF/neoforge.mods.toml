@@ -37,3 +37,6 @@ config = "seamlessportals-ip-peripheral.mixins.json"
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"
+
+[[mixins]]
+config = "seamlessportals-ip-dimlib.mixins.json"
