@@ -5,10 +5,15 @@
   "compatibilityLevel": "JAVA_25",
   "minVersion": "0.8",
   "mixins": [
+    "common.dim_stack.MixinChunkStatusTasks_BedrockReplacement",
+    "common.dim_stack.MixinMinecraftServer_DimStack_CVB",
     "common.nether_portal.MixinAbstractFireBlock_CVB",
     "common.nether_portal.MixinFlintAndSteelItem_CVB"
   ],
   "client": [
+    "client.dim_stack.IEAbstractSelectionList",
+    "client.dim_stack.MixinCreateWorldScreen_CVB",
+    "client.dim_stack.MixinCreateWorldScreenMoreTab_CVB",
     "client.portal_wand.MixinLevelRenderer_PortalWand",
     "client.portal_wand.MixinMinecraft_PortalWand"
   ],

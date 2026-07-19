@@ -93,3 +93,7 @@ accessible class com/mojang/blaze3d/opengl/GlDevice
 # S14.21 companion: RenderSystem.getDevice() returns the GpuDevice FACADE; the GL backend
 # (GlDevice implements GpuDeviceBackend) is reachable only through its private `backend` field.
 accessible field com/mojang/blaze3d/systems/GpuDevice backend Lcom/mojang/blaze3d/systems/GpuDeviceBackend;
+# S19-C: CreateWorldScreen$MoreTab is a private inner class; MixinCreateWorldScreenMoreTab_CVB's
+# class-literal @Mixin target needs it accessible (IP precedent: imm_ptl.accesswidener carries
+# the same transitive-accessible line for this exact class).
+accessible class net/minecraft/client/gui/screens/worldselection/CreateWorldScreen$MoreTab

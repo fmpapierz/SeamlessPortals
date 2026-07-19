@@ -198,6 +198,85 @@ mixin's no-wand early-out — everything below is live-round-only:
 10. OPTIONAL flag-OFF spot check: flip entityPortals=false, /give a wand + a stick → both
     inert (no tab either); flip back.
 
+## §3.5 S19-A LIVE-ROUND RESULTS (2026-07-18, user-confirmed)
+
+- **Creative tab: WORKS** ("creative tab is there"). **Wands: ALL MODES WORK** ("all wands work
+  good"). **Obsidian/nether portal crossing: WORKS** (regression items exercised).
+- **THE TELEPORT CRASH = a JVM C2 JIT DEFECT, not the mod**: hs_err_pid318288 —
+  EXCEPTION_ACCESS_VIOLATION inside jvm.dll on "C2 CompilerThread2" while tier-4-compiling
+  `PortalRenderInfo::renderAndDecideVisibility` (Temurin 25.0.2+10; pure jvm.dll frames — not
+  the render thread, not the driver, not mod logic; fired when the method crossed the compile
+  threshold after a few teleports). MITIGATION SHIPPED: `-XX:CompileCommand=exclude` for that
+  one method in the loom client run config (fabric/build.gradle) — re-test on JDK updates;
+  remove when a fixed Temurin lands. LEDGER: if the same silent hard-crash recurs, a second
+  hot method needs the same flag (check the new hs_err's CompileTask line).
+- Post-mitigation session: **no crash** (user-confirmed).
+
+## §5 S19-C — dim stack: LANDED (live-round-proven; 2 GUI defects found live + fixed probe-first)
+
+Recon `wf_9aecac4e-330` (4 Opus tracers). Landed: **C1** the 4 extract-model draw bodies
+(Opus agent, mapping-spec'd; 1 legit correction — JOML's 2D pivot rotate is `rotateAbout`,
+`rotateAround` is 3D-only); **C2** the mutable-children path (26.2 made
+`AbstractSelectionList.children()` final+unmodifiable — NEW accessor mixin
+`IEAbstractSelectionList` (children field + repositionEntries invoker) +
+`DimListWidget.portal_children()` forwarding view; 7 IP mutation sites re-pointed one-token);
+**C3** the create-world entry (`MixinCreateWorldScreen_CVB` — no-capture <init> inject,
+drift-proof vs IP's ctor-arg capture; `MixinCreateWorldScreenMoreTab_CVB` — outer-ref
+`this$0` javap-pinned in the 26.2 deobf jar + MixinExtras `@Local` RowHelper replacing IP's
+LocalCapture; `IECreateWorldScreen` duck; AW `accessible class CreateWorldScreen$MoreTab` =
+IP's own accesswidener precedent + the neoforge AT twin); **C4** the server half
+(`MixinMinecraftServer_DimStack_CVB` — bare-name `createLevels` + 5-arg `setInitialSpawn`
+INVOKE descriptor, both pinned vs mc262-ref, the shipping `MixinMinecraftServer_Misc`
+precedent; `MixinChunkStatusTasks_BedrockReplacement` 1:1 zero changes;
+`DimStackManagement.init()` into PeripheralModMain at IP's slot).
+
+**LIVE-ROUND DEFECTS (both the same 26.2 class — vanilla split row geometry across two
+methods and 1.21.3 recomputed row positions per-frame, 26.2 caches them):**
+1. Rows off-screen-left: entries added pre-init baked getRowLeft() of a 0-wide list
+   (x=-150). Probe-proven (screen layout was CORRECT — 688x274, every button IP-exact; only
+   rows wrong). FIX: init uses vanilla's combined `updateSizeAndPosition`
+   (setSize+setPosition+repositionEntries).
+2. All rows at one y (overlaid text): `repositionEntries` staggers by getHeight() but ONLY
+   `addEntry` sets height — raw-list inserts left height 0. FIX: `portal_children()` add/set
+   replicate addEntry's height init from the protected `defaultEntryHeight`.
+   (SelectDimensionScreen safe — builds its list inside init() with real bounds.)
+
+**USER CONFIRMED: "all worked"** — rows render correctly; the working-stack flow
+(overworld+nether, Finish, apply) exercised. Alt-dim default entries (bright_void/skyland)
+can't apply until S19-D — expected, ledgered.
+
+### 5.1 Verify record (wf_b94c1d5e-5f8, 3 Fable lenses — GUI PASS / mixins
+PASS_WITH_CORRECTIONS / server PASS; folds applied)
+
+- **CORRECTION folded**: the MoreTab javadoc claimed loom-AP remapping protects the this$0
+  shadow — WRONG mechanism (this repo has no remap machinery); the PROVEN mechanism is
+  stronger: **26.2 ships UNOBFUSCATED** (raw Mojang jar javap'd — dev name IS production
+  name; IP's 1.21.3 field_42178 intermediary indirection has no 26.2 analogue). Bytecode
+  also proved: single MoreTab <init> (bare-selector single-fires), single RowHelper LVT slot
+  (un-ordinal @Local unambiguous).
+- **Fold**: the C2-exclusion vmArg extended to the crossing-gametest run (same JVM + the
+  suite teleports enough to heat the method — gate-flakiness prevention). LEDGER: production
+  jars carry no mitigation (users on affected JVMs — revisit at release packaging).
+- **Verified-clean highlights**: all 4 draw bodies statement-exact vs IP (the icon-flip
+  rotateAbout algebraically identical to IP's 3D quat at 180°; the edit screen's
+  renderBackground drop is toward-vanilla — IP's 1.21.3 call was itself a double-draw);
+  both live fixes complete across ALL 8 portal_children sites incl. plain add(E) →
+  add(size,e) and the swap double-set (harmless); resize/reopen/scroll cycles structurally
+  sound (initialized-latch → repositionElements → re-lay correct); EditBox workarounds
+  verbatim; both server mixins bytecode-anchored; **fresh-world-guard parity PROVEN via the
+  1.21.1 bytecode baseline**; dual createLevels-RETURN handler pair IP-identical
+  (order-nondeterministic, no dependency).
+- **LEDGERED (IP-faithful, do NOT fix)**: stale list selection after Remove (1.21.3-identical;
+  26.2 attaches only clamped-cosmetic scrollToEntry effects); the armed-preset residue
+  (create-world CANCEL leaves dimStackToApply set → next world open applies it — byte-IP;
+  future "old world grew a dim-stack portal" reports map HERE).
+- **LEDGERED (bookkeeping)**: flag-OFF latent CCE through portal_children (entry-point-gated
+  today; resolves when the flag dies — S20 sweep item); SERVER_DIMENSIONS_LOAD_EVENT is a
+  dormant dimlib-stub shell (doubly inert; **named S19-D re-entry condition**);
+  DimensionStackAPI static-inits fabric EventFactory → joins the C7 NeoForge landmine list;
+  serverRemoveDimStack/clearDimStackPortals + fresh-world bedrock replacement statically
+  sound but not live-exercised (one-command live checks, polish-round candidates).
+
 ## §4 S19-B — ModMenu config GUI: CLOTH-CONFIG-BLOCKED, compile shape landed
 
 **Scout correction (the first scout claim "ModMenu has no verified 26.2 build" was WRONG —

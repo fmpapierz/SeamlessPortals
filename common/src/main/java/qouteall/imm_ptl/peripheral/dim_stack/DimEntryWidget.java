@@ -7,6 +7,7 @@ import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
@@ -80,14 +81,14 @@ public class DimEntryWidget extends ContainerObjectSelectionList.Entry<DimEntryW
         return children;
     }
     
-    // 26.2 GUI SHELL (compile shell — S13-A): AbstractSelectionList.Entry.render(GuiGraphics, index,
+    // 26.2 GUI SHELL (S19-C1 — body live): AbstractSelectionList.Entry.render(GuiGraphics, index,
     // y, x, rowWidth, itemHeight, mouseX, mouseY, hovered, delta) became
     // extractContent(GuiGraphicsExtractor, mouseX, mouseY, hovered, a) (AbstractSelectionList.java:455)
     // — the entry now knows its own bounds via getX()/getY()/getWidth()/getHeight(), and the
     // GuiGraphics immediate-draw API became the GuiGraphicsExtractor extract model (2D Matrix3x2fStack
-    // pose + RenderPipeline blit; drawString -> text). Per C1 the dim-stack GUI runtime is S19-deferred
-    // — the entry's draw (dimension label/id, rotatable dim icon, arrow glyphs) is retained verbatim
-    // below (commented) for the S19 extract-model rewrite (x=getX(), y=getY(), rowWidth=getWidth()).
+    // pose + RenderPipeline blit; drawString -> text). The entry's draw (dimension label/id, rotatable
+    // dim icon, arrow glyphs) is restored below (x=getX(), y=getY(), rowWidth=getWidth()).
+    // S19-C1 — IP body restored (26.2 extract-model re-expression; see port-note S19 §5)
     @Override
     public void extractContent(
         @NotNull GuiGraphicsExtractor graphics,
@@ -96,80 +97,81 @@ public class DimEntryWidget extends ContainerObjectSelectionList.Entry<DimEntryW
         boolean hovered,
         float a
     ) {
-        /* S19-deferred (GuiGraphics -> GuiGraphicsExtractor extract model; x=getX(), y=getY(), rowWidth=getWidth()):
         Minecraft client = Minecraft.getInstance();
 
-        guiGraphics.drawString(
+        graphics.text(
             client.font, dimensionName.getString(),
-            x + widgetHeight + 3, (int) (y),
+            this.getX() + widgetHeight + 3, (int) (this.getY()),
             0xFFFFFFFF
         );
 
-        guiGraphics.drawString(
+        graphics.text(
             client.font, dimension.identifier().toString(),
-            x + widgetHeight + 3, (int) (y + 10),
+            this.getX() + widgetHeight + 3, (int) (this.getY() + 10),
             0xFF999999
         );
 
         if (dimIconPath != null) {
-            guiGraphics.pose().pushPose();
-            guiGraphics.pose().translate(x, y, 0);
+            graphics.pose().pushMatrix();
+            graphics.pose().translate((float) this.getX(), (float) this.getY());
 
             int iconLen = widgetHeight - 4;
 
             if (entry != null && entry.flipped) {
-                guiGraphics.pose().rotateAround(
-                    DQuaternion.rotationByDegrees(new Vec3(0, 0, 1), 180).toMcQuaternion(),
-                    iconLen / 2.0f, iconLen / 2.0f, 0
+                // 180-degree Z rotation about the icon centre
+                // (was DQuaternion.rotationByDegrees(new Vec3(0, 0, 1), 180) on the 3D pose)
+                graphics.pose().rotateAbout(
+                    (float) Math.PI,
+                    iconLen / 2.0f, iconLen / 2.0f
                 );
             }
 
-            guiGraphics.blit(
+            graphics.blit(
+                RenderPipelines.GUI_TEXTURED,
                 dimIconPath, 0, 0, 0.0F, 0.0F,
                 iconLen, iconLen,
                 iconLen, iconLen
             );
 
-            guiGraphics.pose().popPose();
+            graphics.pose().popMatrix();
         }
 
         if (entry != null) {
-            guiGraphics.drawString(
+            graphics.text(
                 client.font, getText1(),
-                x + widgetHeight + 3, (int) (y + 20),
+                this.getX() + widgetHeight + 3, (int) (this.getY() + 20),
                 0xFF999999
             );
-            guiGraphics.drawString(
+            graphics.text(
                 client.font, getText2(),
-                x + widgetHeight + 3, (int) (y + 30),
+                this.getX() + widgetHeight + 3, (int) (this.getY() + 30),
                 0xFF999999
             );
 
             if (arrowToPrevious != ArrowType.none) {
-                guiGraphics.pose().pushPose();
-                guiGraphics.pose().translate(x + rowWidth - 13, y, 0);
-                guiGraphics.pose().scale(1.5f, 1.5f, 1.5f);
-                guiGraphics.drawString(
+                graphics.pose().pushMatrix();
+                graphics.pose().translate((float) (this.getX() + this.getWidth() - 13), (float) this.getY());
+                graphics.pose().scale(1.5f, 1.5f);
+                graphics.text(
                     client.font, Component.literal("↑"),
                     0, 0,
                     arrowToPrevious == ArrowType.enabled ? 0xFF999999 : 0xFFFF0000
                 );
-                guiGraphics.pose().popPose();
+                graphics.pose().popMatrix();
             }
 
             if (arrowToNext != ArrowType.none) {
-                guiGraphics.pose().pushPose();
-                guiGraphics.pose().translate(x + rowWidth - 13, y + widgetHeight - 14.5f, 0);
-                guiGraphics.pose().scale(1.5f, 1.5f, 1.5f);
-                guiGraphics.drawString(
+                graphics.pose().pushMatrix();
+                graphics.pose().translate((float) (this.getX() + this.getWidth() - 13), this.getY() + widgetHeight - 14.5f);
+                graphics.pose().scale(1.5f, 1.5f);
+                graphics.text(
                     client.font, Component.literal("↓"),
                     0, 0,
                     arrowToNext == ArrowType.enabled ? 0xFF999999 : 0xFFFF0000
                 );
-                guiGraphics.pose().popPose();
+                graphics.pose().popMatrix();
             }
         }
-        */
     }
     
     private Component getText1() {

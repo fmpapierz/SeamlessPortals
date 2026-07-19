@@ -188,8 +188,15 @@ public class DimStackScreen extends Screen {
             ),
             GuiHelper.blankSpace(5),
             new GuiHelper.LayoutElement(false, 1, (from, to) -> {
-                dimListWidget.setSize(width, to - from);
-                dimListWidget.setPosition(0, from);
+                // S19-C live-round fix (probe-proven 2026-07-18): the list is CONSTRUCTED in
+                // the screen ctor with 0x0 bounds and its entries are added pre-init
+                // (initializeAsDefault), so their x/y bake in getRowLeft() of a 0-wide list
+                // (x=-150 → the off-screen-left entries in the live round). Plain
+                // setSize+setPosition never re-lays existing entries on 26.2 (1.21.3
+                // computed row positions per-frame); vanilla's combined
+                // updateSizeAndPosition (AbstractSelectionList:189-195) does setSize +
+                // setPosition + repositionEntries — the exact intended semantics.
+                dimListWidget.updateSizeAndPosition(width, to - from, 0, from);
             }),
             GuiHelper.blankSpace(5),
             new GuiHelper.LayoutElement(true, 20, (from, to) -> {
@@ -241,6 +248,7 @@ public class DimStackScreen extends Screen {
             ),
             GuiHelper.blankSpace(10)
         );
+
     }
     
     @Override
@@ -254,26 +262,24 @@ public class DimStackScreen extends Screen {
         return w -> dimListWidget.setSelected(w);
     }
     
-    // 26.2 GUI SHELL (compile shell — S13-A): Screen.render(GuiGraphics, mouseX, mouseY, partialTick)
+    // 26.2 GUI SHELL (S19-C1 — body live): Screen.render(GuiGraphics, mouseX, mouseY, partialTick)
     // became extractRenderState(GuiGraphicsExtractor, mouseX, mouseY, a) (Screen.java:116) under the
-    // extract render model (widget draw via extractWidgetRenderState; drawString -> text). Per C1 the
-    // dim-stack GUI runtime is S19-deferred — the original body (super render + dim list + title) is
-    // retained verbatim below (commented) for the S19 extract-model rewrite.
+    // extract render model (widget draw via extractWidgetRenderState; drawString -> text). The original
+    // body (super render + dim list + title) is restored below, re-expressed against the 26.2 extractor.
+    // S19-C1 — IP body restored (26.2 extract-model re-expression; see port-note S19 §5)
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
-        /* S19-deferred (GuiGraphics -> GuiGraphicsExtractor extract model):
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        super.extractRenderState(graphics, mouseX, mouseY, a);
 
         if (isEnabled) {
-            dimListWidget.render(guiGraphics, mouseX, mouseY, partialTick);
+            dimListWidget.extractRenderState(graphics, mouseX, mouseY, a);
         }
 
         Font font = Minecraft.getInstance().font;
-        guiGraphics.drawString(
+        graphics.text(
             font, this.title,
             20, 10, -1
         );
-        */
     }
     
     public void setEnabled(boolean cond) {

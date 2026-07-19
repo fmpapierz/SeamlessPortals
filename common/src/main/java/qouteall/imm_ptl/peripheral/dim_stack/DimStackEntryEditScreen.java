@@ -293,34 +293,33 @@ public class DimStackEntryEditScreen extends Screen {
         Minecraft.getInstance().gui.setScreen(parent);
     }
 
-    // 26.2 GUI SHELL (compile shell — S13-A): Screen.render(GuiGraphics, mouseX, mouseY, delta) became
+    // 26.2 GUI SHELL (S19-C1 — body live): Screen.render(GuiGraphics, mouseX, mouseY, delta) became
     // extractRenderState(GuiGraphicsExtractor, mouseX, mouseY, a) (Screen.java:116) under the extract
     // render model (renderBackground/EditBox.render/Button.render + GuiHelper.renderTextLeft all move
-    // to the extractor). Per C1 the dim-stack GUI runtime is S19-deferred — the original body (edit
-    // fields + labels) is retained verbatim below (commented) for the S19 extract-model rewrite.
+    // to the extractor). The original body (edit fields + labels) is restored below, re-expressed
+    // against the 26.2 extractor.
+    // S19-C1 — IP body restored (26.2 extract-model re-expression; see port-note S19 §5)
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
-        /* S19-deferred (GuiGraphics -> GuiGraphicsExtractor extract model):
-        this.renderBackground(guiGraphics, mouseX, mouseY, delta);
+        // 26.2: this.renderBackground(...) dropped — the screen background is drawn upstream via
+        // Screen.extractBackground under the extract model (matches SeamlessConfigScreen).
+        super.extractRenderState(graphics, mouseX, mouseY, a);
 
-        super.render(guiGraphics, mouseX, mouseY, delta);
+        scaleField.extractRenderState(graphics, mouseX, mouseY, a);
+        horizontalRotationField.extractRenderState(graphics, mouseX, mouseY, a);
+        topYField.extractRenderState(graphics, mouseX, mouseY, a);
+        bottomYField.extractRenderState(graphics, mouseX, mouseY, a);
+        bedrockBlockField.extractRenderState(graphics, mouseX, mouseY, a);
+        connectsPreviousButton.extractRenderState(graphics, mouseX, mouseY, a);
+        connectsNextButton.extractRenderState(graphics, mouseX, mouseY, a);
 
-        scaleField.render(guiGraphics, mouseX, mouseY, delta);
-        horizontalRotationField.render(guiGraphics, mouseX, mouseY, delta);
-        topYField.render(guiGraphics, mouseX, mouseY, delta);
-        bottomYField.render(guiGraphics, mouseX, mouseY, delta);
-        bedrockBlockField.render(guiGraphics, mouseX, mouseY, delta);
-        connectsPreviousButton.render(guiGraphics, mouseX, mouseY, delta);
-        connectsNextButton.render(guiGraphics, mouseX, mouseY, delta);
-
-        scaleLabelRect.renderTextLeft(Component.translatable("imm_ptl.scale"), guiGraphics);
-        flipLabelRect.renderTextLeft(Component.translatable("imm_ptl.flipped"), guiGraphics);
-        horizontalRotationLabelRect.renderTextLeft(Component.translatable("imm_ptl.horizontal_rotation"), guiGraphics);
-        topYLabelRect.renderTextLeft(Component.translatable("imm_ptl.top_y"), guiGraphics);
-        bottomYLabelRect.renderTextLeft(Component.translatable("imm_ptl.bottom_y"), guiGraphics);
-        bedrockLabelRect.renderTextLeft(Component.translatable("imm_ptl.bedrock_replacement"), guiGraphics);
-        connectsPreviousRect.renderTextLeft(Component.translatable("imm_ptl.connects_previous"), guiGraphics);
-        connectsNextRect.renderTextLeft(Component.translatable("imm_ptl.connects_next"), guiGraphics);
-        */
+        scaleLabelRect.renderTextLeft(Component.translatable("imm_ptl.scale"), graphics);
+        flipLabelRect.renderTextLeft(Component.translatable("imm_ptl.flipped"), graphics);
+        horizontalRotationLabelRect.renderTextLeft(Component.translatable("imm_ptl.horizontal_rotation"), graphics);
+        topYLabelRect.renderTextLeft(Component.translatable("imm_ptl.top_y"), graphics);
+        bottomYLabelRect.renderTextLeft(Component.translatable("imm_ptl.bottom_y"), graphics);
+        bedrockLabelRect.renderTextLeft(Component.translatable("imm_ptl.bedrock_replacement"), graphics);
+        connectsPreviousRect.renderTextLeft(Component.translatable("imm_ptl.connects_previous"), graphics);
+        connectsNextRect.renderTextLeft(Component.translatable("imm_ptl.connects_next"), graphics);
     }
 }

@@ -45,7 +45,8 @@ public class SelectDimensionScreen extends Screen {
         Consumer<DimEntryWidget> callback = w -> dimListWidget.setSelected(w);
         
         for (ResourceKey<Level> dim : dimensionList) {
-            dimListWidget.children().add(new DimEntryWidget(dim, dimListWidget, callback, new DimStackEntry(dim)));
+            // S19-C 26.2: children() is unmodifiable now — portal_children() is the mutable view
+            dimListWidget.portal_children().add(new DimEntryWidget(dim, dimListWidget, callback, new DimStackEntry(dim)));
         }
     
         confirmButton = (Button) addRenderableWidget(Button
@@ -73,21 +74,20 @@ public class SelectDimensionScreen extends Screen {
         this.minecraft.gui.setScreen(this.parent);
     }
 
-    // 26.2 GUI SHELL (compile shell — S13-A): Screen.render(GuiGraphics, mouseX, mouseY, delta) became
+    // 26.2 GUI SHELL (S19-C1 — body live): Screen.render(GuiGraphics, mouseX, mouseY, delta) became
     // extractRenderState(GuiGraphicsExtractor, mouseX, mouseY, a) (Screen.java:116) under the extract
-    // render model (drawCenteredString -> centeredText; widget draw via extractWidgetRenderState). Per
-    // C1 the dim-stack GUI runtime is S19-deferred — the original body (super render + dim list +
-    // centered title) is retained verbatim below (commented) for the S19 extract-model rewrite.
+    // render model (drawCenteredString -> centeredText; widget draw via extractWidgetRenderState). The
+    // original body (super render + dim list + centered title) is restored below, re-expressed against
+    // the 26.2 extractor.
+    // S19-C1 — IP body restored (26.2 extract-model re-expression; see port-note S19 §5)
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
-        /* S19-deferred (GuiGraphics -> GuiGraphicsExtractor extract model):
-        super.render(guiGraphics, mouseX, mouseY, delta);
+        super.extractRenderState(graphics, mouseX, mouseY, a);
 
-        dimListWidget.render(guiGraphics, mouseX, mouseY, delta);
+        dimListWidget.extractRenderState(graphics, mouseX, mouseY, a);
 
-        guiGraphics.drawCenteredString(
+        graphics.centeredText(
             this.font, this.title.getString(), this.width / 2, 10, -1
         );
-        */
     }
 }

@@ -94,4 +94,67 @@ public class DimListWidget extends AbstractSelectionList<DimEntryWidget> {
     protected void extractListBackground(GuiGraphicsExtractor graphics) {
         // don't render background
     }
+
+    /**
+     * S19-C 26.2-forced (see {@link
+     * qouteall.imm_ptl.peripheral.mixin.client.dim_stack.IEAbstractSelectionList}): the
+     * MUTABLE children view IP's controller code was written against — 1.21.3 children()
+     * was the mutable TrackedList; 26.2 wraps it unmodifiable. Every mutation delegates to
+     * the real TrackedList (keeping its bindEntryToSelf bookkeeping) and then repositions
+     * entries (26.2 caches entry x/y; 1.21.3 computed positions per-frame). IP call sites
+     * change one token: children() → portal_children().
+     */
+    public java.util.List<DimEntryWidget> portal_children() {
+        return new MutableChildrenView();
+    }
+
+    private class MutableChildrenView extends java.util.AbstractList<DimEntryWidget> {
+        @SuppressWarnings("unchecked")
+        private java.util.List<DimEntryWidget> backing() {
+            return (java.util.List<DimEntryWidget>) ((qouteall.imm_ptl.peripheral.mixin.client
+                .dim_stack.IEAbstractSelectionList) DimListWidget.this).ip_getMutableChildren();
+        }
+
+        private void reposition() {
+            ((qouteall.imm_ptl.peripheral.mixin.client.dim_stack.IEAbstractSelectionList)
+                DimListWidget.this).ip_invokeRepositionEntries();
+        }
+
+        @Override
+        public DimEntryWidget get(int index) {
+            return backing().get(index);
+        }
+
+        @Override
+        public int size() {
+            return backing().size();
+        }
+
+        @Override
+        public DimEntryWidget set(int index, DimEntryWidget element) {
+            // Live-round fix 2026-07-18 round 2: vanilla addEntry is the ONLY height setter
+            // (repositionEntries staggers y by getHeight() but sets just y/x/width,
+            // AbstractSelectionList:146-155) — a raw-list insert leaves height 0, so every
+            // row landed at the same y (the overlaid-text symptom). Replicate addEntry's
+            // height init from the protected defaultEntryHeight (:40).
+            element.setHeight(defaultEntryHeight);
+            DimEntryWidget prev = backing().set(index, element);
+            reposition();
+            return prev;
+        }
+
+        @Override
+        public void add(int index, DimEntryWidget element) {
+            element.setHeight(defaultEntryHeight);  // see set() — vanilla addEntry parity
+            backing().add(index, element);
+            reposition();
+        }
+
+        @Override
+        public DimEntryWidget remove(int index) {
+            DimEntryWidget prev = backing().remove(index);
+            reposition();
+            return prev;
+        }
+    }
 }

@@ -36,6 +36,17 @@ loom {
             client()
             setConfigName('Fabric Client')
             runDir('runs/client')
+            // S19 live-round crash (2026-07-18, hs_err_pid318288): EXCEPTION_ACCESS_VIOLATION
+            // inside jvm.dll on "C2 CompilerThread2" while JIT-compiling
+            // PortalRenderInfo::renderAndDecideVisibility — a Temurin 25.0.2 HotSpot C2
+            // compiler defect (pure jvm.dll frames; not the render thread, not the driver,
+            // not mod logic; fired ~when the method crossed the tier-4 threshold after a few
+            // portal teleports). Surgical mitigation: exclude that ONE method from JIT
+            // compilation (runs interpreted/C1 — negligible, it's a small dispatch method).
+            // Re-test on future JDK updates; remove when a fixed Temurin lands.
+            // (The crossing gametest run carries the same flag — same JVM, same hot method;
+            // without it the suite gate could go flaky on the same defect.)
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
         }
         server {
             server()
@@ -75,6 +86,10 @@ loom {
             property('fabric.client.gametest', 'true')
             property('fabric.client.gametest.modid', project.mod_id)
             property('seamlessportals.gametest.only', 'crossing')
+            // Same Temurin C2 mitigation as the client run above (verify wf_b94c1d5e-5f8:
+            // same JVM + the suite teleports enough to heat the method — without this the
+            // 8-leg gate could go flaky on the same JVM defect).
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
         }
     }
 }

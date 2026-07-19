@@ -25,14 +25,14 @@ import java.util.function.BiConsumer;
  * S16 landed the MINIMAL portal-generation subset; S19-A extends it with IP's WAND cargo:
  * portal_wand + command_stick item registration, the creative-mode TAB (retires the
  * portal-helper /give-only state), PortalWandItem/CommandStickItem/PortalWandInteraction
- * init, initClient (IPOuterClientMisc + wand client). This is IP:peripheral/
- * PeripheralModMain.java's shape minus the features still held per S13B §7.2 + the C1
- * decision: FormulaGenerator, DimStackManagement, AlternateDimensions init +
- * DimensionAPI.suppressExperimentalWarningForNamespace (S19-C/S19-D — dim stack + alternate
- * dims), registerChunkGenerators/registerBiomeSources (S19-D), and the dim_stack/
- * alternate_dimension/dfu commons + the non-wand client mixins (their features' stages).
- * Each remaining omission stays a plan-sanctioned port-structure deviation named in the
- * S19 port-note.
+ * init, initClient (IPOuterClientMisc + wand client). S19-C adds the dim-stack runtime
+ * (DimStackManagement.init + the dim_stack common/client mixins + the create-world entry).
+ * Still held per S13B §7.2 + the C1 decision: FormulaGenerator, AlternateDimensions init +
+ * DimensionAPI.suppressExperimentalWarningForNamespace + registerChunkGenerators/
+ * registerBiomeSources (S19-D — R13g-gated alternate dims), and the dfu common
+ * (MixinItemStackComponentizationFix — the wand/stick legacy datafixer, lands with the
+ * peripheral-commons tail). Each remaining omission stays a plan-sanctioned port-structure
+ * deviation named in the S19 port-note.
  *
  * <p>Named 26.2-forced adaptations (port-note S16 + S19): FabricBlockSettings.of() is GONE →
  * {@code BlockBehaviour.Properties.of()...setId(...)} per the shipped PortalPlaceholderBlock
@@ -89,6 +89,11 @@ public class PeripheralModMain {
 
     public static void init() {
         IntrinsicPortalGeneration.init();
+
+        // S19-C: dim-stack runtime (IP init order — DimStackManagement sits between
+        // IntrinsicPortalGeneration and the wand inits, IP PeripheralModMain:66-67; the
+        // dimension-load-event registration + the dedicated-server preset path live inside).
+        qouteall.imm_ptl.peripheral.dim_stack.DimStackManagement.init();
 
         // S19-A: IP's init order (PeripheralModMain:76-80) — wand + command stick + wand
         // interaction; registerCommandStickTypes LAST (displayItems runs lazily at GUI-open,
