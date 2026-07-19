@@ -1531,6 +1531,21 @@ increment Fable-verified, folded, gametest-gated, pushed):
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**S19 PROGRESS UPDATE (2026-07-19): A/C/D CLOSED LIVE-PROVEN, B re-opened by ground truth,
+E re-directed.** S19-A live round: tab ✓ all wand modes ✓ crossing ✓ (the teleport crash =
+a Temurin C2 JIT defect, mitigated with CompileCommand-exclude on both run configs — NOT
+the mod). S19-C live round: "all worked" (2 live GUI defects fixed probe-first — the 26.2
+cached-row-geometry class). S19-D `f0b9df1` live round: skyland biome variety ✓ (the
+noNewCaves mod-side re-derivation), fog ✓, chaos ✓, stack portals ✓, regression ✓; THREE
+user-routed polish items (bright-night darkness; void-not-empty; THE DIM-PERSISTENCE GAP —
+alt dims don't survive reopen, the un-ported DimLib persistence half, top polish item);
+runtime-add refusal = the documented R13g-PHASE-2 deviation. GROUND-TRUTH OVERTURN
+(user-supplied): Sodium 0.9.1 + Iris 1.11.2 + ModMenu 20.0.0-beta.4 + cloth-config
+26.2.155 ALL have real Fabric 26.2 releases — the C2 "dead on 26.2" premise is FALSE;
+S19-E is user-directed to wire the REAL artifacts (no stale F21 stubs) + the cloth swap
+re-opens S19-B's config screen; the C2 DEPTH question goes to the user at S19-E open.
+NEXT SESSION: `migration/S19E_HANDOFF.md`. Original opening record follows:**
+
 **S19 PROGRESS (2026-07-18): stage OPENED with the rule-9 scope question — user picked
 WAND-FIRST order (1 wand+creative tab → 2 ModMenu GUI → 3 dim-stack GUI → 4 R13g+alt-dims →
 5 compat layers). S19-A CODE COMPLETE + suite-green, READY issued for the wand live round:

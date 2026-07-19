@@ -371,6 +371,40 @@ nether_portal_spawns_piglin:true added (IP parity). (4) fog-comment overclaim so
   vs the Minecraft.level gate); the suite CANNOT prove alt-dim creation/generation/visuals
   (dimension_type DECODE is suite-proven — every world open decodes the JSONs).
 
+### 6.2 S19-D LIVE-ROUND RESULTS (2026-07-19, user-confirmed)
+
+**PASS**: skyland biome VARIETY (the noNewCaves re-derivation works); fog below islands
+(the computeFogColor re-site works); chaos terrain; the stack layer portals; save-relog
+no-crash; crossing regression. `/portal dimension_stack` runtime-add refusal = the
+documented PHASE-2 deviation behaving as designed (item 8).
+
+**USER-ROUTED POLISH ITEMS (all captured with candidate mechanisms — instrument-first when
+picked up):**
+1. **Bright dims darken at night** (item 2). Candidate: the ambience fix added the
+   OVERWORLD's `visual/ambient_light_color #0a0a0a` (near-black night ambient) to BOTH
+   dimension types — on 26.2 that attribute may scale the night lightmap over the
+   ambient_light=15 floor; also the `#minecraft:in_overworld` timeline drives day/night sky
+   scaling. Candidates: brighter ambient_light_color for surface_type_bright, or fixed_time
+   /timeline surgery. Discriminate live before fixing.
+2. **void/bright_void NOT empty — has terrain/biomes** (item 5). Candidates: the
+   FlatLevelGeneratorSettings translation (structure-overrides/biome args), the template →
+   generator binding, or the Add-path constructing a different stem than the template.
+   Instrument the created LevelStem's generator class + settings at registration.
+3. **THE DIM-PERSISTENCE GAP** (item 7 — the big one): save-relog while INSIDE an alt dim →
+   player dumped to overworld; `/execute in` any alt dim → "unknown dimension"; clouds
+   missing in OW afterward. DIAGNOSIS: the alt-dim LevelStems DO NOT SURVIVE REOPEN — the
+   load-window registers dims only when the dim-stack PRE_UPDATE fires (dimStackToApply !=
+   null = CREATE-time only); on reopen the event adds nothing, and the runtime-registered
+   stems evidently do not round-trip through level.dat by themselves. Upstream DimLib has a
+   PERSISTENCE HALF the port did not land: it records added-dim configs and RE-ADDS them
+   inside SERVER_DIMENSIONS_LOAD on every boot (see the dimlib-source for the exact storage
+   — likely level.dat custom data via its PrimaryLevelData hook). **The fix = port that
+   half**: persist added dims at registration, re-register them in the load event on every
+   world open. (The missing-clouds-in-OW tail = likely the S18 per-dim cloud-renderer
+   null-texture class resurfacing through the reopen edge — re-check after the persistence
+   fix; may vanish with it.) Recon open-question #26 ("persistence across restarts —
+   undeterminable from stubs") is now ANSWERED live: NOT persisted.
+
 ## §7 S19-E GROUND-TRUTH UPDATE (USER-SUPPLIED 2026-07-18) + the directed design
 
 **The "dead on 26.2" premise behind C2/F21 is OVERTURNED — user-supplied CurseForge links,
