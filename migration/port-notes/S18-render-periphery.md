@@ -287,3 +287,117 @@ same-dim re-extract family).
 weather gate, markForRebuild-on-cloudRange) — the S18.3 re-verify obligation is closed.
 
 **Gates:** compile green; 8-leg suite ALL LEGS PASS.
+
+---
+
+## §5 — S18.4: same-dim BLOCK ENTITIES landed; particles DESIGNED; vehicle CLASSIFIED (S18.8)
+
+**Same-dim block entities (LANDED — the S15 F1 "per-pass visibleSections" gap closed).** The
+tracer round (`wf_8e531398-86a`) found the "missing" list EXISTS: `extractVisibleBlockEntities`
+iterates the renderer's `visibleSections` FIELD, and for same-dim passes that field holds the
+Step-9 PORTAL-camera discovery list at the 10.8 site (the shell installs a scratch list; discovery
+clears+refills it in place). Two new invokers (`extractVisibleBlockEntities`,
+`submitBlockEntities`) + a four-step insert in `renderPortalEntitiesSameDim`: BERD.prepare(portal
+cam) → scratch clear → isolated extract → submit into the same isolated storage before the single
+renderAllFeatures; finally-cleared. Verify `wf_d69550f0-be8` PASS ×2 — the identity chain proven
+for ALL FOUR pass classes (layer-1 loop-back, promoted-main, nested layer-2 return-home,
+cross-view layer-0); zero one-shot state touched; the globally-rendered prune idempotent; BERD
+prep self-heals next frame (ERD parity class). **Ledgered residuals:** the BE fade gate
+(`getVisibility < 0.3`, LevelExtractor:276) has NO isDestExtracting bypass (the entity bypass
+hooks a different method) — BEs in portal-only-revealed freshly-compiled sections pop in after the
+fade window; the new BE extract sits outside the DestSubLevers attribution levers (whole-pass
+`debug_skip_same_dim_entities` is its only lever); no BE probe counters yet.
+
+**Same-dim + dest PARTICLES (DESIGNED, not landed — the remaining §4-family half).** The tracer
+proved at source: `QuadParticleGroup.particleTypeRenderState` is ONE persistent per-group field —
+a second mid-frame extract on the SAME engine corrupts the main pass (S14.40 confirmed at source);
+`extractRenderState` cannot target caller-supplied state. **The only clean isolation = a SEPARATE
+ParticleEngine** (separate groups ⇒ separate accumulators), and per-dim engines are CHEAP (maps
+only; the heavy ParticleResources is shared read-only) — **the mod already builds exactly these**
+(`PortalWorldManager.particleEngines` + `getOrCreateParticleEngine`, the block-era path where dest
+particles DO render, swapped via `withSwitchedWorld` with `destParticlesActive=true`). The IP-path
+adoption plan: swap `mc.particleEngine` to the per-dest-dim engine in `switchAndRenderTheWorld`
+(replacing the plain `ip_setWorld` re-point), condition the MixinParticleEngine HEAD-cancel on
+"the engine being extracted is the MAIN one", drop the S14.41 clear for isolated engines, and let
+the dest extract fill `destLRS.particlesRenderState` from the isolated groups. OPEN QUESTIONS
+before landing (why it did not ship this increment): flag-ON, who SPAWNS/ticks particles into the
+per-dim engines (the block-era feed — tickCachedParticles — runs only in the flag-OFF client-tick
+block; the flag-ON spawn routing for dest-dim level events must be traced first), and the same-dim
+spatial half of IP's filter (isOnDestinationSide) has no 26.2 anchor yet. NEXT INCREMENT.
+
+**Vehicle presentation (S18.8 — CLASSIFIED, instrument-first plan set).** The tracer settled it:
+**IP-INHERITED, no port regression** — the full ridden chain is faithful (client-first seamless
+move + re-seat; server recreate with reused id+uuid; remove-packet suppression; IP's ported
+passenger-guard live flag-ON; the highest-risk 26.2 retarget — `super.removeVehicle()` — verified
+to send NO dismount packet, exactly IP's intent). The ~1s = **IP's own EntitySync
+entity-ticking-range gate** (`ip_sendChanges` withheld until the dest chunk reaches
+entity-ticking level → the moved client copy freezes; the late SetPassengers eject-then-remount =
+the flicker). Per NO GUESSING the fix choice needs LIVE captures first: (1) does the
+"[ImmPtl] Entity already exists and has passengers" warn fire at a ridden crossing (the guard
+held) or not (a discard-recreate occurred)? (2) correlate the ticking-range flip with motion
+resume. Fix candidates (post-capture): broaden the block-era adopt-in-place mixin to flag-ON
+vehicles with a vehicle-scoped predicate (strict superset of IP's passenger-only guard — closes
+the passenger-empty window), and/or force the recreated vehicle's first sends (IP's
+updateEntityPos precedent). ALSO: the user can settle the bar empirically — original IP
+side-by-side should exhibit the identical ~1s vanish (the classification predicts it).
+
+**S18.9 records:** (a) **item-9 conditional re-check: CONDITION NOT TRIGGERED** — zero S18
+references to `PortalContextSwitch.isRenderingPortal`/`armPromoteBridge` across all S18 commits
+(grep-verified); the two mixins' inertness stands on the S17 sweep's verdict. (b) **F18 Vulkan:**
+no Vulkan-capable run available in this autonomous session (the dev gametest harness runs GL);
+the F18 obligation remains the S11-spec documentation (raw-GL mechanisms silently no-op under
+VulkanBackend) — a live Vulkan-backend launch is OPTIONAL at the (d) round if the user's setup
+supports it; otherwise carry to polish. (c) **Row-4 fuse-view write-mask spot-check:** live-round
+item (in the (d) script below).
+
+---
+
+## §6 — THE S18 (d) LIVE-ROUND SCRIPT (run on READY; judge against the NEW two-sided standard)
+
+**C4 A/B (THE STAGE DECISION — rule 9, BINDING).** Both mechanisms are now FULLY wired (B's draw
+sites landed §1). Flip via `config/immersive_portals.json` → `"crossPortalEntityClipMechanism":
+"SUBMIT_ORDER_UNIFORM"` (A, default) ↔ `"ISOLATED_STORAGE_BRACKET"` (B) + restart (or the config
+GUI). Scene: an animal + yourself (third person) halfway through a portal; inspect BOTH sides +
+the projection. Judge: clip-edge correctness at the plane; translucent parts; fabulous mode;
+mirrors; draw-order flicker; **the B-only named gaps (§1): a GLOWING (spectral-arrow) straddler
+loses its outline under B (keeps it under A); fabulous coarseness; B-after-particles order.**
+Record the verdict — C4 is re-confirmed on it.
+
+1. **Straddle (item 7, the NEW standard):** animal halfway through — whole from BOTH sides,
+   threshold clip both directions; punch/reach through the portal; damage flash visible in the
+   portal view; the S15/S17 hand-item sliver.
+2. **Third-person cross view (§2 — NEW code):** F5 + walk through a portal (the view should
+   switch to the dest side as the camera line crosses); hold the cross view with a nested portal
+   visible in the dest view; change FOV (sprint) during a held cross view; resize the window
+   during hold. Bob-through: walk along a portal plane so view-bob dips the camera through.
+3. **Mirrors:** create a Mirror (`/portal` path §2 table), confirm reflection; player suppressed
+   when camera too close (IP behavior).
+4. **renderMode family (A1):** flip normal → compatibility → debug → none via
+   `/imm_ptl_client_debug render mode <mode>`; each behaves per IP (normal = the gate-proven
+   stencil; compatibility = FBO (heavier); debug = diagnostic; none = no portal view).
+5. **A2/C5 view-bob:** walk toward/away from a portal — bob scales down near, returns away.
+6. **OverlayRendering:** breakable portal → overlay at correct opacity/offset.
+7. **GuiPortalRendering:** `/gui_portal <dim> <pos>` — a portal view renders into the example
+   framebuffer.
+8. **Dest clouds (§3):** clouds visible through a cross-dim window (OW dest); CLIPPED at the
+   plane (recorded improvement vs IP — optional side-by-side glance); second same-dim window in
+   one frame is cloudless (expected cap).
+9. **Dest weather (§3):** rain in the OW → window rain through a cross-dim portal (clipped);
+   same-dim windows rainless (expected, ledgered).
+10. **Dest block outline (§4):** point at a block THROUGH a portal — outline on the dest block in
+    the window; near a portal the source-side outline no longer slivers at the window edge.
+11. **Same-dim block entities (§5):** a chest/enchanting table visible through a same-dim portal
+    (loop-back view) renders; watch for the fade-window pop-in residual on portal-only-revealed
+    sections.
+12. **Multi-portal parity RE-MEASURE (§4):** the corrected dpMs (top-level-only) at the S14.52
+    scene (dp=5 cluster) + the same scene on original IP side-by-side — the parity verdict now
+    has a truthful instrument. Capture kit rows.
+13. **Vehicle captures (§5, instrument-first):** ride a minecart through a portal; check the log
+    for "[ImmPtl] Entity already exists and has passengers" (guard fired = freeze axis; absent =
+    discard-recreate axis); optional IP side-by-side (prediction: identical ~1s vanish).
+14. **Row-4 fuse-view write-mask spot-check** (S17 residual): fuse-view portal scene per the
+    CUTOVER_SPEC row-4 note.
+15. **Watch items:** the particle lever (`debug_allow_dest_particle_extract`) during
+    rain/particle scenes; the MEDIUM amplifier (portal-cone compiles a beat late after far-walk
+    crossings — expected, self-healing); dest break particles still absent (the §5 designed-next
+    item — expected).

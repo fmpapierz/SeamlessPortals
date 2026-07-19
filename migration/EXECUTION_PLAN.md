@@ -1486,6 +1486,39 @@ near/away from a portal — bob scales down near, returns away (changed behavior
 **(e) Regression items:** 7 (now fully), re-run 1, 2, 11.
 **(f) Rollback/flag:** revert commits; `entityPortals` still flippable.
 
+**PROGRESS: S18 CODE COMPLETE — READY FOR THE (d) LIVE ROUND + THE C4 A/B** (commit series
+S18.1→S18.4, 2026-07-18; ledger of record = port-note `S18-render-periphery.md` §1-§6; every
+increment Fable-verified, folded, gametest-gated, pushed):
+- **S18.1 (32a93b4): MECHANISM B LIVE** — the §2.1.3 draw-site decision (main pass =
+  BEFORE_TRANSLUCENT_TERRAIN, IP's exact end-of-entity slot bytecode-verified; dest passes =
+  direct calls after each renderAllFeatures — dest passes run NO framegraph, the state-map round's
+  key discovery); ownRenderBuffers → the core-owned endFrame walk (the one unwired mod
+  RenderBuffers); the §1.2.5 eviction mandate landed; the verify-converged bracket throw fence
+  (3-strike + try/finally restore — a wedged PreparedFrame was a deterministic C4-A/B crash).
+- **S18.2 (2259e63): CrossPortalViewRendering LIVE** — IP handler ④ re-homed (the ONE hook the
+  S13 re-home missed; zero call sites before). Verify FAIL → 5 folds → re-verify PASS ×2: the
+  layer-0 exposure class (Step-10.5 EmptyStackException — the ONLY ungated stack peek in the call
+  tree; the un-finally'd switchAndRenderTheWorld restore; the mainChunkSampler ==1 gate + null
+  poison; the frozen bobbed-projection capture; the S14.29 stencil exit leak). HONEST GATE NOTE:
+  the 8-leg suite is first-person-only — the true branch is proven at the (d) round.
+- **S18.3+S18.7 (2d700fa): DEST CLOUDS + DEST WEATHER** — per-dest-dim renderer isolation; the
+  crash-2026-07-16 fence class closed WITH PROOF; verify caught the post-crossing null-texture
+  nuke (dest clouds would have permanently vanished after any crossing) + the broken same-dim
+  weather + the cloudRange stale-utb. Clip deviation (improvement-class) ledgered: IP drew dest
+  clouds UNCLIPPED.
+- **S18.5+S18.6-instrument (827c0ea): DEST BLOCK OUTLINE** (one boolean + vanilla's per-pass
+  predicate — IP had zero outline machinery; chain verified end-to-end) + the flag-ON sliver
+  re-bucket (lastPortalRenderInfos trigger) + **the dpMs top-level-only fix** (the S14C-round8
+  KNOWN INSTRUMENT ARTIFACT — the S14.52 parity read must be RE-MEASURED before optimizing).
+- **S18.4 (this commit): SAME-DIM BLOCK ENTITIES** — the S15 F1 "per-pass visibleSections" gap
+  closed (the Step-9 discovery list IS the list; identity chain verified for all four pass
+  classes). PARTICLES designed-not-landed (per-dim ParticleEngine adoption plan + named open
+  questions, §5); VEHICLE classified IP-INHERITED with the instrument-first capture plan (§5).
+- **S18.9:** item-9 condition NOT triggered (grep-proven); F18 Vulkan = no capable run this
+  session (optional at (d)); row-4 fuse-view = (d) item.
+- **REMAINING for S18 CLOSE:** the (d) live round per port-note §6 (C4 A/B verdict is THE stage
+  decision) + the §5 next-increment items (dest/same-dim particles; vehicle fix post-captures).
+
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
 **C1 DECIDED (user, 2026-07-18, during S16): S19 WILL BE BUILT — "we are not skipping

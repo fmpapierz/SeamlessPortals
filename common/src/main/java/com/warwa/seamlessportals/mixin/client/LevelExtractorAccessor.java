@@ -105,4 +105,25 @@ public interface LevelExtractorAccessor {
         net.minecraft.client.renderer.culling.Frustum frustum,
         net.minecraft.client.DeltaTracker deltaTracker,
         net.minecraft.client.renderer.state.level.LevelRenderState output);
+
+    /** S18.4 (same-dim block entities): the ISOLATED BE extract — vanilla's private
+     *  {@code extractVisibleBlockEntities(Camera, float, LevelRenderState)}
+     *  (LevelExtractor.java:267-315) iterates {@code this.levelRenderer.visibleSections()} (the
+     *  renderer's FIELD — for the same-dim pass this holds the Step-9 PORTAL-camera discovery
+     *  list, installed by the shell via {@code portal_setChunkInfoList}), reads cached
+     *  per-section {@code getRenderableBlockEntities()} + the globally-rendered set, and writes
+     *  ONLY {@code output.blockEntityRenderStates}. It touches NO one-shot dirty/compile
+     *  trackers (the extract()'s sectionUpdates loop is separate); its only shared mutation
+     *  (pruning removed globally-rendered BEs) is idempotent after the main extract — safe to
+     *  re-run mid-frame against a scratch LRS, the exact safety class of the entity invoker
+     *  above. PREREQUISITE: {@code blockEntityRenderDispatcher().prepare(portalCameraPos)}
+     *  before the call (tryExtractRenderState's shouldRender is keyed on the prepared pos).
+     *  IDENTITY DEPENDENCY (recorded): this relies on
+     *  {@code mc.levelExtractor.levelRenderer == destRenderer} for same-dim passes (true: the
+     *  extractor is bound to the main renderer, re-pointed on promote). */
+    @org.spongepowered.asm.mixin.gen.Invoker("extractVisibleBlockEntities")
+    void seamlessportals$invokeExtractVisibleBlockEntities(
+        net.minecraft.client.Camera camera,
+        float deltaPartialTick,
+        net.minecraft.client.renderer.state.level.LevelRenderState output);
 }

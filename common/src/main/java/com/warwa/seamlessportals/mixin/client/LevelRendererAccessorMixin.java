@@ -187,4 +187,18 @@ public interface LevelRendererAccessorMixin {
         com.mojang.blaze3d.vertex.PoseStack poseStack,
         LevelRenderState levelRenderState,
         net.minecraft.client.renderer.SubmitNodeCollector output);
+
+    /** S18.4 (same-dim block entities): vanilla's private
+     *  {@code submitBlockEntities(PoseStack, LevelRenderState, SubmitNodeCollector)}
+     *  (LevelRenderer.java:664-677) — reads {@code lrs.cameraRenderState.pos} for the
+     *  camera-relative translate and iterates {@code lrs.blockEntityRenderStates}; the exact
+     *  structural parallel of {@code submitEntities} above. Used with the same scratch LRS +
+     *  isolated storage by {@code renderPortalEntitiesSameDim} so loop-back passes draw their
+     *  block entities in the same single {@code renderAllFeatures} as their entities
+     *  (mirroring cross-dim's submitFeatures order: entities then BEs into one storage). */
+    @org.spongepowered.asm.mixin.gen.Invoker("submitBlockEntities")
+    void seamlessportals$invokeSubmitBlockEntities(
+        com.mojang.blaze3d.vertex.PoseStack poseStack,
+        LevelRenderState levelRenderState,
+        net.minecraft.client.renderer.SubmitNodeCollector output);
 }

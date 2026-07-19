@@ -1445,9 +1445,10 @@ public class SecondaryWorldRenderCore {
      * render-player-itself delivery (IP renders your body via vanilla's own camera-entity check
      * plus the isDetached force; no player-specific code exists in IP's nested pass either).
      *
-     * <p>Same-dim block entities + particles remain omitted at S15 (pre-existing gap: block
-     * entities need a per-pass visibleSections list the loop-back view doesn't have) — S18
-     * ladder item. Runs inside the armed 10.5 inner clip + live stencil, like cross-dim.
+     * <p>Same-dim BLOCK ENTITIES landed at S18.4 (the "per-pass visibleSections" gap closed — the
+     * Step-9 portal-camera discovery list IS that list; see the in-body S18.4 note). Same-dim
+     * PARTICLES remain omitted (the isolation design needs the per-dim ParticleEngine adoption —
+     * port-note S18 §5). Runs inside the armed 10.5 inner clip + live stencil, like cross-dim.
      */
     private static void renderPortalEntitiesSameDim(
         LevelRenderer destRenderer, Matrix4f destViewMatrix,
@@ -1499,6 +1500,34 @@ public class SecondaryWorldRenderCore {
                 TeleportFlashProbe.sameDimEntitiesSubmitted +=
                     sameDimScratchLRS.entityRenderStates.size();
 
+                // S18.4 — same-dim BLOCK ENTITIES (the S15 F1 "per-pass visibleSections" gap
+                // CLOSED): the list the BE extract iterates IS available — extractVisibleBlockEntities
+                // reads the renderer's visibleSections FIELD (LevelExtractor:274), and for this pass
+                // that field holds the Step-9 PORTAL-camera discovery list (at layer 1/0 THIS
+                // layer's shell installed it via portal_setChunkInfoList; at a nested return-home
+                // layer the field holds an OUTER shell's scratch — either way Step-9 discovery
+                // cleared+refilled the CURRENT field contents with THIS pass's portal-camera
+                // sections before this site; for same-dim destRenderer == the main renderer ==
+                // the extractor's bound renderer — the chain is verified for layer-1, promoted,
+                // nested layer-2 and cross-view layer-0, recorded on the invoker). Prep the shared BE dispatcher with
+                // the portal camera (tryExtractRenderState's shouldRender keys on the prepared pos;
+                // NOT restored — every extract re-prepares it next frame, the ERD parity class).
+                // No one-shot state is touched (the extract()'s sectionUpdates loop is separate);
+                // the globally-rendered prune is idempotent after the main extract. Residual
+                // (ledgered): the BE fade gate (getVisibility < 0.3, LevelExtractor:276) has no
+                // isDestExtracting bypass — BEs in portal-only-revealed freshly-compiled sections
+                // pop in after the fade window (minor here: same-dim sections are mostly
+                // main-uploaded already).
+                destRenderer.blockEntityRenderDispatcher().prepare(newCamera.position());
+                sameDimScratchLRS.blockEntityRenderStates.clear();
+                ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                    .seamlessportals$invokeExtractVisibleBlockEntities(
+                        newCamera,
+                        deltaTracker.getGameTimeDeltaPartialTick(false),
+                        sameDimScratchLRS);
+                ((LevelRendererAccessorMixin) destRenderer).seamlessportals$invokeSubmitBlockEntities(
+                    new com.mojang.blaze3d.vertex.PoseStack(), sameDimScratchLRS, sameDimSubmitStorage);
+
                 Matrix4fStack mv = RenderSystem.getModelViewStack();
                 mv.pushMatrix();
                 mv.mul(destViewMatrix);
@@ -1515,6 +1544,7 @@ public class SecondaryWorldRenderCore {
             } finally {
                 erd.prepare(client.gameRenderer.mainCamera(), client.crosshairPickEntity);
                 sameDimScratchLRS.entityRenderStates.clear();
+                sameDimScratchLRS.blockEntityRenderStates.clear(); // S18.4
             }
         } catch (Throwable t) {
             // Entities are non-critical; terrain + sky already drew. One-shot swallow visibility
