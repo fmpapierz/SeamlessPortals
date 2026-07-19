@@ -44,3 +44,12 @@ config = "seamlessportals-ip-peripheral.mixins.json"
 
 [[mixins]]
 config = "seamlessportals-ip-dimlib.mixins.json"
+
+# C2-0 (migration/C2_DESIGN.md §6.1/§6.3): the real Sodium/Iris compat config. Listed on both
+# loaders because it ships in :common. INERT on NeoForge: its IPCompatMixinPlugin gate 2 is
+# EntityPortalsFlag.isOn(), which is force-false off Fabric (S13-B P4) — so gate 2 skips EVERY
+# compat class here regardless of whether sodium/embeddium/iris are present. No invoker install
+# exists on NeoForge either, so the facades no-op. (embeddium is NOT treated as sodium by the
+# plugin — design §6.3.) Flag-ON NeoForge is C7.
+[[mixins]]
+config = "seamlessportals-ip-compat.mixins.json"

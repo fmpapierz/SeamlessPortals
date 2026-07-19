@@ -35,6 +35,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(net.minecraft.client.renderer.GameRenderer.class)
 public abstract class SodiumFogOverrideMixin {
 
+    // C2-0 probe P8 (migration/C2_DESIGN.md §4 P8): one-shot latch so the lever-gated hit log below
+    // fires at most once per session. Zero effect without -Dseamlessportals.compatProbe=true.
+    // Lever cached in a static final like the sibling probes (JIT folds the lever-off branch away).
+    private static final boolean seamlessportals$probe = Boolean.getBoolean("seamlessportals.compatProbe");
+    private static volatile boolean seamlessportals$probeP8Logged = false;
+
     /**
      * Sodium's {@code GameRendererMixin} merges a method named
      * {@code sodium$getFogParameters} into {@link net.minecraft.client.renderer.GameRenderer}
@@ -53,6 +59,15 @@ public abstract class SodiumFogOverrideMixin {
             require = 0)
     private void seamlessportals$overrideFog(CallbackInfoReturnable<Object> cir) {
         Object override = SodiumFogOverride.currentOverride();
+        // C2-0 probe P8 (lever-gated, one-shot): record that this getter fired under Sodium + the
+        // entity-portal flag state, to answer whether the block-era fog override coexists / is
+        // reachable flag-ON (design §4 P8; feeds the S20 pre-deletion gate-audit).
+        if (seamlessportals$probe && !seamlessportals$probeP8Logged) {
+            seamlessportals$probeP8Logged = true;
+            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                "[COMPAT PROBE P8] SodiumFogOverrideMixin.sodium$getFogParameters fired; entityPortals={} activeOverride={}",
+                com.warwa.seamlessportals.EntityPortalsFlag.isOn(), override != null);
+        }
         if (override != null) {
             cir.setReturnValue(override);
         }

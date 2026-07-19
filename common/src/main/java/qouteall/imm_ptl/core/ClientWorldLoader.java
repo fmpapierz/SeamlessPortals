@@ -784,6 +784,10 @@ public class ClientWorldLoader {
             SECONDARY_FEATURE_BUFFERS.put(dimension, featureBuffers);
             SECONDARY_FEATURE_DISPATCHERS.put(dimension, featureDispatcher);
 
+            // C2-0 probe P1 (migration/C2_DESIGN.md §4 P1): lever-gated, flag-gated, sodium-gated,
+            // one-shot per dim. No-op (and loads no Sodium type) without -Dseamlessportals.compatProbe=true.
+            qouteall.imm_ptl.core.compat.SodiumCompatProbe.probeSecondaryWorldRenderer(dimension, worldRenderer);
+
             LOGGER.info("Client World Created {}", dimension.identifier());
         }
         catch (Exception e) {

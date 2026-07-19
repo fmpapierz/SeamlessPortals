@@ -130,6 +130,9 @@ loom {
             // Same Temurin 25.0.2 HotSpot C2 defect mitigation as the `client` run above
             // (EXCEPTION_ACCESS_VIOLATION JIT-compiling PortalRenderInfo::renderAndDecideVisibility).
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
+            // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
+            if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,

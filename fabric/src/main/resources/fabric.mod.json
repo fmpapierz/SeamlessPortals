@@ -32,7 +32,8 @@
     "seamlessportals-ip-client.mixins.json",
     "seamlessportals-ip-fabric.mixins.json",
     "seamlessportals-ip-peripheral.mixins.json",
-    "seamlessportals-ip-dimlib.mixins.json"
+    "seamlessportals-ip-dimlib.mixins.json",
+    "seamlessportals-ip-compat.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",

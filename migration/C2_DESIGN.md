@@ -303,3 +303,18 @@ Config ships in `:common` → registered on both loaders; on NeoForge the flag i
 
 ### 6.4 S20 interactions
 Dies at S20: `SodiumFogOverrideMixin` (pre-deletion gate-audit: prove flag-ON sodium fog doesn't depend on it — P8 feeds this), the block-era `PortalContextSwitch` sodium touchpoints, and gate 2 of the plugin (collapses to always-true when the flag dies). Survives S20: the compat config + plugin, all shipped §2 files, the D3 clip re-expression, the honest iris routing (until the shaders-ON decision), and the deferral ledger. Whatever remains of `ExperimentalCompatGate` after the C2-5 user decision is on the S20 sweep list either way.
+
+---
+
+## §7 C2-0 ADDENDUM (2026-07-19): census landed — three §3.1/§4 statements superseded
+
+The C2-0 census + verify round (port-note `C2-sodium-iris.md` §1-§4, raw census `C2_0_CENSUS.md`)
+supersedes the following as written above — the port-note is authoritative where they conflict:
+1. §3.1.2's minimum swap set is EXPANDED (six more per-view RSM fields + two FINAL members that need
+   CONTENT-swap, + the SWR camera-cache five). The authoritative list = port-note §2.
+2. §3.1.4/P5's "a swapped frame counter may neutralize the #3 trigger" is REFUTED (inequality-test
+   trigger; renderOutOfGraph fires it too). #3 ships unconditionally; P5 = measurement only.
+3. §1(e)/§4-P10's `RSM.update` is a phantom method — the drain loop lives in `SWR.setupTerrain`.
+   The three real sync mechanisms are recorded in the port-note §1.2.
+NEW at C2-1: the pendingTask × QueuedSectionStorage safe-read-phase race (port-note §4.1) must be
+mitigated (three named options) — it joins D1's spec as a hard requirement for same-dim portals.

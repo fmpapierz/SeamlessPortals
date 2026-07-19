@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "qouteall.imm_ptl.core.compat.mixin",
+  "plugin": "qouteall.imm_ptl.core.compat.IPCompatMixinPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "minVersion": "0.8",
+  "client": [
+    "sodium.IESodiumWorldRenderer",
+    "sodium.MixinSodiumProbe_ShaderSources",
+    "sodium.MixinSodiumProbe_GlCommandEncoder",
+    "sodium.MixinSodiumChunkRenderList_Probe"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
