@@ -1541,9 +1541,13 @@ submitCustomGeometry; verify wf_88355dbb-8f3 caught the missing-setLineWidth fir
 crash class + the circle NaN-normal pre-ship; round-2 wf_1a0e88dd-409 PASS). Ledger of
 record = port-note `S19-peripheral-tail.md` §1-§3 (incl. the NeoForge TAB class-load
 landmine → C7, the same-dim overlay deviation → polish LOW, the B11 sweep additions).
-S19-B pre-scouted: cloth-config GUI has NO 26.2 build (the shipped F21 AutoConfig
-.getConfigScreen no-op) → S19-B lands as the gated integration SHAPE (F21 pattern), runtime
-blocked on third-party ports — C2-class.**
+S19-B CLOSED INTO C2 (corrected scout): ModMenu EXISTS for 26.2 (modmenu:20.0.0-beta.4, a
+real :fabric dep; the block-era ModMenuIntegration→SeamlessConfigScreen entrypoint stays
+live in both flag states — D3 baseline). The blocker is CLOTH-CONFIG only (the shipped F21
+AutoConfig.getConfigScreen no-op). Landed: 1:1 IPModMenuConfigEntry (unwired — wiring =
+guaranteed NPE) + fabricStubs ModMenu shells (moved OUT of ipStubs in-stage: ipStubs is on
+the :fabric classpath and would shadow the real ModMenu types). C2 re-entry = cloth dep +
+one entrypoint swap. Port-note §4.**
 
 **C1 DECIDED (user, 2026-07-18, during S16): S19 WILL BE BUILT — "we are not skipping
 s19."** The default-skip is overridden; the greenlit branch below is the operative one.

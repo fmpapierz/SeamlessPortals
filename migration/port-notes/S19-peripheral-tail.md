@@ -197,3 +197,27 @@ mixin's no-wand early-out — everything below is live-round-only:
    nether portal) + 2 (throw an item through) after the wand session.
 10. OPTIONAL flag-OFF spot check: flip entityPortals=false, /give a wand + a stick → both
     inert (no tab either); flip back.
+
+## §4 S19-B — ModMenu config GUI: CLOTH-CONFIG-BLOCKED, compile shape landed
+
+**Scout correction (the first scout claim "ModMenu has no verified 26.2 build" was WRONG —
+caught in-stage by the reachability grep):** ModMenu EXISTS for 26.2
+(`com.terraformersmc:modmenu:20.0.0-beta.4`, a real `:fabric` implementation dep, in the dev
+runtime), and the BLOCK-ERA mod already ships a working "modmenu" entrypoint —
+`ModMenuIntegration` → the hand-built `SeamlessConfigScreen`. That stays the live entrypoint
+in BOTH flag states (the D3 baseline; flag-ON it edits block-era settings — harmless,
+retires with the S20 block-era deletion / C2 swap).
+
+The IP-side blocker is CLOTH-CONFIG only: `IPModMenuConfigEntry` →
+`IPConfigGUI.createClothConfigScreen` → `AutoConfig.getConfigScreen(...).get()`, and the
+shipped F21 AutoConfig surface returns NULL from getConfigScreen ("Cloth's GUI has no MC
+26.2 build"). LANDED: the 1:1 `IPModMenuConfigEntry` class (unwired — wiring it = guaranteed
+NPE on the config button) + two **fabricStubs** shells (`ModMenuApi`, `ConfigScreenFactory`).
+PLACEMENT RULE (the in-stage catch): the shells started in ipStubs, which IS on the :fabric
+compile classpath → they sat NEXT TO the real ModMenu classes (the documented fabricStubs
+SHADOWING hazard); moved to fabricStubs (:common-only + neoforge fabricStubsClasspath;
+:fabric resolves REAL ModMenu — proven by the block-era integration compiling against it).
+**C2 re-entry checklist**: real cloth-config dep replaces the AutoConfig no-op → swap
+`IPModMenuConfigEntry` into the fabric.mod.json "modmenu" list → live-test the screen.
+S19-B otherwise CLOSED into C2. Zero runtime reachability today (grep-proven: no callers, no
+entrypoint reference).
