@@ -59,6 +59,15 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             qouteall.q_misc_util.MiscNetworking.initClient();
             qouteall.imm_ptl.core.IPModMainClient.init();
 
+            // S19-A: the peripheral client init (IPOuterClientMisc + the wand client-tick
+            // driver + the drag animation signal). IP's fabric.mod.json runs its peripheral
+            // CLIENT entry FIRST (before the core client entry); this placement after
+            // IPModMainClient mirrors the S16 server-side "tidier one-branch shape" decision —
+            // order-insensitive: registrations (static events/signals) plus IPOuterClientMisc's
+            // IP-faithful imm_ptl_state.json read/upgrade, which only touches the lazy
+            // IPConfig (already loaded flag-ON) — nothing here depends on core client init.
+            qouteall.imm_ptl.peripheral.PeripheralModMain.initClient();
+
             // ===== WIRE 3 (S13-G): flag-ON render-DISPATCH — the REPLACE-BY of the block-era driver =====
             // CUTOVER_SPEC §6.2 item 2 / EXCLUSIVITY_LEDGER rows 14/15 / ported MixinGameRenderer.java:
             // 40-53. First-light attempt 6 spawned + synced the client Portal entities correctly but drew

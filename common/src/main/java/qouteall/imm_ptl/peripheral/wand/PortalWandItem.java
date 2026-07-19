@@ -34,15 +34,33 @@ import java.util.List;
 import java.util.function.Consumer;
 
 public class PortalWandItem extends Item {
-    public static final PortalWandItem instance = new PortalWandItem(new Properties());
-    
-    public static void init() {
+    // 26.2: Item.Properties requires the registry id at CONSTRUCTION (Item ctor →
+    // effectiveDescriptionId → itemIdOrThrow "Item id not set", Item.java:135,641) — the same
+    // 26.2-forced setId pattern as PeripheralModMain's portal_helper item.
+    public static final PortalWandItem instance = new PortalWandItem(
+        new Properties().setId(net.minecraft.resources.ResourceKey.create(
+            net.minecraft.core.registries.Registries.ITEM,
+            net.minecraft.resources.Identifier.fromNamespaceAndPath(
+                "immersive_portals", "portal_wand")
+        ))
+    );
+
+    /**
+     * S19 D3 split of IP's single init(): the DataComponentType is PERSISTED ON SAVED STACKS,
+     * so its registration must be identical in both flag states (a world saved flag-ON with a
+     * wand in a chest must load flag-OFF without the stack failing to parse) — it rides the
+     * UNCONDITIONAL registry seam, same discipline as the item/block registrations. The event
+     * registrations below stay in init() (flag-ON behavior).
+     */
+    public static void registerDataComponents() {
         Registry.register(
             BuiltInRegistries.DATA_COMPONENT_TYPE,
             "iportal:portal_wand_data",
             COMPONENT_TYPE
         );
-        
+    }
+
+    public static void init() {
         AttackBlockCallback.EVENT.register((player, world, hand, pos, direction) -> {
             if (player.getMainHandItem().getItem() == instance) {
                 // cannot break block using the wand
@@ -186,6 +204,15 @@ public class PortalWandItem extends Item {
     // -> InteractionResult.SUCCESS; the held ItemStack payload is dropped (26.2 no longer carries it).
     @Override
     public InteractionResult use(Level world, Player player, InteractionHand hand) {
+        // S19 D3 guard (NOT in IP; dies with the flag at S20): the item is registered in BOTH
+        // flag states (world-save parity), so flag-OFF a /give'd wand must be INERT — its client
+        // state machines + RPC chain would otherwise create entity portals on the block-era
+        // substrate (an untested hybrid that persists into the save). The server-side mirror
+        // guard lives in PortalWandInteraction.checkPermission.
+        if (!com.warwa.seamlessportals.EntityPortalsFlag.isOn()) {
+            return InteractionResult.PASS;
+        }
+
         ItemStack itemStack = player.getItemInHand(hand);
         Mode mode = itemStack.getOrDefault(COMPONENT_TYPE, Mode.FALLBACK);
 

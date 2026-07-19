@@ -8,7 +8,9 @@
     "common.nether_portal.MixinAbstractFireBlock_CVB",
     "common.nether_portal.MixinFlintAndSteelItem_CVB"
   ],
-  "client": [],
+  "client": [
+    "client.portal_wand.MixinMinecraft_PortalWand"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

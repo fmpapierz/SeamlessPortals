@@ -65,13 +65,20 @@ public class SeamlessPortalsModFabric implements ModInitializer {
 
         // S16: the peripheral portal-helper block + item ride the SAME unconditional D3 seam —
         // world-saveable registry entries must be identical in both flag states (a world saved
-        // flag-ON with portal_helper blocks placed must open flag-OFF). Registered but never
-        // obtainable/placed flag-OFF (the CVB ignition mixins + PeripheralModMain.init are
-        // flag-gated; no creative tab until S19 — /give-only).
+        // flag-ON with portal_helper blocks placed must open flag-OFF). S19-A extends the seam
+        // with portal_wand + command_stick (same parity argument: stacks live in saved
+        // inventories) and their stack-persisted DataComponentTypes (an unregistered component
+        // type would fail the stack parse on a flag-OFF load — data loss; AND network-mandatory:
+        // fabric-registry-sync marks DATA_COMPONENT_TYPE synced-by-rawID, so a flag-gated
+        // registration would shift raw ids between flag states and break mixed-state joins —
+        // verify wf_7e348eaa-89b). All registered but inert flag-OFF (init/initClient/TAB are
+        // flag-gated; behavior entry points carry flag-OFF guards: PortalWandItem.use(),
+        // CommandStickItem.doUse(), PortalWandInteraction.checkPermission).
         qouteall.imm_ptl.peripheral.PeripheralModMain.registerBlocks(
             (id, block) -> Registry.register(BuiltInRegistries.BLOCK, id, block));
         qouteall.imm_ptl.peripheral.PeripheralModMain.registerItems(
             (id, item) -> Registry.register(BuiltInRegistries.ITEM, id, item));
+        qouteall.imm_ptl.peripheral.PeripheralModMain.registerDataComponents();
 
         // ===== S13-F (crash-1 fix): imm_ptl chunk-ticket TYPE registration — UNCONDITIONAL =====
         // 26.2 TicketType is a BuiltInRegistries.TICKET_TYPE-registered record (api-map chunk-loading
@@ -109,6 +116,13 @@ public class SeamlessPortalsModFabric implements ModInitializer {
             // shape. Minimal subset: everything except the portal-generation cargo is held to
             // S19 (see PeripheralModMain header).
             qouteall.imm_ptl.peripheral.PeripheralModMain.init();
+            // S19-A: the creative TAB registers FLAG-ON only — tabs are not world state, and
+            // the block-era baseline must not surface entity-portal features in its UI. IP's
+            // PeripheralModEntry registers the tab BEFORE init(); here it sits after (the
+            // flag-ON branch shape) — functionally identical because displayItems is lazy, the
+            // same argument IP's own ordering note relies on for the command-stick map.
+            qouteall.imm_ptl.peripheral.PeripheralModMain.registerCreativeTabs(
+                (id, tab) -> Registry.register(BuiltInRegistries.CREATIVE_MODE_TAB, id, tab));
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (server/common)");
         } else {

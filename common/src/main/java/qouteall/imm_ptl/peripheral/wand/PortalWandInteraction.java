@@ -486,6 +486,12 @@ public class PortalWandInteraction {
     }
     
     private static boolean checkPermission(ServerPlayer player) {
+        // S19 D3 guard (NOT in IP; dies with the flag at S20): server-side mirror of the
+        // PortalWandItem.use() gate — every RemoteCallables entry funnels through here, so a
+        // flag-OFF client cannot RPC entity-portal creation onto the block-era substrate.
+        if (!com.warwa.seamlessportals.EntityPortalsFlag.isOn()) {
+            return false;
+        }
         if (!canPlayerUsePortalWand(player)) {
             player.sendSystemMessage(Component.literal("You cannot use portal wand"));
             LOGGER.error("Player cannot use portal wand {}", player);

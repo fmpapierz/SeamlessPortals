@@ -96,8 +96,15 @@ public class CommandStickItem extends Item {
         BUILT_IN_COMMAND_STICK_TYPES.put(data.command, data);
     }
     
+    // 26.2: Item.Properties requires the registry id at CONSTRUCTION (Item ctor →
+    // effectiveDescriptionId → itemIdOrThrow "Item id not set", Item.java:135,641) — the same
+    // 26.2-forced setId pattern as PeripheralModMain's portal_helper item.
     public static final CommandStickItem instance = new CommandStickItem(
-        new Item.Properties()
+        new Item.Properties().setId(net.minecraft.resources.ResourceKey.create(
+            net.minecraft.core.registries.Registries.ITEM,
+            net.minecraft.resources.Identifier.fromNamespaceAndPath(
+                "immersive_portals", "command_stick")
+        ))
     );
     
     public CommandStickItem(Properties settings) {
@@ -121,7 +128,17 @@ public class CommandStickItem extends Item {
         if (player.level().isClientSide()) {
             return;
         }
-        
+
+        // S19 D3 guard (NOT in IP; dies with the flag at S20; verify catch wf_7e348eaa-89b):
+        // flag-OFF the permission gate below is WIDE OPEN — IPGlobal.easeCommandStickPermission's
+        // raw default is TRUE and its normalization to false runs only in the flag-ON config
+        // path (IPModMain.init → onConfigChanged), so a stick persisted from a flag-ON session
+        // would execute its stored command at GAMEMASTER level for ANY player on a flag-OFF
+        // load. Same guard pattern as PortalWandItem.use().
+        if (!com.warwa.seamlessportals.EntityPortalsFlag.isOn()) {
+            return;
+        }
+
         if (canUseCommand(player)) {
             Data data = stack.get(COMPONENT_TYPE);
             
@@ -216,13 +233,21 @@ public class CommandStickItem extends Item {
         ((ServerPlayer) player).sendSystemMessage(message);
     }
     
-    public static void init() {
+    /**
+     * S19 D3 split of IP's single init(): the DataComponentType is PERSISTED ON SAVED STACKS,
+     * so its registration must be identical in both flag states (world-save parity) — it rides
+     * the UNCONDITIONAL registry seam. The command-signal wiring below stays in init()
+     * (flag-ON behavior). Same split as PortalWandItem.
+     */
+    public static void registerDataComponents() {
         Registry.register(
             BuiltInRegistries.DATA_COMPONENT_TYPE,
             "iportal:command_stick_data",
             COMPONENT_TYPE
         );
-        
+    }
+
+    public static void init() {
         PortalCommand.createCommandStickCommandSignal.connect((player, command) -> {
             ItemStack itemStack = new ItemStack(instance, 1);
             Data data = new Data(

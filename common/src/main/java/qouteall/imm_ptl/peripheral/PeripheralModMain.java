@@ -1,41 +1,56 @@
 package qouteall.imm_ptl.peripheral;
 
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import qouteall.imm_ptl.core.McHelper;
 import qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration;
+import qouteall.imm_ptl.peripheral.wand.ClientPortalWandPortalDrag;
+import qouteall.imm_ptl.peripheral.wand.PortalWandInteraction;
+import qouteall.imm_ptl.peripheral.wand.PortalWandItem;
 
 import java.util.function.BiConsumer;
 
 /**
- * S16 MINIMAL-SUBSET port of IP:peripheral/PeripheralModMain.java — ONLY the
- * portal-generation cargo (portal-helper block/item + {@link IntrinsicPortalGeneration}).
+ * S16 landed the MINIMAL portal-generation subset; S19-A extends it with IP's WAND cargo:
+ * portal_wand + command_stick item registration, the creative-mode TAB (retires the
+ * portal-helper /give-only state), PortalWandItem/CommandStickItem/PortalWandInteraction
+ * init, initClient (IPOuterClientMisc + wand client). This is IP:peripheral/
+ * PeripheralModMain.java's shape minus the features still held per S13B §7.2 + the C1
+ * decision: FormulaGenerator, DimStackManagement, AlternateDimensions init +
+ * DimensionAPI.suppressExperimentalWarningForNamespace (S19-C/S19-D — dim stack + alternate
+ * dims), registerChunkGenerators/registerBiomeSources (S19-D), and the dim_stack/
+ * alternate_dimension/dfu commons + the non-wand client mixins (their features' stages).
+ * Each remaining omission stays a plan-sanctioned port-structure deviation named in the
+ * S19 port-note.
  *
- * <p>DELIBERATELY HELD OUT to S19 per S13B §7.2 + the C1 decision (2026-07-18: S19 WILL be
- * built, so every held item has a guaranteed landing): FormulaGenerator, DimStackManagement,
- * AlternateDimensions init, DimensionAPI.suppressExperimentalWarningForNamespace,
- * PortalWandItem, CommandStickItem, PortalWandInteraction, the creative-mode TAB (IP :40-51 —
- * the portal_helper item is /give-only until S19), initClient (IPOuterClientMisc + wand
- * client), and IP's remaining peripheral mixins — explicitly including
- * {@code MixinEnderEyeItem_CVB} (end-portal CVB; verify fold: named here so end-portal
- * behavior isn't dropped silently) + the alternate_dimension/dfu/dim_stack commons and the 8
- * peripheral client mixins. Each omission is a port-structure deviation from IP's single-init
- * shape, plan-sanctioned (EXECUTION_PLAN §S16(a) scopes S16 to the generation pipeline),
- * named in port-note S16. IP's client {@code BlockRenderLayerMap...cutout()} registration for
- * the helper block is 26.2-OBSOLETE (render layers are sprite-derived:
- * {@code ChunkSectionLayer} picks CUTOUT from texture transparency; ItemBlockRenderTypes is
- * gone) — the assets alone carry it.
- *
- * <p>Named 26.2-forced adaptations (port-note S16): FabricBlockSettings.of() is GONE →
+ * <p>Named 26.2-forced adaptations (port-note S16 + S19): FabricBlockSettings.of() is GONE →
  * {@code BlockBehaviour.Properties.of()...setId(...)} per the shipped PortalPlaceholderBlock
  * pattern (26.2 requires the id ON the Properties or the Block ctor throws "Block id not
  * set"); the BlockItem's Item.Properties likewise needs setId + useBlockDescriptionPrefix
- * (vanilla Items.registerBlock pattern, mc262 Items.java:2116).
+ * (vanilla Items.registerBlock pattern, mc262 Items.java:2116). IP's client
+ * {@code BlockRenderLayerMap...cutout()} registration for the helper block is 26.2-OBSOLETE
+ * (render layers are sprite-derived: {@code ChunkSectionLayer} picks CUTOUT from texture
+ * transparency; ItemBlockRenderTypes is gone) — the assets alone carry it. The creative TAB:
+ * IP's {@code FabricItemGroup.builder()} (fabric-item-group-api-v1) does not exist on 26.2 —
+ * fabric-api 0.152.1+26.2 replaces it with {@code FabricCreativeModeTab.builder()}
+ * (fabric-creative-tab-api-v1), the 1:1 successor (same builder contract, Fabric-managed
+ * row/column placement).
+ *
+ * <p>Registration seams (D3): blocks/items/data-components register UNCONDITIONALLY
+ * (world-save parity — saved stacks carry the data components); the TAB registers FLAG-ON
+ * only (tabs are not world state, and flag-OFF must not surface entity-portal features);
+ * init()/initClient() run flag-ON only. See SeamlessPortalsModFabric.
  */
 public class PeripheralModMain {
 
@@ -59,8 +74,47 @@ public class PeripheralModMain {
             .useBlockDescriptionPrefix()
     );
 
+    // IP PeripheralModMain:40-51 — icon = wand, title = imm_ptl.item_group (lang key already
+    // shipped), contents = 3 wand mode-variants, the built-in command sticks, portal helper.
+    // FabricCreativeModeTab.builder() = the 26.2 successor of FabricItemGroup.builder().
+    public static final CreativeModeTab TAB = FabricCreativeModeTab.builder()
+        .icon(() -> new ItemStack(PortalWandItem.instance))
+        .title(Component.translatable("imm_ptl.item_group"))
+        .displayItems((parameters, entries) -> {
+            PortalWandItem.addIntoCreativeTag(entries);
+            CommandStickItem.addIntoCreativeTag(entries);
+            entries.accept(PeripheralModMain.portalHelperBlockItem);
+        })
+        .build();
+
     public static void init() {
         IntrinsicPortalGeneration.init();
+
+        // S19-A: IP's init order (PeripheralModMain:76-80) — wand + command stick + wand
+        // interaction; registerCommandStickTypes LAST (displayItems runs lazily at GUI-open,
+        // so the tab always sees the populated map). The DataComponentType halves of the IP
+        // init() bodies ride the unconditional seam instead (registerDataComponents — D3).
+        PortalWandItem.init();
+        CommandStickItem.init();
+        PortalWandInteraction.init();
+        CommandStickItem.registerCommandStickTypes();
+    }
+
+    /**
+     * S19-A / IP PeripheralModMain.initClient() (:53-60) minus nothing — all three entries
+     * landed: IPOuterClientMisc, the wand client-tick driver, the drag animation signal.
+     */
+    @Environment(EnvType.CLIENT)
+    public static void initClient() {
+        IPOuterClientMisc.initClient();
+        PortalWandItem.initClient();
+        ClientPortalWandPortalDrag.init();
+    }
+
+    /** D3-unconditional: stack-persisted DataComponentTypes must exist in both flag states. */
+    public static void registerDataComponents() {
+        PortalWandItem.registerDataComponents();
+        CommandStickItem.registerDataComponents();
     }
 
     public static void registerItems(BiConsumer<Identifier, Item> regFunc) {
@@ -68,12 +122,30 @@ public class PeripheralModMain {
             McHelper.newResourceLocation("immersive_portals", "portal_helper"),
             portalHelperBlockItem
         );
+        // S19-A: the remaining two IP items (IP PeripheralModMain:89-97) — registered
+        // unconditionally (D3 world-save parity), obtainable only via the flag-ON TAB or /give.
+        regFunc.accept(
+            McHelper.newResourceLocation("immersive_portals", "command_stick"),
+            CommandStickItem.instance
+        );
+        regFunc.accept(
+            McHelper.newResourceLocation("immersive_portals", "portal_wand"),
+            PortalWandItem.instance
+        );
     }
 
     public static void registerBlocks(BiConsumer<Identifier, Block> regFunc) {
         regFunc.accept(
             McHelper.newResourceLocation("immersive_portals", "portal_helper"),
             portalHelperBlock
+        );
+    }
+
+    // IP PeripheralModMain:129-136 (id immersive_portals:general). FLAG-ON only (see header).
+    public static void registerCreativeTabs(BiConsumer<Identifier, CreativeModeTab> regFunc) {
+        regFunc.accept(
+            McHelper.newResourceLocation("immersive_portals", "general"),
+            TAB
         );
     }
 }
