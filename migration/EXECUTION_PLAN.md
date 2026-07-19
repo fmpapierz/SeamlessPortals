@@ -1531,6 +1531,20 @@ increment Fable-verified, folded, gametest-gated, pushed):
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**S19 PROGRESS (2026-07-18): stage OPENED with the rule-9 scope question — user picked
+WAND-FIRST order (1 wand+creative tab → 2 ModMenu GUI → 3 dim-stack GUI → 4 R13g+alt-dims →
+5 compat layers). S19-A CODE COMPLETE + suite-green, READY issued for the wand live round:
+`6ce907d` (A1 — items/components/tab registration + runtime wiring + the three D3 flag-OFF
+guards; verify wf_7e348eaa-89b caught the command-stick flag-OFF GAMEMASTER privilege
+escalation pre-ship) + `67fabcb` (A2 — overlay re-expression via submitFeatures-RETURN
+submitCustomGeometry; verify wf_88355dbb-8f3 caught the missing-setLineWidth first-frame
+crash class + the circle NaN-normal pre-ship; round-2 wf_1a0e88dd-409 PASS). Ledger of
+record = port-note `S19-peripheral-tail.md` §1-§3 (incl. the NeoForge TAB class-load
+landmine → C7, the same-dim overlay deviation → polish LOW, the B11 sweep additions).
+S19-B pre-scouted: cloth-config GUI has NO 26.2 build (the shipped F21 AutoConfig
+.getConfigScreen no-op) → S19-B lands as the gated integration SHAPE (F21 pattern), runtime
+blocked on third-party ports — C2-class.**
+
 **C1 DECIDED (user, 2026-07-18, during S16): S19 WILL BE BUILT — "we are not skipping
 s19."** The default-skip is overridden; the greenlit branch below is the operative one.
 Per-feature ordering/priorities are surfaced at stage open (a scope question, not a

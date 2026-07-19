@@ -167,3 +167,33 @@ vanilla-consistent (ITEM_ENTITY_TARGET, the block-outline precedent).
   sweep list, bookkeeping only.
 - PortalEntityRenderer's debug-mesh path healed by the emitter fix (was the same latent crash
   behind the debug flag).
+
+## §3 S19-A (d) LIVE-ROUND SCRIPT (wand + creative tab; commits 6ce907d + 67fabcb)
+
+Flag-ON, normal runClient. The 8-leg suite has proven ONLY the startup surface + the overlay
+mixin's no-wand early-out — everything below is live-round-only:
+
+1. **Creative tab**: open creative inventory → an "Immersive Portals" tab exists (wand icon).
+   Contents in order: 3 portal wands (Create/Drag/Copy in the name), ~40 command sticks
+   (enchant-glint, per-stick names), portal helper block. (This exercises displayItems — the
+   duplicate-stack + fabric-pagination classes the suite cannot reach.)
+2. **CREATE mode**: hold the wand → cursor cube snaps to block corners (the A2 overlay);
+   right-click 3 corners (first side: left-bottom, right-bottom, left-top — area grid appears
+   after the 3rd) then the second side's corners → portal pair created. Constraint circle +
+   plane overlays appear during placement. Shift+use cycles mode; shift+left-click prints the
+   settings chat (alignment links clickable).
+3. **DRAG mode**: point at the created portal → flowing selection frame; left-click an
+   anchor/edge to lock, right-click-drag corners; width/height lock glyphs + line segments
+   animate; undo via the chat-printed control; finish. (Server RPC path + permission check.)
+4. **COPY mode**: copy the portal (right-click), the clipboard follows the cursor as a pending
+   frame; confirm placement; also cut (left-click) + clear.
+5. **Command stick**: use e.g. "Delete Portal" on a test portal → executes.
+6. **Left-click guard**: the wand cannot break blocks (attack cancelled).
+7. **HUD text**: wand feedback lines paint at bottom-center (CustomTextOverlay).
+8. **Overlay through portals**: CREATE-mode markings visible through a CROSS-DIM portal
+   window; EXPECTED ABSENT in same-dim portal views (the §2.2 named deviation — confirm
+   acceptable or route to polish).
+9. **(e) regression re-run (wand touches crossing paths)**: crossing items 1 (walk through
+   nether portal) + 2 (throw an item through) after the wand session.
+10. OPTIONAL flag-OFF spot check: flip entityPortals=false, /give a wand + a stick → both
+    inert (no tab either); flip back.
