@@ -498,3 +498,50 @@ B11-class dormant-reachability item for the S20 sweep.
 **Live-round check:** break a block YOURSELF through a portal → break particles in the window;
 fire/lava-adjacent dest scenery → flame/smoke particles in the window (non-fabulous). Note a
 mob/TNT breaking a dest block shows nothing — IP-identical (the server gap above).
+
+---
+
+## §9 — THE C4 A/B ROUND (2026-07-18 evening): **C4 RE-CONFIRMED — A (SUBMIT_ORDER_UNIFORM) STAYS**
+
+**User procedure + verdict:** Test 1 (A, session 19:41–20:21) and Test 2 (B, session 20:21–20:29,
+config flipped to ISOLATED_STORAGE_BRACKET + restart, then reverted): **"SAME EXACT RESULTS."**
+Clipping "same as always, pretty good on entities" under both. Per the C4 rider, the verdict
+re-confirms the evidence-based default: **`SUBMIT_ORDER_UNIFORM` remains the default; B stays
+wired as the fallback until the S20 loser-code cleanup.** B's 8-minute session ran with ZERO
+bracket-fence strikes and zero hazard signatures — the S18.1 wiring is live-proven at parity.
+HONESTY NOTE: nothing logged which mechanism ran in Test 2 (the config file was reverted after);
+the timeline + the strike-free session support engagement, and a one-line mechanism log now lands
+at IPConfig sync so every future A/B session is self-documenting.
+
+**Round findings, classified:**
+
+1. **Hand/hand-item sliver at a straddle** (re-confirmed both mechanisms) — POLISH per the user's
+   round-1 call (the first-person hand renders outside the R3 seam).
+2. **Spectral-arrow glow absent in PORTAL VIEWS under BOTH mechanisms — NEW LEDGERED RESIDUAL
+   (decomposition class):** the dest pass draws via `renderAllFeatures`, which has NO
+   `executeOutline` and no outline post-chain; the predicted A-vs-B glow difference applies to the
+   MAIN-pass bracketed half only (untested this round — moot given the verdict). IP's nested
+   renderLevel re-ran the full outline framebuffer + post-chain per pass, so IP likely DID show
+   glow through portals — an optional side-by-side glance can confirm. Re-expressing the outline
+   chain for dest passes is nontrivial (a framegraph post-chain) — S19/polish candidate, LOW
+   (cosmetic, rare).
+3. **Cannot melee-attack entities through a portal — IP-INHERITED, NOT A GAP:** IP's cross-portal
+   interaction is BLOCKS ONLY (grep of IP block_manipulation + interaction mixins: zero entity
+   picking — no crosshairPickEntity/EntityHitResult substitution exists in IP). Projectiles work
+   because they physically cross (and the damage flash IS visible in the portal view — the R3
+   damage-flash item PASSES). Cross-portal entity ATTACK would be an enhancement beyond IP —
+   polish-backlog candidate alongside the other user-approved improvements.
+4. **"Raycast too far" ×20 (one burst, 20:31)** — IP's OWN rate-limited advisory
+   (MixinBlockGetter:32, verbatim port; LimitedLogger caps it) fired while pointing through a
+   portal at distant/scaled dest terrain. IP-faithful noise class — joins the known-classes table.
+
+**LOG AUDIT (all three sessions: 19:41–20:21 A, 20:21–20:29 B, 20:29–20:33 final):** zero
+swallows, zero bracket strikes, zero fence/EmptyStack/PreparedFrame signatures across all three;
+chunk-ticket noise (2/8/17) = the known IP-inherited class; the rest dev-env chatter. The
+particles/outline/BE code from `dcb7583` ran the whole round clean.
+
+**(d)-round scoreboard after this round:** C4 ✔ DECIDED; straddle ✔ (item 1); damage-flash ✔;
+rain ✔; clouds ✔; source outline ✔; entities ✔. Still open: dest-outline re-check post-NPE-fix
+(item 10), particles re-check post-`dcb7583` (§8), third-person cross view (2), mirrors (3),
+renderMode flips (4), view-bob (5), overlay (6), /gui_portal (7), dpMs re-measure (12), vehicle
+captures (13), row-4 fuse-view (14).

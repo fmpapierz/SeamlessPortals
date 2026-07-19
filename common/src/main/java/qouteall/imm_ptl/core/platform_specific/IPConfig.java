@@ -194,6 +194,12 @@ public class IPConfig implements ConfigData {
         IPGlobal.teleportationDebugEnabled = teleportationDebug;
         IPGlobal.correctCrossPortalEntityRendering = correctCrossPortalEntityRendering;
         IPGlobal.crossPortalEntityClipMechanism = crossPortalEntityClipMechanism;
+        // S18 C4-round fold: log the active mechanism once per config load — the first A/B round's
+        // Test-2 engagement was not provable from logs (nothing recorded which mechanism ran);
+        // this line makes every future A/B session self-documenting. S20-removal rides with the
+        // loser-code cleanup (post-C4).
+        qouteall.q_misc_util.Helper.log(
+            "crossPortalEntityClipMechanism = " + crossPortalEntityClipMechanism);
         IPGlobal.looseMovementCheck = looseMovementCheck;
         IPGlobal.pureMirror = pureMirror;
         IPGlobal.indirectLoadingRadiusCap = indirectLoadingRadiusCap;
