@@ -1531,6 +1531,24 @@ increment Fable-verified, folded, gametest-gated, pushed):
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**C2 PROGRESS (2026-07-19, user-directed BEFORE S20): design + C2-0 + C2-1 LANDED.**
+Governing design = `migration/C2_DESIGN.md` (judge-panel synthesis `2587ee9`: 6-stage ladder
+C2-0..C2-5, 27-file disposition table, 3 redesign specs, 12 probes, 5 user decisions).
+**C2-0 `6f4560b`**: compat weave scaffold (composed IPCompatMixinPlugin: IP substring gate ×
+EntityPortalsFlag; embeddium≠sodium) + 5 lever-gated probes + the javap census — the D1 swap
+set EXPANDED + finalized (port-note §2); verify caught the pendingTask×safe-read-phase RACE +
+refuted the frame-neutralize hypothesis (#3 unconditional). **C2-1 `3a98364`** (worktree-built,
+4 Fable verify rounds — FAIL→fixed→PASS×2→folds→PASS; 2 BLOCKERS + 3 CORRECTIONS pre-ship):
+the widened persistent context swap + content-swap finals + D1 registry + consume-before-swap
+race mitigation + strict-uniqueness pass serial + the gate-INDEPENDENT setLevel/dirty-marking
+repoint brackets (sodium's checkRenderer resolves mc.levelRenderer AT CALL TIME — the fix
+protects the un-levered baseline too) + D5 retarget + #3 + FlawlessFrames + D6 + the D10
+interim clip bracket + per-mod gate verdicts with the -PsodiumCompatLever opt-in (iris stays
+warn+force until C2-4). Committed default = pre-C2 behavior exactly (two audited pure-fix
+exceptions). Suite green throughout. Stage record = port-note `C2-sodium-iris.md`.
+NEXT: the user's BASELINE round (port-note §5 — P2/P1/P5/P7/P8 probe answers) + the LEVERED
+C2-1 round (§2.5 script), then C2-2 (clipping transport; P7 selects M1/M2/M3).**
+
 **S19 CLOSED (2026-07-19, code-complete + verified; two live-round items ride the next READY).**
 The commons tail (EnderEye CVB / dfu legacy-item datafixer + AW/AT / BossBar fog / Splash rewrite)
 landed at `28999ce` (initially VERIFY-PENDING — the lenses died on the Fable usage limit) and was
