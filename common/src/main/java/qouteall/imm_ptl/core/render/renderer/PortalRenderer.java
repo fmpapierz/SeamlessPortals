@@ -416,6 +416,10 @@ public abstract class PortalRenderer {
     // announced once; pack-off frames restore full views immediately via the fall-through below.
     private static boolean shadersOnPassThroughNotified = false;
 
+    // IS1: one-shot (per session) notice that the EXPERIMENTAL shaderpack-views renderer is
+    // live under an active pack (lever-armed sessions only — never fires at default).
+    private static boolean shaderpackViewsExperimentNotified = false;
+
     public static void switchToCorrectRenderer() {
         if (PortalRendering.isRendering()) {
             //do not switch when rendering
@@ -434,6 +438,33 @@ public abstract class PortalRenderer {
         }
 
         IPModInfoChecking.checkShaderpack();
+
+        // ===== IS1 — the lever-only compat-renderer routing (design §1 IS1 deliverables 5/6;
+        // D8-EVO, lever-only until the Q-U1 default-flip decision). UNARMED (the committed
+        // default) this whole block is byte-inert: the flag defaults false and the JVM lever is
+        // absent, so every path below falls through to the pre-IS1 selection verbatim.
+        // ARMED: shaders-ON routes to the new renderer INSTEAD of the D8 dummy; shaders-OFF
+        // (plain/sodium/iris-no-pack) ALSO routes there — the IS1 proof rows (the mechanism is
+        // provable sans iris). renderMode mapping at IS1: none stays dummy (respected), debug →
+        // debugModeInstance (the live-round diagnostic), else → instance.
+        if (IPGlobal.isShaderpackPortalViewsArmed()
+            && IPGlobal.renderMode != IPGlobal.RenderMode.none
+        ) {
+            if (IrisInterface.invoker.isShaders() && !shaderpackViewsExperimentNotified) {
+                shaderpackViewsExperimentNotified = true;
+                CHelper.printChat(Component.literal(
+                    "[Seamless Portals] EXPERIMENTAL shaderpack portal views (IS1): one portal "
+                        + "layer; dest terrain is not clipped at the portal plane; expect "
+                        + "artifacts and frame cost with portals visible."
+                ).withStyle(net.minecraft.ChatFormatting.GOLD));
+            }
+            switchRenderer(
+                IPGlobal.renderMode == IPGlobal.RenderMode.debug
+                    ? qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer.debugModeInstance
+                    : qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer.instance
+            );
+            return;
+        }
 
         if (IrisInterface.invoker.isIrisPresent()) {
             if (IrisInterface.invoker.isShaders()) {
@@ -474,7 +505,18 @@ public abstract class PortalRenderer {
     private static void switchRenderer(PortalRenderer renderer) {
         if (IPCGlobal.renderer != renderer) {
             Helper.log("switched to renderer " + renderer.getClass());
+            PortalRenderer oldRenderer = IPCGlobal.renderer;
             IPCGlobal.renderer = renderer;
+
+            // IS1 (mining §8-20 family): evict the compat renderer's deferred buffer when
+            // routing AWAY from that family (pack-off/renderMode change under the lever).
+            // instanceof does NOT class-initialize IrisCompatOn262Renderer, and oldRenderer can
+            // only BE one after an armed route — byte-inert at the committed default.
+            if (oldRenderer instanceof qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer
+                && !(renderer instanceof qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer)
+            ) {
+                qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer.onSwitchedAway();
+            }
 
             if (IrisInterface.invoker.isShaders()) {
                 // C2-4 verify lens A CORRECTION (the D8 timing sub-fix): IP fired this from

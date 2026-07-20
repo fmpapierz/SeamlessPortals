@@ -46,6 +46,24 @@ public class IPGlobal {
     public static boolean lagAttackProof = true;
     
     public static RenderMode renderMode = RenderMode.normal;
+
+    // ===== IS1 — the iris shaders-ON compat renderer activation (design §0.4-11) ================
+    // Lives QOUTEALL-SIDE (the IPGlobal family), deliberately NOT in ExperimentalCompatGate
+    // (which S20 deletes per decision C2-5(b)) — the S20 sweep cannot strand it. Default FALSE:
+    // every committed default stays byte-identical (shaders-ON = D8 dummy+notice; shaders-OFF =
+    // the stencil family). OR'd with the JVM lever below; consumed by
+    // PortalRenderer.switchToCorrectRenderer (the D8-EVO routing, lever-only until the IS3/IS4
+    // default-flip decision Q-U1).
+    public static boolean experimentalShaderpackPortalViews = false;
+
+    /** The IS1 JVM lever (read once at class-init; wired via gradle -PshaderpackViews=true). */
+    public static final boolean SHADERPACK_VIEWS_JVM_LEVER =
+        Boolean.getBoolean("seamlessportals.shaderpackViews");
+
+    /** True when the iris shaders-ON compat renderer is armed (config flag OR JVM lever). */
+    public static boolean isShaderpackPortalViewsArmed() {
+        return experimentalShaderpackPortalViews || SHADERPACK_VIEWS_JVM_LEVER;
+    }
     
     public static boolean doCheckGlError = true;
     

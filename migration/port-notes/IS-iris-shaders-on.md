@@ -519,3 +519,532 @@ verdicts:**
 fork HOLDS or is RE-DECIDED with evidence; the one live-residual (P-B2) is now GO;
 suite green at default in the same worktree (pre-probe baseline + the attempt-3 run is
 itself an 8-leg pass under iris). IS1 is UNGATED.
+
+---
+
+## §2 THE IS1 IMPLEMENTATION (worktree `is1-driver-paste`, branch `iris-on/is1-driver-paste`)
+
+### §2.1 Files
+
+- **NEW** `common/.../qouteall/imm_ptl/core/compat/iris_compatibility/IrisCompatOn262Renderer.java`
+  — the §2.2-member-walk renderer (design §1 IS1 deliverable 2): prepareRendering = stencil belt
+  ONLY (deferred prepare/clear moved to the workhorse; the held source's
+  IPPortingLibCompat.setIsStencilEnabled DROPPED — §0.4-3 stencil-plumbing NON-dependency);
+  onBeforeHandRendering = the workhorse (arePipelinesReady gate → prepare+resize → reversed-Z
+  clear → depth copyDepthFrom + color straight-copy snapshot → renderPortals(passingModelView)
+  → deferred→main blit-back IN THE FINALLY — §2.5 fold);
+  doRenderPortal (one-layer guard → occlusion test → push → try{renderPortalContent}
+  finally{pop} (§2.5 BLOCKER fix, the S14.29 precedent) → stamp /
+  debug raw view → cache-coherent GlStateManager._colorMask(15) restore — §2.5 fold);
+  invokeWorldRendering with the **D23 layer-0 fallback**
+  (isInsideOwnRenderPortals latch — CrossPortalViewRendering/GuiPortalRendering direct
+  invocations fall back to the decomposed renderWorldNew; REQUIRED at IS1 already, those
+  paths are reachable with the lever armed); §8-20 teardown (CLIENT_CLEANUP_EVENT + the
+  switchRenderer switch-away eviction).
+- **NEW** `common/.../qouteall/imm_ptl/core/render/IrisCompatPaste.java` — the paste family
+  (deliverable 3): `portalAreaSample` (POSITION_COLOR portal mesh, ONE combined P·MV clip
+  matrix as the Projection UBO, fragment `texelFetch` at gl_FragCoord = the 1:1 screen-space
+  law; **depth GREATER_THAN_OR_EQUAL, no write — reversed-Z "closer = larger", GEQUAL not
+  GREATER because the portal entity's own quad may have written plane depth**; blend off) +
+  `portalStraightCopy` (mod-namespace screenquad/blit_screen copies; Optional.empty() depth =
+  the working DISABLED state — the ALWAYS_PASS trap honored; OQ5: blitAndBlendToTexture never
+  used on this path). All four block-era fixes on every pass (6-arg createRenderPass + explicit
+  full RenderArea; depth Optional.empty() on copies; pass-bound NEAREST clamp sampler; blend
+  off + GlStateManager backstops). Frame-transient buffers ride the S14.30 ledger.
+- **NEW shader assets** `common/src/main/resources/assets/seamlessportals/shaders/core/
+  {screenquad.vsh, blit_screen.fsh}` (verbatim vanilla copies — P-PASTE belt-and-suspenders)
+  + `{portal_area_sample.vsh, portal_area_sample.fsh}` (the stamp pair). No "sodium" substring
+  anywhere in our namespace (the §1-C rule).
+- **EDIT (additive)** `MyGameRenderer.java` — `renderWorldFullPipeline(WorldRenderInfo)` +
+  `switchAndRenderTheWorldFullPipeline(...)`: **DUPLICATE-with-pairing-comment** (the design
+  §2.1 implementer's choice, taken for zero-drift: `switchAndRenderTheWorld` is BYTE-UNTOUCHED;
+  the duplicate carries a lens-checkable PAIRING CONTRACT block listing the SAVE/SWAP/RESTORE
+  sets in order). Differences from the decomposed shell, all declared in the contract block:
+  the invoke body = `renderDestWorldFullPipeline`; the invokeWrapper indirection dropped
+  (every live caller passed Runnable::run); renderWorldFullPipeline wraps push/popRenderInfo
+  in try/finally (renderWorldNew's pop is not throw-protected — hardening, not drift: the
+  decomposed entry is untouched).
+- **EDIT (additive)** `SecondaryWorldRenderCore.java` — `renderDestWorldFullPipeline(...)`:
+  the §2.1 core body (Step-2 extractor router + §8-14 re-point/assert, Step-3 matrices +
+  conventional-Z frustum, Step-4 camera state, Step-5 cross-dim extract + identity-guarded
+  SOG feed, Step-6 fog family, Step-7 projection, Step-8 Globals-UBO, the same-dim sodium
+  drive, then ONE direct 8-arg `destRenderer.render(UNPOOLED, deltaTracker, false,
+  destCameraState, destViewMatrix, destFogBuffer, destFogData.color, doRenderSky)` into the
+  main target). NORMATIVE EXCLUSIONS honored in-code: no compile drain, no
+  ip_armDestChunkRenders, no armed VisibleSectionDiscovery/manual visibleSections, no SOG
+  feed beyond the identity-guarded one. DEF-G whole-pass clip belt via
+  FrontClipping.disableClipping (the cached owner — never raw-GL) + raw stencil disable;
+  finally = UBM latch reset, Globals restore, source diffuse, camera-state/fog-field
+  restores, shader-fog slice restore, stencil-NEUTRALIZE (disabled — the stencil-free shape),
+  §8-3(c) source setupFog re-run.
+- **EDIT (behavior-identical refactor)** `ViewAreaRenderer.java` — the mesh BUILD (incl. the
+  S14.36 near-plane clip) extracted to `buildPortalViewAreaMesh(...)`; the existing draw path
+  calls it (build → null-check → drawMesh, unchanged). Single source of truth for the stamp's
+  geometry route.
+- **EDIT (additive)** `IPGlobal.java` — `experimentalShaderpackPortalViews` (default false,
+  qouteall-side per §0.4-11) + `SHADERPACK_VIEWS_JVM_LEVER`
+  (`-Dseamlessportals.shaderpackViews`) + `isShaderpackPortalViewsArmed()`.
+- **EDIT** `renderer/PortalRenderer.java` — the D8-EVO lever-only routing branch AHEAD of the
+  existing selection (armed && renderMode!=none → instance / debug→debugModeInstance, both
+  shaders-ON and shaders-OFF proof rows; renderMode=none respected → dummy) + the one-shot
+  lever-armed pack-ON notice; switchRenderer gains the compat-family switch-away eviction
+  (instanceof — does not class-initialize; byte-inert unarmed). UNARMED = byte-identical
+  pre-IS1 behavior (flag false + lever absent ⇒ the new branch is never taken; D8 dummy +
+  notice verbatim; the deferred reloadPipelines one-shot rides unchanged and now also covers
+  compat↔dummy transitions when armed).
+- **EDIT (header comment only)** `IrisCompatibilityPortalRenderer.java` — the doc-pointer line.
+- **EDIT** `fabric/build.gradle` — `-PshaderpackViews=true` ⇒
+  `-Dseamlessportals.shaderpackViews=true` on `client`, `clientSodium`, `crossingGametest`
+  (the established lever-passthrough pattern).
+
+### §2.2 THE IS1 INJECTION INVENTORY (design §1 IS1 deliverable 4 — every flag-ON mixin +
+fabric listener firing inside the REAL nested LevelRenderer.render, classified)
+
+Context: the nested render always runs INSIDE `pushPortalLayer..popPortalLayer`
+(doRenderPortal), so `PortalRendering.isRendering()==TRUE` for its whole extent — the
+recursion-guard family below is structurally armed. `renderOutline=FALSE` on the 8-arg call
+is DOUBLY load-bearing (§1-E): IP fidelity AND it gates out the block-outline family.
+
+| # | Injection (site) | Classification | Ground |
+|---|---|---|---|
+| F1 | Fabric AFTER_TRANSLUCENT_TERRAIN driver (SeamlessPortalsClientFabric:134-146) | **guarded-by-isRendering (load-bearing)** | Re-fires inside the nested framegraph; early-returns because the nested render runs inside the pushed layer (§2.4-7 lens assert). The IS0 §1.5 NOTE's constraint ("push a portal layer around a real-renderer nested render") is SATISFIED by construction — doRenderPortal pushes before renderPortalContent. |
+| F2 | PerEntityClipBracket BEFORE_TRANSLUCENT_TERRAIN (PerEntityClipBracket:467-469) | **guarded-by-isRendering (the SECOND load-bearing guard — §1-E ledger line)** | Same re-fire class; early-returns inside the pushed layer. |
+| F3 | Fabric BEFORE_BLOCK_OUTLINE (inside vanilla submitBlockOutline) | **gated-out by renderOutline=FALSE** | submitBlockOutline is only called when render()'s renderOutline arg is true; Fabric's per-frame context is null outside the real MAIN framegraph (the S18.5 NPE class) — the FALSE arg forecloses it. |
+| M1 | LevelRendererAccessorMixin | benign | Accessor-only, no injections. |
+| M2 | LevelRendererBlockOutlineMixin (@ModifyArg submitBlockOutline) | **gated-out by renderOutline=FALSE** | Host method never runs (the [M11] of §1-E). |
+| M3 | LevelRendererCompileSectionsMixin (@Redirect in compileSections) | benign/wanted | compileSections runs INSIDE the nested render() on the DEST renderer — the redirect resolves per-instance state; this is the §8-13-correct single drain (the sibling core drains nowhere else). |
+| M4 | **MixinLevelRenderer_CrossPortalEntity** (submitEntities HEAD/TAIL/@WrapOperation, unguarded) — THE §1-E MUST-CLASSIFY | **benign-live-equivalent (RESOLVED)** | Already fires per pass on every LevelRenderer instance incl. secondaries since S13 (its own header): the decomposed path invokes submitFeatures on the same storages. Nested-render specifics: (a) HEAD's CASE-3 setupInnerClipping arms GL_CLIP_DISTANCE0 with the pass's OWN dest view matrix + this portal's plane during the SUBMIT phase (CPU, pre-framegraph-execute) and TAIL's disableClipping disarms it before any draw executes — no draw runs clipped, the DEF-G belt (asserted before render()) governs the EXECUTE phase; (b) per-storage scoping keys on the secondary's own SubmitNodeStorage (Verifier-1 P2); (c) renderEntityProjections at TAIL is iris-DISABLED (isCrossPortalRenderingEnabled → false when iris present — the C2-4 IP-faithful posture, design IS2 leg 7) and on sodium-only rows runs exactly as it already does for decomposed secondary submits. No bracket added. |
+| M5 | MixinLevelRenderer_ForceMainThreadRebuild (compileSections internals) | benign/wanted | Rides the same single compileSections drain as M3. |
+| M6 | MixinLevelRenderer_Optional (① translucent-sort HEAD-cancel while isRendering; ② sort-camera redirect; ③ per-layer clip uniform; ④ ViewArea update position) | **guarded-by-isRendering (wanted)** | IP-verbatim guards; ① actively protects the main translucent-sort state from the nested render — WANTED. ③'s clip upload no-ops under the DEF-G belt (FrontClipping disarmed for the whole pass). |
+| M7 | MixinLevelRenderer (R4 ImmPtlViewArea install @Redirect in invalidateCompiledGeometry) | benign/wanted | Fires only if the dest extract consumes shouldInvalidateCompiledGeometry (RD change/reload); installs the per-dim grid exactly as on the decomposed path; under sodium the whole body is HEAD-cancelled (sodium$replace) as always. |
+| M8 | MixinLevelRenderer_Clouds (cloudOptimization) | benign | Cloud-pass optimization keyed to the executing renderer instance; same-dim nested clouds are SUPPRESSED outright (cloudColor zeroed — §2.3 row 4), cross-dim secondary CloudRenderer is textureless (no-op render). |
+| M9 | MixinLevelRenderer_PortalWand (submitFeatures RETURN) | benign (cosmetic, ledgered) | Wand overlay submit re-runs for the nested pass; body checks are player/item-scoped (IP-verbatim isRendering checks inside render bodies per its header). Worst case = wand gizmos visible in a compat window — a live-round observable, not a defect class. |
+| M10 | LevelRendererCullTerrainMixin (cullTerrain HEAD) | benign | Sodium-present early-return; the prime-consume path is PortalWorldManager-scoped (block-era flag-OFF machinery, consumePendingPrime false flag-ON). |
+| M11 | LevelRendererDiagMixin (SOG update probes) | benign | Log-gated diagnostics. |
+| M12 | LevelRendererEntityVisibilityMixin (isSectionCompiledAndVisible HEAD) | benign (the §1-E "minor at render():274") | Affects only the playerCompiledSectionCallback gate; spurious dest-camera runs are idempotent vanilla one-shots. |
+| S | sodium LevelRendererMixin (prepareChunkRenders wrap + endFrame RETURN) | **WANTED — the arm** | Mining §5: sodium arms the ChunkSectionsToRender render() builds internally, with the pass's own matrices (the scratch/dest cameraRenderState). This replaces ip_armDestChunkRenders on this path (which is EXCLUDED — §0.4-4). |
+| I | iris MixinLevelRenderer (class weave: setupPipeline/beginLevelRender/endLevelRender + framegraph lambdas) | **WANTED — the mechanism** | P-B2-proven: the full iris lifecycle re-enters on the secondary instance and finalizes into the main target. |
+
+### §2.3 Design-interpretation decisions (flagged for the IS1 lenses)
+
+1. **Bracket-share vs duplicate (deliverable-1 choice): DUPLICATE, chosen OVER the two
+   sharing forms the design §2.1 lists** (extracted private driver / strategy branch — both
+   SHARE the bracket; a duplicate copies it), satisfying the binding constraint maximally:
+   "zero drift of the decomposed path" beats DRY; `switchAndRenderTheWorld` is byte-untouched
+   and the sibling carries the PAIRING CONTRACT comment the lens diffs. CONSEQUENCE (Lens-F
+   fold, §2.5): future edits to `switchAndRenderTheWorld` require a hand-mirrored edit of the
+   sibling — **the pair is an S20/gate-audit LOCKSTEP item** (any edit to either re-diffs
+   both against the contract block).
+2. **Frustum capture (decomposed Step 3.5) is CROSS-DIM-DROPPED / SAME-DIM-KEPT.**
+   Un-captured, extract's applyFrustum branch + sodium's cullTerrain anchor (at the
+   SOG.consumeFrustumUpdate INVOKE inside the capturedFrustum==null branch) + render()'s
+   sog.update graph scheduling ALL run naturally — "render() gets real occlusion"
+   (mining §7.2-B). The cull frustum stays OUR conventional-Z build (I7: applyFrustum and
+   sog.update both offsetToFullyIncludeCameraCube it). Same-dim keeps the capture to suppress
+   dest-camera graph churn on the MAIN SOG (no extract runs there anyway).
+3. **Same-dim (sharedState) discipline mirrors the decomposed path: NO extract.** A same-dim
+   extract would reposition the MAIN SectionUpdateTracker to the portal camera + re-flip the
+   main delta window. Consequences (pre-registered IS1 observables, NOT defects):
+   (a) same-dim compat windows draw NO entities (main entityRenderStates consumed+cleared by
+   the main pass — the S15 same-dim family; the lever-off stencil path retains the S15
+   isolated pipeline, so the A/B leg DIFFERS here by design); (b) plain-row same-dim windows
+   draw no vanilla terrain (shell-swapped empty visibleSections; armed discovery excluded) —
+   sky/fog only; the DECISIVE same-dim row is sodium (design SD-ROW) where terrain rides the
+   D1-swapped context via the explicit same-dim `ip_driveDestTerrainSetup` (the §2.4-4
+   "decided in OUR code" item: drive for sharedState only — cross-dim culls naturally in the
+   un-captured extract).
+4. **Shared-state clouds/weather suppression (26.2-forced, crash-class foreclosure).** The
+   nested render() on the MAIN renderer would rotate the main CloudRenderer's utb a SECOND
+   time per frame at a different camera cell (the S18.3 fence-crash class) and draw
+   MAIN-camera-centric weather columns at the portal camera (the S18.7 AIOOBE class —
+   UNCAUGHT inside the framegraph). cloudColor zeroed (alpha gates addCloudsPass off;
+   restored in the finally) + weatherRenderState reset (columnCount==0 no-op; next main
+   extract refills). Ledgered observables: no clouds/weather in same-dim compat windows.
+   Cross-dim: the secondary's own CloudRenderer is textureless (never reload-registered) →
+   addCloudsPass no-ops → **no vanilla dest clouds in compat windows at IS1** (the decomposed
+   path's mod-owned per-dim cloud isolation is Step-10.11 machinery, not reused here) —
+   accepted stage-(a) envelope item.
+5. **render() 8th arg** = WorldRenderInfo.doRenderSky (IP's fuse-view no-sky), not literal
+   true; vanilla's boss-world-fog clause is not re-derived (immaterial, commented in-code).
+6. **§8-3(c) source setupFog re-run** added to the sibling finally (block-era Step-9
+   discipline; compute-only on 26.2; one extra AtmosphericFogEnvironment lerp step toward the
+   SOURCE level per pass — benign, commented).
+7. **endFrame audit (§2.1 lens item), no additions needed:** newly-exercised owners under the
+   full render() = the secondary's SkyRenderer (no per-frame ring; closed by vanilla lifecycle),
+   the secondary's CloudRenderer (textureless → render no-ops → no rotation; covered by
+   ClientWorldLoader.endFrameOnSecondaryLevelRenderers under sodium anyway), the secondary FRD
+   buffers + pooled RenderBuffers (already covered: endFrameOnSecondaryFeatureBuffers +
+   endFramePooled), frame-transient stamp buffers (the S14.30 ledger). "Resizing Sodium
+   terrain uniforms" spam stays the pre-registered regression signal.
+8. **Plain-row pre-registered artifacts** (lever-ON only): first-frame SOG-walk stutter
+   (§6.3 class — design-accepted); same-dim main-grid repositionCamera ping-pong (render()'s
+   own repositionCamera recenters the main ViewArea at the dest camera each window frame; the
+   next main frame recenters back — §8-12 class, plain-row-only: sodium's IgnoringViewArea
+   no-ops it). **Lens-D upgraded wording (§2.5 fold): per the fix-A memory ("warm-swap
+   repositionCamera resets meshes to UNCOMPILED"), a FAR same-dim portal may drive a
+   MAIN-WORLD RECOMPILE STORM / terrain holes on the plain row, not just churn — watch for it
+   in the plain proof row; if confirmed, the IS2 candidate is restoring the main grid position
+   (or a sharedState repositionCamera skip), NOT accepting the ping-pong.** The decisive
+   sodium row is unaffected. Both named for the live round.
+9. **Both-levers precedence (Lens-G CORRECTION, defined here):** the IS0 anchor
+   (`MixinGameRenderer_IPPostLevelAnchor`) fires `renderer.onBeforeHandRendering` — the FULL
+   compat pass incl. blit-back — BEFORE the `ShaderpackViewsProbe` dispatch. With
+   `-PshaderpackViewsProbe` AND `-PshaderpackViews` both set, P-alpha/P-B2 therefore snapshot
+   and judge frames that already contain compat-stamped portal views + the deferred blit-back,
+   confounding the probe's pre-registered discriminators (P-B2 "clean N/N+1", the FramePass
+   trace). **Probe rounds are defined for renderer-lever-OFF only; both-levers is a
+   diagnostics-confounded configuration, not a supported row.** Benign at default (both levers
+   absent); no crash class. Also noted in the renderer's class header.
+10. **Multi-portal occlusion-query ledger (Lens-D NOTE):** for the 2nd+ portal in a frame,
+   `testShouldRenderPortal` depth-tests against the CURRENT main-target depth — which the
+   previous portal's nested full render replaced with DEST-world depth (blit-back restores
+   color only, after the loop; nothing restores main depth between portals). Wrong show/hide
+   decisions possible for portals 2+ (a falsely-culled portal shows the snapshot scene). The
+   STAMP stays correct (tested against the untouched deferred snapshot depth). Inherited
+   one-layer-era shape, faithful to the held IP source — NOT an implementation error — but the
+   stencil family does not have it: **pre-registered A/B observable — two portals
+   side-by-side, the second window shows the static snapshot scene.** IS2+ candidate: run the
+   query draw against the deferred buffer's snapshot depth.
+
+### §2.4 Round commands (IS1 proof rows)
+
+```
+Set-Location "C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is1-driver-paste"
+# plain proof row (A/B vs the stencil renderer by dropping the lever):
+.\gradlew.bat :fabric:runClient -PshaderpackViews=true
+# sodium proof row (the DECISIVE shared-RSM/same-dim leg):
+.\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PshaderpackViews=true
+# iris shaders-OFF regression row (unchanged behavior expected armed = compat, unarmed = parity):
+.\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViews=true
+```
+
+Suite gate (orchestrator): the 8-leg suite runs sodium/iris-ABSENT and cannot exercise them;
+default (no lever) is byte-identical committed behavior.
+
+### §2.5 THE FABLE FOLD (three-lens verify round: F=PASS, D=PASS_WITH_CORRECTIONS,
+G=PASS_WITH_CORRECTIONS — every BLOCKER/CORRECTION applied, ZERO refuted)
+
+**Applied (code):**
+
+1. **[D-BLOCKER] doRenderPortal layer-stack throw-safety** (`IrisCompatOn262Renderer`):
+   `pushPortalLayer → try{renderPortalContent} finally{popPortalLayer}` — the S14.29 /
+   `RendererUsingStencil:332-346` approved-hardening precedent (a single escaping throw from
+   the nested full render() used to leave `isRendering()==TRUE` forever = session-permanent
+   silent portal death). Companion: the deferred→main **blit-back moved into
+   onBeforeHandRendering's finally** (structurally gated — the try opens only after the
+   snapshot is taken), so a mid-loop throw restores the composited snapshot instead of
+   leaving the last portal's raw dest render on the main target. The held IP source lacks
+   both guards; the stencil renderer's landed hardening is the governing precedent.
+2. **[D-CORRECTION] cache-coherent color-mask restore**: raw
+   `GL11.glColorMask(true,true,true,true)` → `GlStateManager._colorMask(15)` (the S14.22
+   idiom, `RendererUsingStencil:451`). The raw call desynced the per-draw-buffer COLOR_MASK
+   cache: with the stamp no-oping (maxPortalLayer==0 / null mesh), cache=0 (the query
+   pipeline's writeColor=false) vs actual=15 → the next mask-0 pipeline apply short-circuits
+   and draws WITH color writes (visible aperture-mesh artifacts). The "colorMask is GONE"
+   rationale held only for the never-loaded held shell — `_colorMask(int)` exists (api-map
+   render-sub.md:168) and was already in use in-tree.
+3. **[D-CORRECTION] pipeline-failure honest fallback**: new
+   `IrisCompatPaste.arePipelinesReady()` + workhorse early-return BEFORE the snapshot/loop.
+   Previously a static-init pipeline failure (credible: reflection register, JPMS/driver
+   variance) made every copy no-op while the per-portal nested renders still clobbered the
+   main target — live symptom = whole-screen dest world (NOT the promised "unchanged
+   window"), a wrongly-discriminated corruption mode. Now: D7 loud log + "portals render
+   nothing", and the static-init catch comment describes the real behavior.
+4. **[G-CORRECTION] both-levers precedence DEFINED** — §2.3 row 9 + the renderer class
+   header (probe rounds are renderer-lever-OFF only; both-levers = diagnostics-confounded,
+   unsupported). No code change (verified benign at default).
+
+**Refuted:** none — all four verified against the worktree code (the try/finally gap, the
+GlStateManager cache mechanics vs the in-tree S14.22 precedent, the clobber path, the anchor
+firing order at `MixinGameRenderer_IPPostLevelAnchor`).
+
+**NOTE folds (comments/ledger only, no behavior change):**
+
+- **[F] deliverable-1 phrasing + lockstep**: §2.3 row 1 reworded (duplicate chosen OVER the
+  two listed sharing forms) + the sibling pair registered as an S20/gate-audit LOCKSTEP item.
+- **[F] mid-packet MISMATCH frame parity**: the workhorse's entry guard is nullity-only —
+  the S15 mismatch class (`player.level() != mc.level`) is intentionally uncovered, at
+  parity with the F1/stencil family (comment at the guard). If the live round surfaces a
+  mismatch-frame defect on the anchor, add the CrossPortalViewRendering:59-62 one-line skip.
+- **[F] sky pre-fill lever scope**: deliberate divergence — nested inside
+  `!debugSkipDestExtract` (decomposed path gates it standalone); debug-lever-only,
+  self-retiring (commented in-code).
+- **[F] clouds/weather suppression pre-try window**: capture-before-try shape accepted on
+  the decomposed precedent (commented in-code; the pre-try calls are field reads).
+- **[D] multi-portal occlusion query**: §2.3 row 10 (pre-registered A/B observable +
+  in-code comment at `testShouldRenderPortal`; IS2+ candidate = query vs snapshot depth).
+- **[D] far same-dim plain-row severity upgrade**: §2.3 row 8 (recompile storm / terrain
+  holes possible, not just churn; IS2 candidate named — do NOT accept the ping-pong if
+  confirmed).
+- **[D] renderWorldNew unprotected push/pop**: the D23 fallback rides `renderWorldNew`'s
+  unbracketed `pushRenderInfo/popRenderInfo` — pre-existing exposure shared with EVERY
+  existing renderer, deliberately left (frozen decomposed entry; the NEW
+  `renderWorldFullPipeline` hardened its own pair). Candidate one-liner for a later
+  stage-wide sweep.
+- **[G] sibling signature**: `doRenderHand` dropped in the sibling (dead in the original) —
+  now listed in the PAIRING CONTRACT block so lockstep diffs don't flag it.
+- **[G] asset/pipeline lifecycle**: verified inert at default (lazy compile; registration
+  only via the armed-branch clinit; failure loud-not-crash; no "sodium" substring).
+- **[G] IPGlobal flag**: mutable public static with no config/command wiring at IS1 — the
+  JVM lever is the practical switch; runtime flips handled (per-call re-evaluation +
+  instanceof eviction). Config wiring rides the later Q-U1 default-flip decision.
+- **[D+G] verified-clean records**: sibling pairing line-for-line; exclusion list vs
+  render() internals (no double drain/arm; sharedState-XOR-natural-anchor cull); anchor
+  non-reentrancy; passingModelView aliasing; deferred-buffer lifecycle + teardown; GL-state
+  discipline (stencil/depth-clamp uncached — grep-verified); committed-default inertness
+  (seam assert: 8 files, zero decomposed-path deletions, mixin configs untouched); one-shot
+  consumer pairing per §0.4-4; compile gate re-run green by Lens G.
+
+**Compile gate after the fold**: `.\gradlew.bat :common:compileJava :fabric:compileJava
+--console=plain` — green (see below).
+
+### §2.6 THE ROW-1 AIOOBE (IS1 live defect; diagnose-first per the C2-3b pattern —
+tasked as "§2.5" but that slot is the Fable fold; all code comments reference §2.6)
+
+**The repro (2 runs, deterministic):** the 8-leg crossing gametest with the IS1 lever
+(`-PshaderpackViews=true`), PLAIN install. `ArrayIndexOutOfBoundsException: Index 923 out of
+bounds for length 27` — IDENTICAL index both runs — at `RenderSectionRegion.getSection(:64)
+<- getBlockState(:40) <- SectionCompiler.compile(:76)` on a ForkJoin meshing worker
+("Batching sections", `CompileTask.doTask:472`), surfaced on the Render thread via
+`BlockableEventLoop` delayed-crash, in `the_nether` as MAIN at client ticks ~465-467 —
+immediately after leg 4's overworld->nether promote. Lever-OFF suite green in the same tree.
+Length 27 = the 3x3x3 region; index 923 => (compiled-section, region-origin) pairing
+INCONSISTENT — an identity/coords bug, not content.
+
+**The mechanism (SAME-DIM STALE-STATE RE-CONSUMPTION THROUGH THE UNGUARDED ImmPtlViewArea
+WRAP):** the IS1 same-dim full-pipeline pass violates vanilla's
+one-LRS/one-camera/one-consume-per-frame invariant. sharedState passes skip the extract
+(`renderDestWorldFullPipeline` Step 5 is cross-dim-only) and run a real 8-arg
+`destRenderer.render()` on the MAIN renderer with the dest camera. `render()` first
+repositions the MAIN `ImmPtlViewArea` to the DEST camera section (LevelRenderer.render:169
+-> ImmPtlViewArea.repositionCamera — swaps the coord-pinned preset), then its internal
+`compileSections` (:255 -> :608-640) RE-consumes the SAME main-LRS
+`sectionUpdateRenderStates` the main pass already consumed this frame (the list clears only
+at the next extract head — LevelRenderState.reset:35 / LevelExtractor:161; vanilla
+compileSections never removes entries). Each stale state's node is re-resolved at :625 via
+`ImmPtlViewArea.getRenderSection(long)`, which — unlike vanilla
+`RotatingSectionStorage.getValue` (:104-123: `containsSection` window guard +
+`repositionCenter` re-noding => in-window occupant ALWAYS exact-match, else null) — did a
+bare `positiveModulo` wrap into the current preset with NO window check and NO occupant-node
+verification. Our RenderSections are coord-PINNED (`createColumn`), so an out-of-window
+query returns a live section at congruent-mod-W DIFFERENT coords. Geometry lock: arena node
+A=(-4,y,-4) queried against the leg-7 portal-C far-dest preset centered at section (87,y,87)
+(dest 1400.5,250,1400.5; renderDistance 6 -> W=13; -4 ≡ 87 ≡ 9 mod 13 on both axes) returns
+the pinned B=(87,y,87); `compileAsync` pairs region(A) with section(B); `doTask` reads B's
+node at RUN time (SectionRenderDispatcher:432) and iterates B's origin against region(A):
+index = 92 + 3 + 828 = **923 exactly**, every run. The bad task is CREATED on the last
+overworld-main frame(s) of the leg-4 crossing (portal C renders same-dim every frame; the
+crossing machinery dirties exactly one arena section that frame — one state, one task);
+the promote then flips main to the nether and the worker throws within ms — hence
+"the_nether as MAIN". Leg 7 passes because its 150 ticks are static (empty states list on
+every portal-C frame). Lever-OFF is green because the decomposed path never calls
+`render()`: same-dim never repositions and its drain is cross-dim-only after its own
+reposition. Cross-dim IS1 passes are consistent (Step-5 extract resets+refills destLRS;
+`render()` repositions to the dest camera before compiling). The
+`seamlessportals$suppressFrameObsidian` redirect in the stack is pass-through (incidental).
+
+**The fix (both halves landed together — the diagnostician's spec verbatim, one placement
+refinement):**
+
+1. **PRIMARY (pairing-rule, `SecondaryWorldRenderCore.renderDestWorldFullPipeline`):**
+   sharedState passes only — immediately before the nested `destRenderer.render()`, copy
+   `destLRS.sectionUpdateRenderStates` to a local ArrayList and clear the (final) list; in
+   the outermost finally's sharedState branch, `addAll` the contents back. The nested
+   render()'s compileSections sees an EMPTY list (no re-consumption, no re-resolution
+   against the dest-repositioned preset), while the restore keeps the states available for
+   their ONE legitimate consumer on any pass ordering (protects pre-main layer-0 callers —
+   CrossPortalViewRendering/GUI-portal — from starving the main compileSections: the
+   ow-holes-consumed-compile-queue class). Per-pass bracketing handles multiple same-dim
+   portals per frame. Cross-dim passes are NOT bracketed (their Step-5 extract+render() is
+   the correct one-shot pairing); §8-13 honored — render() still self-drains, it is only
+   denied someone else's already-consumed one-shots. PLACEMENT REFINEMENT vs the spec's
+   "next to the cloudColor suppression" option: the swap sits INSIDE the try (the spec's
+   alternative "just before :1601"), because a stranded EMPTY states list on a pre-try
+   throw would be silent compile loss (the holes class) — worse than the accepted
+   cloudColor pre-try window; the finally only runs for an entered try.
+2. **HARDENING (vanilla-parity occupant guard, `ImmPtlViewArea.getRenderSection(long)`):**
+   after resolving a non-null result, `if (result.getSectionNode() != sectionNode) return
+   null;` — transplants exactly the guarantee vanilla's containsSection+repositionCenter
+   congruence provides (in-window => exact match; else null), for EVERY node-keyed consumer
+   (compileSections re-resolution, SOG BFS, ...). Landed WITH the primary, never instead
+   (VERIFY-LENS AMENDMENT: the original "alone it would NPE at compileSections:626"
+   rationale was inaccurate for THIS codebase — `LevelRendererCompileSectionsMixin`
+   already @Redirects the states field-get and pre-filters null-resolving states, so the
+   hardening alone would have SILENTLY ABSORBED the mis-paired state, dropping the
+   compile; that mixin is the THIRD protective layer. The primary fix is still required
+   to restore the one-consume invariant rather than mask its violation).
+
+**Ledgered (no code change now):**
+
+- `getRenderSectionAt(BlockPos)` shares the wrap hazard for BlockPos-keyed callers — queued
+  for the S20 audit (also noted in-code at the §2.6 hardening comment).
+- The same-dim pass leaves the main ViewArea on the DEST preset until the NEXT main
+  frame's `render()`:169 reposition — and (VERIFY-LENS CORRECTION: the original
+  "only same-frame reader = playerCompiledSectionCallback" claim was WRONG) the next
+  frame's EXTRACT runs BEFORE that reposition, where TWO readers can hit the dest-centered
+  preset: (a) `LevelExtractorFlashBridgeMixin`'s applyFrustum flood (live in the <=30s
+  promote-bridge window — i.e. right after every crossing): post-hardening its lookups
+  return null → possible multi-frame main-terrain BLANK (lever-ON + same-dim portal
+  rendered the previous frame + bridge window); pre-hardening it returned wrapped WRONG
+  sections (the same corruption family as the AIOOBE) — the hardening made this strictly
+  SAFER, but the window is real. (b) An off-thread SOG full-update overlapping the window
+  builds an empty/boundary-seeded graph instead of a garbage one. DECISION DEFERRED to
+  the re-run per the lens: if watch row 7 shows blanking, restore the main preset in the
+  outermost finally's sharedState branch (weigh against the PortalContextSwitch:1191
+  DISAPPEAR-FIX history first).
+
+**Residual uncertainty (from the verdict, not load-bearing):** (1) the precise dirty-source
+of the single arena state on the fatal frame is inferred (ANY dirty visible section on a
+portal-C frame triggers the mechanism); (2) arena spawn sections (-4,\*,-4) derived from the
+923 algebra, not read from a log; (3) candidates (d)/(e) cleared by the I10-exclusivity
+header note + absent probe property, not an exhaustive walk. The discriminating probe (log
+occupant-mismatch in getRenderSection + dump the states list at sharedState entry) is
+recorded in the verdict should a pre-fix run ever be wanted.
+
+**REGRESSION WATCH (the §2.6 rows):**
+
+1. Leg 4 (the crash leg): AIOOBE gone across x2 lever-ON runs (determinism => one clean
+   pair is strong evidence).
+2. Leg 7 (same-dim far-dest, 150 ticks): still passes; portal C windows keep their ledgered
+   IS1 same-dim observables (no entities, no vanilla terrain on the PLAIN row) — the fix
+   removes only wrong-paired compiles, which never produced valid meshes.
+3. The ow-holes class: break/place a block near a visible same-dim portal — the main world
+   must still recompile that section the same frame (the swap-out+restore never starves the
+   MAIN compileSections, incl. layer-0 CrossPortalViewRendering/GUI-portal orderings).
+4. Cross-dim window freshness (legs 2/3/4 views): nether/overworld window content still
+   updates on block changes — the cross-dim Step-5 extract + render() self-drain pairing
+   untouched.
+5. Lever-OFF full suite: decomposed path stays green. NOTE (lens): the decomposed path is
+   code-untouched but NOT byte-identical in BEHAVIOR — the ImmPtlViewArea occupant guard
+   is live lever-OFF too (all lever-OFF consumers audited null-tolerant; vanilla-parity
+   says no visible change) — watch for any new holes/visibility regressions regardless.
+6. The 12-point checklist's far-walk item (SOG delta feed adjacent but untouched): walk
+   away from and back to a portal — no distant-chunk vanish recurrence.
+7. (Lens CORRECTION row) The dest-preset residue window: post-crossing (the <=30s bridge
+   window) with a same-dim portal visible and a static camera — watch for multi-frame
+   MAIN-terrain blanking (the two next-frame extract-time readers of the dest-centered
+   preset). Blanking observed => land the preset-restore in the sharedState finally.
+
+**Compile gate after §2.6**: `.\gradlew.bat :common:compileJava :fabric:compileJava
+--console=plain` — green.
+
+### §2.7 THE SAME-DIM SODIUM SUPPLY (Fable verdict, 2026-07-20 — NOT A BROKEN LINK:
+### a NON-DISCRIMINATING OBSERVATION; evidence fixed, chain untouched)
+
+**The observation (self-run screenshot rounds, deterministic):** SODIUM row (lever ON) =
+pixel-identical to the PLAIN row — same-dim windows sky-only after leg 7's 150-tick hold;
+cross-dim window carries real nether terrain+fog+entities. The pre-registered expectation
+(design §2.4-4) treated the same-dim row as DECISIVE for the Step-9'
+`ip_driveDestTerrainSetup` drive. That expectation is VOID for this arena.
+
+**MECHANISM (the verdict, statically walked end-to-end — every link engaged and sound):**
+
+- Bracket engaged: the sibling full-pipeline shell carries the D1 sodium context swap
+  (`MyGameRenderer.switchAndRenderTheWorldFullPipeline` — createNewContext +
+  switchContextWithCurrentWorldRenderer swap-in after the repoint; symmetric swap-back in
+  the finally; the PAIRING CONTRACT lists it in both SWAP-IN and RESTORE).
+- Swap payload sound: `MixinSodiumRenderSectionManager.ip_swapContext` reference-swaps the
+  renderLists/tree/frame/camera-cache family + content-swaps cullResults/ACTC;
+  consume-before-swap; GLOBAL_PASS_SERIAL absorb-then-increment; the SodiumInterface
+  five-swap + scheduleTerrainUpdate bracket marks needsGraphUpdate per swapped-in pass.
+- The drive runs: Step 9' (`SecondaryWorldRenderCore` sharedState-only, BEFORE the nested
+  8-arg render(), inside the bracket) calls the full 6-arg `SWR.setupTerrain` on the
+  call-time-resolved current renderer. Sodium 0.9.1's setupTerrain has NO once-per-frame
+  gate (bytecode: prepareFrame -> prepareRender -> prepareRenderTrees ->
+  finalizeRenderLists end-to-end on every call), and finalizeRenderLists always publishes
+  dest-camera renderLists (sync renderOutOfGraph frustum-flood fallback, or findBestTree
+  over the content-swapped persistent cullResults with a blocking-consume retry).
+- Consumption live: sodium's own LevelRendererMixin WrapOperation at prepareChunkRenders
+  arms the ChunkSectionsToRender with this SWR + destCameraState.pos; the renderGroup
+  calls execute inside render() = inside the D1 bracket, HEAD-cancelling into
+  SWR.drawChunkLayer -> RSM.getRenderLists() read LIVE. ip_armDestChunkRenders is
+  correctly excluded on this path (design §2.4-3).
+- Culling/clip cannot blank it: terrain collection tests the UNHOOKED Direct viewport
+  functions (C2-3b sync-only discipline); async trees are portal-agnostic supersets; the
+  C2-2 in-shader clip uploads keep-all {0,0,0,1} under the DEF-G whole-pass disable.
+
+**THE GEOMETRY VERDICT:** both same-dim dest cameras hover MID-AIR at y=250
+(`CrossingSmoke` destA = (px+100.5, 250, planeZ); portal C dest = (1400.5, 250, 1400.5))
+with client renderDistance 6. Sodium's collection/draw envelope = min(fog cullDistance,
+renderDistance*16 ~= 96 blocks) (RSM getSearchDistance bytecode); the ground sits >=180
+blocks below both cameras -> ZERO renderable sections in range -> the CORRECT, fully
+converged dest view is sky+fog — pixel-identical to the plain row's by-design no-extract
+floor. A working drive and a broken drive produce the SAME image there. Cross-dim "works"
+in reverse: destB = (0.5, 129.5, 0.5) sits 2 blocks above the solid bedrock roof (terrain
+in range), and its setupTerrain fires naturally at extract time (capture dropped
+cross-dim -> sodium's LevelExtractorMixin cullTerrain anchor) on the dest dim's own SWR.
+
+**THE FIX (evidence only — ZERO change to the sodium chain; no seam file touched):**
+
+1. `CrossingSmoke` leg-7 block, lever-gated (`-Dseamlessportals.gametest.screenshots`,
+   via `screenshotsLeverOn()` — default suite byte-identical): PORTAL D above portal A
+   (origin (px+0.5, py+4.5, planeZ), spans y py+3..py+6 inside the cleared box; no plane
+   overlap with A; clear of the item/pearl paths and of window B's screen region) with a
+   same-dim ZERO-VERTICAL-OFFSET dest (px+100.5, py+4.5, planeZ). VERIFY-LENS GEOMETRY
+   FIX (round-1 BLOCKER: D's window sits ABOVE the eye so all window rays point UP — the
+   original floor pad was never hit, and the (+100,-3,0) dest embedded the through-portal
+   camera inside the pad slab): the dest camera now sits at eye height (~py+1.62) in
+   cleared air, and the terrain in the rays' path is a south-facing obsidian WALL across
+   the transformed window frustum (x px+94..px+106, z pz-12..pz-11, y py+3..py+13 —
+   bottom/top rays land at ~py+4.6..~py+11.2 on z=pz-12), ray corridor air-cleared
+   (x px+94..106, z pz-10..pz+2, y py..py+13), inside the already-forceloaded dest area
+   and ~12 blocks into the ~96-block envelope. Second screenshot
+   `is1-leg7-samedim-ground-dest-converged` at the 150-tick hold.
+2. The positive-half probe (diagnose-first): `SecondaryWorldRenderCore
+   .logSameDimSupplyProbe` — immediately after the Step-9' drive, while the D1 context is
+   still installed, log `SodiumWorldRenderer.getVisibleChunkCount()` (reflection-only:
+   `sodium$getWorldRenderer` -> `getVisibleChunkCount`, both public on 0.9.1; disarms on
+   any failure). Same lever; the 1Hz throttle is keyed PER PASS IDENTITY
+   (dim:layer:portal-UUID — VERIFY-LENS CORRECTION: a global gate is deterministically
+   claimed by portal A whose correct count is 0, starving the discriminating portal-D
+   line forever). Render-thread-logging discipline I5 preserved.
+
+**EXPECTED VISUALS (the fixed rows):**
+
+- SODIUM row, portal D: real dest-camera terrain (the obsidian WALL filling the window's
+  upper region). Pass 1 may be the renderOutOfGraph frustum-flood (no occlusion) or
+  briefly blank while fresh dest chunks mesh; occlusion-tree lists within ~2-3 passes;
+  150-tick hold = converged. Probe: portal D's pass line shows
+  visibleSectionsAfterDrive > 0 (A/C legitimately log 0 — empty envelope).
+- PLAIN row, portal D: stays SKY-ONLY (same-dim runs no extract — the pre-registered
+  floor). THIS pair (sodium terrain vs plain sky in the same window) is the real decisive
+  discriminator the design's SD-ROW wanted.
+- The two y=250 windows legitimately remain sky-only on EVERY row — correct content, not
+  a defect. Same-dim windows still draw NO entities and NO clouds/weather (pre-registered
+  IS1 observables, unchanged).
+- Ledgered: scaled portals (scale>2) may show a projection mismatch in nested-arm terrain
+  (sodium's GameRendererMixin captures the MAIN projection; the nested arm cannot receive
+  destDrawProjection — identical at scale 1). Untested until a scale>2 same-dim row
+  exists.
+
+**RESIDUAL UNCERTAINTY:** (i) the drive's positive delivery is proven statically, not yet
+live — one sodium-row run with the fixed evidence settles it (pad in D's window and/or
+nonzero probe line); (ii) if the consistent-settings seed held terrain >= y~154 within 96
+blocks of either y=250 dest, the verdict flips back to a chain defect — the same probe
+discriminates (typical spawn gen makes this unlikely; no terrain fragment in any
+screenshot); (iii) the scale>2 nested-arm projection question (ledgered above); (iv) the
+FlawlessFrames n=1 cold-arm interplay is asserted from the C2-1c ledger, not re-walked
+(benign either way — it only forces the sync path harder).
+
+**REGRESSION WATCH (the §2.7 rows):**
+
+1. C2 same-dim water/glass OUTER-WORLD INTEGRITY: main-world visibility/translucency
+   uncorrupted after same-dim full-pipeline passes — guarded by the untouched symmetric
+   swap-back, consume-before-swap + GLOBAL_PASS_SERIAL, the SWR five-swap, and the UBM
+   latch reset (`ip_onDestTerrainDrawsFinished`); all four stayed byte-untouched in this
+   fix (verified: no seam file in the diff).
+2. The §2.6 rows stay green: leg 4 x2 lever-ON (no AIOOBE), leg 7 held 150 ticks, the
+   ow-holes block-break row, cross-dim freshness (legs 2/3/4), lever-OFF full suite,
+   far-walk item, watch-row-7 dest-preset-residue blanking.
+3. Cross-dim unaffected: the nether window keeps real terrain+fog+entities on both rows —
+   portal D does not sit in window B's screen region (D is stacked above A).
+4. Lever-OFF byte-identical: portal D + pad + second screenshot + probe are all gated on
+   the same screenshots lever; the probe additionally self-disarms sodium-absent.
+5. "Resizing Sodium terrain uniforms" spam absent (the C2-1d endFrame-leak signal — D's
+   draws ride the same shared-SWR UBM).
+6. With the ground-level row live: first-pass envelope may exceed the converged set
+   (frustum-flood, acceptable <=3 passes); on the PLAIN row watch the §2.3 row-8 far
+   same-dim recompile-storm class (sodium row immune via IgnoringViewArea).
+
+**Compile gate after §2.7**: `.\gradlew.bat :common:compileJava :fabric:compileJava
+--console=plain` — green.

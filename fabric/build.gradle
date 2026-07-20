@@ -116,6 +116,10 @@ loom {
             // CompilerThread0, not any game thread — not mod logic, not the IS0 probes). Same
             // surgical mitigation, same removal condition as the exclude above.
             vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
+            // 5/6): arms the lever-only compat renderer for the plain proof rows —
+            //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
+            if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
         }
         server {
             server()
@@ -151,6 +155,11 @@ loom {
             // log-only shaders-ON probe suite (P-alpha/gamma + P-B2 + P-OQ4) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViewsProbe=true
             if (project.findProperty('shaderpackViewsProbe') == 'true') { vmArg('-Dseamlessportals.shaderpackViewsProbe=true') }
+            // IS1 shaderpack-views renderer lever (mirror of the client run's; the sodium/iris
+            // proof + live rounds) —
+            //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PshaderpackViews=true
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViews=true
+            if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -193,11 +202,23 @@ loom {
             // died JIT-compiling IOWorker::storePendingChunk during the suite's world saves —
             // same jvm.dll defect class, not mod logic; see the client run's note).
             vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
+            // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
+            vmArg('-XX:-OmitStackTraceInFastThrow')
             // IS0 shaderpack-views probe (mirror of the clientSodium lever above; the suite
             // runs sodium/iris-ABSENT, so with no pack the probe only logs its one-shot
             // waiting line — byte-inert for the 8-leg gate without the property) —
             //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViewsProbe=true
             if (project.findProperty('shaderpackViewsProbe') == 'true') { vmArg('-Dseamlessportals.shaderpackViewsProbe=true') }
+            // IS1 visual pre-screen screenshots (CrossingSmoke.maybeScreenshot; the self-run
+            // rounds capture portal-view frames for multimodal classification) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PgametestScreenshots=true
+            if (project.findProperty('gametestScreenshots') == 'true') { vmArg('-Dseamlessportals.gametest.screenshots=true') }
+            // IS1 shaderpack-views renderer lever (mirror; the suite runs sodium/iris-ABSENT —
+            // with the lever the compat renderer routes even shaders-OFF, so an armed suite run
+            // exercises the full-pipeline driver under the 8 legs) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true
+            if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
         }
     }
 }

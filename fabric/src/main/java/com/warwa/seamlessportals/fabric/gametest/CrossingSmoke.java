@@ -259,11 +259,69 @@ public class CrossingSmoke implements FabricClientGameTest {
                     LOG + "leg 7: far-dest same-dim portal C spawned (dest 1400,250,1400 — "
                         + "~81 chunks from destA)");
             });
+            // §2.7 THE SAME-DIM SODIUM-SUPPLY DISCRIMINATOR (lever-gated; port-note
+            // IS-iris-shaders-on §2.7). The two pre-existing same-dim windows are
+            // NON-DISCRIMINATING for the sodium terrain chain: destA and portal C's dest
+            // both hover MID-AIR at y=250 with client renderDistance 6, and sodium's
+            // terrain collection/draw envelope is min(fog cullDistance, renderDistance·16
+            // ≈ 96 blocks) — the ground sits ≥180 blocks below, so ZERO sections are in
+            // range and the CORRECT converged dest view is sky+fog on EVERY row,
+            // pixel-identical to the plain row's by-design no-extract floor (a working
+            // Step-9' drive and a broken one produce the same image there). Portal D
+            // fixes the evidence: a same-dim window whose dest camera has COMMAND-BUILT
+            // terrain inside the envelope (deterministic across seeds — natural surface
+            // height at the dest is not).
+            //   PLAIN row expectation: D stays sky-only (same-dim runs no extract, by
+            //   design — the pre-registered floor).
+            //   SODIUM row expectation: D shows the obsidian pad = the Step-9'
+            //   ip_driveDestTerrainSetup drive delivering renderLists (pass 1 may be the
+            //   renderOutOfGraph frustum-flood or briefly blank while dest chunks mesh;
+            //   occlusion-tree lists within ~2-3 passes; the 150-tick hold = converged).
+            // Lever-gated so the default suite stays byte-identical; D sits ABOVE portal
+            // A (spans y py+3..py+6, inside the cleared box, no plane overlap with A) —
+            // clear of every leg path (item/pearl fly at y≈py+1 through x px+0.5/px+4.5)
+            // and outside the cross-dim window B's screen region.
+            if (screenshotsLeverOn()) {
+                // VERIFY-LENS GEOMETRY FIX (the round-1 staging was itself
+                // non-discriminating: D's window sits ABOVE the eye, so all window rays
+                // point UP — a floor pad below the dest camera is never hit, and the
+                // ZERO-vertical-offset dest keeps the through-portal camera at eye height
+                // in cleared air instead of embedded in the pad). The terrain the rays DO
+                // hit: a south-facing obsidian WALL across the transformed window frustum
+                // (bottom/top rays from eye ~py+1.62 through D's py+3..py+6 span land on
+                // z=pz-12 at ~py+4.6..~py+11.2), with the ray corridor air-cleared.
+                runCommands(context, List.of(
+                    "fill " + (px + 94) + " " + (py + 3) + " " + (pz - 12) + " "
+                        + (px + 106) + " " + (py + 13) + " " + (pz - 11) + " minecraft:obsidian",
+                    "fill " + (px + 94) + " " + py + " " + (pz - 10) + " "
+                        + (px + 106) + " " + (py + 13) + " " + (pz + 2) + " minecraft:air"
+                ));
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    spawnTestPortal(ow, new Vec3(px + 0.5, py + 4.5, planeZ),
+                        Level.OVERWORLD, new Vec3(px + 100.5, py + 4.5, planeZ));
+                    SeamlessPortalsConstants.LOGGER.info(
+                        LOG + "portal D spawned (lever-gated §2.7 discriminator): same-dim"
+                            + " zero-offset dest ({},{},{}) — the obsidian WALL at z={}"
+                            + " sits in every window ray, ~12 blocks into the ~96-block"
+                            + " sodium envelope",
+                        px + 100.5, py + 4.5, planeZ, pz - 12);
+                });
+            }
             context.runOnClient(mc -> {
                 mc.player.setYRot(180f); // face the portal row (north of the platform)
                 mc.player.setXRot(0f);
             });
-            context.waitTicks(150);
+            // IS1 visual pre-screen (self-run rounds, port-note IS-iris-shaders-on §2.7):
+            // lever-gated screenshots at the same-dim portal-view hold — the stamp-shape /
+            // frame-edge-halo / same-dim-observable evidence the log legs cannot judge.
+            // Inert without -Dseamlessportals.gametest.screenshots (suite-neutral).
+            context.waitTicks(75);
+            maybeScreenshot(context, "is1-leg7-samedim-portals");
+            context.waitTicks(75);
+            // §2.7 shot 2 — the converged frame (150 ticks): portal D's window is the
+            // decisive pixel pair (sodium row = the obsidian WALL; plain row = sky).
+            maybeScreenshot(context, "is1-leg7-samedim-ground-dest-converged");
             String leg7State = context.computeOnClient(mc -> {
                 if (mc.player == null || mc.level == null) return "player/level null";
                 if (mc.player.level() != mc.level) return "player/level incoherent";
@@ -332,6 +390,9 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (!clientState.equals("OK")) {
                 throw new AssertionError(LOG + "leg 4 (pearl) FAILED client-side: " + clientState);
             }
+            // IS1 visual pre-screen shot 2: post-crossing nether (the dest-preset-residue
+            // watch-row-7 window — a blank main terrain here is the residue signature).
+            maybeScreenshot(context, "is1-leg4-post-crossing-nether");
             float postYaw = context.computeOnClient(mc -> mc.player.getYRot());
             if (Math.abs(postYaw - pinnedYaw) > 1.0f) {
                 throw new AssertionError(LOG + "leg 4 (pearl) FAILED relatives-preservation: "
@@ -494,6 +555,34 @@ public class CrossingSmoke implements FabricClientGameTest {
         portal.setDestination(dest);
         portal.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 3, 3);
         McHelper.spawnServerEntity(portal);
+    }
+
+    /**
+     * IS1+ visual pre-screen: capture a screenshot iff
+     * {@code -Dseamlessportals.gametest.screenshots} is set (the self-run rounds' lever;
+     * port-note IS-iris-shaders-on §2.7). Never throws — a capture failure must not fail
+     * a functional leg; it logs and moves on. Inert without the property (suite-neutral).
+     */
+    private static void maybeScreenshot(ClientGameTestContext context, String name) {
+        if (!screenshotsLeverOn()) {
+            return;
+        }
+        try {
+            java.nio.file.Path shot = context.takeScreenshot(name);
+            SeamlessPortalsConstants.LOGGER.info(LOG + "pre-screen screenshot saved: {}", shot);
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(LOG + "pre-screen screenshot '" + name
+                + "' FAILED (non-fatal)", t);
+        }
+    }
+
+    /**
+     * The self-run visual rounds' lever ({@code -Dseamlessportals.gametest.screenshots}) —
+     * gates the screenshots AND the §2.7 discriminator staging (portal D + its terrain pad)
+     * so the default 8-leg suite stays byte-identical.
+     */
+    private static boolean screenshotsLeverOn() {
+        return Boolean.getBoolean("seamlessportals.gametest.screenshots");
     }
 
     /** Spawn an item 2 blocks south of the portal plane, flying north through it. */

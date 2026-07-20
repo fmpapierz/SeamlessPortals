@@ -5,6 +5,7 @@ import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -38,6 +39,7 @@ import net.minecraft.client.renderer.fog.FogRenderer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.ChunkLoadingRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.resources.model.sprite.AtlasManager;
 import net.minecraft.core.SectionPos;
@@ -65,7 +67,9 @@ import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1256,6 +1260,458 @@ public class SecondaryWorldRenderCore {
         }
     }
 
+    // ===== IS1 — THE FULL-PIPELINE INVOKE BODY (iris shaders-ON engagement) ======================
+    // migration/IRIS_SHADERS_ON_DESIGN.md §2.1 (renderWorldFullPipeline body) + §0.4-4 (the sibling
+    // driver + the NORMATIVE exclusion list) + port-note IS-iris-shaders-on.md §1-E (LRS-identity
+    // assert, renderOutline=FALSE doubly load-bearing, DEF-G belt) — invoked ONLY from
+    // MyGameRenderer.switchAndRenderTheWorldFullPipeline (the duplicated shell bracket). It reuses
+    // the renderDestWorld Step-1..7 PRODUCT family and replaces the decomposed Step-9/10 drive+draw
+    // with ONE direct 8-arg LevelRenderer.render() — the block-era-proven FBO-mode call shape
+    // (FBO_PRECEDENT_MINING §1.4 step 8h) — INTO THE MAIN TARGET (the IP compat clobber; the
+    // caller renderer snapshots/restores around the whole portal loop).
+    //
+    // EXCLUDED here (normative, design §0.4-4 — the §8-13 one-shot pairing rule):
+    //   * the compileSections drain (render() drains internally; double-drain = compileAsync
+    //     cancels in-flight tasks = never-finishing compiles);
+    //   * ip_armDestChunkRenders (sodium's own LevelRendererMixin wraps render()'s INTERNAL
+    //     prepareChunkRenders call site and arms the instance itself — mining §5);
+    //   * armed VisibleSectionDiscovery / manual visibleSections population (render() gets real
+    //     occlusion via extract-applyFrustum + sog.update — mining §7.2-B);
+    //   * any SOG feed beyond the identity-guarded delta feed (kept for throw-safety only —
+    //     render()'s own sog.update consumes the window on the non-throw path, idempotently).
+    //
+    // FULL-PIPELINE DELTAS vs the decomposed Steps (each a design-sanctioned decision):
+    //   * Step 3.5 frustum CAPTURE is CROSS-DIM-DROPPED: capturing would skip extract's
+    //     applyFrustum branch (vanilla visibleSections supply) AND sodium's cullTerrain anchor
+    //     (which sits at the SectionOcclusionGraph.consumeFrustumUpdate INVOKE inside the
+    //     capturedFrustum==null branch — port-note §1-D transport walk) AND render()'s
+    //     sog.update graph scheduling (gated on !camera.isFrustumCaptured). Un-captured, the
+    //     natural flow supplies visibility on BOTH substrates; the cull frustum stays OUR
+    //     conventional-Z build (I7/SPIKE-R1: applyFrustum/sog.update both run
+    //     offsetToFullyIncludeCameraCube on it — safe ONLY conventional-Z).
+    //     SAME-DIM keeps the capture: no extract runs there (see below), and the captured flag
+    //     suppresses sog.update's graph scheduling on the MAIN SOG (a dest-camera full-update
+    //     BFS churn on the main graph every window frame otherwise).
+    //   * Step 5 extract stays CROSS-DIM-ONLY (the decomposed sharedState discipline): a
+    //     same-dim extract would reposition the MAIN SectionUpdateTracker to the portal camera
+    //     (dirty-mark loss for far portals) and re-flip the main delta window. Consequence
+    //     (ledgered IS1 observable): same-dim compat windows draw NO entities (the main
+    //     entityRenderStates were submitted+cleared by the main pass) and, on the PLAIN row,
+    //     no vanilla terrain (the shell swapped visibleSections to a fresh empty list; the
+    //     armed-discovery populate is excluded). The DECISIVE same-dim row is sodium
+    //     (design SD-ROW), where terrain rides the D1-swapped context via the explicit
+    //     same-dim cull drive below.
+    //   * Step 9: the vanilla armed-discovery half is EXCLUDED; the sodium drive runs for
+    //     SHARED-STATE passes only (no extract = no natural cullTerrain anchor for the swapped
+    //     context; cross-dim culls naturally inside the un-captured extract) — the §2.4-4
+    //     "decided inside OUR code" item.
+    //   * SHARED-STATE clouds/weather suppression (26.2-forced, crash-class): the nested
+    //     render() would drive the MAIN CloudRenderer a SECOND time this frame at a different
+    //     camera cell (utb re-rotation on one instance per frame = the S18.3
+    //     "Cannot wait on a fence for the current submit" class) and render MAIN-camera-centric
+    //     weather columns at the portal camera (the S18.7 AIOOBE class — UNCAUGHT inside the
+    //     framegraph, unlike the mod's try/catch'd direct draws). cloudColor is zeroed
+    //     (alpha-0 gates addCloudsPass off) + weatherRenderState reset (columnCount==0 no-ops)
+    //     for the pass; cloudColor restored in the finally, weather re-extracts next main frame.
+    //   * DEF-G belt (port-note §1.1 RE-DECIDED row): whole-pass clip disable through the
+    //     CACHED OWNER (FrontClipping.disableClipping — never raw-GL a cached state) before
+    //     render() and re-asserted in the finally; retired at IS3.
+    //   * finally tail adds the §8-3(c) source setupFog re-run (any capture-at-setupFog
+    //     observer re-captures SOURCE fog THIS frame) — the block-era Step-9 discipline the
+    //     decomposed path never needed (it installs/restores the shader-fog slice per draw).
+    @SuppressWarnings("unused")
+    public static void renderDestWorldFullPipeline(
+        ClientLevel destLevel, LevelRenderer destRenderer, Camera newCamera, int renderDistance,
+        ClientLevel sourceLevel, Camera sourceCamera
+    ) {
+        Minecraft mc = client;
+        DeltaTracker deltaTracker = mc.getDeltaTracker();
+        float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
+        ResourceKey<Level> destDim = destLevel.dimension();
+        Vec3 destCameraPos = newCamera.position();
+        TeleportFlashProbe.destPassesThisFrame++;
+
+        DrawCallTrace.record(">>> renderDestWorldFullPipeline dim=" + destDim.identifier()
+            + " layer=" + PortalRendering.getPortalLayer() + " " + DrawCallTrace.mvTop());
+
+        // ===== Step 2 — per-dim substrate (EXTRACTOR-IDENTITY router; verbatim decomposed) =======
+        LevelExtractor destExtractor;
+        if (destDim == RenderStates.originalPlayerDimension) {
+            destExtractor = mc.levelExtractor;
+        }
+        else {
+            destExtractor = ClientWorldLoader.WORLD_EXTRACTOR_MAP.get(destDim);
+            if (destExtractor == null) {
+                destExtractor = ClientWorldLoader.getWorldExtractor(destDim);
+            }
+        }
+
+        // §8-14 renderer-vs-extractor LRS coherence (the defensive re-point; the hard identity
+        // assert re-runs immediately before render() below per port-note §1-E).
+        LevelRenderState extractorState =
+            ((LevelExtractorAccessor) (Object) destExtractor).seamlessportals$getLevelRenderState();
+        LevelRenderState rendererState =
+            ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState();
+        if (rendererState != extractorState) {
+            ((LevelRendererAccessorMixin) destRenderer).seamlessportals$setLevelRenderState(extractorState);
+        }
+        LevelRenderState destLRS =
+            ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState();
+
+        boolean sharedState = (destLRS == mc.gameRenderer.gameRenderState().levelRenderState);
+
+        // §2.1-1 FRD isolation assert: a CROSS-DIM full render() must run on the per-secondary
+        // FeatureRenderDispatcher (ClientWorldLoader install :739-748) — sharing the main FRD
+        // would be the S15 "PreparedFrame already in use" class if anything overlapped. One-shot
+        // loud log, never a crash (post-main use is sequential even on violation).
+        if (!sharedState && !fullPipelineFrdAssertLogged
+            && ((LevelRendererAccessorMixin) destRenderer).seamlessportals$getFeatureRenderDispatcher()
+                == mc.gameRenderer.featureRenderDispatcher()
+        ) {
+            fullPipelineFrdAssertLogged = true;
+            qouteall.q_misc_util.Helper.err(
+                "[renderDestWorldFullPipeline] cross-dim secondary shares the MAIN "
+                    + "FeatureRenderDispatcher — per-secondary isolation expected (one-shot log)");
+        }
+
+        // ===== Step 3 — dest view matrix + projections + CONVENTIONAL-Z cull frustum =============
+        Matrix4f destViewMatrix = new Matrix4f();
+        newCamera.getViewRotationMatrix(destViewMatrix);
+        destViewMatrix = TransformationManager.processTransformation(newCamera, destViewMatrix);
+        CameraRenderState mainCameraState =
+            mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+        Matrix4f destProjection = new Matrix4f(mainCameraState.projectionMatrix);
+        Matrix4f destDrawProjection = RenderStates.getPortalDrawProjection(
+            destProjection, PortalRendering.getExtraModelViewScaling());
+        Matrix4f destCullProjection = buildCullingProjection(destProjection);
+        Frustum destFrustum = new Frustum(destViewMatrix, destCullProjection);
+        destFrustum.prepare(destCameraPos.x, destCameraPos.y, destCameraPos.z);
+        // The cull frustum feeds extract's entity/particle culls + (cross-dim) applyFrustum +
+        // render()'s sog.update — always set. The CAPTURE is same-dim-only (header note).
+        ((CameraInvokerMixin) newCamera).seamlessportals$setCullFrustum(destFrustum);
+        if (sharedState) {
+            ((CameraInvokerMixin) newCamera).seamlessportals$setCapturedFrustum(destFrustum);
+        }
+
+        // ===== Step 4 — camera render state (scratch object for shared state) ====================
+        SectionRenderDispatcher dispatcher = destRenderer.sectionRenderDispatcher();
+        Vec3 savedDispatcherCamPos = null;
+        if (sharedState && dispatcher != null) {
+            // render()'s own repositionCamera sets the dest position; restore main's in the finally.
+            savedDispatcherCamPos = mainCameraState.pos;
+        }
+
+        CameraRenderState destCameraState;
+        CameraRenderState savedSharedCameraState = null;
+        if (sharedState) {
+            savedSharedCameraState = destLRS.cameraRenderState;
+            destCameraState = new CameraRenderState();
+            destLRS.cameraRenderState = destCameraState;
+        } else {
+            destCameraState = destLRS.cameraRenderState;
+        }
+
+        newCamera.extractRenderState(destCameraState, partialTick);
+        destCameraState.viewRotationMatrix.set(destViewMatrix);
+        destCameraState.projectionMatrix.set(destProjection);
+        if (destCameraState.entityRenderState != null) {
+            destCameraState.entityRenderState.bob = 0.0f;
+            destCameraState.entityRenderState.backwardsInterpolatedWalkDistance = 0.0f;
+            destCameraState.entityRenderState.hurtTime = -1.0f;
+            destCameraState.entityRenderState.hurtDuration = 1;
+            destCameraState.entityRenderState.isDeadOrDying = false;
+        }
+        FogData savedFogData = destCameraState.fogData;
+        FogType savedFogType = destCameraState.fogType;
+        // Shared-state clouds/weather suppression (header note): saved + zeroed below, after the
+        // extract question is settled (no extract runs for shared, so zeroing here is stable).
+        // Fable-fold NOTE (port-note §2.5): these mutations sit a few statements BEFORE the try
+        // (same capture-before-try shape as the decomposed path) — a throw in the tiny pre-try
+        // window (sourceCamera.position()/getGameTime()/getShaderFog()) would strand
+        // cloudColor=0 on the MAIN LRS until renderer switch-away. Accepted on the decomposed
+        // precedent; practical risk negligible (those calls are field reads).
+        int savedSharedCloudColor = 0;
+        if (sharedState) {
+            savedSharedCloudColor = destLRS.cloudColor;
+            destLRS.cloudColor = 0; // alpha 0 → addCloudsPass gated off (2nd same-frame utb rotate)
+            destLRS.weatherRenderState.reset(); // columnCount==0 no-ops (AIOOBE class foreclosed);
+                                                // refilled by the next MAIN extract
+        }
+
+        Vec3 savedCameraPos = sourceCamera.position();
+        long savedLevelGameTime = sourceLevel.getGameTime();
+
+        boolean diffuseChangedToDest = false;
+        // §2.6 THE ROW-1 AIOOBE FIX (same-dim stale-state re-consumption): holder for the
+        // swapped-out MAIN sectionUpdateRenderStates contents. Assigned INSIDE the try
+        // (immediately before render()) so a throw can never strand an emptied list —
+        // the finally restore below is the only other toucher.
+        List<SectionUpdateRenderState> savedSectionUpdateStates = null;
+        GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
+        try {
+            // ===== Step 5 — dest EXTRACT [cross-dim only] + identity-guarded SOG feed ============
+            if (!sharedState && !IPGlobal.debugSkipDestExtract) {
+                try {
+                    if (!IPGlobal.debugSkipExtractOnly) {
+                        // S14.41 discipline: drop retained shared particle-group refs pre-extract.
+                        if (!IPGlobal.debugAllowDestParticleExtract) {
+                            destLRS.particlesRenderState.particles.clear();
+                        }
+                        // S14.40 context gate: cancels the corrupting vanilla mid-frame particle
+                        // extract (MixinParticleEngine) — same bracket as the decomposed Step 5.
+                        isDestExtracting = true;
+                        try {
+                            destExtractor.extract(deltaTracker, newCamera, partialTick);
+                        }
+                        finally {
+                            isDestExtracting = false;
+                        }
+                        // Isolated world-filtered particle fill (S18 dest particles; render()'s
+                        // submitFeatures submits particlesRenderState like any pass).
+                        if (!IPGlobal.debugAllowDestParticleExtract
+                            && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                            ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
+                                .ip_extractIsolated(
+                                    destLRS.particlesRenderState,
+                                    new Frustum(destFrustum).offset(-3.0F),
+                                    newCamera, partialTick, destLevel);
+                        }
+                    }
+                } finally {
+                    // (b) identity-guarded SOG delta feed — THROW-SAFETY ONLY on this path:
+                    // render()'s own sog.update consumes the same frozen window right after
+                    // (updateLoadedChunks/updateEmptySections are set-ops — double application
+                    // is idempotent); on a mid-extract throw this finally is the only consumer
+                    // (the §5.2 phantom-holes class). Sodium gate + rationale = the decomposed
+                    // Step-5(b) block verbatim.
+                    ChunkLoadingRenderState destDeltas = destLRS.chunkLoadingRenderState;
+                    if (!SodiumInterface.invoker.isSodiumPresent()
+                        && !IPGlobal.debugSkipSogFeed
+                        && lastAppliedDeltaWindow.get(destDim) != destDeltas.addedLoadedChunks) {
+                        lastAppliedDeltaWindow.put(destDim, destDeltas.addedLoadedChunks);
+                        SectionOcclusionGraph destSog = destRenderer.sectionOcclusionGraph();
+                        applyLoadedDeltasResolved(
+                            destLevel, destSog,
+                            destDeltas.addedLoadedChunks, destDeltas.removedLoadedChunks, false);
+                        destSog.updateEmptySections(
+                            destDeltas.addedEmptySections, destDeltas.removedEmptySections);
+                    }
+                    // (c) compileSections drain: EXCLUDED (normative §0.4-4) — render() drains;
+                    // double-draining compileAsyncs the same regions twice (mining §8-13).
+                }
+
+                // S14.23 analog — first-frames sky state for never-rendered dims. SELF-RETIRING:
+                // render()'s addSkyPass constructs the renderer's OWN skyRenderer on the first
+                // pass, after which extract fills skyRenderState natively and this guard is false.
+                // Fable-fold NOTE (port-note §2.5): DELIBERATE lever-scope difference vs the
+                // decomposed path — there the pre-fill runs under its own standalone
+                // !sharedState && skyRenderer()==null gate OUTSIDE debugSkipDestExtract; here it
+                // is nested inside it, so the debug lever also skips the pre-fill. Divergence is
+                // debug-lever-only and self-retiring (see above).
+                if (destRenderer.skyRenderer() == null) {
+                    SkyRenderer portalSr = getOrCreatePortalSkyRenderer(destRenderer);
+                    if (portalSr != null) {
+                        portalSr.extractRenderState(
+                            destLevel, partialTick, newCamera, destLRS.skyRenderState
+                        );
+                    }
+                }
+            }
+
+            // ===== Step 6 — dest FOG (verbatim decomposed: FIX-6 rain bracket + standalone UBO) ==
+            FogRenderer fr =
+                ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
+            FogData destFogData;
+            var atmosphericEnv = getAtmosphericFogEnvironment();
+            float outerRainFogMultiplier = 0f;
+            if (atmosphericEnv != null) {
+                var atmoAccess =
+                    (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
+                outerRainFogMultiplier = atmoAccess.ip_getRainFogMultiplier();
+                atmoAccess.ip_setRainFogMultiplier(
+                    destRainFogMultiplier.getOrDefault(destDim, 0f));
+            }
+            try {
+                destFogData = fr.setupFog(
+                    newCamera, WorldRenderInfo.getRenderDistance(), deltaTracker, 0f, destLevel
+                );
+            } finally {
+                if (atmosphericEnv != null) {
+                    var atmoAccess =
+                        (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
+                    destRainFogMultiplier.put(destDim, atmoAccess.ip_getRainFogMultiplier());
+                    atmoAccess.ip_setRainFogMultiplier(outerRainFogMultiplier);
+                }
+            }
+            destCameraState.fogData = destFogData;
+            destCameraState.fogType = FogType.NONE;
+            FogRendererContext.setCurrentRenderedFogColor(
+                new Vec3(destFogData.color.x, destFogData.color.y, destFogData.color.z)
+            );
+            GpuBufferSlice destFogBuffer = writeFogSlice(destFogData);
+
+            // ===== Step 7 — dest DRAW projection install (render()'s draws read RenderSystem) ====
+            if (!IPGlobal.debugSkipProjectionInstall) {
+                RenderSystem.setProjectionMatrix(
+                    writeProjectionSlice(destDrawProjection), ProjectionType.PERSPECTIVE);
+            }
+
+            // ===== Step 8 — Globals UBO for the dest pass (verbatim decomposed) ==================
+            RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();
+            if (!IPGlobal.debugSkipGlobalsUbo)
+            ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
+                mainRT.width, mainRT.height,
+                mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
+                destLevel.getGameTime(), deltaTracker,
+                mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
+                destCameraPos,
+                mc.gameRenderer.gameRenderState().optionsRenderState.textureFiltering
+                    == TextureFilteringMethod.RGSS
+            );
+
+            // ===== Step 9' — same-dim sodium cull drive (§2.4-4, decided here; header note) ======
+            if (sharedState) {
+                SodiumInterface.invoker.ip_driveDestTerrainSetup(
+                    newCamera, destFrustum,
+                    new Matrix4f(destCullProjection).mul(destViewMatrix),
+                    destFogData, destCameraState.smartCull
+                );
+                // §2.7 diagnose-first probe (lever-gated + 1Hz; no-op at default) — the
+                // positive half of the same-dim sodium-supply evidence the screenshot rows
+                // cannot carry alone. See the helper's javadoc.
+                logSameDimSupplyProbe(destDim);
+            }
+
+            // Dest diffuse lighting (mc.level == dest under the shell swap): the nested render()'s
+            // feature draws read the lighting state; restored to SOURCE in the finally.
+            MyGameRenderer.resetDiffuseLighting();
+            diffuseChangedToDest = true;
+
+            // ===== THE INVOKE — one direct 8-arg full-pipeline render INTO THE MAIN TARGET =======
+            // DEF-G whole-pass belt: clip disable through its CACHED OWNER (FrontClipping —
+            // never raw-GL a GlStateManager-cached/mirrored state) + raw stencil disable
+            // (26.2 vanilla caches no stencil state — the mod idiom). Retired at IS3.
+            GL11.glDisable(GL11.GL_STENCIL_TEST);
+            FrontClipping.disableClipping();
+            // §8-14 LRS-identity HARD assert immediately before render() (port-note §1-E):
+            // extract writes the extractor's LRS; render() reads the renderer's field — a
+            // divergence here silently drops entities/clouds/particles.
+            if (((LevelRendererAccessorMixin) destRenderer).seamlessportals$getLevelRenderState()
+                != destLRS
+            ) {
+                ((LevelRendererAccessorMixin) destRenderer)
+                    .seamlessportals$setLevelRenderState(destLRS);
+            }
+            // renderOutline=FALSE is DOUBLY load-bearing (port-note §1-E): IP fidelity AND it
+            // gates OUT M11 + Fabric's BEFORE_BLOCK_OUTLINE handler (whose per-frame context
+            // exists only for the MAIN framegraph frame). shouldRenderSky honors the render
+            // info's fuse-view gate (IP: fuse-view portals render no sky); vanilla's own boss-fog
+            // clause (!shouldCreateWorldFog) is not re-derived here — a boss-world-fog frame
+            // renders the dest sky where vanilla would suppress it (immaterial, ledgered).
+            // Iris hooks fire on this secondary instance (class weave); iris finalizing the
+            // nested render INTO MAIN is the mechanism, not a hazard (design §2.1-2).
+            // §2.6 THE ROW-1 AIOOBE FIX — restore vanilla's one-consume-per-frame invariant:
+            // for SHARED-STATE passes the nested render() would RE-consume the MAIN LRS's
+            // sectionUpdateRenderStates (already consumed by the main compileSections this
+            // frame; the list clears only at the next extract head — LevelRenderState.reset),
+            // re-resolving each state's node via ImmPtlViewArea's wrap-around
+            // getRenderSection(long) AFTER render()'s repositionCamera moved the MAIN preset
+            // to the DEST camera section. An out-of-window node then wraps to a coord-PINNED
+            // section at congruent-mod-W DIFFERENT coords, and compileAsync pairs region(A)
+            // with section(B) — the deterministic AIOOBE 923/27 in SectionCompiler on the
+            // meshing worker (port-note §2.6). Swap the contents OUT for the nested render
+            // (empty list = nothing to re-consume) and restore in the outermost finally so
+            // the states stay available for their ONE legitimate consumer on any pass
+            // ordering (protects pre-main layer-0 callers from main-compileSections
+            // starvation — the ow-holes-consumed-compile-queue class). Cross-dim passes are
+            // NOT bracketed: their Step-5 extract+render() is the correct one-shot pairing,
+            // and render() still self-drains (§8-13 honored — we only deny it someone
+            // else's already-consumed one-shots).
+            if (sharedState && !destLRS.sectionUpdateRenderStates.isEmpty()) {
+                savedSectionUpdateStates = new ArrayList<>(destLRS.sectionUpdateRenderStates);
+                destLRS.sectionUpdateRenderStates.clear();
+            }
+            destRenderer.render(
+                GraphicsResourceAllocator.UNPOOLED,
+                deltaTracker,
+                false,
+                destCameraState,
+                destViewMatrix,
+                destFogBuffer,
+                destFogData.color,
+                WorldRenderInfo.getTopRenderInfo().doRenderSky
+            );
+        } finally {
+            // ===== the outermost finally — restore everything this core changed ==================
+            // C2 UBM latch reset (shared-SWR same-dim frames; facade no-op when sodium inactive).
+            SodiumInterface.invoker.ip_onDestTerrainDrawsFinished();
+            // Globals UBO restore with the SOURCE camera + game time (verbatim decomposed).
+            RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();
+            if (!IPGlobal.debugSkipGlobalsUbo)
+            ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
+                mainRT.width, mainRT.height,
+                mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
+                savedLevelGameTime, deltaTracker,
+                mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
+                savedCameraPos,
+                mc.gameRenderer.gameRenderState().optionsRenderState.textureFiltering
+                    == TextureFilteringMethod.RGSS
+            );
+            // Source diffuse restore (immediate OUTER dim — V1-M2-consistent).
+            if (diffuseChangedToDest) {
+                DimensionType srcDimType = sourceLevel.dimensionType();
+                mc.gameRenderer.lighting().updateLevel(srcDimType.cardinalLightType());
+            }
+            // Camera-state / fog-field restores (mirrors the decomposed Step-10.13 split).
+            if (sharedState) {
+                // §2.6 restore — put the swapped-out section-update states back on the MAIN
+                // LRS (per-pass bracketing: each same-dim portal pass empties during its own
+                // nested render only). null when the list was empty at swap time or the
+                // throw happened before the swap.
+                if (savedSectionUpdateStates != null) {
+                    destLRS.sectionUpdateRenderStates.addAll(savedSectionUpdateStates);
+                }
+                destLRS.cameraRenderState = savedSharedCameraState;
+                destLRS.cloudColor = savedSharedCloudColor;
+                if (dispatcher != null && savedDispatcherCamPos != null) {
+                    dispatcher.setCameraPosition(savedDispatcherCamPos);
+                }
+            } else {
+                destCameraState.fogData = savedFogData;
+                destCameraState.fogType = savedFogType;
+            }
+            // Shader-fog slice restore (render()'s sky/weather passes set it per pass).
+            if (savedShaderFog != null) {
+                RenderSystem.setShaderFog(savedShaderFog);
+            }
+            // Stencil re-assert NEUTRALIZE (§2.1-3): the compat shape is STENCIL-FREE — the
+            // neutral state is DISABLED, not the decomposed EQUAL(layer) re-assert. Clip belt
+            // re-asserted through its cached owner.
+            GL11.glDisable(GL11.GL_STENCIL_TEST);
+            FrontClipping.disableClipping();
+            // §8-3(c) — re-run SOURCE setupFog so any capture-at-setupFog observer serves SOURCE
+            // fog for the frame's remainder (block-era Step-9 discipline). Compute-only for the
+            // UBO on 26.2; the shared AtmosphericFogEnvironment takes one extra lerp step toward
+            // the SOURCE level (the live value already IS the source's after the Step-6 bracket
+            // restore — benign). Non-critical: best-effort.
+            try {
+                FogRenderer frRestore =
+                    ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
+                frRestore.setupFog(
+                    sourceCamera, mc.options.getEffectiveRenderDistance(),
+                    deltaTracker, 0f, sourceLevel
+                );
+            } catch (Throwable t) {
+                // fog restore is best-effort; the shader-fog slice restore above already ran
+            }
+            DrawCallTrace.record("<<< renderDestWorldFullPipeline dim=" + destDim.identifier()
+                + " " + DrawCallTrace.mvTop());
+        }
+    }
+
+    // One-shot latch for the §2.1-1 FRD isolation assert log.
+    private static boolean fullPipelineFrdAssertLogged = false;
+
     // ===== §1 Step 10.4 — dest sky (re-expresses MOD:PortalContextSwitch.renderPortalSky:895) =====
     private static void renderPortalSky(
         LevelRenderer destRenderer, LevelRenderState destLRS,
@@ -1899,6 +2355,70 @@ public class SecondaryWorldRenderCore {
             return registerFrameTransientUbo(RenderSystem.getDevice().createBuffer(
                 () -> "seamlessportals_portal_proj", GpuBuffer.USAGE_UNIFORM, buf
             ));
+        }
+    }
+
+    // ===== §2.7 the same-dim sodium-supply probe (lever-gated, 1Hz; diagnose-first) ==============
+    // Port-note IS-iris-shaders-on §2.7: the shipped same-dim gametest windows hover MID-AIR at
+    // y=250 where sodium's ~96-block collection/draw envelope (min(fog cullDistance,
+    // renderDistance·16)) holds ZERO sections, so their sky-only pixels cannot discriminate a
+    // working Step-9' drive from a broken one (the IS1 "sodium row looks like the plain floor"
+    // observation was NON-DISCRIMINATING, not a defect). This probe is the positive half of the
+    // fixed evidence: read the visible-section count IMMEDIATELY after ip_driveDestTerrainSetup,
+    // while the D1-swapped per-(portal,layer) context is still installed on the shared main RSM —
+    // NONZERO with terrain inside the dest envelope = the drive's renderLists delivering into the
+    // nested render()'s renderGroup draws. Gated by the self-run rounds' screenshot lever
+    // (-Dseamlessportals.gametest.screenshots) so the default suite stays byte-identical, and
+    // throttled to 1Hz per the render-thread-logging discipline (I5 above). Reflection-only so no
+    // sodium type appears in this class and NO facade/seam file changes:
+    // LevelRendererExtension.sodium$getWorldRenderer() -> SodiumWorldRenderer
+    // .getVisibleChunkCount() (both public on sodium 0.9.1; the latter javap-proven in the §2.7
+    // verdict). Any reflection failure (sodium absent/renamed) disarms the probe for the session
+    // with one log line — never a throw, never a misleading number.
+    private static final boolean SUPPLY_PROBE_LEVER =
+        Boolean.getBoolean("seamlessportals.gametest.screenshots");
+    // VERIFY-LENS CORRECTION (§2.7): the throttle is keyed PER PASS IDENTITY
+    // (dim + layer + rendering-portal UUID), not globally — a global 1Hz gate is claimed
+    // by the FIRST same-dim pass after each boundary (deterministically portal A, whose
+    // correct count is 0), starving the discriminating portal-D line forever. Render
+    // thread only; bounded by live portal count (cleared on disarm).
+    private static final java.util.HashMap<String, Long> supplyProbeLastLogNanos =
+        new java.util.HashMap<>();
+    private static boolean supplyProbeDisarmed = false;
+
+    private static void logSameDimSupplyProbe(ResourceKey<Level> destDim) {
+        if (!SUPPLY_PROBE_LEVER || supplyProbeDisarmed) {
+            return;
+        }
+        qouteall.imm_ptl.core.portal.Portal renderingPortal =
+            PortalRendering.getRenderingPortal();
+        String passKey = destDim.identifier() + ":" + PortalRendering.getPortalLayer()
+            + ":" + (renderingPortal != null ? renderingPortal.getUUID() : "null");
+        long now = System.nanoTime();
+        Long last = supplyProbeLastLogNanos.get(passKey);
+        if (last != null && now - last < 1_000_000_000L) {
+            return;
+        }
+        supplyProbeLastLogNanos.put(passKey, now);
+        try {
+            LevelRenderer renderer = client.levelRenderer;
+            Object swr = renderer.getClass()
+                .getMethod("sodium$getWorldRenderer").invoke(renderer);
+            if (swr == null) {
+                supplyProbeDisarmed = true;
+                supplyProbeLastLogNanos.clear();
+                return;
+            }
+            Object count = swr.getClass().getMethod("getVisibleChunkCount").invoke(swr);
+            qouteall.q_misc_util.Helper.log(
+                "[same-dim sodium supply probe] pass=" + passKey
+                    + " visibleSectionsAfterDrive=" + count);
+        } catch (Throwable t) {
+            supplyProbeDisarmed = true;
+            supplyProbeLastLogNanos.clear();
+            qouteall.q_misc_util.Helper.log(
+                "[same-dim sodium supply probe] disarmed (sodium absent or reflection failed): "
+                    + t);
         }
     }
 

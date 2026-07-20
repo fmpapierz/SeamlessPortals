@@ -542,6 +542,19 @@ public class ImmPtlViewArea extends ViewArea {
                 return null;
             }
 
+            // §2.6 ROW-1 AIOOBE HARDENING (port-note IS-iris-shaders-on.md §2.6;
+            // vanilla-parity occupant guard): our RenderSections
+            // are coord-PINNED (createColumn), so a query OUTSIDE the current preset's window
+            // wraps via positiveModulo to a live section at congruent-mod-W DIFFERENT coords.
+            // Vanilla's RotatingSectionStorage.getValue guarantees in-window => exact node
+            // match, else null (containsSection + repositionCenter congruence); transplant
+            // exactly that guarantee here for every node-keyed consumer (compileSections
+            // re-resolution, SOG BFS, ...). NOTE: getRenderSectionAt (BlockPos-keyed) shares
+            // the wrap hazard — ledgered for the S20 audit, not changed here.
+            if (result.getSectionNode() != sectionNode) {
+                return null;
+            }
+
             ((IERenderSection) result).portal_setIndex(sectionIndex);
             return result;
         }
