@@ -33,22 +33,25 @@ public final class ExperimentalCompatGate {
     private ExperimentalCompatGate() {}
 
     /**
-     * The C2-held gate lever. Default {@code false} = the ported Sodium/Iris compat layer stays
-     * dormant (the invoker is never swapped away from the no-op base {@code Invoker}). Non-{@code
-     * final} to match {@code IPGlobal}'s lever convention and to keep the gate-on branch a genuine
-     * runtime branch (so its lazy-classload discipline is preserved rather than being
-     * compile-time dead-code).
+     * The sodium-compat gate. <b>DEFAULT {@code true} SINCE C2-2 — USER DECISION #1
+     * (2026-07-19): sodium compat ships DEFAULT-ON</b> once the D3 clip transport landed (the
+     * full chain: D1 widened context swap, D5 entity-cull neutralize, #3 per-layer render lists,
+     * FlawlessFrames bridge, the C2-1b/c/d live-round fixes + dest drive + endFrame walk, C2-1e
+     * dest entities, and the C2-2 sodium shader source patch + GLDrawContext clip upload which
+     * retired the D10 interim bracket). Sodium users get portal views out of the box with the
+     * GOLD experimental notice retained. Set {@code false} (or ship a build with it false) as the
+     * one-boolean ROLLBACK to the warn+force-off posture; the
+     * {@code -Dseamlessportals.experimentalSodiumCompat=true} JVM lever remains as an override
+     * that can turn compat ON when the gate is false (it cannot turn it off). Non-{@code final}
+     * per {@code IPGlobal}'s lever convention.
      *
-     * <p>C2-1 STATE: the Sodium 0.9.1 compat mixin set NOW EXISTS and is registered
-     * ({@code seamlessportals-ip-compat.mixins.json} — the D1 widened context swap, the D5
-     * entity-cull neutralize, #3 per-layer render lists, the FlawlessFrames bridge, the D10
-     * interim clip bracket). This gate (or the equivalent
-     * {@code -Dseamlessportals.experimentalSodiumCompat=true} lever) activates the SODIUM verdict
-     * ONLY — iris-present installs keep the full warn+force until C2-4 (activating the sodium
-     * chains under an active iris pipeline is forbidden, design §0.2). See
+     * <p>This gate activates the SODIUM verdict ONLY — iris-present installs keep the full
+     * warn+force until C2-4 (activating the sodium chains under an active iris pipeline is
+     * forbidden, design §0.2). Sodium-ABSENT installs are untouched by this flag entirely
+     * (the activation condition is present &amp;&amp; gate — presence short-circuits). See
      * {@code SeamlessPortalsClientFabric.detectAndGateRenderCompat} for the per-mod verdicts.
      */
-    public static boolean ENABLE_SODIUM_IRIS_COMPAT = false;
+    public static boolean ENABLE_SODIUM_IRIS_COMPAT = true;
 
     /**
      * Session-scoped force flag. Set {@code true} by the fabric client detection when Sodium/Iris

@@ -403,3 +403,42 @@ accepted envelope); the same-dim loop-back entity pass fixed by the same line; N
 sodium keeps the old behavior (fabric-only install site — pre-existing posture, C7 line).
 Live check (rides the next round): a mob in the dest dim renders in the aperture;
 entities-beside-portal + the same-dim water check re-glanced for no regression.
+
+## §3.9 C2-2 — THE CLIPPING TRANSPORT (D3) LANDED + SODIUM DEFAULT-ON (user decision #1)
+
+Impl wf_8668fe23-07c (Fable); lenses A PASS / B PASS_WITH_CORRECTIONS (1 CORRECTION folded:
+the stale-latch heal is now STORE-GATED on both sites — an unconditional glEnable could
+desync raw GL from FrontClipping's cache and re-create the undefined class for unpatched
+VANILLA programs; + the four-enable-paths javadoc correction incl. restore(Snapshot) = the
+qouteall-bridge path; + the VK-warn honest wording).
+
+**LANDED:** (1) the M1 SOURCE PATCH — sibling mixin at the ShaderManager source seam,
+branch strictly sodium:blocks/block_layer_* VERTEX (jar enumeration: block_layer_opaque.vsh
+is the ONLY sodium GLSL; per-pass variance is defines-only); injects our
+seamlessportals_ClipPlane + gl_ClipDistance[0] write, VIEW-space, anchored + formatted
+byte-for-byte like the vanilla transformer; idempotence guard + anchor fail-safe (unpatched
+→ WARN → the definedness guard). (2) THE UPLOADER — **RE-SITED BY BYTECODE** (the specced
+candidate-B seam REFUTED: ShaderChunkRenderer.begin binds NO program — it only compiles;
+the real per-pass bind is GLDrawContext.setContext) → MixinSodiumGLDrawContext_ClipUpload
+at setContext RETURN, mirroring GlCommandEncoderClipMixin (keep-all when disabled,
+per-program location cache). **P7b SETTLED STATICALLY en route**: candidate A (the vanilla
+trySetup uploader) provably covers every sodium batch too (GLDrawBatch.draw →
+RenderPass.multiDrawIndexed → executeDraws → trySetup) — double-upload same-value benign,
+ledgered. (3) the D10 INTERIM BRACKET RETIRED (source-patched shaders now write
+gl_ClipDistance) with a surgical residual guard: unpatched-program + armed-plane → suppress
+the enable for exactly that pass (store-gated restore). (4) VK/D4: lazy DrawBackend.BACKEND
+check (census-correct, never instanceof the device); non-GL → patch skipped + one-shot
+honest deviation log. (5) the patched-source dump lever rides -Dseamlessportals.compatProbe.
+
+**SODIUM COMPAT DEFAULT-ON (USER DECISION #1, 2026-07-19)**:
+ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT = true — sodium users get portal views out
+of the box; the GOLD notice stays (reworded: clipping newly enabled, report artifacts); the
+gate boolean is the one-line ROLLBACK; the JVM lever remains as an ON-override only.
+Iris-present unchanged (warn+force until C2-4). Sodium-absent structurally untouched
+(presence short-circuits; suite green = the proof, every commit).
+
+Compile x3 + suite ALL LEGS PASS post-folds. LIVE ROUND (the C2-2 script §1): wall-embedded
+portal backside must NOT show; nose-against-aperture both sides; slow crouch-cross both
+ways (no through-pop); water/translucent portal; same-dim mirror; a MOB in the dest dim
+(the C2-1e check); vanilla-clip regression leg (plain runClient, no sodium: stand at the
+plane, no new artifacts); NO JVM args needed — this round tests the shipped default.

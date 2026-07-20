@@ -10,7 +10,8 @@
     "sodium.MixinSodiumRenderSectionManager",
     "sodium.MixinSodiumRenderRegion",
     "sodium.MixinSodiumFlawlessFrames",
-    "sodium.MixinSodiumShaderChunkRenderer_InterimClipBracket",
+    "sodium.MixinSodiumShaderManagerCompilationCache_ClipSourcePatch",
+    "sodium.MixinSodiumGLDrawContext_ClipUpload",
     "sodium.MixinSodiumProbe_ShaderSources",
     "sodium.MixinSodiumProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe"

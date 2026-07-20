@@ -415,7 +415,9 @@ public class SodiumInterface {
          * The armed instance's {@code renderGroup} HEAD-inject then cancels into
          * {@code SWR.drawChunkLayer}: OPAQUE → SOLID+CUTOUT, TRANSLUCENT → TRANSLUCENT
          * (javap drawChunkLayer) — reading the swapped-in context's renderLists +
-         * lastFogParameters, through the D10 interim clip bracket at ShaderChunkRenderer.begin.
+         * lastFogParameters. (C2-2: the D10 interim clip bracket at ShaderChunkRenderer.begin is
+         * RETIRED — dest terrain is now front-clipped in-shader via the sodium source patch, with
+         * the per-pass plane upload at GLDrawContext.setContext.)
          *
          * <p>THE DELIBERATE OMISSION (vB NOTE-2 fold): sodium's WrapOperation ALSO stores the
          * ChunkRenderMatrices on the mixin'd LevelRenderer itself ({@code putfield matrices},
@@ -502,7 +504,7 @@ public class SodiumInterface {
      * <p>ONLY {@code onClientChunkLoaded}/{@code onClientChunkUnloaded} are overridden (the
      * exact {@link OnSodiumPresent} bodies). {@code isSodiumPresent()} stays FALSE so every
      * render-path consumer (TerrainSetupOverride yield, MixinSectionRenderDispatcher
-     * pool-split, FrustumCuller outer-cull, D10 bracket) still sees the un-levered world, and
+     * pool-split, FrustumCuller outer-cull) still sees the un-levered world, and
      * {@code createNewContext}/{@code switchContextWithCurrentWorldRenderer} stay no-ops (the
      * MyGameRenderer :344/:424 bracket calls them unconditionally — e.g. via the
      * config-gated CrossPortalViewRendering or the GUI-portal debug API, both reachable with

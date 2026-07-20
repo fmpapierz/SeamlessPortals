@@ -282,19 +282,21 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         if (sodiumActive) {
             // ===== C2-1 SODIUM ACTIVE (gate or lever) ==========================================
             // The compat mixin set (seamlessportals-ip-compat.mixins.json: the D1 swap mixin,
-            // #3 per-layer lists, FlawlessFrames bridge, D10 interim clip bracket + accessors)
-            // is woven whenever sodium is present flag-ON; this install is what makes their
-            // bodies live. OnSodiumPresent classloads only here.
+            // #3 per-layer lists, FlawlessFrames bridge, the C2-2 clip transport (sodium shader
+            // source patch + GLDrawContext upload; invoker-independent by the §6.2 flag-agnostic
+            // discipline) + accessors) is woven whenever sodium is present flag-ON; this install
+            // is what makes the invoker-gated bodies live. OnSodiumPresent classloads only here.
             SodiumInterface.invoker = new SodiumInterface.OnSodiumPresent();
 
-            // One-shot HONEST experimental notice (GOLD — a notice, not a failure; design §1
-            // C2-1 deliverable 8 wording; the clipping clause drops at C2-2).
+            // One-shot HONEST experimental notice (GOLD — a notice, not a failure). C2-2: the
+            // clipping-gap clause DROPPED (the D3 transport landed) and sodium compat is now
+            // DEFAULT-ON (user decision #1) — wording stays honest in either live-round outcome:
+            // it names the newly-enabled clipping without claiming it artifact-free.
             IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {
                 CHelper.printChat(
                     Component.literal(
-                        "[Seamless Portals] Sodium support is EXPERIMENTAL — known issue: "
-                            + "terrain near the portal plane may bleed through "
-                            + "(clipping lands in a later update)."
+                        "[Seamless Portals] Sodium support is EXPERIMENTAL — portal clipping "
+                            + "is newly enabled; please report any terrain artifacts near portals."
                     ).withStyle(ChatFormatting.GOLD)
                 );
             }));
