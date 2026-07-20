@@ -34,6 +34,21 @@ public class FrustumCuller {
         camY = cameraY;
         camZ = cameraZ;
     }
+
+    /**
+     * C2-3 D2 (named addition, not in IP): exposes the predicate {@link #update} computed, so the
+     * sodium compat producer ({@code MixinSodiumWorldRenderer_CullSnapshot}) can snapshot the
+     * EXISTING {@link BoxPredicateF} onto the per-pass sodium {@code Viewport} — null when this
+     * pass has no portal culling (the {@code IPCGlobal.doUseAdvancedFrustumCulling} lever off,
+     * iris shadow pass, isometric view, or no cullable portal), which the consumers use as their
+     * zero-cost fast path. Semantically identical to what
+     * {@link #canDetermineInvisibleWithCameraCoord(float, float, float, float, float, float)}
+     * consults internally; the accessor exists because the null/non-null distinction is itself
+     * the signal.
+     */
+    public @Nullable BoxPredicateF getCanDetermineInvisibleFunc() {
+        return canDetermineInvisibleFunc;
+    }
     
     public boolean canDetermineInvisibleWithCameraCoord(
         float minX, float minY, float minZ, float maxX, float maxY, float maxZ

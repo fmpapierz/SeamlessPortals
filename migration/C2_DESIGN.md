@@ -318,3 +318,13 @@ supersedes the following as written above — the port-note is authoritative whe
    The three real sync mechanisms are recorded in the port-note §1.2.
 NEW at C2-1: the pendingTask × QueuedSectionStorage safe-read-phase race (port-note §4.1) must be
 mitigated (three named options) — it joins D1's spec as a hard requirement for same-dim portals.
+
+### §7.1 C2-3 ADDENDUM: the §3.2 "center±8" reconstruction is SUPERSEDED
+Verify lens B (C2-3) proved sodium 0.9.1's own testSection verdict is padded to
+CHUNK_SECTION_PADDED_RADIUS (9.125f — the 1.125 overhang margin); IP's 0.6 predicate consumed
+sodium's own tested floats by construction, so the spec's ±8 "conservative-exact" claim was
+inverted at the margin — a portal predicate 1.125 tighter than the frustum verdict it ANDs
+onto could mis-cull overhanging geometry at aperture seams. The landed consumer uses
+±Viewport.CHUNK_SECTION_PADDED_RADIUS (margin parity, strictly more conservative). Also
+lens-A precision: the A/B lever gates the PREDICATE half only; the cave-cull override is
+lever-independent (IP-faithful, AND-compose = safe-direction-only).

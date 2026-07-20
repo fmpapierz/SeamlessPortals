@@ -12,6 +12,10 @@
     "sodium.MixinSodiumFlawlessFrames",
     "sodium.MixinSodiumShaderManagerCompilationCache_ClipSourcePatch",
     "sodium.MixinSodiumGLDrawContext_ClipUpload",
+    "sodium.MixinSodiumViewportExt",
+    "sodium.MixinSodiumViewport_CullConsumer",
+    "sodium.MixinSodiumWorldRenderer_CullSnapshot",
+    "sodium.MixinSodiumOcclusionCuller_CaveCull",
     "sodium.MixinSodiumProbe_ShaderSources",
     "sodium.MixinSodiumProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe"

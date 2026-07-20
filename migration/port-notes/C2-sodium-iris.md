@@ -456,3 +456,35 @@ identically, the side-by-side court):** when a portal has solid terrain directly
 at the portal from the terrain side, the terrain visibly clips INTO the portal. Long-standing
 in this port AND in upstream IP — an inherited-improvement candidate (the
 melee-through-portal class), NOT a port defect. Joins the polish backlog.
+
+## §3.11 C2-3 — THE CULLING PERF CHAIN (D2) LANDED
+
+Impl wf_c6de6175-fc4 (Fable); lenses A + B both PASS_WITH_CORRECTIONS, folds applied.
+LANDED: the IESodiumViewport duck (predicate + cave-cull override + the DORMANT D2b origin
+field) + the setupTerrain-HEAD producer (ACTIVE-invoker-gated; IP file #6 body 1:1; snapshots
+onto the viewport; the legacy SodiumInterface.frustumCuller static written for parity only —
+consumer-free, grep-proven) + the testSection @WrapOperation predicate consumer (iris-chains-
+safe) + the findVisible @ModifyVariable cave-cull consumer (worker-thread snapshot reads;
+submit = the happens-before edge; P4 by-reference settled).
+
+**THE LENS CATCHES (both folded):**
+- **Lens B (spec-level)**: sodium's testSection verdict is PADDED (CHUNK_SECTION_PADDED_RADIUS
+  9.125 — the 1.125 overhang margin); the design's ±8 reconstruction was TIGHTER than the
+  verdict it ANDs onto → could mis-cull overhanging geometry at aperture seams. FIXED:
+  ±CHUNK_SECTION_PADDED_RADIUS (margin parity with sodium's own test + IP's effective inputs).
+  C2_DESIGN §7.1 records the supersession.
+- **Lens A (wording)**: the A/B lever (IPCGlobal.doUseAdvancedFrustumCulling, runtime debug
+  commands advanced_frustum_culling_enable/disable) gates the PREDICATE half only; the
+  cave-cull override is lever-independent (IP-faithful) and AND-composes = safe-direction-only
+  (can only render MORE). Javadoc corrected; FPS A/B attributes to the predicate half.
+- Named deviation (documented in-code, lens-confirmed real): IP file #4 forced the MAIN pass's
+  occlusion boolean too (killing sodium's main-world cave culling whenever live); our
+  null-passthrough keeps sodium's main-pass default — the design's own consumer body.
+- Unhooked (ledgered): isBoxVisibleLooser/testSectionExpanded + isBoxVisibleDirect/
+  SectionTree-frustum-tested shortcuts (under-cull/perf-only directions); D2b dormant.
+
+**LIVE ROUND (perf-flavored)**: a heavy dest scene through a portal; FPS with the lever
+toggled A/B via the client debug commands (expect measurable gain, ZERO visual delta);
+grazing-angle + aperture-edge artifact hunt (terrain vanishing at odd angles = the predicate
+failure class — the padded-radius fold is its mitigation); box/scale portals expected
+unchanged (D2b deferred). Suite cannot exercise any of it (no sodium).

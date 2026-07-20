@@ -39,6 +39,15 @@ import java.util.Set;
 @Environment(EnvType.CLIENT)
 public class SodiumInterface {
 
+    /**
+     * C2-3: LEGACY IP STATIC — parity/debug ONLY, NO consumer (do not add readers). IP file #6
+     * wrote this each setupTerrain and IP file #5 read it at the section test; under Sodium
+     * 0.9.1's ASYNC cull model a render-thread static is wrong-thread/wrong-frame, so the live
+     * transport is the D2 viewport-carried snapshot ({@code IESodiumViewport} duck, written by
+     * {@code MixinSodiumWorldRenderer_CullSnapshot}, read by
+     * {@code MixinSodiumViewport_CullConsumer}/{@code MixinSodiumOcclusionCuller_CaveCull}).
+     * This static is still written per pass for IP-parity inspection at a debugger/probe.
+     */
     @Nullable
     public static FrustumCuller frustumCuller = null;
 
