@@ -6,6 +6,11 @@
   "minVersion": "0.8",
   "client": [
     "sodium.IESodiumWorldRenderer",
+    "sodium.IESodiumCameraTimingControl",
+    "sodium.MixinSodiumRenderSectionManager",
+    "sodium.MixinSodiumRenderRegion",
+    "sodium.MixinSodiumFlawlessFrames",
+    "sodium.MixinSodiumShaderChunkRenderer_InterimClipBracket",
     "sodium.MixinSodiumProbe_ShaderSources",
     "sodium.MixinSodiumProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe"

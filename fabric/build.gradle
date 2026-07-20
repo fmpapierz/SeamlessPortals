@@ -133,6 +133,11 @@ loom {
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
+            // C2-1 sodium activation lever (design §1 C2-1 deliverable 8): flips the SODIUM
+            // per-mod verdict live for this run without touching the committed
+            // ExperimentalCompatGate default —
+            //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PsodiumCompatLever=true
+            if (project.findProperty('sodiumCompatLever') == 'true') { vmArg('-Dseamlessportals.experimentalSodiumCompat=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,

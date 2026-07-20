@@ -317,6 +317,12 @@ public class ClientWorldLoader {
     }
 
     private static void disposeWorldRenderer(ResourceKey<Level> dimension, LevelRenderer worldRenderer) {
+        // C2-1 D1: invalidate persistent Sodium portal contexts built against this dimension's
+        // RSM/world (design §3.1.3 invalidation set — dest ClientLevel unload + LevelRenderer
+        // replacement both route through this per-dim dispose seam). No-op base Invoker when the
+        // sodium compat is not installed.
+        qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface.invoker
+            .onWorldRendererDisposed(dimension);
         // 26.2: setLevel(null) moved LevelRenderer → LevelExtractor (api-map CHANGED
         // "LevelRenderer.setLevel"). Null the level on this dim's construction-bound extractor
         // (EXTRACTOR-IDENTITY). For the main dim the extractor is CLIENT.levelExtractor (seeded
@@ -324,7 +330,31 @@ public class ClientWorldLoader {
         // path (Minecraft.updateLevelInEngines → levelExtractor.setLevel(null)).
         LevelExtractor extractor = WORLD_EXTRACTOR_MAP.get(dimension);
         if (extractor != null) {
-            extractor.setLevel(null);
+            // C2-1 FIX BLOCKER-1a (verify lens A), second call site: sodium's LevelExtractorMixin
+            // setLevel inject resolves the SWR via Minecraft.getInstance().levelRenderer AT CALL
+            // TIME (checkRenderer, no cache guard — see the creation-site comment in
+            // createSecondaryClientWorld for the bytecode proof). setLevel(null) → SWR.setLevel
+            // (null) → unloadLevel → deleteRendererState: with mc.levelRenderer still MAIN while a
+            // SECONDARY dim is disposed, that would delete the MAIN renderer's sodium state.
+            // Bracket with a repoint to the renderer being disposed (the MATCHING per-dim one),
+            // restore in finally; presence-gated (sodium's mixin is presence-scoped, gate-independent).
+            LevelRenderer sodiumRepointSaved = null;
+            boolean sodiumRepointed = false;
+            if (com.warwa.seamlessportals.compat.SodiumCompat.isSodiumLoaded()
+                && worldRenderer != null
+            ) {
+                sodiumRepointSaved = CLIENT.levelRenderer;
+                ((IEMinecraftClient) CLIENT).ip_setWorldRenderer(worldRenderer);
+                sodiumRepointed = true;
+            }
+            try {
+                extractor.setLevel(null);
+            }
+            finally {
+                if (sodiumRepointed) {
+                    ((IEMinecraftClient) CLIENT).ip_setWorldRenderer(sodiumRepointSaved);
+                }
+            }
         }
         if (worldRenderer != CLIENT.levelRenderer) {
             worldRenderer.close();
@@ -751,7 +781,39 @@ public class ClientWorldLoader {
 
             // 26.2: setLevel moved LevelRenderer → LevelExtractor. Wires the level and builds the
             // chunk infrastructure via allChanged → invalidateCompiledGeometry.
-            worldExtractor.setLevel(newWorld);
+            //
+            // C2-1 FIX BLOCKER-1a (verify lens A): sodium's LevelExtractorMixin injects into
+            // setLevel and its checkRenderer() resolves the SodiumWorldRenderer via
+            // Minecraft.getInstance().levelRenderer AT CALL TIME (bytecode-proven:
+            // LevelExtractorMixin.checkRenderer offsets 0-15 — getstatic Minecraft.levelRenderer →
+            // sodium$getWorldRenderer → cached in the extractor mixin's `renderer` field; the
+            // setLevel inject then calls renderer.setLevel(level) → loadLevel → initRenderer).
+            // Without a repoint, mc.levelRenderer is still the MAIN renderer here, so the MAIN SWR
+            // would be setLevel'd against the SECONDARY world (gate-INDEPENDENT corruption — the
+            // sodium mixin applies whenever sodium is installed) and the secondary SWR's
+            // renderSectionManager would stay null (the swap-driver NPE class). Temporarily
+            // repoint mc.levelRenderer to the MATCHING just-created renderer (the same
+            // ip_setWorldRenderer repoint MyGameRenderer:298 uses), restore in finally. Gated on
+            // SodiumCompat.isSodiumLoaded() (the block-era cached presence detector — presence,
+            // not the experimental gate, because sodium's mixin is presence-scoped) so vanilla
+            // behavior is untouched without sodium.
+            {
+                LevelRenderer sodiumRepointSaved = null;
+                boolean sodiumRepointed = false;
+                if (com.warwa.seamlessportals.compat.SodiumCompat.isSodiumLoaded()) {
+                    sodiumRepointSaved = CLIENT.levelRenderer;
+                    ((IEMinecraftClient) CLIENT).ip_setWorldRenderer(worldRenderer);
+                    sodiumRepointed = true;
+                }
+                try {
+                    worldExtractor.setLevel(newWorld);
+                }
+                finally {
+                    if (sodiumRepointed) {
+                        ((IEMinecraftClient) CLIENT).ip_setWorldRenderer(sodiumRepointSaved);
+                    }
+                }
+            }
 
             // Immediate reload so extract() has non-null sky / resource state (direct port of IP's
             // worldRenderer.onResourceManagerReload; 26.2 moved the listener onto LevelExtractor —

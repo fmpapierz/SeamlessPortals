@@ -241,27 +241,30 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
     }
 
     /**
-     * S19-E increment 3 — Sodium/Iris presence detection + the HONEST incompat gate (a NAMED
-     * DEVIATION removed at C2; see {@link ExperimentalCompatGate}).
+     * C2-1 (restructured from the S19-E all-or-nothing gate) — PER-MOD verdicts (design
+     * {@code migration/C2_DESIGN.md} §1 C2-1 deliverable 8; see {@link ExperimentalCompatGate}).
      *
-     * <p>1:1 re-site of IP's {@code IPModEntryClient.onInitializeClient:71-108}: the
-     * {@code FabricLoader.isModLoaded("sodium"/"iris")} checks, the {@code On*Present} invoker swap,
-     * {@code ExperimentalIrisPortalRenderer.init()}, and the one-shot Iris shaderpack warning. IP
-     * runs this in the fabric client entrypoint right after its core client init; this method runs
-     * at the corresponding point (after {@code PeripheralModMain.initClient}), flag-ON only.
+     * <p>SODIUM verdict: {@code sodiumActive = sodiumPresent && (gate || lever) && !irisPresent}.
+     * When active, {@code SodiumInterface.invoker = new OnSodiumPresent()} atomically activates
+     * the whole A1-A6 facade (TerrainSetupOverride yield, pool-split skips, chunk-tracker feed,
+     * sprite marking, the pre-sited MyGameRenderer swap brackets — now backed by the C2-1 D1
+     * context mechanism) plus a one-shot HONEST experimental chat notice naming the known C2-1
+     * gap (clipping lands at C2-2).
      *
-     * <p>DEVIATION vs IP: the invoker swap is gated behind
-     * {@link ExperimentalCompatGate#ENABLE_SODIUM_IRIS_COMPAT} (default {@code false}). Detection
-     * always runs (cheap, side-effect-free). While the gate is off and Sodium/Iris IS present,
-     * instead of swapping the invoker — which would drive the un-C2-verified IP render paths — the
-     * mod warns loudly and force-disables portal views for the session
-     * ({@link #warnAndForcePortalRenderingOff}).
+     * <p>IRIS verdict: iris-present KEEPS THE FULL WARN+FORCE regardless of gate/lever (design
+     * §0.2: iris implies sodium at runtime, and activating the sodium chains under an active iris
+     * shader pipeline would route the stencil renderer under it — forbidden until C2-4's honest
+     * per-{@code isShaders()} routing lands). This intentionally supersedes the pre-C2 gate-on
+     * branch that installed {@code OnIrisPresent}.
      *
-     * <p>IP's lazy-classload discipline is PRESERVED exactly: the {@code new *.On*Present()} and
-     * {@code ExperimentalIrisPortalRenderer.init()} references only execute inside the
-     * {@code isModLoaded} branch AND the gate-on sub-branch, so no {@code net.caffeinemc.*} /
-     * {@code net.irisshaders.*} implementation class loads unless the mod is present AND the gate
-     * is flipped. (With the gate {@code false} at runtime, that whole sub-branch is never taken.)
+     * <p>Committed default = gate {@code false} + no lever ⇒ EXACTLY today's behavior (sodium or
+     * iris present → warn + force {@code renderMode=none}; nothing installed). The lever is the
+     * {@code -Dseamlessportals.experimentalSodiumCompat=true} JVM property
+     * ({@code -PsodiumCompatLever=true} on the runClientSodium gradle config).
+     *
+     * <p>IP's lazy-classload discipline is PRESERVED: {@code new OnSodiumPresent()} executes only
+     * inside the sodium-present + active sub-branch, so no {@code net.caffeinemc.*} implementation
+     * class loads otherwise.
      */
     private static void detectAndGateRenderCompat() {
         boolean isSodiumPresent = FabricLoader.getInstance().isModLoaded("sodium");
@@ -271,36 +274,47 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         SeamlessPortalsConstants.LOGGER.info("Sodium is {}present", isSodiumPresent ? "" : "not ");
         SeamlessPortalsConstants.LOGGER.info("Iris is {}present", isIrisPresent ? "" : "not ");
 
-        if (ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT) {
-            // ===== C2 PATH (gate flipped) — IP IPModEntryClient:73-105 behavior verbatim =====
-            // Never taken today (gate default false). NOTE the C2 flip is NOT just this gate:
-            // none of IP's imm_ptl_compat mixin set (9 sodium + 7 iris mixins) is REGISTERED yet —
-            // the IESodiumWorldRenderer accessor source exists in-tree but no compat mixins json
-            // registers it (the rest are unported) — so flipping the gate with Sodium present
-            // would CCE at the OnSodiumPresent duck casts. C2 ports + registers that set FIRST
-            // (see migration/C2_IP_COMPAT_DEPTH.md), then flips/deletes the gate.
-            // The On*Present classes classload only here.
-            if (isSodiumPresent) {
-                SodiumInterface.invoker = new SodiumInterface.OnSodiumPresent();
-            }
-            if (isIrisPresent) {
-                IrisInterface.invoker = new IrisInterface.OnIrisPresent();
-                ExperimentalIrisPortalRenderer.init();
+        boolean sodiumLever = Boolean.getBoolean("seamlessportals.experimentalSodiumCompat");
+        boolean sodiumActive = isSodiumPresent
+            && (ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT || sodiumLever)
+            && !isIrisPresent;
 
-                IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {
-                    if (IPConfig.getConfig().shouldDisplayWarning("iris")) {
-                        CHelper.printChat(
-                            Component.translatable("imm_ptl.iris_warning")
-                                .append(IPMcHelper.getDisableWarningText("iris"))
-                        );
-                    }
-                }));
-            }
+        if (sodiumActive) {
+            // ===== C2-1 SODIUM ACTIVE (gate or lever) ==========================================
+            // The compat mixin set (seamlessportals-ip-compat.mixins.json: the D1 swap mixin,
+            // #3 per-layer lists, FlawlessFrames bridge, D10 interim clip bracket + accessors)
+            // is woven whenever sodium is present flag-ON; this install is what makes their
+            // bodies live. OnSodiumPresent classloads only here.
+            SodiumInterface.invoker = new SodiumInterface.OnSodiumPresent();
+
+            // One-shot HONEST experimental notice (GOLD — a notice, not a failure; design §1
+            // C2-1 deliverable 8 wording; the clipping clause drops at C2-2).
+            IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {
+                CHelper.printChat(
+                    Component.literal(
+                        "[Seamless Portals] Sodium support is EXPERIMENTAL — known issue: "
+                            + "terrain near the portal plane may bleed through "
+                            + "(clipping lands in a later update)."
+                    ).withStyle(ChatFormatting.GOLD)
+                );
+            }));
         }
         else if (isSodiumPresent || isIrisPresent) {
-            // ===== HONEST-GATING DEVIATION (gate off + an incompatible renderer present) =====
-            // Iris implies Sodium at runtime, so a single warn+force covers both; the subject just
-            // names what was detected (Iris named too, so a shader user knows shaders are the issue).
+            // ===== HONEST-GATING (per-mod verdict fell through) ================================
+            // Covers: sodium present with gate+lever off (today's committed default), AND every
+            // iris-present install (iris keeps warn+force until C2-4 — design §0.2). The subject
+            // names what was detected so a shader user knows shaders are the issue.
+            //
+            // D11-SEAM (contingency, NOT active — design D-ledger D11 / §0.3 conflict 10): THIS
+            // branch is where the A5/A6 chunk-tracker feed would be re-gated
+            // unconditional-when-sodium-present if the baseline round shows a BLANK main world
+            // (sodium present, gate off, flag-ON: ImmPtlClientChunkMap replaces the client chunk
+            // cache and Sodium's own load hook never fires while the invoker is the no-op base).
+            // The carve-out shape: install here a minimal tracker-feed-only Invoker subclass
+            // (onClientChunkLoaded/onClientChunkUnloaded = OnSodiumPresent's bodies, everything
+            // else no-op) BEFORE warnAndForcePortalRenderingOff — pure correctness plumbing
+            // outside the experimental gate, same family as the D3 unconditional-worldgen seam.
+            // See the matching D11-SEAM comment on SodiumInterface.OnSodiumPresent.
             String subject = isIrisPresent
                 ? (isSodiumPresent ? "Sodium + Iris (shaders)" : "Iris (shaders)")
                 : "Sodium";

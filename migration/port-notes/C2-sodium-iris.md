@@ -74,6 +74,109 @@ of P1/P2/P3/P5/P7/P8 = the baseline round (§5).
 - **Validate on swap-in**: `renderDistance != 0 && == options.getEffectiveRenderDistance()`;
   `renderLists != null`; null renderTree/pendingTask/taskLists legitimate (cold context).
 
+
+## §2.5 THE C2-1 IMPLEMENTATION RECORD (LANDED; 4 verify rounds, 2 blockers + 3 corrections caught pre-ship)
+
+Impl: `wf_558ffb7a-60e` (Fable, in the isolated worktree `c2/c2-1-core` — the main tree stayed
+frozen for the user's baseline round). Fix rounds: `wf_c01de5b4-152` + `wf_d360c42c-438`.
+Verify ledger: **lens A FAIL (2 BLOCKERS) → fixed → lens A′ PASS_WITH_CORRECTIONS + lens B
+PASS_WITH_CORRECTIONS → final folds → focused lens PASS** (3 informational notes). Compile
+green x3 + 8-leg suite ALL LEGS PASS in the worktree (sodium absent ⇒ gate 1 drops every
+compat mixin; the touched light-publish path runs the helper's plain-run fallback — proven
+byte-equivalent un-sodium).
+
+### What landed (beyond the §2 swap list)
+
+- **SodiumRenderingContext v2** (widened per §2, per-field census citations) +
+  **MixinSodiumRenderSectionManager** (the symmetric 3-way swap; content-swap for the two
+  finals; validate BEFORE any mutation; `@Shadow`-with-body `consumeCullTaskResults(boolean)`)
+  + **IESodiumCameraTimingControl** accessor + the SWR camera-cache five on extended
+  IESodiumWorldRenderer accessors. SWR.renderDistance deliberately NOT swapped.
+- **D1 race mitigation (b) — consume-before-EVERY-swap**: at ip_swapContext entry any live
+  pendingTask is blocking-consumed; invariant "no CullTask outstanding while its context is
+  parked" proven airtight incl. registry invalidation/LRU paths. Model = TREE-PERSISTENCE
+  WITH SYNCHRONOUS CONSUMPTION (results persist via the cullResults content-swap; each pass
+  pays a bounded blocking consume). Option (a) refcount = the ledgered hardening if live
+  rounds show frame cost. Failed-consume repair: pendingTask=null + idempotent
+  endSafeReadPhase + one-shot registry-hosted log (mixin-static-initialiser gamble avoided).
+- **SodiumContextRegistry** (D1 lifetime): keyed (portal UUID, layer); LRU
+  max(16, maxPortalLayer*16); invalidation on world-renderer dispose (NEW 7th facade method
+  `onWorldRendererDisposed` — a NAMED ADDITION vs IP's 6-method Invoker, base no-op), RD
+  mismatch, dest-dim change, gate flip. Non-portal facade callers (GUI-portal API,
+  CrossPortalViewRendering) get IP-original per-pass cold contexts, never registered/armed.
+- **BLOCKER-1 fix (gate-INDEPENDENT, protects the un-levered baseline too)**: sodium's
+  LevelExtractorMixin resolves `mc.levelRenderer` AT CALL TIME (checkRenderer, javap-proven)
+  in setLevel AND the whole dirty-marking family. Repoint brackets (the MyGameRenderer :298
+  pattern, finally-restored, presence-gated on the cached SodiumCompat.isSodiumLoaded) at:
+  ClientWorldLoader secondary-creation setLevel + disposeWorldRenderer setLevel(null) + the
+  NEW `SodiumRendererRepoint.runWithRendererRepointed` helper at
+  ImmPtlClientChunkMap.onLightUpdate (the ONE seam outside any repoint — the frame-END
+  lateUpdateLight caller; all other callers sit inside withSwitchedWorld which already
+  repoints; the packet block-update route likewise — enumerated with per-site thread
+  evidence). Defensive null-RSM guard in the swap driver (one-shot-per-dim ERROR + full
+  symmetric skip — the honest mid-frame degrade).
+- **BLOCKER-2 fix (strict serial)**: `GLOBAL_PASS_SERIAL = max(serial, max(this.frame,
+  context.frame)) + 1; this.frame = serial` at swap-in — every swapped-in frame strictly
+  exceeds ALL historical lastVisibleFrame stamps (the equal-frame collision class eliminated
+  unconditionally, incl. FlawlessFrames-armed multi-increment passes); forward-only preserved.
+- **#3 MixinSodiumRenderRegion** (unconditional per §4.2), **MixinSodiumFlawlessFrames** 1:1 +
+  cold-context arming (n=1, next-frame latch), **D6** SpriteUtil→api INSTANCE, **D10 interim
+  clip bracket** at ShaderChunkRenderer.begin/end (raw GL on the non-cached CLIP_DISTANCE0;
+  triple-gated; stale-latch clear; retired at C2-2), **CORRECTION-3** validate escape =
+  getPortalRenderDistance's real branches (the session-latched renderedScalingPortal escape
+  replaced — that latch NEVER resets, its only reset is commented out upstream).
+- **Gate restructure**: per-mod verdicts; sodiumActive = present && (gate || the
+  `-Dseamlessportals.experimentalSodiumCompat` lever, gradle `-PsodiumCompatLever=true`) &&
+  !irisPresent (iris ALWAYS warn+force until C2-4); one-shot GOLD experimental notice naming
+  the clipping gap. Committed default = 6f4560b behavior EXACTLY (two audited exceptions:
+  the BLOCKER-1 pure-fix brackets; the debug-command FlawlessFrames arm — see ledger).
+
+### C2-1 ledger (from the verify rounds)
+
+- **Named addition**: the 7th facade method onWorldRendererDisposed (D1 invalidation seam;
+  IP's Invoker has 6 — dies/reconsiders at S20 with the facade).
+- **Un-levered delta (sanctioned)**: ClientDebugCommand's forceMainThreadRebuildFor now
+  reaches sodium's FlawlessFrames when woven (manual debug command only; the design §6.2
+  envelope covers it).
+- **IP-FAITHFUL crash class (do-not-fix)**: RD=2 + reducedPortalRendering ⇒
+  getPortalRenderDistance=0 ⇒ the validate throws — IDENTICAL upstream (same /3, same
+  Validate). Live-round watch item.
+- **C7 line**: SodiumCompat.isSodiumLoaded counts EMBEDDIUM on NeoForge; IPCompatMixinPlugin
+  deliberately does not — when C7 un-defers the client, the repoint brackets must NOT fire
+  for embeddium (semantic mismatch between the two presence gates, moot until C7).
+- **Flag-OFF + sodium (pre-existing, S20-dies)**: the block-era PortalWorldManager setLevel
+  sites + SeamlessClientChunkMap/RemoteBlockUpdater dirty sites are unbracketed — same
+  wrong-routing class on the never-supported block-era+sodium combination; enumerated with
+  reachability evidence; dies with the S20 block-era deletion.
+- **Perf watch**: per-pass blocking consume (mitigation b — option (a) if frame cost);
+  renderOutOfGraph frustum-only overdraw; prepareFrame telemetry pollution; per-iteration
+  frame advance when armed; a scale-oscillating portal would recreate+arm every frame.
+- **Comment notes (informational, recorded not fixed)**: the GLOBAL_PASS_SERIAL javadoc says
+  "above" for a map declared below; the repair comment's "147-175 null/close tail" is
+  conservative (actual null@161/close@166 — covers strictly more throw points than claimed);
+  the helper fast-path "zero-overhead" is approximate (a volatile-Boolean unbox + isSameThread
+  virtual call).
+
+### The C2-1 LIVE-ROUND SCRIPT (lever on) — run AFTER the §5 baseline round
+
+Launch: `.\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true -PsodiumCompatLever=true`
+Expect the GOLD experimental notice (NOT the red force-off line). Then:
+1. Cross-dim portal shows DEST terrain (not outer-world garbage, not permanently blank;
+   first-frames blank while chunks build = accepted envelope).
+2. THE DECISIVE SAME-DIM CHECK: portal pair near water/glass — outer-world transparent pass
+   intact with the portal on screen.
+3. Nested portal (layer 2) sane.
+4. Entities beside the portal stay visible on portal frames.
+5. Walk-through both ways + post-crossing world renders fully (no blank curtain).
+6. Dest-dim fog through the aperture (nether-from-overworld).
+7. Save-relog; then lever OFF relaunch → red warn+force returns (A/B).
+8. A plain runClient regression pass (no sodium).
+EXPECTED-AND-ACCEPTED: terrain bleed-through at the portal plane (clipping = C2-2, the
+notice says so); portal-pass frame cost unoptimized (culling = C2-3).
+FAILURE DISCRIMINATORS (pre-registered): aperture shows YOUR world's terrain → P1 routing;
+outer-world translucent corruption same-dim → swap/#3; main-world sections vanish one frame
+after a portal pass → pending-task; portal terrain NEVER appears → convergence (P3 fork).
+
 ## §4 C2-0 verify record (the catches)
 
 ### 4.1 THE NEW HAZARD (lens 1, the load-bearing catch): pendingTask × safe-read-phase race

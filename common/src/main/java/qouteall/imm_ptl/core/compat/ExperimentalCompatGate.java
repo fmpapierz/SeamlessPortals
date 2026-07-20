@@ -34,11 +34,19 @@ public final class ExperimentalCompatGate {
 
     /**
      * The C2-held gate lever. Default {@code false} = the ported Sodium/Iris compat layer stays
-     * dormant (the invoker is never swapped away from the no-op base {@code Invoker}). Flipped to
-     * {@code true} (or this whole class deleted) at C2 completion, once the compat layer is
-     * retargeted to the 26.2 render substrate. Non-{@code final} to match {@code IPGlobal}'s lever
-     * convention and to keep the gate-on branch a genuine runtime branch (so its lazy-classload
-     * discipline is preserved rather than being compile-time dead-code).
+     * dormant (the invoker is never swapped away from the no-op base {@code Invoker}). Non-{@code
+     * final} to match {@code IPGlobal}'s lever convention and to keep the gate-on branch a genuine
+     * runtime branch (so its lazy-classload discipline is preserved rather than being
+     * compile-time dead-code).
+     *
+     * <p>C2-1 STATE: the Sodium 0.9.1 compat mixin set NOW EXISTS and is registered
+     * ({@code seamlessportals-ip-compat.mixins.json} — the D1 widened context swap, the D5
+     * entity-cull neutralize, #3 per-layer render lists, the FlawlessFrames bridge, the D10
+     * interim clip bracket). This gate (or the equivalent
+     * {@code -Dseamlessportals.experimentalSodiumCompat=true} lever) activates the SODIUM verdict
+     * ONLY — iris-present installs keep the full warn+force until C2-4 (activating the sodium
+     * chains under an active iris pipeline is forbidden, design §0.2). See
+     * {@code SeamlessPortalsClientFabric.detectAndGateRenderCompat} for the per-mod verdicts.
      */
     public static boolean ENABLE_SODIUM_IRIS_COMPAT = false;
 

@@ -305,8 +305,19 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
         // per affected section, POST-publish) — an extra spread would multiply re-marks up to
         // ~27× per update (a remesh-storm cousin of the S14.48-removed all-dirty wave) with zero
         // added healing. Single-section is correct here for ALL dims.
-        ClientWorldLoader.getWorldExtractor(level.dimension())
-            .setSectionDirty(chunkSectionPos.x(), chunkSectionPos.y(), chunkSectionPos.z());
+        //
+        // C2-1 vA2 finding 1: sodium's LevelExtractorMixin resolves the SWR via mc.levelRenderer
+        // AT CALL TIME inside setSectionDirty (checkRenderer), and this publish-path mark also
+        // fires OUTSIDE any renderer swap (MyRenderHelper.lateUpdateLight at frame-END is
+        // deliberately outside withSwitchedWorld) — bracket with the per-dim repoint. Fast
+        // no-repoint path when mc.levelRenderer already matches (the ACTIVE dim; calls inside
+        // withSwitchedWorld / the teleport cutover). Plain call when sodium is absent. The
+        // S14-hardened dirty-mark itself is UNCHANGED.
+        qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumRendererRepoint
+            .runWithRendererRepointed(level.dimension(), () ->
+                ClientWorldLoader.getWorldExtractor(level.dimension())
+                    .setSectionDirty(chunkSectionPos.x(), chunkSectionPos.y(), chunkSectionPos.z())
+            );
     }
 
     // ================================================================================================
