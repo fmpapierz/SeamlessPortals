@@ -58,6 +58,36 @@ public class LevelRendererEntityVisibilityMixin {
         // ever lost entities to the fade term.
         if (PortalContextSwitch.isRenderingPortal
             || qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
+            // C2-1e (dest entities invisible under ACTIVE sodium — live-round finding
+            // 2026-07-19; mechanism javap-proven): under Sodium the renderer's viewArea field
+            // is sodium's IgnoringViewArea (installed by LevelRendererMixin.sodium$replace),
+            // whose getRenderSectionAt(BlockPos) returns null UNCONDITIONALLY (0.9.1 javap:
+            // aconst_null/areturn) — so the compiled-gate read below evaluated FALSE for every
+            // BlockPos, isSectionCompiledAndVisible returned false, and
+            // LevelExtractor.isEntityVisible (shouldRender && (isOutsideBuildHeight ||
+            // isSectionCompiledAndVisible), mc262-ref :251-259) culled EVERY in-build-height
+            // dest entity during the Step-5 dest extract. Fix = IP sodium-compat file #2's
+            // exact semantics ported to this consumer ("The section visibility information
+            // will be wrong if rendered a portal. Just cancel this optimization." — IP forced
+            // its 0.6.0 isSectionVisible seam TRUE during portal frames; on 0.9.1 that one
+            // seam split in two: sodium's own EntityRenderer.shouldRender wrap →
+            // RSM.isBoxVisible is covered by the D5 neutralize in
+            // MixinSodiumRenderSectionManager, and THIS vanilla extract gate is the other
+            // half): force visible and let the entity's own frustum/distance cull
+            // (EntityRenderDispatcher.shouldRender — the other conjunct of isEntityVisible,
+            // running against the dest frustum) decide. Scope is TIGHTER than IP's
+            // portalsRenderedThisFrame != 0 — isSodiumPresent() is true only for the ACTIVE
+            // invoker (flag-ON + gate/lever + !iris; feed-only/base report false and keep the
+            // yielded-empty envelope), and this branch is reached only inside dest extracts —
+            // the main extract keeps sodium's honest isSectionReady culling. Deliberately NOT
+            // a fall-through into sodium's @Overwrite (SWR.isSectionReady →
+            // RSM.isSectionBuilt): that body is null-guard-free on renderSectionManager
+            // (javap), so the BLOCKER-1b null-RSM degrade state would NPE mid-extract.
+            if (qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface
+                .invoker.isSodiumPresent()) {
+                cir.setReturnValue(true);
+                return;
+            }
             net.minecraft.client.renderer.ViewArea viewArea =
                 ((LevelRendererAccessorMixin) this).seamlessportals$getViewArea();
             if (viewArea == null) {

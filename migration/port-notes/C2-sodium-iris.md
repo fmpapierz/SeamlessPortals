@@ -373,3 +373,33 @@ shows the strict serial live (lastFrame ~117k, monotonic).
 With this round, **C2-1's deliverable is live-proven**: Sodium + portal views + crossing +
 same-dim isolation + persistence all work; the accepted artifacts (plane bleed-through
 until C2-2; first-frames cold blank) behaved as documented.
+
+## §3.8 C2-1e — DEST-DIM ENTITIES THROUGH PORTALS (diagnose-first; lens PASS)
+
+**THE MECHANISM (evidence-complete BEFORE the fix; BOTH prior hypotheses REFUTED):** the
+mod's OWN block-era-vintage `LevelRendererEntityVisibilityMixin` HEAD-cancels
+`isSectionCompiledAndVisible` during dest extracts by reading the renderer's viewArea — under
+sodium ACTIVE that is `IgnoringViewArea`, whose `getRenderSectionAt` is unconditionally
+`aconst_null` → the mixin cancels FALSE for every position → `extractVisibleEntities`'
+final conjunct fails → destLRS.entityRenderStates stays empty → no dest entities. REFUTED
+with evidence: (a) sodium's own entity cull is ALREADY D5-neutralized during every dest pass
+(portalsRenderedThisFrame ≥1 — incremented in onBeginPortalWorldRendering:98, NOT
+pushPortalLayer as the prose first said); (b) visibleSections never feeds entity extraction
+(only BE extraction — which is why chests/signs DID render).
+
+**THE FIX (one file, +30 lines):** in the mixin's dest-extract leg, when
+`SodiumInterface.invoker.isSodiumPresent()` (TRUE only for the ACTIVE invoker), cancel TRUE
+instead of consulting the foreign viewArea — IP compat file #2's exact semantics ("the
+section visibility information will be wrong… just cancel this optimization") ported to the
+one 0.9.1 consumer the D5 retarget does not cover. The entity's own frustum/distance cull +
+the cross-portal shouldRenderEntityNow filter stay live; scope deliberately TIGHTER than
+IP's (dest extracts only — the main extract keeps sodium's honest culling). Fall-through
+into sodium's @Overwrite REJECTED with evidence (SWR.isSectionReady is null-guard-free →
+would NPE in the ledgered null-RSM degrade state). Sodium-absent / feed-only / flag-OFF
+bit-identical.
+
+**Ledgered:** entities-before-terrain possible during cold first-frames (IP-parity, the
+accepted envelope); the same-dim loop-back entity pass fixed by the same line; NeoForge +
+sodium keeps the old behavior (fabric-only install site — pre-existing posture, C7 line).
+Live check (rides the next round): a mob in the dest dim renders in the aperture;
+entities-beside-portal + the same-dim water check re-glanced for no regression.
