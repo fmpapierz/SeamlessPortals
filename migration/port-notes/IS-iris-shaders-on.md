@@ -1220,3 +1220,20 @@ mangled session; they three-way-split what the harness could not):
 4. Was it mangled from the FIRST creative-open of the session, or only AFTER an event
    (first portal view / first shader toggle / a window resize / fullscreen)?
 5. Does F3+T (reload resources) heal it?
+
+**§3.5 THE SECOND USER ROUND (2026-07-20, iris+sodium+lever, main-tree 304420d — the
+post-fix hands-on):** F FOG **FIXED (user-confirmed)**; O OUTLINE **works (user-confirmed)**;
+G CREATIVE INVENTORY **GOOD this session (user-confirmed)** — so defect G was
+environment/session-specific and is NOT present on the fixed build; G is effectively CLOSED
+(the §3.4 questions stand only if it ever recurs). The one remaining observation, USER-ROUTED
+TO IS3: **"if terrain is close to the portal on the dest side, and I move around on the
+source side, the camera clips into terrain."** = the MISSING FRONT-CLIPPING — the
+full-pipeline renderer's DEF-G belt (`FrontClipping.disableClipping()` at
+`renderDestWorldFullPipeline` ~:1629, replacing the decomposed path's `setupInnerClipping`
+arm at ~:1098) leaves dest geometry on the camera side of the portal plane UN-clipped, so a
+dest camera swung near dest terrain shows into it. IS3 is exactly the fix: retire the belt,
+arm `setupInnerClipping` for the full-pipeline pass, and land the TransformPatcher injection
+so shaders-ON iris-patched terrain programs write `gl_ClipDistance` (arming clip-distance
+globally is only safe once the programs write it — the belt existed to avoid the
+UNDEFINED-non-writing-program hazard). User directive: execute IS3 + IS4 with the deep-Opus
+protocol ([[opus-verifier-depth-protocol]]).
