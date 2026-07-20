@@ -1531,6 +1531,21 @@ increment Fable-verified, folded, gametest-gated, pushed):
 
 ### S19 — Peripheral tail (U13) — USER DECISION — effort S–XL
 
+**C2 CLOSED (2026-07-20, user-confirmed — the full ladder landed + live-proven).**
+Sodium 0.9.1 tier COMPLETE + DEFAULT-ON (user decision #1): views + clipping (the D3
+view-space transport through the sodium GLSL seam + the GLDrawContext uploader) + entities
+(C2-1e) + crossing/persistence + the endFrame walk (C2-1d) + the safety-only culling floor
+(C2-3/C2-3b: the async-baked-predicate flicker diagnosed + fixed with the sync-only guard;
+the predicate now culls zero terrain — perf re-entry ledgered). Iris 1.11.2 tier (C2-4):
+shaders-OFF full parity (P11 proven), shaders-ON honest pass-through (D8), the D7
+loud-fallback, clean mid-session toggling. THE INSTALL MATRIX USER-PROVEN (plain / sodium /
+iris-no-pack / iris+pack). ~20 Fable lens rounds; 4 BLOCKERS + 2 design-spec supersessions
++ 2 convergent-derivation events caught pre-ship. C2-5 DECISIONS: shaders-ON renderer →
+the S20/polish era (migration/IRIS_SHADERS_ON_HANDOFF.md = the engagement doc + opening
+prompt); the gate scaffolding KEPT until S20. Ledger of record = port-note
+`C2-sodium-iris.md` (§5 = the close + the deferred ladder + the S20-binding interactions).
+NEXT: S20 via `migration/S20_HANDOFF.md`. Original C2 progress record follows:**
+
 **C2 PROGRESS (2026-07-19, user-directed BEFORE S20): design + C2-0 + C2-1 LANDED.**
 Governing design = `migration/C2_DESIGN.md` (judge-panel synthesis `2587ee9`: 6-stage ladder
 C2-0..C2-5, 27-file disposition table, 3 redesign specs, 12 probes, 5 user decisions).

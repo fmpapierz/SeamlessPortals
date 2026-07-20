@@ -669,3 +669,58 @@ strongest single witness.
 **LIVE RE-CHECK (rides the next round)**: the recursive-portal pan scene — flicker GONE with
 culling enabled; no FPS regression vs lever-off expected (both states now cull no terrain).
 >>>>>>> 10c9507 (C2-3b RECURSIVE-FLICKER FIX: the sync-only culling guard (diagnose-first; the engagement's deepest mechanism).)
+
+## §5 C2 CLOSED (2026-07-20, user-confirmed)
+
+**The flicker re-check PASSED** (user: recursive-portal pan scene clean, culling enabled) —
+the last open C2 item. **C2 IS CLOSED.**
+
+### 5.1 The scoreboard
+
+Six stages (C2-0..C2-5) + four unplanned fix rounds (C2-1b/c/d, C2-1e, C2-3b), all
+worktree-built, Fable-verified, suite-green, live-proven:
+- **Sodium 0.9.1 tier COMPLETE + DEFAULT-ON**: views, clipping (our view-space transport
+  through the sodium GLSL seam), entities, crossing, persistence, the endFrame discipline,
+  the safety-only culling floor.
+- **Iris 1.11.2 tier**: shaders-OFF = full parity (incl. clipping — P11 proven); shaders-ON
+  = honest pass-through + notice (D8); the D7 loud-fallback; mid-session toggling clean.
+- **The install matrix user-proven**: plain / sodium / iris-no-pack / iris+pack, each
+  across create, cross, recurse, same-dim, relog.
+- **Verify tally (the whole C2)**: ~20 Fable lens rounds; 4 BLOCKERS (cross-dim setLevel
+  NPE + main-SWR corruption; frame lockstep; the endFrame VRAM leak; the async-baked
+  predicate — the last found live by the user, diagnosed to mechanism in one round),
+  2 spec-level supersessions of the governing design (the ±8 padded-radius; the
+  candidate-B uploader seam), 2 convergent-independent-derivation events, and the
+  diagnose-first discipline REFUTING the orchestrator's hypotheses twice (C2-1e, C2-3b's
+  responsibility split).
+- **User decisions recorded**: #1 sodium DEFAULT-ON (C2-2); C2-5(a) shaders-ON → the
+  S20/polish era (`migration/IRIS_SHADERS_ON_HANDOFF.md` = the engagement doc);
+  C2-5(b) the gate scaffolding KEPT until S20 (the one-boolean rollback).
+
+### 5.2 THE DEFERRED LADDER (the C2 tail, in priority order)
+
+1. **The iris shaders-ON renderer** — `IRIS_SHADERS_ON_HANDOFF.md` (the FBO-compatibility
+   shape; **the block-era FBO precedent dies at S20 — mine it before the sweep or from git
+   history**).
+2. **The culling perf re-entry**: a render-thread-only hook on the traverse Direct
+   shortcuts (isBoxVisibleDirect/getBoxIntersectionDirect) — per-frame-fresh by
+   construction (§3.14; the predicate currently culls zero terrain).
+3. D2b box-portal iteration-origin revival (the dormant duck field + the findVisible
+   offset-67 sketch).
+4. The VK clip variant (D4 — discard-based, backend-agnostic).
+5. isBoxVisibleLooser/testSectionExpanded hooks (perf-measured).
+6. The safe-read-phase refcount hardening (mitigation (a) — if the per-pass blocking
+   consume ever shows frame cost).
+7. PipelineManager.getPipelineNullable hardening (replaces the B4 reflection).
+8. Iris FILES 1/2/3 + the executeTranslucent re-anchor (D12) — the deep-end revival facts.
+9. The C7 lines: embeddium≠sodium at every presence site; cloth-config-neoforge; the
+   me.shedaniel NCDFE class; the EventFactory landmines.
+
+### 5.3 S20 interactions (binding on the sweep)
+
+Dies at S20: the block-era system incl. SodiumFogOverrideMixin (**pre-deletion gate-audit:
+P8 proved it fires flag-ON but inert — prove flag-ON sodium fog doesn't depend on it**),
+PortalWorldManager's sodium touchpoints, gate 2 of IPCompatMixinPlugin (collapses to
+always-true), the D3 guard family, ExperimentalCompatGate + the warn machinery (per
+decision (b)). Survives: the compat config + plugin, every shipped C2 file, the D-ledger.
+The full matrix is in C2_DESIGN §6.4 + this §5.2.
