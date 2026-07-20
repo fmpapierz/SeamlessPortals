@@ -458,3 +458,64 @@ documented fallback line); P-B2 fires ~40 frames after alpha resolves, inside a 
 draw-traced frame; frame N+1 marker follows. Grep `[IS0-PROBE]`. Compile gate re-run to
 green after the verify corrections. Default (no property): the probe class never loads; the
 anchor dispatches the empty hook to a non-overriding receiver — inert by reachability.
+
+## §1.6 THE IS0 PROBE ROUND — RUN + CLASSIFIED (2026-07-20, SELF-RUN x3; VERDICT: GO)
+
+Vehicle: the crossing-gametest harness with `-PirisRuntime=true -PshaderpackViewsProbe=true`
++ ComplementaryReimagined_r5.8.1 staged (`shaderpacks/` + `config/iris.properties`
+enableShaders=true) — the self-run pattern (user-routed 2026-07-20): a driven real client,
+log-classified evidence, no user round needed at IS0.
+
+**Attempts 1-2 CRASHED — root cause found, fixed, and the fix is itself evidence** (commits
+68e223e superseded-by 5dbd0af): EXCEPTION_ACCESS_VIOLATION ~1s after the P-OQ4 line, victim
+= C2 CompilerThread0 (hs_err_pid248404, CompileTask IOWorker::storePendingChunk) then GC
+Thread#5 (hs_err_pid130364). First classified as the S19 Temurin JIT defect class — WRONG:
+two DIFFERENT housekeeping-thread victims at the same run-point = native heap corruption
+with varying victims. Mechanism (engine-source-proven): `GlCommandEncoder.copyTextureToBuffer`
+(:346) sets `GL_PACK_ROW_LENGTH = width` via the raw uncached `_pixelStore` and never resets
+(vanilla immune: its readbacks target bound PBOs; the gametest screenshot machinery is the
+armer) → P-OQ4's client-memory 16x16 glReadPixels wrote strided rows over the native heap.
+FIX = the pack-state bracket (save 4x GL_PACK_*, force tight 0/0/0/4, restore
+exact-reverse); compact Fable verify PASS (4 NOTEs: no-try/finally acceptable-for-
+instrumentation; PBO-binding hole is a non-corruption class; sweep = P-OQ4 was the ONLY
+live client-memory readback; LATENT dead-code same-class sites MyRenderHelper
+debugFramebufferDepth/:452 ColorRed — S20 audit items). Memory
+`26-2-glstate-and-fbo-invariants` gains invariant #4; the JIT-exclude for
+IOWorker::storePendingChunk (68e223e) KEPT — harmless, and the first hs_err is now
+explained, not defect-class evidence. DISCRIMINATION LESSON: jvm.dll + compiler-thread
+victim MASQUERADES as the Temurin class; discriminate by victim VARIETY across repro runs +
+proximity to a readback.
+
+**Attempt 3 (5dbd0af): exit 0, ALL 8 LEGS PASS under iris+pack, no hs_err. The probe
+verdicts:**
+
+- **P-OQ4 CONFIRMED** + the mechanism proven in-run: pre-bracket `GL_PACK_ROW_LENGTH=854`
+  (the gametest window width — STALE, the corruption arm caught red-handed). Depth
+  readback fbo=3 glGetError=0; this run min=max=mean=1.0 (attempt-1 read min=0.0 max=1.0
+  mean=0.0625 pre-crash) — non-trivial both times, verdict stands; the all-1.0 flatworld
+  oddity is noted, not load-bearing (the IS1 round re-reads depth in a real scene).
+- **P-alpha DOCUMENTED** (the rejection observed live): one commanded decomposed dest
+  render under the pack at the post-main slot — runs with NO iris lifecycle scoped to it,
+  programs bind (GL_CURRENT_PROGRAM=31 at tail), glGetError=0. Gamma re-entry stays
+  D22-conditional; nothing here re-opens it.
+- **P-B2 = GO (the decisive verdict).** ONE direct 8-arg `LevelRenderer.render()` on
+  WORLD_RENDERER_MAP[overworld] (= the MAIN renderer, promoted-identity — logged; all
+  bracket fields identity for the source-world case) at anchorFrame 816 under the active
+  pack: `renderReturned=true exception=none elapsedMs=7 glGetError=0`; iris pipeline
+  object IDENTICAL head/tail (no create, manager slot behaves per §1.3-2c);
+  `rendererPipelineField=null` post = **iris$endLevelRender ran at the NESTED render's own
+  tail** — iris's full class-woven lifecycle re-entered; the DrawCallTrace dump shows the
+  frame carrying TWO complete iris pass sequences INCLUDING TWO `Final pass
+  (iris:composite)` executions = the nested render went through iris's WHOLE pipeline to
+  presentation (the presentation-contract STOP class did not fire). Frame N+1:
+  glGetError=0; the harness then played 30+ more seconds through legs 3/4/5/6a/6b/7 (incl.
+  world reopen) to ALL LEGS PASS — no crash in any iris$ hook, no persistent corruption
+  signal. RESIDUAL (named): pixel-level visual cleanliness of frames N/N+1 is
+  un-judged by logs — it rides the IS1 visual round's pre-screen (screenshots) per the
+  self-run split; the elapsedMs=7 figure also pre-answers the §2.7 cost envelope's
+  order-of-magnitude question for one layer.
+
+**IS0 EXIT CRITERIA MET** (design §1 IS0 Verify + the §1.1 reconciliation): every static
+fork HOLDS or is RE-DECIDED with evidence; the one live-residual (P-B2) is now GO;
+suite green at default in the same worktree (pre-probe baseline + the attempt-3 run is
+itself an 8-leg pass under iris). IS1 is UNGATED.
