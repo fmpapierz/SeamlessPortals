@@ -1068,3 +1068,17 @@ mid-session at the switch frame, D21 temporal/flicker envelope, walk-through fee
 frame-edge nose-to-frame, resize) + notice v2 wording (tracks what the user sees) +
 the OQ7 one-shot pipeline log + the D8-default decision points (Q-U1 rides IS3 per the
 design).
+
+### §3.1 THE USER ROUND (2026-07-20, iris+sodium, levered session)
+
+PASS (user-confirmed): views under the pack (1) / pack-toggle no-crash (2) / walk-through
+(3) / no flicker observed (4) / block-break recompile (5, partial) / relog (6). DEFECTS
+routed to the is2-live-defects diagnose round (wf_ad533d56-9f9): **(F)** shaders-OFF +
+lever: NO dest-dim fog in the nether-from-OW window (clear view; fog normal after
+teleporting; the decomposed path had this PROVEN at C2 §3.7 — the lever routes shaders-OFF
+to the full-pipeline renderer too, so the suspect is renderDestWorldFullPipeline's fog
+supply vs the decomposed Step-6); **(O)** the targeted-block outline MISSING shaders on AND
+off (levered; default unknown); **(G)** creative inventory MANGLED — vanilla tabs empty
+slots + blank tab icons, the IP tab INTACT, shaders-independent (levered; default/plain/
+pre-IS unknown; the static-init suspect: IrisCompatPaste's reflective RenderPipelines
+.register at class load). The user's observations outrank every screenshot reading.
