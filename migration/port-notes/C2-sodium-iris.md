@@ -529,3 +529,13 @@ leg); pack ON mid-session → portals switch to pass-through + the one-shot noti
 at the toggle frame (the D8 timing sub-fix's decisive check), world renders correctly under
 shaders; pack OFF → views return; ShadowRenderer sanity (no portal-cull artifacts in
 shadows); save-relog. Plus the C2-3b flicker re-check when that fix lands.
+
+## §3.13 C2-4 LIVE ROUND (2026-07-20, user-run): 1-5 ALL GOOD — IRIS SHADERS-OFF PARITY LIVE-PROVEN
+
+No pack → FULL portal views under iris+sodium (incl. the P11 clipping leg) ✓; pack ON
+mid-session → pass-through + the one-shot notice, NO crash/corruption at the toggle frame
+(the D8 timing sub-fix's decisive check) ✓; play under shaders normal ✓; pack OFF → views
+return ✓; save-relog with pack on ✓. With this round the C2-5 INSTALL MATRIX is user-proven:
+plain (every suite/live round) / sodium (§3.7/§3.10) / iris-no-pack / iris+pack (this
+round). Outstanding: the C2-3b flicker fix (in flight) + its re-check; then the C2-5
+close-out decisions.
