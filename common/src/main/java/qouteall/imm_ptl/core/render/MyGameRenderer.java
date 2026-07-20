@@ -475,6 +475,232 @@ public class MyGameRenderer {
         }
     }
 
+    // =============================================================================================
+    // IS1 — THE SIBLING FULL-PIPELINE DRIVER (iris shaders-ON engagement)
+    // migration/IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable 1 / §2.1 / §0.4-4 (the sibling-driver
+    // fork record). Entry for IrisCompatOn262Renderer.invokeWorldRendering ONLY.
+    //
+    // IMPLEMENTER'S CHOICE (design §2.1 sanctions "extracted private driver OR duplicate"):
+    // DUPLICATE-WITH-PAIRING-COMMENT. switchAndRenderTheWorld above is left BYTE-UNTOUCHED (the
+    // binding gate-audit constraint: zero drift of the decomposed path at lever-off), and
+    // switchAndRenderTheWorldFullPipeline below carries the bracket as a lens-checkable copy.
+    //
+    // ===== PAIRING CONTRACT (the gate-audit lens diffs this list against switchAndRenderTheWorld)
+    // SAVE set (same order): oldWorld, oldWorldRenderer, oldLightmap, oldNoClip, oldChunkInfoList,
+    //   oldCrosshairTarget, oldCamera, oldRenderBuffers, oldClientRenderBuffers, oldFrustum;
+    //   fresh chunkInfoList swap onto the old renderer; iris pipeline capture (B4).
+    // SWAP-IN (same order): worldRenderer, level, lightmap, noPhysics, fog swappingManager push,
+    //   particle world, hitResult (remote-dim + shouldRenderHitResult), camera, pooled
+    //   RenderBuffers (dispatcher-exists guard), sodium D1 context swap, iris setPipeline(null)
+    //   [B4 KEPT VERBATIM — design §0.4-5: iris resolves via its GLOBAL manager; the field the
+    //   bracket nulls is iris's own per-render scratch], first-visit lightmap prime, per-invocation
+    //   projection locals + identity model-view push.
+    // INVOKE: the S18.2 try/finally; the dpMs top-level-only bracket; body =
+    //   SecondaryWorldRenderCore.renderDestWorldFullPipeline (vs renderDestWorld) — the ONE
+    //   sanctioned difference. The invokeWrapper indirection is DROPPED (every live caller passed
+    //   Runnable::run; the try/finally semantics are identical).
+    // SIGNATURE: the doRenderHand param is DROPPED in the sibling (dead in the original —
+    //   switchAndRenderTheWorld never reads it; Fable-fold G-NOTE, listed so future lockstep
+    //   diffs don't flag it).
+    // RESTORE (finally, same order): sodium context swap-back, model-view pop, projection restore,
+    //   worldRenderer, level, lightmap, noPhysics, particle world, hitResult, camera, fog pop,
+    //   chunkInfoList restore + list return, renderBuffers ×2 + pool return, frustum restore,
+    //   iris setPipeline(restore), EntityRenderDispatcher.prepare(oldCamera), checkGlError,
+    //   smartCull=true.
+    // =============================================================================================
+
+    /**
+     * IS1 (design §2.1): the full-pipeline analog of {@link #renderWorldNew} — pushes the render
+     * info (consumed by TransformationManager.processTransformation + WorldRenderInfo.getCameraPos/
+     * getRenderDistance/doRenderSky inside the core) and runs the duplicated shell bracket around
+     * ONE direct 8-arg {@code LevelRenderer.render()} on the dest dim's secondary.
+     */
+    public static void renderWorldFullPipeline(WorldRenderInfo worldRenderInfo) {
+        WorldRenderInfo.pushRenderInfo(worldRenderInfo);
+        try {
+            switchAndRenderTheWorldFullPipeline(
+                worldRenderInfo.world,
+                worldRenderInfo.renderDistance
+            );
+        } finally {
+            WorldRenderInfo.popRenderInfo();
+        }
+    }
+
+    // The duplicated shell bracket — see the PAIRING CONTRACT block above. Every line except the
+    // invoke body is a copy of switchAndRenderTheWorld; keep the two in lockstep (lens item).
+    private static void switchAndRenderTheWorldFullPipeline(
+        ClientLevel newWorld,
+        int renderDistance
+    ) {
+        if (!enablePortalCaveCulling) {
+            client.smartCull = false;
+        }
+
+        if (!PortalRendering.shouldEnableSodiumCaveCulling()) {
+            client.smartCull = false;
+        }
+
+        ResourceKey<Level> newDimension = newWorld.dimension();
+
+        LevelRenderer worldRenderer = ClientWorldLoader.getWorldRenderer(newDimension);
+
+        CHelper.checkGlError();
+
+        IEGameRenderer ieGameRenderer = (IEGameRenderer) client.gameRenderer;
+        DimensionRenderHelper helper =
+            ClientWorldLoader.getDimensionRenderHelper(newDimension);
+        Camera newCamera = new Camera();
+
+        // Step 1 — virtual-camera CONFIG (pairing: identical to the decomposed shell).
+        ((IECamera) newCamera).ip_resetState(WorldRenderInfo.getCameraPos(), newWorld);
+        ((IECamera) newCamera).portal_setFocusedEntity(client.getCameraEntity());
+        ((com.warwa.seamlessportals.mixin.client.CameraInvokerMixin) newCamera)
+            .seamlessportals$invokeSetRotation(
+                RenderStates.originalCamera.yRot(), RenderStates.originalCamera.xRot());
+        newCamera.tick(); // primes the camera's OWN EnvironmentAttributeProbe with dest level+position
+        ((com.warwa.seamlessportals.mixin.client.CameraInvokerMixin) newCamera)
+            .seamlessportals$setInitialized(true);
+
+        // Outermost-entry block-atlas sampler capture (pairing: identical; harmless here — the
+        // full render() creates the secondary's own chunkLayerSampler internally, but the static
+        // must stay warm for any decomposed pass sharing the frame).
+        if (PortalRendering.getPortalLayer() <= 1) {
+            SecondaryWorldRenderCore.captureMainChunkSampler(client.levelRenderer);
+        }
+
+        // store old state (pairing: SAVE set, same order)
+        ClientLevel oldWorld = client.level;
+        LevelRenderer oldWorldRenderer = client.levelRenderer;
+        Lightmap oldLightmap =
+            ((com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin) client.gameRenderer)
+                .seamlessportals$getLightmap();
+        boolean oldNoClip = client.player.noPhysics;
+        ObjectArrayList<SectionRenderDispatcher.RenderSection> oldChunkInfoList =
+            ((IEWorldRenderer) oldWorldRenderer).portal_getChunkInfoList();
+        HitResult oldCrosshairTarget = client.hitResult;
+        Camera oldCamera = client.gameRenderer.mainCamera();
+        RenderBuffers oldRenderBuffers = ((IEWorldRenderer) worldRenderer).ip_getRenderBuffers();
+        RenderBuffers oldClientRenderBuffers = client.gameRenderer.renderBuffers();
+        Frustum oldFrustum = ((IEWorldRenderer) worldRenderer).portal_getFrustum();
+
+        ObjectArrayList<SectionRenderDispatcher.RenderSection> newChunkInfoList =
+            VisibleSectionDiscovery.takeList();
+        ((IEWorldRenderer) oldWorldRenderer).portal_setChunkInfoList(newChunkInfoList);
+
+        Object irisPipeline = IrisInterface.invoker.getPipeline(worldRenderer);
+
+        // switch (pairing: SWAP-IN, same order)
+        ((IEMinecraftClient) client).ip_setWorldRenderer(worldRenderer);
+        client.level = newWorld;
+        ieGameRenderer.ip_setLightmapTextureManager(helper.lightmapTexture);
+
+        client.player.noPhysics = true;
+
+        FogRendererContext.swappingManager.pushSwapping(newDimension);
+        ((IEParticleManager) client.particleEngine).ip_setWorld(newWorld);
+        if (BlockManipulationClient.remotePointedDim == newDimension) {
+            client.hitResult = BlockManipulationClient.remoteHitResult;
+        }
+        if (!PortalRendering.shouldRenderHitResult()) {
+            client.hitResult = null;
+        }
+        ieGameRenderer.ip_setCamera(newCamera);
+
+        RenderBuffers newRenderBuffers = null;
+        if (IPGlobal.useSecondaryEntityVertexConsumer) {
+            newRenderBuffers = acquireRenderBuffersObject();
+            if (newRenderBuffers != null) {
+                // S14-A FIX-5 dispatcher-exists guard (pairing: identical rationale — see the
+                // decomposed shell's comment block).
+                if (worldRenderer.sectionRenderDispatcher() != null) {
+                    ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(newRenderBuffers);
+                }
+                ((IEMinecraftClient) client).ip_setRenderBuffers(newRenderBuffers);
+            }
+        }
+
+        Object newSodiumContext = SodiumInterface.invoker.createNewContext(renderDistance);
+        SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+
+        IrisInterface.invoker.setPipeline(worldRenderer, null);
+
+        // first-visit lightmap prime (pairing: identical).
+        if (!RenderStates.isDimensionRendered(newDimension)
+            && !qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap
+        ) {
+            helper.updateAndRender(newCamera, RenderStates.getPartialTick());
+        }
+
+        // Projection + model-view bracket (pairing: identical — per-invocation LOCALS, V2-DEFECT-2).
+        GpuBufferSlice savedProjectionBuffer = RenderSystem.getProjectionMatrixBuffer();
+        ProjectionType savedProjectionType = RenderSystem.getProjectionType();
+        Matrix4fStack modelViewStack = RenderSystem.getModelViewStack();
+        modelViewStack.pushMatrix();
+        modelViewStack.identity();
+
+        // invoke rendering (pairing: the S18.2 try/finally + the dpMs top-level-only bracket;
+        // the ONE sanctioned difference = the full-pipeline core body).
+        try {
+            ProfilerFiller profiler = Profiler.get();
+            profiler.push("render_portal_content_full_pipeline");
+            long dpT0 = System.nanoTime();
+            destPassBracketDepth++;
+            try {
+                SecondaryWorldRenderCore.renderDestWorldFullPipeline(
+                    newWorld, worldRenderer, newCamera, renderDistance,
+                    oldWorld, oldCamera);
+            } finally {
+                destPassBracketDepth--;
+                if (destPassBracketDepth == 0) {
+                    qouteall.imm_ptl.core.render.TeleportFlashProbe.destPassNanosThisFrame +=
+                        System.nanoTime() - dpT0;
+                }
+            }
+            profiler.pop();
+        } finally {
+            SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+
+            // recover (pairing: RESTORE, exact decomposed order)
+            modelViewStack.popMatrix();
+            RenderSystem.setProjectionMatrix(savedProjectionBuffer, savedProjectionType);
+
+            ((IEMinecraftClient) client).ip_setWorldRenderer(oldWorldRenderer);
+            client.level = oldWorld;
+            ieGameRenderer.ip_setLightmapTextureManager(oldLightmap);
+            client.player.noPhysics = oldNoClip;
+
+            ((IEParticleManager) client.particleEngine).ip_setWorld(oldWorld);
+            client.hitResult = oldCrosshairTarget;
+            ieGameRenderer.ip_setCamera(oldCamera);
+
+            FogRendererContext.swappingManager.popSwapping();
+
+            ((IEWorldRenderer) oldWorldRenderer).portal_setChunkInfoList(oldChunkInfoList);
+            VisibleSectionDiscovery.returnList(newChunkInfoList);
+
+            ((IEWorldRenderer) worldRenderer).ip_setRenderBuffers(oldRenderBuffers);
+            ((IEMinecraftClient) client).ip_setRenderBuffers(oldClientRenderBuffers);
+            if (newRenderBuffers != null) {
+                returnRenderBuffersObject(newRenderBuffers);
+            }
+
+            ((IEWorldRenderer) worldRenderer).portal_setFrustum(oldFrustum);
+
+            IrisInterface.invoker.setPipeline(worldRenderer, irisPipeline);
+
+            client.getEntityRenderDispatcher()
+                .prepare(
+                    oldCamera,
+                    client.crosshairPickEntity
+                );
+
+            CHelper.checkGlError();
+
+            client.smartCull = true;
+        }
+    }
+
     /**
      * IP {@link LevelRenderer#renderLevel} fog-state reset (@IPVanillaCopy). SUPERSEDED on 26.2: IP's
      * six {@code FogRenderer} statics (setupFog/levelFogColor) are GONE (render-core G31), and the

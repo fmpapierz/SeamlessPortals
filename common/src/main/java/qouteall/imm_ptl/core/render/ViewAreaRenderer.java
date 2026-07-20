@@ -229,9 +229,48 @@ public class ViewAreaRenderer {
         // try-with-resources (SkyRenderer). Safe ordering: drawMesh copies the vertex bytes into
         // the GL store at createBuffer and draws synchronously; MeshData.close only releases its
         // result ref — the builder close after it is the sole ALLOCATOR.free.
+        //
+        // IS1 (iris shaders-ON engagement, design §2.3): the mesh BUILD (incl. the S14.36
+        // near-plane clip) is extracted into buildPortalViewAreaMesh below so the compat
+        // renderer's portal-shaped stamp (IrisCompatPaste) reuses the IDENTICAL geometry route
+        // without duplicating the Sutherland-Hodgman logic. Behavior-identical refactor: this
+        // method's build+draw sequence is unchanged (build → null-check → drawMesh).
         try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
             256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
         )) {
+            var apertureMesh = buildPortalViewAreaMesh(
+                fogColor, portal, cameraPos, partialTick, modelViewMatrix, byteBuffer
+            );
+
+            // IP: BufferUploader.draw(Objects.requireNonNull(bufferBuilder.build())) — the 26.2
+            // translation is PortalRenderTypes.drawMesh (render-core G8). S14.36 amendment: an
+            // EMPTY mesh is now a LEGITIMATE outcome (every aperture triangle clipped away when
+            // the quad sits behind the camera plane), so null build() skips the draw instead of
+            // hard-failing; any other emptiness still surfaces via the skipped aperture (blank
+            // window), not a crash.
+            if (apertureMesh != null) {
+                PortalRenderTypes.drawMesh(renderType, apertureMesh);
+            }
+        }
+    }
+
+    /**
+     * IS1 (iris shaders-ON engagement, design §2.3 / D20): the portal view-area mesh BUILD,
+     * extracted VERBATIM from {@link #buildPortalViewAreaTrianglesBuffer} so the stamp path
+     * ({@code IrisCompatPaste.stampPortalArea}) shares the exact geometry route — IP's
+     * {@code PORTAL_DRAW_FB_IN_AREA} contract ("the portal-shaped triangles") — including the
+     * S14.36 CPU near-plane clip (triangles crossing the camera plane rasterize sky-wide external
+     * wedges otherwise). The caller OWNS the {@code byteBuffer} lifetime and must keep it alive
+     * until the returned {@link MeshData}'s vertex bytes have been uploaded (the returned mesh
+     * references the builder's native memory). Returns null when every triangle clipped away.
+     */
+    public static MeshData buildPortalViewAreaMesh(
+        Vec3 fogColor, Portal portal,
+        Vec3 cameraPos, float partialTick,
+        Matrix4f modelViewMatrix,
+        ByteBufferBuilder byteBuffer
+    ) {
+        {
             BufferBuilder bufferBuilder = new BufferBuilder(
                 byteBuffer, PrimitiveTopology.TRIANGLES, DefaultVertexFormat.POSITION_COLOR
             );
@@ -326,16 +365,9 @@ public class ViewAreaRenderer {
 
             portal.renderViewAreaMesh(originRelativeToCamera, vertexOutput);
 
-            // IP: BufferUploader.draw(Objects.requireNonNull(bufferBuilder.build())) — the 26.2
-            // translation is PortalRenderTypes.drawMesh (render-core G8). S14.36 amendment: an
-            // EMPTY mesh is now a LEGITIMATE outcome (every aperture triangle clipped away when
-            // the quad sits behind the camera plane), so null build() skips the draw instead of
-            // hard-failing; any other emptiness still surfaces via the skipped aperture (blank
-            // window), not a crash.
-            var apertureMesh = bufferBuilder.build();
-            if (apertureMesh != null) {
-                PortalRenderTypes.drawMesh(renderType, apertureMesh);
-            }
+            // Null when empty (every triangle clipped away) — the caller decides (see the
+            // S14.36 amendment note at buildPortalViewAreaTrianglesBuffer).
+            return bufferBuilder.build();
         }
     }
 

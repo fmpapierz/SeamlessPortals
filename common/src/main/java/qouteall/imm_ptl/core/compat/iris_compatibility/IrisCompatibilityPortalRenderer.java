@@ -21,6 +21,10 @@ import java.util.List;
 
 import static org.lwjgl.opengl.GL11.GL_STENCIL_TEST;
 
+// IS1 DOC POINTER (iris shaders-ON engagement): this class is the HELD FIDELITY REFERENCE for
+// the live 26.2 re-expression `IrisCompatOn262Renderer` (same package; design
+// migration/IRIS_SHADERS_ON_DESIGN.md §2.2 member walk). It stays UNTOUCHED and never loads.
+//
 // S12-A Iris compile-SHELL — VERBATIM IP logic re-expressed onto the 26.2 surface. The renderMode=
 // {compatibility,debug} renderer WHEN Iris shaders are active. This class NEVER LOADS on 26.2: Iris has no
 // 26.2 build, IrisInterface.invoker.isIrisPresent() returns false forever (base Invoker), and
