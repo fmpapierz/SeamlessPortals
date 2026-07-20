@@ -1187,3 +1187,36 @@ S20 block-era sweep untouched; IF a pre-S20 flag-OFF fog defect ever surfaces th
 is to convert `SodiumFogOverride` to a save/restore stack (activate returns the prior value;
 clear restores it) — gated by a trace first confirming the decomposed draw actually recurses.
 Recorded so the S20 sweep does not delete it blind.
+
+**§3.3 THE EM SELF-RUN EVIDENCE (2026-07-20, harness screenshots) — F fixed, O explained,
+G not-ours + not-harness-reproducible.**
+- **DEFECT F (fog):** FIXED. Shaders-OFF sodium+lever cross-dim window now shows the nether
+  FOG GRADIENT (`shots_A_sodium_lever/*em-o-b*`); pre-fix it was the user's "clear, no fog".
+- **DEFECT O (outline):** FIX-O delivers the through-window outline (faint at white-on-grey
+  contrast, present shaders-OFF). The ORDINARY-block outline is missing under iris+shaders
+  **identically with and without our lever** (`shots_B_iris_default` == `shots_C_iris_lever`
+  EM-O-A) — i.e. iris's own faint outline rendering under a pack, NOT an IS regression. Our
+  renderer is exonerated for O; FIX-O closes the one part that WAS ours (dest outlines).
+- **DEFECT G (creative inventory mangle):** OUR CODE EXONERATED + NOT HARNESS-REPRODUCIBLE.
+  The creative screen (vanilla tabs + IP tab, per-tab shots, pre AND post portal) is INTACT
+  across FOUR configs: sodium+lever (`shots_A`), iris+pack default/no-lever (`shots_B`),
+  iris+pack+lever (`shots_C`), and iris+pack+lever+SHADER-TOGGLE-x2/11-pipeline-destroys
+  (`shots_D`, the EM-G-R3 toggle leg). None mangle. Since even the pipeline-reload trigger
+  (the leading atlas-poison suspect) is clean, the user's mangle depends on real-play
+  environment state the gametest harness does not replicate — the strongest candidates are
+  GUI-scale change / window-resize / fullscreen-toggle (each rebuilds/invalidates the
+  GuiItemAtlas — the exact one-time-poison-window mechanism the G diagnosis favored), none of
+  which the fixed-854x480 harness exercises. LIKELY a pre-existing iris/sodium GUI-atlas
+  interaction independent of Seamless Portals. NEXT = user localization (§3.4), not a
+  guessed fix (NO GUESSING).
+
+**§3.4 USER LOCALIZATION QUESTIONS for defect G** (each a ~30s action in the user's own
+mangled session; they three-way-split what the harness could not):
+1. Were HOTBAR item icons ever blank, or only the creative screen? (atlas-wide vs creative-only)
+2. Hover an "empty" creative slot — does a TOOLTIP appear? (content exists = render/atlas bug;
+   no tooltip = content-generation bug)
+3. Change GUI Scale in Options, reopen creative: HEALS (→ one-time past poison event) /
+   stays blank (→ active per-frame poison) / unchanged (→ atlas anatomy wrong).
+4. Was it mangled from the FIRST creative-open of the session, or only AFTER an event
+   (first portal view / first shader toggle / a window resize / fullscreen)?
+5. Does F3+T (reload resources) heal it?

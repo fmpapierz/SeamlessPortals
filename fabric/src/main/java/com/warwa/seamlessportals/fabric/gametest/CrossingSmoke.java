@@ -347,6 +347,12 @@ public class CrossingSmoke implements FabricClientGameTest {
             // legs CAPTURE state as evidence, they assert nothing.
             emOutlineEvidenceLegs(context, px, py, pz, planeZ);
             maybeCreativeBrowse(context, "em-g-post");
+            // EM-G-R3 the untested trigger: my 3 static-shaders harness configs never
+            // reproduced the creative-inventory mangle, so the trigger is the ONE thing they
+            // omit — a shader TOGGLE mid-session (iris pipeline destroy+recreate; the leading
+            // icon-atlas-poison suspect + the clip-cache stale-id event). Toggle off/on twice
+            // with frames rendered between, then re-browse creative. iris-only, fail-soft.
+            maybeShaderToggleThenBrowse(context, "em-g-toggle");
 
             // The vanilla branch preserves the owner's ROTATION+DELTA as RELATIVES
             // (Relative.union(ROTATION, DELTA)); the first fix cut dropped them (verify
@@ -733,6 +739,64 @@ public class CrossingSmoke implements FabricClientGameTest {
                     LOG + "EM-G '" + phase + "' screen close FAILED (non-fatal)", t);
             }
         }
+    }
+
+    /**
+     * EM-G-R3: reproduce the user's creative-inventory mangle by exercising the untested
+     * trigger — a shader TOGGLE (iris destroyPipeline + recreate) mid-session, the leading
+     * icon-atlas-poison suspect. Off→render→on→render, twice, then re-browse creative under
+     * {@code phase}. iris-only (reflection; no-op + skip when iris absent); fail-soft.
+     */
+    private static void maybeShaderToggleThenBrowse(ClientGameTestContext context, String phase) {
+        if (!screenshotsLeverOn()) {
+            return;
+        }
+        try {
+            if (!isIrisPackActive(context)) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "EM-G toggle skipped (no iris shaderpack active this run)");
+                return;
+            }
+            context.runOnClient(mc -> mc.player.setYRot(180f)); // face the portal row
+            for (int cycle = 0; cycle < 2; cycle++) {
+                setShadersEnabled(context, false);
+                context.waitTicks(40); // destroy + render frames shaders-OFF (our renderer live)
+                setShadersEnabled(context, true);
+                context.waitTicks(60); // recreate + settle, render frames shaders-ON
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "EM-G toggle cycle " + (cycle + 1) + " done (off→on)");
+            }
+            maybeCreativeBrowse(context, phase);
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(LOG + "EM-G toggle leg FAILED (non-fatal)", t);
+        }
+    }
+
+    private static boolean isIrisPackActive(ClientGameTestContext context) {
+        return context.computeOnClient(mc -> {
+            try {
+                Class<?> apiC = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
+                Object api = apiC.getMethod("getInstance").invoke(null);
+                return (Boolean) apiC.getMethod("isShaderPackInUse").invoke(api);
+            } catch (Throwable t) {
+                return false;
+            }
+        });
+    }
+
+    private static void setShadersEnabled(ClientGameTestContext context, boolean enabled) {
+        context.runOnClient(mc -> {
+            try {
+                Class<?> apiC = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
+                Object api = apiC.getMethod("getInstance").invoke(null);
+                Object cfg = apiC.getMethod("getConfig").invoke(api);
+                Class<?> cfgC = Class.forName("net.irisshaders.iris.api.v0.IrisApiConfig");
+                cfgC.getMethod("setShadersEnabledAndApply", boolean.class).invoke(cfg, enabled);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "iris setShadersEnabled(" + enabled + ") failed", t);
+            }
+        });
     }
 
     /** The browse target: index into {@code CreativeModeTabs.tabs()}, or -1 = the IP tab. */
