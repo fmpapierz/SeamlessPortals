@@ -54,16 +54,19 @@ import java.util.Set;
  * the exception: each probe {@code @Inject} is {@code require = 0} and lever-gated behind
  * {@code -Dseamlessportals.compatProbe=true} (they are diagnostics, must never gate the boot).
  *
- * <h2>The Iris arm is DELIBERATELY UNPOPULATED at C2-4 (D9)</h2>
- * The {@code contains("Iris")} / {@code contains("IrisSodium")} arms are live code but match
- * ZERO registered classes: C2-4 ships the iris invoker ({@code IrisInterface.OnIrisPresent} —
- * pure facade, reflection + public Iris API, NO mixin) with shaders-OFF parity and honest
- * shaders-ON dummy routing, and registers NO iris compat mixin (design §5 D9). IP's iris mixin
- * set (FILES 1/2/3: MixinIrisRenderingPipeline / MixinIrisClearPass / MixinIrisFinalPassRenderer)
- * is javap-CONFIRMED alive on Iris 1.11.2+26.2 — a cheap revival, ledgered — but every live body
- * is Experimental-renderer-gated and that renderer is DEFER-DORMANT until the shaders-ON
- * re-expression (C2-5 user checkpoint); registering dead weaves at {@code defaultRequire = 1}
- * would only add boot surface.
+ * <h2>The Iris arm — populated at IS3 (D9 amendment)</h2>
+ * At C2-4 this arm matched ZERO registered classes (the invoker
+ * {@code IrisInterface.OnIrisPresent} is a pure facade — reflection + public Iris API, NO mixin).
+ * IS3 (port-note {@code IS-iris-shaders-on.md} §4.2/§4.6) registers the FIRST live iris-targeting
+ * mixin: {@code iris.MixinIrisSodiumTransformPatcher_ClipInject} — the shaders-ON terrain-clip GLSL
+ * injector. It carries {@code "IrisSodium"} in its simple name so gate-1's ORDER-SENSITIVE test
+ * (IrisSodium BEFORE Iris BEFORE Sodium) routes it to {@code isSodiumPresent() && isIrisPresent()}
+ * — correct, since it patches Patch.SODIUM terrain GLSL and is meaningless without BOTH mods. It
+ * is NOT one of IP's three iris mixins (MixinIrisRenderingPipeline / MixinIrisClearPass /
+ * MixinIrisFinalPassRenderer — those target the rendering pipeline and stay dead); it is a NEW
+ * mixin with no IP precedent. {@code @Pseudo} + {@code require = 1}: a drift in iris's
+ * {@code TransformPatcher.transformInternal} descriptor is a LOUD boot crash (D7 honesty), the
+ * gate ensures iris-present, and gate-2 forces it off on NeoForge.
  *
  * <h2>Loader safety</h2>
  * Config plugins load VERY early (before the mod initializers). Mod detection here is pure

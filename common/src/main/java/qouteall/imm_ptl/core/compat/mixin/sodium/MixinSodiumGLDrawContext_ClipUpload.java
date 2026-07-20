@@ -3,7 +3,9 @@ package qouteall.imm_ptl.core.compat.mixin.sodium;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.RenderPass;
+import com.warwa.seamlessportals.render.ClipUniformLocationCache;
 import com.warwa.seamlessportals.render.FrontClipping;
+import com.warwa.seamlessportals.render.FullPipelineClipState;
 import com.warwa.seamlessportals.render.ShaderCodeTransformation;
 import net.caffeinemc.mods.sodium.client.gpu.device.context.GLDrawContext;
 import org.lwjgl.opengl.GL11;
@@ -14,9 +16,6 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * C2-2 D3 — the sodium clip-plane UPLOADER + the D10-residual definedness guard (design
@@ -79,17 +78,22 @@ import java.util.Map;
  * GlStateManager-cached — raw {@code GL11.glEnable/glDisable} is the store's own pattern.
  * {@code GL_CURRENT_PROGRAM} is read-only observation of real GL state (consistent with the
  * GlStateManager cache: {@code setContext} binds through {@code _glUseProgram}). The location
- * cache mirrors {@code GlCommandEncoderClipMixin}'s (per-program-id, first-use query; same
- * accepted program-id-reuse exposure — sodium's terrain pipelines live in the static
- * {@code ShaderChunkRenderer.programs} map and are compiled once per pass type, so churn is nil).
+ * cache is now the SHARED, IS2-invalidated {@link ClipUniformLocationCache} (IS3 §4.3 fold-in) —
+ * the same holder {@code GlCommandEncoderClipMixin} uses, invalidated by
+ * {@code GlDeviceClipCacheMixin} on {@code GlDevice.clearPipelineCache}. This retires the old
+ * private, un-invalidated, uncapped {@code ip_clipPlaneLocationCache}: with IS3 widening the
+ * &gt;=0-location set to iris-transformed terrain, a stale &gt;=0 location fed after a terrain-shader
+ * rebuild + program-id reuse would GL_INVALID_OPERATION-spam and mis-write here too. This closes it
+ * for {@code clearPipelineCache}-triggering reloads (F3+T / resource-pack apply / {@code GlDevice
+ * .close}); an iris-only pipeline rebuild — iris deletes + recompiles its OWN programs via its own
+ * {@code glDeleteProgram} and never calls {@code clearPipelineCache} — that recycles a program id
+ * stays covered only by the {@code MAX_ENTRIES} cap-clear and the next resource-reload clear:
+ * bounded and self-healing, not fully closed (IS3 V4-3 fold).
  *
  * <p>The class name carries {@code Sodium} for the compat plugin's substring gate.
  */
 @Mixin(value = GLDrawContext.class, remap = false)
 public abstract class MixinSodiumGLDrawContext_ClipUpload {
-
-    /** Cache: programId → {@code seamlessportals_ClipPlane} location (or -1 if absent). */
-    private static final Map<Integer, Integer> ip_clipPlaneLocationCache = new HashMap<>();
 
     /** D10-residual latch: the enable was suppressed for the current pass. */
     @Unique
@@ -99,16 +103,23 @@ public abstract class MixinSodiumGLDrawContext_ClipUpload {
     private void ip_uploadClipPlaneOnSetContext(
         RenderPass pass, RenderPipeline pipeline, CallbackInfo ci
     ) {
+        // IS3 V6 FOLD — the arm decision is the store's live intent OR the pass-scoped full-pipeline
+        // override (armed by the belt while M4 clobbers the live store mid-pass; §4.1). Off the
+        // full-pipeline path FullPipelineClipState is never armed, so clipArmed == capture().enabled
+        // and the plane / enable behaviour below is identical to the shipped decomposed path.
+        boolean overrideArmed = FullPipelineClipState.isArmed();
+        boolean clipArmed = overrideArmed || FrontClipping.capture().enabled;
+
         // Stale-latch self-heal (a throw that skipped endDraw must not leak the suppression into
         // the next pass — the retired bracket's NOTE-7 discipline). C2-2 verify lens B CORRECTION:
-        // the re-enable MUST consult the store — an unconditional glEnable here could desync raw
+        // the re-enable MUST consult the arm intent — an unconditional glEnable here could desync raw
         // GL from FrontClipping's cache (store says disabled → disableGlClipDistance early-returns
         // → the enable sticks) and re-create the undefined class for unpatched VANILLA programs.
-        // Store-gated = exact-restore in all cases (store-enabled: restores what suppression
-        // removed; store-disabled: GL is already off and stays off).
+        // Arm-gated = exact-restore in all cases (armed: restores what suppression removed;
+        // disarmed: GL is already off and stays off).
         if (ip_clipDistance0Suppressed) {
             ip_clipDistance0Suppressed = false;
-            if (FrontClipping.capture().enabled) {
+            if (clipArmed) {
                 GL11.glEnable(GL30.GL_CLIP_DISTANCE0);
             }
         }
@@ -117,28 +128,55 @@ public abstract class MixinSodiumGLDrawContext_ClipUpload {
         if (programId <= 0) {
             return;
         }
-        Integer cached = ip_clipPlaneLocationCache.get(programId);
+        // IS3 §4.3 FOLD-IN: route this cache through the shared, IS2-invalidated
+        // ClipUniformLocationCache (invalidated by GlDeviceClipCacheMixin on
+        // GlDevice.clearPipelineCache) instead of the old private, un-invalidated,
+        // uncapped ip_clipPlaneLocationCache. IS3 widens the >=0-location program set to the
+        // iris-transformed terrain, so a stale >=0 location fed after a sodium/iris terrain-shader
+        // rebuild + program-id reuse would be a real GL_INVALID_OPERATION + wrong-uniform-write
+        // hazard on this seam too. Sharing the invalidated cache closes it (the vanilla trySetup
+        // uploader still lands the correct plane per-batch via the same cache).
+        Integer cached = ClipUniformLocationCache.get(programId);
         int loc;
         if (cached == null) {
             loc = GlStateManager._glGetUniformLocation(
                 programId, ShaderCodeTransformation.UNIFORM_NAME);
-            ip_clipPlaneLocationCache.put(programId, loc);
+            ClipUniformLocationCache.put(programId, loc);
         }
         else {
             loc = cached;
         }
 
         if (loc >= 0) {
-            // The upload — keep-all {0,0,0,1} when clipping is disabled (byte-neutral).
-            GL20.glUniform4f(
-                loc,
-                FrontClipping.getPlaneX(),
-                FrontClipping.getPlaneY(),
-                FrontClipping.getPlaneZ(),
-                FrontClipping.getPlaneW()
-            );
+            // The upload — keep-all {0,0,0,1} when clipping is disabled (byte-neutral). Under the
+            // full-pipeline override, source the FROZEN belt plane (the live store was reset to
+            // keep-all by M4's mid-pass disableClipping(), so reading it would clip nothing).
+            if (overrideArmed) {
+                GL20.glUniform4f(
+                    loc,
+                    FullPipelineClipState.getPlaneX(),
+                    FullPipelineClipState.getPlaneY(),
+                    FullPipelineClipState.getPlaneZ(),
+                    FullPipelineClipState.getPlaneW()
+                );
+                // IS3 V6 FOLD (jB J1): RE-ASSERT the enable here. setContext fires once per terrain
+                // group (OPAQUE then TRANSLUCENT are separate renderGroup → DefaultChunkRenderer.render
+                // calls), and un-injected iris entity/feature draws BETWEEN those groups disable
+                // GL_CLIP_DISTANCE0 (their vanilla trySetup guard) — without this re-enable the
+                // translucent terrain group would draw UNCLIPPED. Full-pipeline-override-only so the
+                // decomposed path adds no GL call (there the ambient store arm already holds the cap).
+                GL11.glEnable(GL30.GL_CLIP_DISTANCE0);
+            } else {
+                GL20.glUniform4f(
+                    loc,
+                    FrontClipping.getPlaneX(),
+                    FrontClipping.getPlaneY(),
+                    FrontClipping.getPlaneZ(),
+                    FrontClipping.getPlaneW()
+                );
+            }
         }
-        else if (FrontClipping.capture().enabled) {
+        else if (clipArmed) {
             // D10-residual definedness guard: this terrain program writes no gl_ClipDistance
             // (unpatched source or driver dead-strip) while a clip plane is armed — drawing with
             // the enable on would be UNDEFINED per the GL spec. Suppress for exactly this pass.
@@ -151,9 +189,11 @@ public abstract class MixinSodiumGLDrawContext_ClipUpload {
     private void ip_restoreClipEnableOnEndDraw(CallbackInfo ci) {
         if (ip_clipDistance0Suppressed) {
             ip_clipDistance0Suppressed = false;
-            // Restore the exact pre-pass state — store-gated for the same lens-B reason as the
-            // setContext heal (if the store was disarmed mid-pass, GL must stay off).
-            if (FrontClipping.capture().enabled) {
+            // Restore the exact pre-pass state — arm-gated for the same lens-B reason as the
+            // setContext heal (if disarmed mid-pass, GL must stay off). IS3 V6 fold: consult the
+            // full-pipeline override too, so a full-pipeline pass restores after an unpatched-terrain
+            // suppression even though M4 drove the live store's capture().enabled to false.
+            if (FullPipelineClipState.isArmed() || FrontClipping.capture().enabled) {
                 GL11.glEnable(GL30.GL_CLIP_DISTANCE0);
             }
         }

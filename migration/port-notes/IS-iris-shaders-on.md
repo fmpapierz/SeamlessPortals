@@ -1693,3 +1693,131 @@ isShaders() check gates only the notice). Judges fold on the two decisions that 
 (option b vs the sodium-guard-covers-it claim; IrisSodium vs Iris naming) — both resolved above
 against source. Majority-bound: a claim ships only if >=2 independent verifiers re-derive it from
 source; a split escalates to a fresh source read, never to a vote on prose.
+
+## §4.8 IS3 IMPLEMENTATION RECORD + THE VERIFY FOLD (worktree `is3-clip`, branch `iris-on/is3-clip`)
+
+The §4 spec was built; the deep-Opus verify plan (§4.7) ran — 6 verifiers x2 + 3 judges + a
+majority-bound Opus fold. TWO independent BLOCKERs surfaced (3/3 judges REAL each), both on the
+primary compat-profile shaders-ON path, both MUST-FIX. This subsection is the post-impl reconcile
+the recon (§4.1/§4.2) lacked.
+
+### The two BLOCKERs (both landed)
+
+- **V2 — the `cancellable = true` omission.** `MixinIrisSodiumTransformPatcher_ClipInject`'s
+  `@Inject(at = @At("RETURN"))` called `cir.setReturnValue(copy)` WITHOUT `cancellable = true`.
+  Mixin 0.8.5: `CallbackInfoReturnable.setReturnValue` invokes `CallbackInfo.cancel()`, which
+  THROWS `CancellationException` when `cancellable == false` (the default). On every compat-profile
+  pack `spliceClip` returns a patched (`!= vsh`) source → `setReturnValue` fires → throws out of
+  iris shader compilation. Blast radius (judge JX-1/JB): the injection weaves on iris+sodium+flag
+  independent of the shaderpackViews LEVER, so this threw on NORMAL startup for every default
+  iris+sodium user loading a common shaderpack — not just the experimental feature. FIX: added
+  `cancellable = true` (matching the sibling `setReturnValue`-at-RETURN seams
+  `MixinSodiumShaderManagerCompilationCache_ClipSourcePatch:45`, `ShaderManagerCompilationCacheMixin:32`).
+
+- **V6 — the M4 belt-swap defeat (the §4.1 arm does not survive `render()`).** The §4.1 belt swap
+  arms the clip ONCE before `destRenderer.render()`. But vanilla `LevelRenderer.render`
+  (mc262-ref `:174`) runs `submitFeatures` (its ENTITY submit, BUILD phase) BEFORE
+  `executeFrameGraph` (`:239`, where terrain draws at `:409` OPAQUE / `:438` TRANSLUCENT). M4
+  (`MixinLevelRenderer_CrossPortalEntity` submitEntities-TAIL →
+  `CrossPortalEntityRenderer.onEndRenderingEntitiesAndBlockEntities` `:171`) calls
+  `FrontClipping.disableClipping()` UNCONDITIONALLY there — resetting the live `com.warwa` store to
+  the keep-all plane `(0,0,0,1)` AND clearing `glClipEnabled` BEFORE terrain executes. The per-draw
+  uploaders key terrain-enable on `capture().enabled` (now false) and upload the live plane (now
+  keep-all), so dest terrain rendered UNCLIPPED — IS3's core symptom fix did not occur. The §2.2 M4
+  row (IS1-era "disarms before any draw executes") was never reconciled against the new arm; under
+  the belt swap that benign note IS the clobber. (The decomposed path is immune: it arms at
+  `~:1098` immediately before its own DIRECT terrain draw and submits entities AFTER, so M4 never
+  precedes its terrain.)
+
+  FIX (the pass-scoped override, judge-prescribed option (a) — a mere post-`submitFeatures` re-arm,
+  option (b), is INSUFFICIENT):
+  1. New holder `com.warwa.seamlessportals.render.FullPipelineClipState` — a pass-scoped `armed` +
+     frozen view-space plane `(x,y,z,w)`, armed ONLY inside `renderDestWorldFullPipeline`.
+  2. The belt arm FREEZES the just-armed `com.warwa` `FrontClipping.capture()` into the override
+     (only when `enabled` — a layer-0 null plane leaves it disarmed → unclipped, matching decomposed).
+     Saved/restored across the pass (nested full-pipeline passes stack).
+  3. BOTH per-draw uploaders (`GlCommandEncoderClipMixin` + `MixinSodiumGLDrawContext_ClipUpload`)
+     now compute `clipArmed = FullPipelineClipState.isArmed() || FrontClipping.capture().enabled`
+     and, when the override is armed, source the FROZEN belt plane (not the M4-clobbered live store)
+     for the `glUniform4f` upload. Terrain therefore re-asserts `GL_CLIP_DISTANCE0` with the real
+     plane regardless of M4; non-terrain draws still suppress (defined-and-unclipped).
+  4. **jB J1 (the deeper oscillation, 2/3 judges via jA+jB — the sodium uploader MUST self-enable
+     too):** within one `frame.execute` the draw order is OPAQUE terrain → solid entities →
+     translucent entities → TRANSLUCENT terrain (mc262-ref `:409/:419/:434/:438`). The un-injected
+     entity draws `glDisable` the cap between the two terrain groups, and the sodium `setContext`
+     uploader previously did NOT self-enable (it relied on the ambient whole-pass arm), so
+     translucent terrain would draw unclipped even after the store is re-armed. FIX: the sodium
+     uploader now issues `glEnable(GL_CLIP_DISTANCE0)` at `loc>=0` when the full-pipeline override is
+     armed (each terrain group's `setContext` re-asserts it; the vanilla per-batch trySetup guard
+     also covers it if Candidate-A holds — belt-and-suspenders). Full-pipeline-override-gated so the
+     decomposed path adds no GL call.
+  5. **The teardown leak** (found while implementing): the per-draw raw `glEnable` toggles bypass the
+     `com.warwa` `glClipEnabled` cache, and M4 may have driven that cache to false mid-pass, so the
+     finally's `disableClipping()` can no-op while raw `GL_CLIP_DISTANCE0` is left ON — leaking into
+     the main frame. FIX: the finally now HARD-disables the raw cap (`GL11.glDisable(GL30
+     .GL_CLIP_DISTANCE0)`; not GlStateManager-cached — the store's own idiom) + restores the override.
+
+  Ordering for the live round: V2 throws at pack-COMPILE (before any portal frame), so it MASKS V6.
+  With V2 fixed, a compat pack reaches the terrain-draw scenario where V6's unclipped terrain (now
+  also fixed) would have shown.
+
+### The M4 row — reconciled (feeds the §2.2 discoverability gap)
+
+`§2.2`'s M4 row must now read: under the §4.1 full-pipeline arm, M4's submitEntities-TAIL
+`disableClipping()` disarms the LIVE store during `render()`'s BUILD phase, so the full-pipeline
+terrain clip does NOT ride the live store — it rides the pass-scoped `FullPipelineClipState`
+override (frozen at the belt arm), which both per-draw uploaders consult. M4's transient onBegin
+re-arm (margin 0, `viewRotationMatrix`) during submit is therefore also harmless to terrain (terrain
+reads the frozen belt plane, never the M4-mutated live store).
+
+### Doc/wording corrections folded (>=2/3 judges REAL, non-blocking)
+
+- **V1-1 / V5-1 (3/3):** the "bit-identical shaders-OFF / suppress-branch-never-fires" claim was
+  FALSE — `ShaderCodeTransformation` is a CONSERVATIVE injector (its own javadoc names
+  `rendertype_end_portal`/panorama/ungated programs as left un-injected, loc==-1), so an un-injected
+  world program CAN draw inside an armed decomposed inner-clip window and now hits the new `glDisable`
+  suppress branch where pre-IS3 nothing happened. Retired the "bit-identical" wording to
+  "undefined→defined-unclipped SAFE improvement (same pixels on NVIDIA, correct on AMD/Intel), NOT a
+  regression; lever-OFF the full-pipeline renderer never runs → the guard reads exactly
+  `capture().enabled`, GL-state identical to plain sodium." (`GlCommandEncoderClipMixin` javadoc.)
+- **V4-3 (2/2):** softened the `ClipUniformLocationCache` "closes it" claim — the fold-in closes the
+  stale-location hazard only for `clearPipelineCache`-triggering reloads; an iris-only pipeline
+  rebuild (iris never calls `clearPipelineCache`) that recycles a program id stays covered only by
+  the `MAX_ENTRIES` cap + the next resource reload (bounded, self-healing, not fully closed).
+- **V5-4 (2/2):** `ClipUniformLocationCache` javadoc no longer calls `GlCommandEncoderClipMixin` the
+  "sole reader/writer" — the sodium uploader is a second reader/writer since the §4.3 fold-in.
+- **V4-2 (2/2):** `ClipDiscriminatorProbe` javadoc corrected — `ENABLED = Boolean.getBoolean(...)`
+  is a RUNTIME-read static, NOT a javac compile-time constant, so the guards are real short-circuit
+  branches (cheap: 3 static reads + primitives, no allocation), not dead-code-eliminated / "byte-inert".
+- **V3-1 (jA REAL; masked by V6 for jC):** the shaders-OFF full-pipeline SKY bisection (render()
+  draws sky AFTER the single arm; the decomposed path draws sky before its arm because the dome spans
+  the plane) is spec-accepted (§4.6) and reappears now that V6 is fixed — added the cross-reference to
+  the belt comment so the "clips exactly as on the stencil path" line no longer hides the sky exception.
+
+### NOTEs recorded (no code change — API-forced / accepted)
+
+- **Per-draw `FrontClipping.capture()` allocation (V1-2/V4-1/V5-3, 2/2):** the guard reads
+  `capture().enabled` eagerly for every `programId>0` draw (GUI/menu included), allocating a
+  `Snapshot` where pre-IS3 the `loc<0` early-return did not. HotSpot escape analysis should
+  scalar-replace the non-escaping Snapshot after warmup; a non-allocating `isGlClipEnabled()` accessor
+  on `com.warwa FrontClipping` would remove it but was declined to honor the live-substrate freeze.
+  Correctness unaffected. (An additive accessor remains a deferrable follow-up if GC pressure is seen.)
+- **The user notice (§4.4 reword; judges J2/JX-3):** the dropped "expect artifacts" clause is now
+  BACKED by the V2+V6 fixes making the clip real end-to-end — but the final "it works" proof is the
+  live round; the notice ships coupled to that round confirming terrain clips through the pack.
+
+### Live-only items the fold cannot statically close (settle at the §4.7 self-run)
+
+- **Discriminator 1** — do iris Patch.VANILLA non-terrain draws funnel through `GlCommandEncoder
+  .trySetup`? If they route through iris's own deferred path the guard never fires for them (armed +
+  no `gl_ClipDistance` written = undefined → strict-driver cull). The fix is robust to the terrain
+  side regardless (both uploaders self-enable), but the non-terrain definedness still depends on this.
+- **Candidate-A** — that every sodium terrain batch also recurs through vanilla trySetup. The sodium
+  uploader's per-group `setContext` self-enable now covers the translucent-after-entities case even if
+  Candidate-A fails; the `[IS3-CLIP-PROBE]` dump must still confirm terrain→loc>=0/enabled at BOTH the
+  OPAQUE and TRANSLUCENT draws.
+
+### Compile gate
+
+`.\gradlew.bat :common:compileJava :fabric:compileJava --console=plain` from the worktree root —
+GREEN (both tasks executed) after the fold.

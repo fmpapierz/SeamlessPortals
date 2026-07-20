@@ -18,7 +18,8 @@
     "sodium.MixinSodiumOcclusionCuller_CaveCull",
     "sodium.MixinSodiumProbe_ShaderSources",
     "sodium.MixinSodiumProbe_GlCommandEncoder",
-    "sodium.MixinSodiumChunkRenderList_Probe"
+    "sodium.MixinSodiumChunkRenderList_Probe",
+    "iris.MixinIrisSodiumTransformPatcher_ClipInject"
   ],
   "injectors": {
     "defaultRequire": 1
