@@ -77,7 +77,14 @@ engagement** (`IRIS_SHADERS_ON_HANDOFF.md` — its own opening prompt inside), t
 perf re-entry (port-note §5.2 item 2), sign-through-portal, config small-window cutoff,
 terrain-behind-portal (IP-inherited), bright-dims night darkness, void-not-empty,
 R13g-PHASE-2, the S19_HANDOFF §3 backlog. Release packaging: cloth JiJ + the JIT-flag
-story. Then C7 (NeoForge) ask-first — its landmine list is fully catalogued.
+story. Then C7 (NeoForge) ask-first — its landmine list is fully catalogued — and
+**Distant Horizons compat, ask-first (user-routed 2026-07-20)**: DH has 26.2 builds;
+three tiers — (1) coexistence smoke test (THE RISK: DH keys LOD worlds off the client
+level + chunk-load events → our secondary ClientLevels/ImmPtlClientChunkMap feeds could
+poison its LOD builder — the sodium call-time-resolution hazard family), (2) LODs in
+portal views (DH = another third-party renderer: the C2 pattern — presence facade,
+brackets, per-dim isolation, endFrame-class disciplines; prefer DH's public API jar),
+(3) DH + iris + the shaders-ON renderer.
 
 ## 6. OPENING PROMPT (paste-ready)
 
