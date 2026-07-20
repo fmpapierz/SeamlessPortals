@@ -54,6 +54,17 @@ import java.util.Set;
  * the exception: each probe {@code @Inject} is {@code require = 0} and lever-gated behind
  * {@code -Dseamlessportals.compatProbe=true} (they are diagnostics, must never gate the boot).
  *
+ * <h2>The Iris arm is DELIBERATELY UNPOPULATED at C2-4 (D9)</h2>
+ * The {@code contains("Iris")} / {@code contains("IrisSodium")} arms are live code but match
+ * ZERO registered classes: C2-4 ships the iris invoker ({@code IrisInterface.OnIrisPresent} —
+ * pure facade, reflection + public Iris API, NO mixin) with shaders-OFF parity and honest
+ * shaders-ON dummy routing, and registers NO iris compat mixin (design §5 D9). IP's iris mixin
+ * set (FILES 1/2/3: MixinIrisRenderingPipeline / MixinIrisClearPass / MixinIrisFinalPassRenderer)
+ * is javap-CONFIRMED alive on Iris 1.11.2+26.2 — a cheap revival, ledgered — but every live body
+ * is Experimental-renderer-gated and that renderer is DEFER-DORMANT until the shaders-ON
+ * re-expression (C2-5 user checkpoint); registering dead weaves at {@code defaultRequire = 1}
+ * would only add boot surface.
+ *
  * <h2>Loader safety</h2>
  * Config plugins load VERY early (before the mod initializers). Mod detection here is pure
  * reflection over {@code FabricLoader} / NeoForge {@code ModList} — the same dual-path shape

@@ -1,33 +1,23 @@
 package qouteall.imm_ptl.core.compat;
 
 /**
- * S19-E increment 3 — NAMED DEVIATION scaffold (removed / flipped at C2 completion).
+ * The Sodium/Iris compat gate — born as the S19-E honest-gating scaffold, now (since C2-2/C2-4)
+ * the LIVE per-mod verdict gate. HISTORY (lens-B corrected, C2-4): the paragraphs that stood
+ * here described the S19-E posture (default-false, "unverified internals", warn+force as the
+ * norm) — that era ended as C2 landed the verified chains stage by stage (C2-1 swap core,
+ * C2-2 clipping + DEFAULT-ON per user decision #1, C2-3 culling, C2-4 iris). The CURRENT truth
+ * lives on {@link #ENABLE_SODIUM_IRIS_COMPAT}'s own javadoc: default {@code true}, one gate
+ * covering BOTH per-mod verdicts (the activation formula is gate {@code ||} the
+ * {@code -Dseamlessportals.experimentalSodiumCompat=true} JVM lever — the lever is an
+ * ON-override only), iris shaders-ON routing to the honest pass-through until the C2-5
+ * shaders-ON decision.
  *
- * <p>The real Sodium 0.9.1 / Iris 1.11.2 compat classes
- * ({@link qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface.OnSodiumPresent},
- * {@link qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.OnIrisPresent},
- * {@link qouteall.imm_ptl.core.compat.iris_compatibility.ExperimentalIrisPortalRenderer}) were
- * re-expressed onto the 26.2 render surface but are NOT yet retargeted to / verified against the
- * mod's live render substrate — that is the C2 work (see migration/C2_IP_COMPAT_DEPTH.md).
- * Swapping {@code SodiumInterface.invoker} / {@code IrisInterface.invoker} to the {@code On*Present}
- * subclasses today would activate IP render paths ({@code PortalRenderer.switchToCorrectRenderer},
- * the {@code MyGameRenderer} Sodium-context / Iris-pipeline calls) against unverified internals.
- *
- * <p>So the mod-presence DETECTION ({@code FabricLoader.isModLoaded}, cheap + side-effect-free)
- * ALWAYS runs flag-ON, but the invoker swap + {@code ExperimentalIrisPortalRenderer.init()} are
- * gated behind {@link #ENABLE_SODIUM_IRIS_COMPAT} (default {@code false}). While the gate is off
- * and Sodium/Iris IS present flag-ON, the mod warns loudly (log + one-shot world-join chat) and
- * force-disables portal VIEWS for the session ({@code IPGlobal.renderMode = none}, NOT persisted)
- * rather than rendering garbage. Teleportation and portal creation are unaffected.
- *
- * <p>C2 removes this whole class: flip / delete the gate, delete the warn-and-force branch in
- * {@link com.warwa.seamlessportals.fabric.SeamlessPortalsClientFabric} and the force-persistence
- * guard in {@link qouteall.imm_ptl.core.platform_specific.IPConfig#onConfigChanged()}.
- *
- * <p>Flag-OFF this is entirely inert: the detection lives inside the {@code entityPortals}
- * client-init branch, and the block-era compat handling
- * ({@link com.warwa.seamlessportals.compat.SodiumCompat} /
- * {@link com.warwa.seamlessportals.mixin.SeamlessMixinConfigPlugin}) owns the shipping baseline.
+ * <p>The warn-and-force machinery below survives for the D7 iris-resolve-failure fallback and
+ * for gate-false (rollback) builds; the D11 tracker feed installs independently of the gate
+ * whenever sodium is present (correctness plumbing). Flag-OFF this is entirely inert (the
+ * detection lives inside the {@code entityPortals} client-init branch; the block-era compat
+ * handling owns that baseline). DISPOSITION: the C2-5 close-out decides whether this class
+ * survives as the rollback switch or is deleted with the warn machinery.
  */
 public final class ExperimentalCompatGate {
     private ExperimentalCompatGate() {}
@@ -45,9 +35,14 @@ public final class ExperimentalCompatGate {
      * that can turn compat ON when the gate is false (it cannot turn it off). Non-{@code final}
      * per {@code IPGlobal}'s lever convention.
      *
-     * <p>This gate activates the SODIUM verdict ONLY — iris-present installs keep the full
-     * warn+force until C2-4 (activating the sodium chains under an active iris pipeline is
-     * forbidden, design §0.2). Sodium-ABSENT installs are untouched by this flag entirely
+     * <p><b>SINCE C2-4 this ONE gate activates BOTH verdicts</b> (the name finally true):
+     * {@code sodiumActive = sodiumPresent && gate}, {@code irisActive = irisPresent && gate}.
+     * Iris-present installs get {@code OnIrisPresent} live (D7 loud pipeline-field resolve at
+     * install; resolve failure → warn+force fallback, never silent) with honest per-state
+     * routing (D8): shaders OFF = full portal views (sodium chains active underneath — iris
+     * requires sodium; the C2-1 {@code !irisPresent} sodium exclusion is retired); shaders ON =
+     * {@code rendererDummy} pass-through + one-shot notice, until the shaders-ON re-expression
+     * (C2-5 user checkpoint). Mod-ABSENT installs are untouched by this flag entirely
      * (the activation condition is present &amp;&amp; gate — presence short-circuits). See
      * {@code SeamlessPortalsClientFabric.detectAndGateRenderCompat} for the per-mod verdicts.
      */

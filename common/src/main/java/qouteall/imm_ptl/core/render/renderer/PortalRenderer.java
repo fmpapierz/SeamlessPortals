@@ -18,10 +18,10 @@ import qouteall.imm_ptl.core.ClientWorldLoader;
 import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.compat.IPModInfoChecking;
-import qouteall.imm_ptl.core.compat.iris_compatibility.ExperimentalIrisPortalRenderer;
-import qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatibilityPortalRenderer;
+// C2-4 D8/D9: the iris renderer imports (ExperimentalIrisPortalRenderer / IrisPortalRenderer /
+// IrisCompatibilityPortalRenderer) are DROPPED with the shaders-ON dummy routing — the held
+// renderer sources stay in the tree for the C2-5 shaders-ON re-expression decision.
 import qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface;
-import qouteall.imm_ptl.core.compat.iris_compatibility.IrisPortalRenderer;
 import qouteall.imm_ptl.core.portal.Mirror;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.portal.global_portals.GlobalPortalStorage;
@@ -411,6 +411,11 @@ public abstract class PortalRenderer {
 
     private static boolean fabulousWarned = false;
 
+    // C2-4 D8: one-shot (per session) notice that a shaderpack-ON frame routes portal views to
+    // pass-through. Deliberately NOT reset when the pack is turned off mid-session: the state is
+    // announced once; pack-off frames restore full views immediately via the fall-through below.
+    private static boolean shadersOnPassThroughNotified = false;
+
     public static void switchToCorrectRenderer() {
         if (PortalRendering.isRendering()) {
             //do not switch when rendering
@@ -432,17 +437,28 @@ public abstract class PortalRenderer {
 
         if (IrisInterface.invoker.isIrisPresent()) {
             if (IrisInterface.invoker.isShaders()) {
-                if (IPCGlobal.experimentalIrisPortalRenderer) {
-                    switchRenderer(ExperimentalIrisPortalRenderer.instance);
-                    return;
+                // ===== C2-4 D8 NAMED DEVIATION — honest shaders-ON routing =====================
+                // IP 1.21.3 selected its iris renderer family here (experimental flag ->
+                // ExperimentalIrisPortalRenderer.instance; else renderMode: normal ->
+                // IrisPortalRenderer.instance, compatibility -> IrisCompatibilityPortalRenderer
+                // .instance, debug -> .debugModeInstance, none -> rendererDummy). All three iris
+                // renderers assume IP's recursive full-pipeline renderLevel; our dest path is the
+                // decomposed no-framegraph renderDestWorld (S18), so they are DEFER-DORMANT held
+                // sources (design §2 files 23/24/25, D9) until the shaders-ON re-expression
+                // (user checkpoint at C2-5). Until then a shaderpack-ON frame routes to
+                // rendererDummy: portals render as pass-through (visible geometry, no views) —
+                // strictly better than the pre-C2-4 blanket iris force-off, and LOUD via the
+                // one-shot notice below. Shaders OFF falls through to the normal vanilla-path
+                // selection: full stencil-direct portal views with the sodium chains active
+                // underneath (iris requires sodium) — IP's exact shaders-OFF arrangement.
+                if (!shadersOnPassThroughNotified) {
+                    shadersOnPassThroughNotified = true;
+                    CHelper.printChat(Component.literal(
+                        "[Seamless Portals] Shaderpack portal views are not yet supported — "
+                            + "portals render as pass-through. Disable shaders to see portal views."
+                    ).withStyle(net.minecraft.ChatFormatting.GOLD));
                 }
-
-                switch (IPGlobal.renderMode) {
-                    case normal -> switchRenderer(IrisPortalRenderer.instance);
-                    case compatibility -> switchRenderer(IrisCompatibilityPortalRenderer.instance);
-                    case debug -> switchRenderer(IrisCompatibilityPortalRenderer.debugModeInstance);
-                    case none -> switchRenderer(IPCGlobal.rendererDummy);
-                }
+                switchRenderer(IPCGlobal.rendererDummy);
                 return;
             }
         }
@@ -461,7 +477,21 @@ public abstract class PortalRenderer {
             IPCGlobal.renderer = renderer;
 
             if (IrisInterface.invoker.isShaders()) {
-                IrisInterface.invoker.reloadPipelines();
+                // C2-4 verify lens A CORRECTION (the D8 timing sub-fix): IP fired this from
+                // BEFORE renderLevel (MixinGameRenderer.onBeforeRenderingCenter), so its
+                // destroyPipeline always preceded the frame's iris$setupPipeline. OUR per-frame
+                // caller is the re-homed AFTER_TRANSLUCENT_TERRAIN driver — MID-renderLevel —
+                // so a direct reload here on the pack-ON transition frame would destroy the
+                // pipeline iris$endLevelRender still uses at renderLevel TAIL (finalize + hand
+                // rendering on deleted GL objects). DEFER to the next frame's pre-render slot
+                // (PRE_GAME_RENDER_TASK_LIST — the frame-pump fires it before gameRenderer
+                // .render, i.e. before iris$setupPipeline), restoring IP's destroy-before-
+                // prepare ordering exactly. One-frame delay is benign: the renderer switch
+                // itself took effect above; iris keeps its current pipeline for the remainder
+                // of this frame, exactly as it would have under IP's pre-frame switch timing.
+                IPGlobal.PRE_GAME_RENDER_TASK_LIST.addTask(qouteall.q_misc_util.my_util.MyTaskList.oneShotTask(
+                    () -> IrisInterface.invoker.reloadPipelines()
+                ));
             }
         }
     }

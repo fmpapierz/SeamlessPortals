@@ -241,30 +241,46 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
     }
 
     /**
-     * C2-1 (restructured from the S19-E all-or-nothing gate) — PER-MOD verdicts (design
-     * {@code migration/C2_DESIGN.md} §1 C2-1 deliverable 8; see {@link ExperimentalCompatGate}).
+     * C2-4 (evolved from the C2-1 per-mod-verdict shape) — PER-MOD verdicts under ONE gate
+     * (design {@code migration/C2_DESIGN.md} §1 C2-4 deliverables 1-2; see
+     * {@link ExperimentalCompatGate} — the {@code ENABLE_SODIUM_IRIS_COMPAT} name is finally
+     * true: one gate, both mods).
      *
-     * <p>SODIUM verdict: {@code sodiumActive = sodiumPresent && (gate || lever) && !irisPresent}.
-     * When active, {@code SodiumInterface.invoker = new OnSodiumPresent()} atomically activates
-     * the whole A1-A6 facade (TerrainSetupOverride yield, pool-split skips, chunk-tracker feed,
-     * sprite marking, the pre-sited MyGameRenderer swap brackets — now backed by the C2-1 D1
-     * context mechanism) plus a one-shot HONEST experimental chat notice naming the known C2-1
-     * gap (clipping lands at C2-2).
+     * <p>SODIUM verdict: {@code sodiumActive = sodiumPresent && (gate || lever)}. The C2-1
+     * {@code !irisPresent} exclusion is DROPPED at C2-4: its rationale ("activating sodium chains
+     * while IrisInterface reports absent would route the stencil renderer under an active shader
+     * pipeline") is discharged by the honest routing now that {@code OnIrisPresent} is live —
+     * {@code PortalRenderer.switchToCorrectRenderer} sees a truthful {@code isShaders()} and
+     * routes shaders-ON to {@code rendererDummy} (D8), while shaders-OFF runs the normal
+     * stencil-direct renderers with the sodium chains active underneath (iris requires sodium at
+     * runtime) and the B4 pipeline null/restore bracket detaching iris for dest passes — IP's
+     * exact shaders-OFF arrangement.
      *
-     * <p>IRIS verdict: iris-present KEEPS THE FULL WARN+FORCE regardless of gate/lever (design
-     * §0.2: iris implies sodium at runtime, and activating the sodium chains under an active iris
-     * shader pipeline would route the stencil renderer under it — forbidden until C2-4's honest
-     * per-{@code isShaders()} routing lands). This intentionally supersedes the pre-C2 gate-on
-     * branch that installed {@code OnIrisPresent}.
+     * <p>IRIS verdict: {@code irisActive = irisPresent && (gate || lever)}. When active,
+     * {@code IrisInterface.invoker = new OnIrisPresent()} (all B1-B7 call sites go live) +
+     * {@code ExperimentalIrisPortalRenderer.init()} at IP's IPModEntryClient slot (:94-95 —
+     * init() is EMPTY upstream AND here, verified; the Experimental renderer itself stays
+     * D9-deferred and is unreachable: the D8 routing never selects it). <b>D7</b>: the install is
+     * REFUSED if the IP-exact {@code LevelRenderer.pipeline} reflection failed to resolve
+     * ({@code ip_isPipelineFieldResolved()} — loud ctor-time error naming the iris version); on
+     * refusal BOTH verdicts fall to the warn+force-none path (running sodium chains under an
+     * unmanageable iris pipeline is the exact hazard the C2-1 exclusion guarded), never silent.
      *
-     * <p>Committed default = gate {@code false} + no lever ⇒ EXACTLY today's behavior (sodium or
-     * iris present → warn + force {@code renderMode=none}; nothing installed). The lever is the
-     * {@code -Dseamlessportals.experimentalSodiumCompat=true} JVM property
-     * ({@code -PsodiumCompatLever=true} on the runClientSodium gradle config).
+     * <p>Committed default = gate {@code true} (since C2-2, user decision #1) ⇒ sodium AND
+     * sodium+iris installs get the compat live out of the box; gate {@code false} + no lever
+     * restores warn+force for both. Lever: {@code -Dseamlessportals.experimentalSodiumCompat=true}.
      *
-     * <p>IP's lazy-classload discipline is PRESERVED: {@code new OnSodiumPresent()} executes only
-     * inside the sodium-present + active sub-branch, so no {@code net.caffeinemc.*} implementation
-     * class loads otherwise.
+     * <p>IP's lazy-classload discipline is PRESERVED: {@code new OnSodiumPresent()} /
+     * {@code new OnIrisPresent()} execute only inside their present+active sub-branches, so no
+     * {@code net.caffeinemc.*} / {@code net.irisshaders.*} implementation class loads otherwise.
+     *
+     * <p>Embeddium line (C2-1 ledger, re-checked at this install site): this method detects via
+     * {@code FabricLoader.isModLoaded("sodium"/"iris")} — fabric-only, where embeddium (a
+     * NeoForge fork whose internals are NOT Sodium 0.9.1) does not exist; the compat weave's
+     * {@code IPCompatMixinPlugin} deliberately does not match embeddium either. The block-era
+     * {@code SodiumCompat.isSodiumLoaded} DOES count embeddium on its NeoForge reflection path —
+     * that semantic mismatch is ledgered and moot until C7 un-defers the NeoForge client (no
+     * install seam exists there; design §6.3).
      */
     private static void detectAndGateRenderCompat() {
         boolean isSodiumPresent = FabricLoader.getInstance().isModLoaded("sodium");
@@ -275,9 +291,32 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         SeamlessPortalsConstants.LOGGER.info("Iris is {}present", isIrisPresent ? "" : "not ");
 
         boolean sodiumLever = Boolean.getBoolean("seamlessportals.experimentalSodiumCompat");
-        boolean sodiumActive = isSodiumPresent
-            && (ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT || sodiumLever)
-            && !isIrisPresent;
+        boolean gateOrLever = ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT || sodiumLever;
+        boolean sodiumActive = isSodiumPresent && gateOrLever;
+        boolean irisActive = isIrisPresent && gateOrLever;
+
+        if (irisActive) {
+            // ===== C2-4 IRIS ACTIVE (D7 loud-resolve install) ==================================
+            // OnIrisPresent classloads only here (lazy discipline). The ctor resolves the
+            // IP-exact LevelRenderer.pipeline reflection LOUDLY (D7); a resolve failure marks
+            // iris compat BROKEN → refuse the install AND drop the sodium verdict (sodium chains
+            // must not run under an iris pipeline the bracket cannot detach) → the warn+force
+            // branch below runs, exactly the pre-C2-4 posture. Never silent.
+            IrisInterface.OnIrisPresent onIrisPresent = new IrisInterface.OnIrisPresent();
+            if (onIrisPresent.ip_isPipelineFieldResolved()) {
+                IrisInterface.invoker = onIrisPresent;
+                // IP IPModEntryClient:95 — init() is empty (verified upstream + here); called at
+                // IP's slot for fidelity. The Experimental renderer stays D9-deferred.
+                ExperimentalIrisPortalRenderer.init();
+            }
+            else {
+                irisActive = false;
+                sodiumActive = false;
+                SeamlessPortalsConstants.LOGGER.error(
+                    "Seamless Portals: iris compat BROKEN (pipeline field unresolved — see the "
+                        + "error above); falling back to warn + portal-views-off for this session.");
+            }
+        }
 
         if (sodiumActive) {
             // ===== C2-1 SODIUM ACTIVE (gate or lever) ==========================================
@@ -290,22 +329,31 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
 
             // One-shot HONEST experimental notice (GOLD — a notice, not a failure). C2-2: the
             // clipping-gap clause DROPPED (the D3 transport landed) and sodium compat is now
-            // DEFAULT-ON (user decision #1) — wording stays honest in either live-round outcome:
-            // it names the newly-enabled clipping without claiming it artifact-free.
+            // DEFAULT-ON (user decision #1). C2-4: ONE notice covering the whole install state —
+            // with iris present it states the per-shader-state behavior honestly (shaders OFF =
+            // full portal views; shaders ON = pass-through, the D8 routing; the in-the-moment
+            // reminder when a pack is actually enabled is the one-shot in
+            // PortalRenderer.switchToCorrectRenderer).
+            final boolean irisInstalled = irisActive;
             IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {
-                CHelper.printChat(
-                    Component.literal(
-                        "[Seamless Portals] Sodium support is EXPERIMENTAL — portal clipping "
-                            + "is newly enabled; please report any terrain artifacts near portals."
-                    ).withStyle(ChatFormatting.GOLD)
-                );
+                String text = irisInstalled
+                    ? ("[Seamless Portals] Sodium + Iris support is EXPERIMENTAL — with shaders "
+                        + "OFF portal views are fully active (clipping enabled); with a "
+                        + "shaderpack ON portal views are not yet supported and render as "
+                        + "pass-through. Please report any terrain artifacts near portals.")
+                    : ("[Seamless Portals] Sodium support is EXPERIMENTAL — portal clipping "
+                        + "is newly enabled; please report any terrain artifacts near portals.");
+                CHelper.printChat(Component.literal(text).withStyle(ChatFormatting.GOLD));
             }));
         }
-        else if (isSodiumPresent || isIrisPresent) {
+        else if ((isSodiumPresent || isIrisPresent) && !irisActive) {
             // ===== HONEST-GATING (per-mod verdict fell through) ================================
-            // Covers: sodium present with gate+lever off (today's committed default), AND every
-            // iris-present install (iris keeps warn+force until C2-4 — design §0.2). The subject
-            // names what was detected so a shader user knows shaders are the issue.
+            // Covers: sodium/iris present with gate+lever off, AND the D7 iris-broken fallback
+            // (both verdicts dropped above). The `!irisActive` guard is for the theoretical
+            // iris-installed-without-sodium loader state (iris hard-depends on sodium, so it
+            // cannot boot — but if it did, a successful iris install must not be immediately
+            // force-disabled by this branch). The subject names what was detected so a shader
+            // user knows shaders are the issue.
             //
             // D11-LANDED (2026-07-19 C2-1b; design D-ledger D11 / §0.3 conflict 10): the C2
             // baseline round (gate OFF) PROVED the contingency — the main world was BLANK (only

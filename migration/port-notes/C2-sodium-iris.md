@@ -488,3 +488,44 @@ toggled A/B via the client debug commands (expect measurable gain, ZERO visual d
 grazing-angle + aperture-edge artifact hunt (terrain vanishing at odd angles = the predicate
 failure class — the padded-radius fold is its mitigation); box/scale portals expected
 unchanged (D2b deferred). Suite cannot exercise any of it (no sodium).
+
+## §3.12 C2-4 — IRIS LANDED (invoker + shaders-OFF parity + honest shaders-ON routing)
+
+Impl wf_48760ec7-62d (Fable); lenses A PASS_WITH_CORRECTIONS / B PASS (1 CORRECTION each,
+both folded). LANDED: OnIrisPresent LIVE with the D7 loud resolve assert (spec correction en
+route: IP's Helper.noError RETHROWS — upstream's failure mode was an opaque hard crash, not
+silence; D7 = graceful loud fallback to warn+force, sodium vetoed too, never silent); the
+`!irisPresent` sodium exclusion DROPPED (one gate, both verdicts — the gate name finally
+true); D8 routing in switchToCorrectRenderer (shaders-ON → rendererDummy + one-shot GOLD
+notice; shaders-OFF → the normal stencil-direct path with the sodium chains underneath; IP's
+iris renderer selection preserved in-comment for the C2-5 revival); the B4 pipeline
+null/restore bracket live and PROVEN inert-equivalent no-pack (VanillaRenderingPipeline
+never-null on the main renderer; secondary fields null; dest passes run no renderLevel);
+CrossPortalEntityRenderer's iris-disable live (IP-faithful, kept); D9 asserted (zero iris
+mixins registered; the plugin's Iris arms deliberately empty, revival ledgered).
+
+**P11 SETTLED STATICALLY**: with shaders OFF iris routes NOTHING through patchSodium
+(constant-pool-proven: patchSodium ← ShaderCreator ← IrisRenderingPipeline only —
+VanillaRenderingPipeline never touches it) → the C2-2 sodium clipping keeps working under
+iris-installed-shaders-off. The one extra iris/ShaderManager class
+(MixinShaderManager_Overrides) is IrisRenderingPipeline-gated = shaders-OFF inert (lens-B
+sweep; a shaders-ON re-expression must account for it — C2-5 ledger line).
+
+**THE LENS-A CATCH (folded — the D8 timing sub-fix)**: our per-frame switchToCorrectRenderer
+caller is the re-homed AFTER_TRANSLUCENT_TERRAIN driver = MID-renderLevel; IP's was BEFORE
+renderLevel. A direct reloadPipelines() on the pack-ON transition frame would destroy the
+pipeline iris$endLevelRender still uses at renderLevel TAIL (finalize + hand rendering on
+deleted GL objects). FIX: the reload defers to the next frame's PRE_GAME_RENDER_TASK_LIST
+one-shot (the frame-pump fires it before gameRenderer.render → before iris$setupPipeline) —
+IP's destroy-before-prepare ordering restored exactly; one-frame delay benign.
+Also folded (lens B): the stale S19-E-era ExperimentalCompatGate class javadoc rewritten to
+the C2-4 truth. LEDGERED: B1's MixinRenderSystem_Clipping consumer is RE-EXPRESSED (26.2
+stencil-direct + the C2-2 sodium patch replaced IP's setShader-seam uniform delegation) —
+the P11 live leg is its proof; not a missed port.
+
+**LIVE ROUND (needs -PirisRuntime=true + a user-chosen shaderpack in the run's shaderpacks
+dir)**: no pack → FULL portal parity (views, crossing, mirror, the C2-2 clipping — the P11
+leg); pack ON mid-session → portals switch to pass-through + the one-shot notice, NO crash
+at the toggle frame (the D8 timing sub-fix's decisive check), world renders correctly under
+shaders; pack OFF → views return; ShadowRenderer sanity (no portal-cull artifacts in
+shadows); save-relog. Plus the C2-3b flicker re-check when that fix lands.
