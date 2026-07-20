@@ -280,11 +280,42 @@ public final class ShaderpackViewsProbe {
         int rh = Math.min(16, main.height);
         int rx = Math.max(0, main.width / 2 - rw / 2);
         int ry = Math.max(0, main.height / 2 - rh / 2);
+        // PACK-STATE BRACKET (the IS0 probe-round double-crash fix, hs_err_pid248404/130364):
+        // glReadPixels into CLIENT memory obeys GL_PACK_* state, and 26.2's
+        // GlCommandEncoder.copyTextureToBuffer (:346) sets GL_PACK_ROW_LENGTH = width and
+        // NEVER resets it (_pixelStore is a raw uncached passthrough; vanilla survives only
+        // because its own readbacks always target bound PBOs). With a stale row length > rw,
+        // the driver writes rh strided rows far past the FloatBuffer -> native heap
+        // corruption -> delayed EXCEPTION_ACCESS_VIOLATION on whichever JVM housekeeping
+        // thread (C2 compiler / GC worker) touches the trampled region first. Save, force
+        // tight packing, read, restore-in-exact-reverse. The stale value is LOGGED as the
+        // in-run evidence of the mechanism.
+        int prevPackRowLength = GL11.glGetInteger(GL11.GL_PACK_ROW_LENGTH);
+        int prevPackSkipRows = GL11.glGetInteger(GL11.GL_PACK_SKIP_ROWS);
+        int prevPackSkipPixels = GL11.glGetInteger(GL11.GL_PACK_SKIP_PIXELS);
+        int prevPackAlignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT);
+        GlStateManager._pixelStore(GL11.GL_PACK_ROW_LENGTH, 0);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_ROWS, 0);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_PIXELS, 0);
+        GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, 4);
         FloatBuffer depths = BufferUtils.createFloatBuffer(rw * rh);
         GL11.glReadPixels(rx, ry, rw, rh, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depths);
         int glErr = GL11.glGetError();
+        GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, prevPackAlignment);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_PIXELS, prevPackSkipPixels);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_ROWS, prevPackSkipRows);
+        GlStateManager._pixelStore(GL11.GL_PACK_ROW_LENGTH, prevPackRowLength);
 
         GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+
+        LOGGER.info(P + "P-OQ4 pack-state at readback (pre-bracket): GL_PACK_ROW_LENGTH="
+            + prevPackRowLength + " skipRows=" + prevPackSkipRows
+            + " skipPixels=" + prevPackSkipPixels + " alignment=" + prevPackAlignment
+            + (prevPackRowLength != 0
+                ? " -> STALE ROW LENGTH CONFIRMED (the copyTextureToBuffer residue; the"
+                    + " un-bracketed readback wrote strided rows over the native heap —"
+                    + " the double-crash mechanism)"
+                : " -> tight (no stale pack state this run)"));
 
         float min = Float.POSITIVE_INFINITY;
         float max = Float.NEGATIVE_INFINITY;
