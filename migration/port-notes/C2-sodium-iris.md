@@ -345,3 +345,31 @@ Launch: `.\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProb
 **What the 8-leg suite proved this stage**: compile x3 green; the suite (no sodium) = the plugin
 drops every compat entry when sodium is absent; the flag-OFF title-card leg = gate-2 skip. The suite
 CANNOT exercise anything sodium-present — this baseline round is that proof.
+
+## §3.7 THE RE-RUN RESULTS (2026-07-19, user-run, log-confirmed) — C2-1 LIVE-PROVEN
+
+**PART 1 (feed-only): PASS** — rendering good, teleport good, no portal views (correct).
+D11 install line + red warn + chat all present in the log. The feed-only inference is CLOSED.
+This round also serves as the lever-off A/B row (feed-only IS the lever-off state).
+
+**PART 2 (levered): PASS ACROSS THE BOARD** — rendering good, LIVE PORTAL VIEWS GOOD,
+teleport good, **the decisive same-dim water check GOOD**, glass good, recursive portals
+good, entities beside portal good, chest good, sign good, save-relog good. Log-confirmed:
+GOLD notice; ZERO "Resizing Sodium terrain uniforms" (the C2-1d leak fix clean); zero
+degrade one-shots; zero mod exceptions; no crash reports. P5 under the levered session
+shows the strict serial live (lastFrame ~117k, monotonic).
+
+**FINDINGS from the round:**
+1. **NO ENTITIES visible in the dest dim through the portal** (mobs/players on the other
+   side don't render in the aperture; entities BESIDE the portal in the viewer's dim are
+   fine). → the active C2 work item (§3.8); diagnose-first.
+2. **Sign placed THROUGH a portal plants blank** (the text-edit GUI does not open on
+   cross-portal placement) — **USER-ROUTED: POST-S20 POLISH** (cross-portal interaction
+   GUI class; joins the polish backlog).
+3. **Config screen (S19-E live item: PASSED — the real IP cloth screen works)** with one
+   cosmetic: text cut off when the game window is small — **USER-ROUTED: POST-S20 POLISH**
+   (cloth-config layout behavior at small widths).
+
+With this round, **C2-1's deliverable is live-proven**: Sodium + portal views + crossing +
+same-dim isolation + persistence all work; the accepted artifacts (plane bleed-through
+until C2-2; first-frames cold blank) behaved as documented.
