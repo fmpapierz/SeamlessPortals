@@ -1048,3 +1048,23 @@ FlawlessFrames n=1 cold-arm interplay is asserted from the C2-1c ledger, not re-
 
 **Compile gate after §2.7**: `.\gradlew.bat :common:compileJava :fabric:compileJava
 --console=plain` — green.
+
+## §3 IS2 OPENING EVIDENCE (2026-07-20, self-run — THE DELIVERABLE RENDERS)
+
+The iris+pack row (ComplementaryReimagined_r5.8.1 staged, `-PirisRuntime=true
+-PshaderpackViews=true -PgametestScreenshots=true`, the merged IS1 tree, ZERO IS2-specific
+code): **ALL 8 LEGS PASS with the compat renderer LIVE under the active pack**; zero
+AIOOBE; the supply probe delivers identically under iris (portal D 35→42, A/C
+legitimately 0); no notable errors. The converged screenshot
+(`0001_is1-leg7-samedim-ground-dest-converged.png`, iris row): main world fully
+pack-rendered (volumetric clouds, shader lighting); portal D's obsidian wall THROUGH the
+window WITH pack shading; the two y=250 windows showing the pack's cloud layer from
+above (real dest-camera full-pipeline renders — the mid-air windows are now visibly
+meaningful under the pack); the cross-dim nether window under the pack's fog treatment;
+stamps portal-shaped; main terrain intact. The engagement's core deliverable — portal
+views rendering WITH an active shaderpack — is live on the harness evidence.
+REMAINING FOR IS2 CLOSE: the experiential legs only a human can judge (pack-toggle
+mid-session at the switch frame, D21 temporal/flicker envelope, walk-through feel,
+frame-edge nose-to-frame, resize) + notice v2 wording (tracks what the user sees) +
+the OQ7 one-shot pipeline log + the D8-default decision points (Q-U1 rides IS3 per the
+design).
