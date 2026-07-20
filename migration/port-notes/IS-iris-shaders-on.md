@@ -1237,3 +1237,459 @@ so shaders-ON iris-patched terrain programs write `gl_ClipDistance` (arming clip
 globally is only safe once the programs write it — the belt existed to avoid the
 UNDEFINED-non-writing-program hazard). User directive: execute IS3 + IS4 with the deep-Opus
 protocol ([[opus-verifier-depth-protocol]]).
+
+
+## §4 THE IS3 IMPLEMENTATION SPEC
+
+*Opus reconcile of the four IS3 recon reports (rBelt / rPatcher / rBinder / rInteract),
+standing in for Fable at full depth. Every load-bearing claim below was re-derived from
+source in the main READ-ONLY tree, the iris 1.11.2+26.2 jar (javap), and mc262-ref — NOT
+inherited from the recon reports or the IS0 census. Where the reports disagreed (the mixin
+naming/gate, the GLSL splice anchor), the disagreement is resolved here against source.*
+
+### §4.0 THE HAZARD VERDICT — non-terrain iris programs (RESOLVED: option (b))
+
+**Decision: extend the vanilla `GlCommandEncoderClipMixin` (the per-draw `trySetup` uploader)
+with the same per-draw definedness guard the sodium uploader already carries.** The belt swap
+(§4.1) MUST NOT ship without this — landing them together is the single most important
+implementation requirement of IS3.
+
+**The hazard, re-derived from source.** The full-pipeline arm (§4.1) drives a GLOBAL raw
+`GL11.glEnable(GL30.GL_CLIP_DISTANCE0)` — verified: `qouteall...FrontClipping.setupInnerClipping`
+-> `feedViewSpacePlane` (FrontClipping.java:166-177) -> `com.warwa...FrontClipping.restore(Snapshot
+enabled=true)` (com.warwa FrontClipping.java:85-89) -> `enableGlClipDistance()` = a bare
+`GL11.glEnable(GL30.GL_CLIP_DISTANCE0)` guarded by the private `glClipEnabled` bool
+(com.warwa FrontClipping.java:245-250). This is a global GL capability that stays ON for the
+entire nested `render()`. Per the GL clip-distance rule (OpenGL 4.6 core; GLSL 4.60 section 7.1):
+if `GL_CLIP_DISTANCE0` is enabled and the bound vertex program does not write
+`gl_ClipDistance[0]`, the value is UNDEFINED — the primitive may be arbitrarily clipped or
+culled (NVIDIA tends to read 0/benign; AMD/Intel are free to cull).
+
+**Why non-terrain iris programs do not write it (jar-verified).** IS3 injects only into
+`params.patch == Patch.SODIUM` VERTEX (§4.2). javap of the iris jar: `Patch` = {VANILLA,
+DH_TERRAIN, DH_GENERIC, SODIUM, COMPOSITE, COMPUTE} — **there is no ENTITY patch type.** Under
+an active pack iris routes terrain through `patchSodium` (Patch.SODIUM) and
+entities/sky/particles/clouds/weather/block-entities/hand through `patchVanilla`
+(Patch.VANILLA), composites through Patch.COMPOSITE. So every non-terrain iris program writes
+NO `gl_ClipDistance`. The vanilla source seam (`ShaderCodeTransformation` via
+`ShaderManagerCompilationCacheMixin`) does NOT reach iris pack programs — iris compiles them
+itself and substitutes via `GlDevice.getOrCompilePipeline`, bypassing the vanilla
+`ShaderManager` source path. So under a pack the ONLY programs that write `gl_ClipDistance`
+are the IS3-injected Patch.SODIUM terrain programs.
+
+**Why the existing sodium guard does NOT cover the gap (the crux the reports split on —
+resolved against source).** `MixinSodiumGLDrawContext_ClipUpload` carries a real definedness
+guard: at `GLDrawContext.setContext` RETURN, `loc == -1 && FrontClipping.capture().enabled` ->
+`GL11.glDisable(GL30.GL_CLIP_DISTANCE0)`, restored at `endDraw`
+(MixinSodiumGLDrawContext_ClipUpload.java:141-160). BUT `GLDrawContext` is **sodium's own draw
+context** — it is bound only for sodium TERRAIN passes. Non-terrain iris draws
+(entities/sky/particles) are ordinary Mojang draws that funnel through
+`com.mojang.blaze3d.opengl.GlCommandEncoder.trySetup`, NOT sodium's `GLDrawContext.setContext`.
+The sodium guard never sees them. And the vanilla `GlCommandEncoderClipMixin` — the mixin that
+DOES cover those draws — has NO guard today: line 56 is `if (loc < 0) return;` (verified,
+GlCommandEncoderClipMixin.java:56), a bare early-out. Its own comment (lines 64-69) states
+"GL_CLIP_DISTANCE0 enable/disable is managed by FrontClipping ... No per-draw enable needed" —
+correct in the shaders-OFF world (every vanilla world shader is injected via the source seam ->
+`loc >= 0`), but FALSE the moment a global clip is armed over un-injected iris Patch.VANILLA
+programs.
+
+**Options weighed.** (a) inject into ALL iris patch types — REJECTED: COMPOSITE/COMPUTE are
+fullscreen/deferred passes with no world model-view (a view-space clip is meaningless and can
+corrupt them); DH/shadow passes use a different projection (clipping cuts the wrong plane);
+and blanket-injecting Patch.VANILLA entity programs would bisect straddling dest entities (the
+exact defect `setupInnerClippingForEntities`' margin exists to avoid). (c) accept the
+undefined behavior — REJECTED: the GL spec makes it undefined, not benign; non-NVIDIA drivers
+can cull the sky/entities. (b) scope the enable per-program at the universal `trySetup`
+chokepoint — ADOPTED: mirror the sodium guard in the vanilla mixin. It fixes the user's
+terrain-clip symptom (terrain has `loc >= 0` -> clips), leaves non-terrain iris draws
+DEFINED-and-unclipped (`loc == -1` -> suppress), and is bit-identical for the proven
+shaders-OFF decomposed path (all vanilla world shaders are injected -> `loc >= 0` -> the guard's
+suppress branch never fires; behavior unchanged).
+
+**Mandatory keying detail (from source).** The vanilla guard MUST key its enable/disable
+decision on `FrontClipping.capture().enabled` — the store's armed INTENT — NOT on the private
+`glClipEnabled` cache, exactly as the sodium mixin does (MixinSodiumGLDrawContext_ClipUpload
+.java:111,141,156). Reason: `com.warwa...FrontClipping.enableGlClipDistance` early-returns when
+`glClipEnabled` is already true (com.warwa FrontClipping.java:245-250), so a per-draw
+`glDisable` that goes behind the store's back would leave the store's cache reading "enabled"
+while GL is off, and the store would then decline to re-enable -> a suppressed draw's disable
+could stick across the next terrain draw. Keying on `capture().enabled` makes each `trySetup`
+re-decide from the true intent: `loc >= 0` -> `glEnable`; `loc < 0 && capture().enabled` ->
+`glDisable`. Because `trySetup` fires per-draw, no latch/restore is needed on the vanilla side
+(the sodium side needs its `endDraw` restore because `setContext` fires once per pass, not per
+draw).
+
+### §4.1 THE BELT SWAP — `renderDestWorldFullPipeline`
+
+**Site.** `SecondaryWorldRenderCore.java`, the DEF-G pre-render belt immediately before
+`destRenderer.render(...)`. Current:
+
+```java
+GL11.glDisable(GL11.GL_STENCIL_TEST);
+FrontClipping.disableClipping();          // <-- the DEF-G clip belt, retired at IS3
+```
+
+**Delta — replace ONLY the `disableClipping()` line with the decomposed path's arm
+(byte-for-byte the decomposed arm at ~:1098-1101; verified identical there):**
+
+```java
+GL11.glDisable(GL11.GL_STENCIL_TEST);     // KEEP — the compat shape is stencil-free (section 2.1-3)
+FrontClipping.setupInnerClipping(
+    PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+    destViewMatrix, -FrontClipping.ADJUSTMENT
+);
+```
+
+All symbols are in scope in this method: `FrontClipping` = `qouteall.imm_ptl.core.render
+.FrontClipping` (same package, no import), `PortalRendering` (imported line 65), `destViewMatrix`
+(the matrix passed to `destRenderer.render` a few lines below), `FrontClipping.ADJUSTMENT` =
+`0.01` (qouteall FrontClipping.java:95). The signature matches: `setupInnerClipping(Plane,
+Matrix4f, double)` (qouteall FrontClipping.java:132) — `getActiveClippingPlane()` returns
+`@Nullable Plane` (PortalRendering.java:187), `destViewMatrix` is `Matrix4f`, `-ADJUSTMENT` is
+`double`. So `-ADJUSTMENT = -0.01`.
+
+**Why the `isRendering()` guard is mandatory (verified).** `getActiveClippingPlane()` peeks the
+portal-layer stack and throws at layer-0 callers (its javadoc: "Must use after checking
+isRendering()", PortalRendering.java:87; the S18.2 BLOCKER fix at the decomposed site,
+SecondaryWorldRenderCore ~:1089-1097). The full-pipeline pass always runs inside
+`doRenderPortal`'s `pushPortalLayer` bracket (so `isRendering()==true` in practice — the D23
+layer-0 fallback routes CrossPortalViewRendering/GuiPortalRendering to the decomposed
+`renderWorldNew`, never here), but the guard is kept for symmetry and safety:
+`setupInnerClipping(null, ...)` collapses to `disableClipping()` (qouteall FrontClipping.java:
+149-152), so a layer-0 full-frame render stays unclipped, exactly like the decomposed path.
+
+**The finally needs NO change.** The outermost finally already re-asserts `GL11.glDisable(
+GL11.GL_STENCIL_TEST); FrontClipping.disableClipping();` (the section 2.1-3 stencil-neutralize +
+clip disarm). Verified: it disarms the clip after `render()` on any path or throw — correct
+post-pass cleanup, directly mirroring the decomposed finally at ~:1197. Leave it.
+
+**Ordering (verified).** The belt sits AFTER the section 2.7 same-dim supply probe
+(`logSameDimSupplyProbe`) and the section 2.6 `sectionUpdateRenderStates` swap-out, BEFORE
+`destRenderer.render(...)`. Arming clip is pure GL state; section 2.6/2.7 are CPU
+LevelRenderState — no interaction. The finally restores clip after `render()` regardless of
+throw. Correct.
+
+### §4.2 THE TRANSFORMPATCHER MIXIN — shaders-ON GLSL clip injector (javap-exact)
+
+Registers the FIRST live iris-targeting `@Mixin` (D9 amendment, section 4.6).
+
+**Target (javap-confirmed).** `net.irisshaders.iris.pipeline.transform.TransformPatcher` — a
+`public class` (not interface). Method:
+`private static java.util.Map<PatchShaderType,String> transformInternal(String, Map<PatchShaderType,String>, Parameters)`;
+JVM descriptor `(Ljava/lang/String;Ljava/util/Map;Lnet/irisshaders/iris/pipeline/transform/parameter/Parameters;)Ljava/util/Map;`.
+Body (bytecode offsets 0-16): `params.name = arg0; return (Map) transformer.transform(arg1, params);`
+— arg1 is the INPUT source map, the RETURN is the TRANSFORMED map. `Parameters` is a
+`public abstract class` with `public final Patch patch`, `public PatchShaderType type`,
+`public String name` (all readable directly). `Patch.SODIUM` and `PatchShaderType.VERTEX` are
+public static final enum constants. iris is `compileOnly` on the common classpath, so the
+mixin imports these directly (no reflection).
+
+**Caching behavior (javap-confirmed — better than per-frame).** The public 6-arg `transform(...)`
+wrapper builds a `CacheKey`, and on `cache.containsKey(key)` returns the cached map WITHOUT
+calling `transformInternal` (bytecode: containsKey short-circuit); on a miss it calls
+`transformInternal` then `cache.put(key, result)` (offsets 170-190). So our `@Inject` at
+`transformInternal` RETURN fires ONCE per unique (params+sources) tuple — never per-frame,
+never per-draw — and the mutated map is what gets cached. Zero steady-state cost, no
+double-patch.
+
+**Mixin shape.**
+```java
+@Pseudo
+@Mixin(value = net.irisshaders.iris.pipeline.transform.TransformPatcher.class, remap = false)
+public abstract class MixinIrisSodiumTransformPatcher_ClipInject {
+    @Inject(method = "transformInternal", at = @At("RETURN"), remap = false, require = 1)
+    private static void seamlessportals$injectSodiumTerrainClip(
+        String name,
+        java.util.Map<PatchShaderType, String> inputSources,
+        Parameters params,
+        CallbackInfoReturnable<java.util.Map<PatchShaderType, String>> cir
+    ) {
+        if (params.patch != Patch.SODIUM) return;              // terrain only
+        java.util.Map<PatchShaderType, String> out = cir.getReturnValue();
+        if (out == null) return;
+        String vsh = out.get(PatchShaderType.VERTEX);
+        if (vsh == null) return;
+        String patched = seamlessportals$spliceClip(vsh);
+        if (patched != vsh) {
+            // Defensive: do NOT assume the returned map is mutable. Copy + setReturnValue.
+            java.util.EnumMap<PatchShaderType, String> copy = new java.util.EnumMap<>(out);
+            copy.put(PatchShaderType.VERTEX, patched);
+            cir.setReturnValue(copy);
+        }
+    }
+}
+```
+
+Handler is `static` (target is `private static`; a static @Inject captures the three target
+args ahead of the CIR). The `EnumMap` copy + `setReturnValue` avoids the "is the return mutable?"
+assumption (bytecode does not prove the `EnumASTTransformer.transform` result is an in-place
+mutable map — one alloc per cache-MISS is free and zero-risk; do not rely on in-place `.put`).
+
+**The GLSL splice — the getVertexPosition anchor gate + core-profile fail-safe (LOAD-BEARING
+CORRECTION, jar-verified; the IS0 census expression is INCOMPLETE).** The IS0 section 1-D
+expression `dot((u_ModelViewMatrix * getVertexPosition()).xyz, seamlessportals_ClipPlane.xyz) +
+seamlessportals_ClipPlane.w` compiles ONLY on the compatibility-profile path. Verified from the
+jar: `getVertexPosition` appears as a defined symbol only in `SodiumTransformer` (the
+compat-profile transformer), `DHTerrainTransformer`, `DHGenericTransformer` — NOT in
+`SodiumCoreTransformer`. Both `SodiumTransformer` and `SodiumCoreTransformer` inject
+`u_ModelViewMatrix`. So:
+
+- **Compat-profile packs** (dispatched to `SodiumTransformer`): inject
+  `vec4 getVertexPosition(){ return vec4(_vert_position + u_RegionOffset +
+  _get_draw_translation(_draw_id), 1.0); }` — bytecode-equal to `vec4(position,1.0)` from
+  sodium's own `block_layer_opaque.vsh` (`position = _vert_position + translation`,
+  `translation = u_RegionOffset + _get_draw_translation`). So
+  `u_ModelViewMatrix * getVertexPosition()` = eye-space position, mathematically identical to
+  the proven shaders-OFF sodium seam `u_ModelViewMatrix * vec4(position,1.0)`
+  (SodiumClipShaderPatch.java:202-205). The census expression is sign-exact HERE.
+- **Core-profile packs** (dispatched to `SodiumCoreTransformer`): NO `getVertexPosition()`
+  defined -> the census expression fails to compile -> would blank dest terrain. This path
+  becomes a DOCUMENTED RESIDUAL (unclipped-but-defined; parallels the D4 Vulkan residual).
+
+`seamlessportals$spliceClip(String source)` therefore:
+1. `if (source.contains(ShaderCodeTransformation.UNIFORM_NAME)) return source;` — idempotence
+   (`UNIFORM_NAME == "seamlessportals_ClipPlane"`, verified ShaderCodeTransformation.java:41).
+   Shared literal with the shaders-OFF sodium seam (belt-and-suspenders; the two seams operate
+   on different source strings and are mutually exclusive per program, so cross-seam
+   double-patch cannot actually occur).
+2. `if (!source.contains("u_ModelViewMatrix")) return failSafe(source, "no u_ModelViewMatrix");`
+   — present on both sodium paths.
+3. `if (!source.contains("getVertexPosition(")) return failSafe(source, "core-profile: no
+   getVertexPosition — unclipped-but-defined residual");` — the core-path gate. Route to the
+   fail-safe (unchanged source + one-shot WARN), NOT to a broken compile.
+4. Brace-match `"void main("` (the identical loop as SodiumClipShaderPatch.java:168-195), splice:
+   - before `void main(`:
+     ```
+     out float gl_ClipDistance[1];
+     uniform vec4 seamlessportals_ClipPlane;
+     ```
+   - before main's closing brace:
+     ```
+     {
+         // SEAMLESSPORTALS_CLIP_INJECTED (iris-sodium terrain, IS3)
+         gl_ClipDistance[0] = dot((u_ModelViewMatrix * getVertexPosition()).xyz, seamlessportals_ClipPlane.xyz) + seamlessportals_ClipPlane.w;
+     }
+     ```
+
+Declaration-order safe (bytecode-verified from the transformer injection points): `u_Globals`
+(carrying `u_ModelViewMatrix`) is injected BEFORE_DECLARATIONS and `getVertexPosition()`
+BEFORE_FUNCTIONS — both precede `main` in print order; our uniform decl sits immediately before
+`main`. So at the write site all four symbols (`u_ModelViewMatrix`, `getVertexPosition`,
+`seamlessportals_ClipPlane`, `gl_ClipDistance`) are declared-before-use. `getVertexPosition()`
+returns `vec4` -> `mat4 * vec4` = `vec4`, `.xyz` valid. Sodium's terrain `main` is not wrapped
+(no `irisMain`/`renameFunctionCall("main")` on either sodium path), so the single `void main(`
+is the real one. `out float gl_ClipDistance[1];` is the same explicit built-in redeclaration the
+proven shaders-OFF sodium seam already emits into `#version 330 core` sources; iris declares no
+`gl_PerVertex` block anywhere (grep-verified), so a separate `out float gl_ClipDistance[1]` is
+safe — optionally add a `contains("gl_PerVertex")` fail-safe as cheap insurance against an
+exotic pack that redeclares the block.
+
+**Registration.** Config `common/src/main/resources/seamlessportals-ip-compat.mixins.json`
+(package `qouteall.imm_ptl.core.compat.mixin`, plugin `IPCompatMixinPlugin`,
+`injectors.defaultRequire = 1`). Add the class under a new `iris.` (or `iris_sodium.`) subpackage:
+`iris.MixinIrisSodiumTransformPatcher_ClipInject`.
+
+**Naming/gate — resolved against source (rPatcher vs rInteract split).** The simple name MUST
+contain `"IrisSodium"`. Gate-1 in `IPCompatMixinPlugin.shouldApplyMixin` is order-sensitive
+(verified IPCompatMixinPlugin.java:104-117): `contains("IrisSodium")` is tested FIRST ->
+`isSodiumPresent() && isIrisPresent()`; only if that substring is absent does it fall to
+`contains("Iris")` -> iris-only. rInteract argued "Iris" alone suffices because iris hard-depends
+on sodium; that is behaviorally correct in the shipped config but LESS precise. The mixin
+patches Patch.SODIUM terrain GLSL — it is genuinely meaningless without BOTH mods — and the
+plugin's own footgun doc (IPCompatMixinPlugin.java:34-42) states the substring is "the
+mod-presence key, not decoration." `IrisSodium` is the honest key and the gate-order comment
+explicitly anticipates it. Gate-2 = `EntityPortalsFlag.isOn()` (applied to every class; forces
+false off Fabric -> the mixin is skipped on NeoForge entirely, benign — no shaders-ON compat
+there).
+
+**Assert.** `require = 1` (inherits `defaultRequire = 1`) + `@Pseudo`: with iris present (gate
+ensures it) a drift in `transformInternal`'s descriptor across iris versions fails the @Inject
+bind -> LOUD boot crash (the D7 deliberate-honesty discipline). `@Pseudo` tolerates iris-absent
+(gate already skips). Ledger the iris-version coupling (section 4.6). Add a one-shot
+`LOGGER.info` per patched shader id (mirror SodiumClipShaderPatch.java:216) and a one-shot
+`LOGGER.warn` on the core-profile fail-safe, both behind the existing
+`-Dseamlessportals.compatProbe=true` lever for a full patched-source dump.
+
+### §4.3 THE BINDER + PLANE-SOURCE CONFIRMATION
+
+**The per-draw uploaders resolve the location after injection (source + bytecode-verified).**
+Two uploaders fire for the nested full-pipeline terrain draw:
+- `MixinSodiumGLDrawContext_ClipUpload` @ `GLDrawContext.setContext` RETURN. Jar bytecode of
+  `setContext`: `GlRenderPipeline.program() -> GlProgram.getProgramId() ->
+  GlStateManager._glUseProgram(id)` (offsets 24-34), re-bound before RETURN (offsets 70-72) —
+  so at the injection `GL_CURRENT_PROGRAM` is the iris-patched terrain program. Post-section-4.2,
+  `_glGetUniformLocation(id, "seamlessportals_ClipPlane") >= 0` -> `glUniform4f` uploads the
+  armed plane; the definedness-suppress branch (loc==-1) goes dead on patched programs.
+- `GlCommandEncoderClipMixin` @ `trySetup` RETURN (the universal chokepoint; the sodium
+  Candidate-A ledger proves sodium terrain reaches it via `GLDrawBatch.draw ->
+  RenderPass.multiDrawIndexed -> GlCommandEncoder.executeDraws -> trySetup`, program current).
+  Uploads via `ClipUniformLocationCache`.
+
+**Plane source and matrix-match (the load-bearing correctness proof).** The clip's eye-space
+correctness requires the matrix fed to `setupInnerClipping` to equal the matrix that transforms
+the terrain vertices. `getActiveClippingPlane()` returns the innermost pushed portal's
+`getInnerClipping()` (the correct dest-portal inner-clip plane; null -> keep-all). `destViewMatrix`
+is the matrix passed to `destRenderer.render(...)`, and (per the qouteall FrontClipping S13-L
+class note, lines 55-74, and rBinder's `render() -> prepareChunkRenders(cameraRenderState
+.viewRotationMatrix == destViewMatrix) -> sodium ChunkRenderMatrices.modelView ->
+u_ModelViewMatrix` trace) it is provably the SAME matrix sodium terrain is transformed by. So
+the injected `dot((u_ModelViewMatrix*getVertexPosition()).xyz, n) + c` evaluates
+`dot(R*p_rel, R*n) + c = n*p_rel + c` — the exact kept half-space of the bridge SIGN NOTE.
+Correct for same-dim and cross-dim (both branches reach the same arm with `isRendering()` true
+and the same portal plane). Scaled fuse-view portals: `destViewMatrix` carries the same uniform
+scale k=1/s the decomposed path handles, and `rotateClipNormalToViewSpace` (qouteall
+FrontClipping.java:201-223) detects `|det-1| > 1e-3` -> returns the covector inverse-transpose
+`M^-T * n = (1/k)R*n`; the shader's `k*R*p_rel` compounds to `n*p_rel + c` — scale cancels.
+Because the full-pipeline arm feeds the SAME `destViewMatrix` to both terrain and clip, the
+S13-L derivation transfers verbatim.
+
+**Fold-in hardening (from rBinder, verified).** `MixinSodiumGLDrawContext_ClipUpload` uses its
+own private `ip_clipPlaneLocationCache` HashMap (line 92), which `GlDeviceClipCacheMixin` does
+NOT invalidate on `GlDevice.clearPipelineCache` and which has no size cap — unlike the vanilla
+uploader, which was moved to the IS2-invalidated `ClipUniformLocationCache`. On program-id reuse
+after a sodium/iris terrain-shader rebuild it can feed a stale >=0 location to `glUniform4f`
+(GL_INVALID_OPERATION spam + wrong-uniform-write). This PRE-EXISTS IS3 (live for shaders-OFF
+sodium since C2) but IS3 widens the >=0-location program set to the iris-transformed terrain, so
+fold the fix in: route the sodium uploader's cache through `ClipUniformLocationCache`. Non-blocking
+(the `trySetup` uploader still lands the correct plane per-batch via the invalidated cache).
+
+### §4.4 THE RETIREMENTS + the new notice
+
+- **RETIRE** the DEF-G clip belt: only the `FrontClipping.disableClipping()` at the pre-render
+  site (section 4.1). KEEP the `GL11.glDisable(GL_STENCIL_TEST)` beside it (the stencil-free
+  shape). KEEP both finally re-asserts (`glDisable(STENCIL)` + `disableClipping()` — post-pass
+  cleanup). Update the method-header javadoc's "DEF-G belt ... retired at IS3" bullet to describe
+  the arm.
+- **KEEP** the sodium per-pass definedness guard (MixinSodiumGLDrawContext_ClipUpload:141-160):
+  it is the safety net for an unpatched sodium terrain program (core-profile residual section 4.2,
+  resource-pack-replaced source, driver dead-strip) — NOT the whole-pass belt.
+- **ADD** (NOT a retirement — the section 4.0 requirement): the definedness guard to the vanilla
+  `GlCommandEncoderClipMixin`, keyed on `FrontClipping.capture().enabled`.
+- **FOLD IN** the sodium-cache wiring (section 4.3).
+- **REWORD the notice** (`PortalRenderer.java` ~:453-460): IS3 makes clipping real, so drop the
+  "dest terrain is not clipped at the portal plane" clause and the blanket "expect artifacts."
+  New wording (keep GOLD, the one-shot latch, the `isShaders()` gate):
+  > `[Seamless Portals] Experimental shaderpack portal views are ON — portals render through
+  > your shaderpack (one recursion layer). Expect some added frame cost while portals are on
+  > screen.`
+  Leave the D8 pass-through notice (~:485-491) as-is (it still serves opt-out / renderMode=none
+  / pre-flip builds).
+
+### §4.5 THE DEFAULT-FLIP (Q-U1) — USER CHECKPOINT, DO NOT BAKE
+
+Mechanics verified. `isShaderpackPortalViewsArmed() = experimentalShaderpackPortalViews (default
+FALSE) || SHADERPACK_VIEWS_JVM_LEVER` (IPGlobal.java:57-65). The D8-EVO routing branch
+(PortalRenderer.java:450-467) fires on `isShaderpackPortalViewsArmed() && renderMode != none`
+and routes to `IrisCompatOn262Renderer` (debug -> debugModeInstance, else -> instance). CRITICAL,
+verified: the `IrisInterface.invoker.isShaders()` check INSIDE that branch (:453) gates ONLY the
+notice — NOT the routing. So a naive flip (`experimentalShaderpackPortalViews = true`) routes
+EVERYONE — including shaders-OFF / no-pack users — to the full-pipeline compat renderer,
+retiring the proven `rendererUsingStencil` as the default. That is a far larger blast radius than
+"shaders-ON defaults to the new renderer" and is almost certainly NOT the intended Q-U1.
+
+**Recommended flip form (minimal blast radius) — shaders-gate the flag path, keep the JVM
+lever's broad dev routing:**
+```java
+boolean shaders = IrisInterface.invoker.isShaders();
+if (IPGlobal.renderMode != IPGlobal.RenderMode.none
+    && (IPGlobal.SHADERPACK_VIEWS_JVM_LEVER
+        || (IPGlobal.experimentalShaderpackPortalViews && shaders))) {
+    // ... route to IrisCompatOn262Renderer ...
+}
+```
+with `experimentalShaderpackPortalViews` flipped to default `true`. Effect: shaders-ON -> compat
+(new renderer); shaders-OFF -> falls through to `switch(renderMode)` -> `rendererUsingStencil`
+(unchanged proven path); the dev lever still forces compat for both (the IS1/IS2/IS3 proof rows).
+`renderMode=none` stays the master off-switch (guard is false -> `switch(none)` ->
+`rendererDummy`, verified). Opt-out = `experimentalShaderpackPortalViews=false` or
+`renderMode=none`; `IrisCompatOn262Renderer.onSwitchedAway()` handles the eviction.
+
+**This is a USER DECISION.** Recommendation: flip to default-ON ONLY after IS3 live-validates
+clipping (terrain-clip defect resolved AND the sky/non-terrain observables judged acceptable),
+via the shaders-gated form above. Do NOT bake the flip into IS3's code — surface it as the
+checkpoint with the recommended default.
+
+### §4.6 THE DEVIATION LEDGER
+
+- **D9 amendment.** D9 was "zero iris mixins." IS3 registers ONE: the TransformPatcher clip
+  injector (section 4.2), populating the previously-empty Iris arm of `IPCompatMixinPlugin`. It
+  is NOT one of IP's three iris mixins (those target the rendering pipeline; IP used the now-dead
+  GL_CLIP_PLANE0 / per-shader-uniform path) — it is a NEW mixin with no IP precedent. Fabric-only
+  by construction (gate-2). Amend the IPCompatMixinPlugin section 57-66 javadoc.
+- **NEW: vanilla-mixin definedness guard.** The always-on-substrate `GlCommandEncoderClipMixin`
+  gains a per-draw enable-authority guard (section 4.0). Bit-identical for shaders-OFF (all
+  vanilla world shaders injected -> loc>=0 -> suppress never fires).
+- **NEW: full-pipeline shaders-OFF SKY clipping.** The monolithic `render()` cannot draw-sky-
+  before-arm the way the decomposed path does (decomposed draws sky before its :1098 arm because
+  "the dome spans both sides of the plane"). On the lever-only shaders-OFF proof row, the vanilla
+  sky shader IS injected (loc>=0) -> option (b) enables the clip for the sky draw inside `render()`
+  -> the sky dome gets bisected at the plane. Lever-only test-config artifact (shipped default =
+  D8 / the shaders-gated flip keeps shaders-OFF on the decomposed stencil renderer). Likely
+  benign (the clipped half is the near-camera hemisphere behind the portal). Live-round
+  observable — a cut-sky screenshot on a proof row is NOT a regression.
+- **NEW: non-terrain iris programs render UNCLIPPED-but-DEFINED under a pack.** Entities/clouds/
+  weather straddling the dest plane are not clipped shaders-ON — only terrain is (section 4.0
+  option b). This is actually MORE faithful to IP (IP unset the clip uniform for all shaders
+  except cross-portal-entity + weather) and within the stage-(a) envelope. Matching the
+  decomposed path's margin-clipped entities under shaders-ON would need Patch.VANILLA injection
+  with the straddle-margin — deferred.
+- **RESIDUAL: core-profile shaderpacks get no terrain clipping** (section 4.2
+  `SodiumCoreTransformer` path -> no `getVertexPosition()` -> fail-safe). Dest terrain near the
+  portal still clips into view for them (unclipped-but-defined; the sodium guard keeps it
+  defined). Popular packs (BSL/Complementary/Sildur's are `#version 120` compat) route through
+  `SodiumTransformer` -> covered; the residual bites only core-profile packs. Surface via the
+  one-shot WARN.
+- **Scaled-portal.** Scale-1 exact (rigid fast path, bit-identical). Scale>2 correctness under
+  the full-pipeline iris terrain path is UNPROVEN (the covector transform assumes the iris sodium
+  shader's `u_ModelViewMatrix` == the fed `destViewMatrix`, compounded by the section 2.7 scale>2
+  nested-arm projection-capture mismatch). Rides a later live row.
+
+### §4.7 THE LIVE-ROUND SCRIPT + discriminators + verify plan
+
+**Pre-registered discriminators (settle the load-bearing live-only forks):**
+1. **Do iris non-terrain (Patch.VANILLA) draws actually pass through `GlCommandEncoder.trySetup`
+   under an active pack?** (rBelt's LIVE-ONLY fork — the section 4.0 guard is worthless if they
+   don't reach the vanilla mixin, and the non-terrain hazard would then not exist there either.)
+   Discriminator: a 1Hz lever-gated per-draw probe at `trySetup` RETURN logging
+   `GL_CURRENT_PROGRAM`, the queried loc, and the enable-decision for the first N draws of a
+   full-pipeline pass under a real pack. Expect: terrain -> loc>=0 / enabled; entity+sky ->
+   loc==-1 / disabled. If entity/sky draws never appear, they route elsewhere (iris's own path)
+   and the guard is moot — re-scope.
+2. **Do the per-draw uploaders FIRE for sodium terrain under an ACTIVE iris pack?** (rPatcher/
+   rBinder's top live risk — iris may reroute chunk-draw dispatch.) Discriminator: the
+   `compatProbe` dump + a `glGetUniformLocation != -1` + upload log on the iris terrain program.
+   If the location is never queried/uploaded, the correctly-patched uniform is dead and clipping
+   stays off even on the compat path.
+3. **Does the injection reach the RIGHT terrain source (compat vs core)?** Discriminator: the
+   one-shot patch-INFO (compat, patched) vs the one-shot core-profile WARN (residual). A pack
+   showing the WARN is a core-profile pack -> expected unclipped terrain.
+4. **Is the clip visually correct (the user's symptom)?** Discriminator: on the dest side place
+   terrain close to and in front of the portal; on the source side swing the camera near it. PASS
+   = the near-side dest terrain is clipped at the portal plane (no clip-through). Convict
+   independently via the C4 A/B lever (`IPGlobal.enableClippingMechanism` /
+   `IPCGlobal.useFrontClipping`) — toggling clip OFF must restore the clip-through, ON must fix
+   it. Surface the A/B switch at the live test (standing C4 directive).
+5. **Sky/entity definedness under a pack** (the section 4.0 hazard's negative check).
+   Discriminator: on AMD/Intel if available (undefined-clip culls there, not on NVIDIA), confirm
+   the sky dome and entities render fully with clip armed. A culled sky = the guard is not firing
+   for those draws.
+
+**Live script (surface the A/B switch at each):** (a) plain no-pack lever row — full-pipeline
+shaders-OFF: terrain clips, note the sky-bisection artifact (expected, section 4.6). (b)
+sodium-only lever row. (c) real compat-profile pack (BSL/Complementary): terrain clips at the
+plane, sky + entities render fully (defined). (d) real core-profile pack if available: WARN
+fires, terrain unclipped-but-defined (documented residual). (e) scaled fuse-view portal at scale
+1 (exact) and >2 (ledgered). (f) cross-dim + same-dim both.
+
+**Deep-Opus verify plan ([[opus-verifier-depth-protocol]]).** 6 verifiers x2 rounds + 3 judges +
+majority-bound fold. Load-bearing claims each verifier MUST re-derive from source (no
+inheritance): (i) the section 4.0 hazard chain — Patch enum has no ENTITY, vanilla mixin line 56
+lacks the guard, non-terrain draws route through vanilla trySetup not sodium GLDrawContext; (ii)
+the transformInternal descriptor + caching + Parameters.patch access; (iii) the getVertexPosition
+compat/core split (SodiumTransformer vs SodiumCoreTransformer) — the census-expression
+correction; (iv) the belt-swap symbol scope + the finally already restoring; (v) destViewMatrix
+== the sodium terrain matrix (the plane-source correctness proof); (vi) the flip over-reach (the
+isShaders() check gates only the notice). Judges fold on the two decisions that split the recon
+(option b vs the sodium-guard-covers-it claim; IrisSodium vs Iris naming) — both resolved above
+against source. Majority-bound: a claim ships only if >=2 independent verifiers re-derive it from
+source; a split escalates to a fresh source read, never to a vote on prose.
