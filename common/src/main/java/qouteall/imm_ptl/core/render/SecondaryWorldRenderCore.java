@@ -13,6 +13,7 @@ import com.warwa.seamlessportals.mixin.client.CameraInvokerMixin;
 import com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin;
 import com.warwa.seamlessportals.mixin.client.LevelExtractorAccessor;
 import com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin;
+import com.warwa.seamlessportals.render.SodiumFogOverride;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.fabricmc.api.EnvType;
@@ -1263,7 +1264,8 @@ public class SecondaryWorldRenderCore {
     // ===== IS1 — THE FULL-PIPELINE INVOKE BODY (iris shaders-ON engagement) ======================
     // migration/IRIS_SHADERS_ON_DESIGN.md §2.1 (renderWorldFullPipeline body) + §0.4-4 (the sibling
     // driver + the NORMATIVE exclusion list) + port-note IS-iris-shaders-on.md §1-E (LRS-identity
-    // assert, renderOutline=FALSE doubly load-bearing, DEF-G belt) — invoked ONLY from
+    // assert, renderOutline cross-dim-only per IS2 FIX-O — same-dim FALSE stays load-bearing,
+    // DEF-G belt) — invoked ONLY from
     // MyGameRenderer.switchAndRenderTheWorldFullPipeline (the duplicated shell bracket). It reuses
     // the renderDestWorld Step-1..7 PRODUCT family and replaces the decomposed Step-9/10 drive+draw
     // with ONE direct 8-arg LevelRenderer.render() — the block-era-proven FBO-mode call shape
@@ -1319,6 +1321,13 @@ public class SecondaryWorldRenderCore {
     //   * finally tail adds the §8-3(c) source setupFog re-run (any capture-at-setupFog
     //     observer re-captures SOURCE fog THIS frame) — the block-era Step-9 discipline the
     //     decomposed path never needed (it installs/restores the shader-fog slice per draw).
+    //   * IS2 FIX-F: Step 6 (dest fog) is HOISTED BEFORE the Step-5 extract — the vanilla
+    //     setupFog-before-extract order (GameRenderer extractCamera :631-640 precedes
+    //     levelExtractor.extract :389) that sodium's in-extract cullTerrain depends on via the
+    //     FogRendererMixin duck — plus the SodiumFogOverride activate/clear belt around the
+    //     extract (port-note §3.2; SodiumFogOverride(+Mixin) are FLAG-ON LOAD-BEARING now).
+    //   * IS2 FIX-O: renderOutline = cross-dim-only recompute of vanilla's per-frame
+    //     predicate (see the pre-render() block comment); same-dim stays FALSE.
     @SuppressWarnings("unused")
     public static void renderDestWorldFullPipeline(
         ClientLevel destLevel, LevelRenderer destRenderer, Camera newCamera, int renderDistance,
@@ -1449,8 +1458,60 @@ public class SecondaryWorldRenderCore {
         List<SectionUpdateRenderState> savedSectionUpdateStates = null;
         GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
         try {
+            // ===== Step 6 — dest FOG, HOISTED BEFORE the Step-5 extract (IS2 FIX-F; port-note ====
+            // IS-iris-shaders-on §3.2) — the verbatim decomposed body (FIX-6 rain bracket +
+            // standalone UBO). VANILLA ORDER RESTORED: 26.2 GameRenderer.extract runs
+            // extractCamera (setupFog -> cameraState.fogData, GameRenderer:631-640) BEFORE
+            // levelExtractor.extract (:389); the IS1 body inverted that (fog AFTER the Step-5
+            // extract), so sodium's cullTerrain — which runs INSIDE the extract and reads fog
+            // through the FogRendererMixin duck — saw SOURCE-poisoned fog: the §3.1 defect (F),
+            // no dest-dim fog in cross-dim windows. Step 9' keeps its slot below; the finally's
+            // §8-3(c) SOURCE setupFog re-run is unchanged.
+            FogRenderer fr =
+                ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
+            FogData destFogData;
+            var atmosphericEnv = getAtmosphericFogEnvironment();
+            float outerRainFogMultiplier = 0f;
+            if (atmosphericEnv != null) {
+                var atmoAccess =
+                    (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
+                outerRainFogMultiplier = atmoAccess.ip_getRainFogMultiplier();
+                atmoAccess.ip_setRainFogMultiplier(
+                    destRainFogMultiplier.getOrDefault(destDim, 0f));
+            }
+            try {
+                destFogData = fr.setupFog(
+                    newCamera, WorldRenderInfo.getRenderDistance(), deltaTracker, 0f, destLevel
+                );
+            } finally {
+                if (atmosphericEnv != null) {
+                    var atmoAccess =
+                        (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
+                    destRainFogMultiplier.put(destDim, atmoAccess.ip_getRainFogMultiplier());
+                    atmoAccess.ip_setRainFogMultiplier(outerRainFogMultiplier);
+                }
+            }
+            destCameraState.fogData = destFogData;
+            destCameraState.fogType = FogType.NONE;
+            FogRendererContext.setCurrentRenderedFogColor(
+                new Vec3(destFogData.color.x, destFogData.color.y, destFogData.color.z)
+            );
+            GpuBufferSlice destFogBuffer = writeFogSlice(destFogData);
+
             // ===== Step 5 — dest EXTRACT [cross-dim only] + identity-guarded SOG feed ============
             if (!sharedState && !IPGlobal.debugSkipDestExtract) {
+                // IS2 FIX-F BELT (port-note §3.2): serve the DEST fog to sodium's cullTerrain
+                // for the extract's duration through the P8-proven SodiumFogOverrideMixin duck
+                // (reflection-built FogParameters; sodium-absent / ctor-miss no-op). While the
+                // override is active it SUPERSEDES sodium's captured value (the mixin's HEAD
+                // setReturnValue), so DURING the extract cullTerrain reads THIS FogParameters —
+                // its field order is load-bearing, keep it lockstep with sodium's own
+                // storeFogParameters ctor args (IS2 fold jC JX-1). The hoist above independently
+                // fixes the value sodium captures (fr.setupFog -> storeFogParameters), so on
+                // sodium 0.9.1 the two agree and the belt is idempotent version-drift insurance;
+                // do not remove EITHER believing the other covers it (IS2 fold V2-1).
+                // clear() runs FIRST in the finally below — paired discipline, throw-safe.
+                SodiumFogOverride.activate(destFogData);
                 try {
                     if (!IPGlobal.debugSkipExtractOnly) {
                         // S14.41 discipline: drop retained shared particle-group refs pre-extract.
@@ -1478,6 +1539,9 @@ public class SecondaryWorldRenderCore {
                         }
                     }
                 } finally {
+                    // IS2 FIX-F belt release (paired with the activate above; before the SOG
+                    // feed so no later work in this finally runs with the override armed).
+                    SodiumFogOverride.clear();
                     // (b) identity-guarded SOG delta feed — THROW-SAFETY ONLY on this path:
                     // render()'s own sog.update consumes the same frozen window right after
                     // (updateLoadedChunks/updateEmptySections are set-ops — double application
@@ -1518,37 +1582,7 @@ public class SecondaryWorldRenderCore {
                 }
             }
 
-            // ===== Step 6 — dest FOG (verbatim decomposed: FIX-6 rain bracket + standalone UBO) ==
-            FogRenderer fr =
-                ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
-            FogData destFogData;
-            var atmosphericEnv = getAtmosphericFogEnvironment();
-            float outerRainFogMultiplier = 0f;
-            if (atmosphericEnv != null) {
-                var atmoAccess =
-                    (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
-                outerRainFogMultiplier = atmoAccess.ip_getRainFogMultiplier();
-                atmoAccess.ip_setRainFogMultiplier(
-                    destRainFogMultiplier.getOrDefault(destDim, 0f));
-            }
-            try {
-                destFogData = fr.setupFog(
-                    newCamera, WorldRenderInfo.getRenderDistance(), deltaTracker, 0f, destLevel
-                );
-            } finally {
-                if (atmosphericEnv != null) {
-                    var atmoAccess =
-                        (qouteall.imm_ptl.core.mixin.client.accessor.IEAtmosphericFogEnvironment) atmosphericEnv;
-                    destRainFogMultiplier.put(destDim, atmoAccess.ip_getRainFogMultiplier());
-                    atmoAccess.ip_setRainFogMultiplier(outerRainFogMultiplier);
-                }
-            }
-            destCameraState.fogData = destFogData;
-            destCameraState.fogType = FogType.NONE;
-            FogRendererContext.setCurrentRenderedFogColor(
-                new Vec3(destFogData.color.x, destFogData.color.y, destFogData.color.z)
-            );
-            GpuBufferSlice destFogBuffer = writeFogSlice(destFogData);
+            // (Step 6 — dest FOG: HOISTED above Step 5, IS2 FIX-F — see the banner there.)
 
             // ===== Step 7 — dest DRAW projection install (render()'s draws read RenderSystem) ====
             if (!IPGlobal.debugSkipProjectionInstall) {
@@ -1602,9 +1636,15 @@ public class SecondaryWorldRenderCore {
                 ((LevelRendererAccessorMixin) destRenderer)
                     .seamlessportals$setLevelRenderState(destLRS);
             }
-            // renderOutline=FALSE is DOUBLY load-bearing (port-note §1-E): IP fidelity AND it
-            // gates OUT M11 + Fabric's BEFORE_BLOCK_OUTLINE handler (whose per-frame context
-            // exists only for the MAIN framegraph frame). shouldRenderSky honors the render
+            // IS2 FIX-O (port-note §1-E row REVISED + §3.2): dest block outline is CROSS-DIM
+            // ONLY. The old blanket renderOutline=FALSE "doubly load-bearing" row is half-
+            // retired: the Fabric-NPE half was decomposed-era reasoning (jar-verified: the
+            // BEFORE_BLOCK_OUTLINE WorldRenderContext is per-render-INSTANCE on 26.2, so the
+            // nested render carries its own), and the fidelity half points the OTHER way — IP
+            // delivered dest outlines through its compat renderer. Cross-dim recomputes
+            // vanilla's per-frame predicate (the S18.5 invoker; mc.hitResult is already the
+            // shell-swapped REMOTE hit). SAME-DIM MUST STAY FALSE: destLRS==mainLRS would
+            // re-submit the MAIN outline at the dest transform. shouldRenderSky honors the render
             // info's fuse-view gate (IP: fuse-view portals render no sky); vanilla's own boss-fog
             // clause (!shouldCreateWorldFog) is not re-derived here — a boss-world-fog frame
             // renders the dest sky where vanilla would suppress it (immaterial, ledgered).
@@ -1631,10 +1671,14 @@ public class SecondaryWorldRenderCore {
                 savedSectionUpdateStates = new ArrayList<>(destLRS.sectionUpdateRenderStates);
                 destLRS.sectionUpdateRenderStates.clear();
             }
+            // IS2 FIX-O — see the block comment above: cross-dim only.
+            boolean destRenderOutline = !sharedState
+                && ((GameRendererAccessorMixin) mc.gameRenderer)
+                    .seamlessportals$invokeShouldRenderBlockOutline();
             destRenderer.render(
                 GraphicsResourceAllocator.UNPOOLED,
                 deltaTracker,
-                false,
+                destRenderOutline,
                 destCameraState,
                 destViewMatrix,
                 destFogBuffer,

@@ -13,9 +13,15 @@ its biggest live round.**
    architectural precedent. Either extract a reference write-up (the render sequence, the
    FBO lifecycle, the SodiumBridge arm mechanics) into a migration doc first, or accept
    git-history mining later — decide and record.
-2. **The SodiumFogOverrideMixin pre-deletion gate-audit** (C2 P8 evidence: it FIRES flag-ON
-   under sodium with activeOverride=false — reachable but inert): PROVE flag-ON sodium fog
-   does not depend on it before deletion (port-note §5.3).
+2. **SodiumFogOverride(+Mixin): the gate-audit is RESOLVED THE OTHER WAY — they are FLAG-ON
+   LOAD-BEARING now, do NOT delete.** Superseded at IS2 (2026-07-20, port-note
+   `IS-iris-shaders-on.md` §3.2 FIX-F): `renderDestWorldFullPipeline` brackets its Step-5
+   extract with `SodiumFogOverride.activate(destFogData)`/`clear()` so sodium's cullTerrain
+   (which resolves fog AT CULL TIME inside the extract via the `sodium$getFogParameters`
+   duck) deterministically reads DEST fog. The old C2 P8 evidence ("fires flag-ON with
+   activeOverride=false — reachable but inert") described the pre-IS2 tree; the pair is now
+   an active flag-ON seam with a ledgered duck-ordering dependency (fog computed + override
+   armed BEFORE the extract). No pre-deletion audit needed — deletion is off the table.
 
 ## 1. WHAT DIES (the sweep, per the disposition tables + the accumulated ledgers)
 
@@ -28,8 +34,10 @@ its biggest live round.**
 - **The whole block-era com.warwa portal system**: StencilPortalRenderer,
   PortalWorldManager, PortalContextSwitch, SeamlessClientChunkMap, RemoteBlockUpdater,
   PortalDimensionManager, SeamlessConfigScreen + SeamlessPortalsConfig (block-era),
-  SodiumCompat/SodiumBridge/SodiumFogOverride(+Mixin) — after §0.2 —, the block-era
-  fabric client driver branch.
+  SodiumCompat/SodiumBridge — but **NOT SodiumFogOverride(+Mixin): flag-ON load-bearing
+  since IS2 (FIX-F extract belt, port-note `IS-iris-shaders-on.md` §3.2; see the rewritten
+  §0.2 above) — they move to the §3 survivor list** —, the block-era fabric client driver
+  branch.
 - **The C2 gate scaffolding** (user decision C2-5(b)): ExperimentalCompatGate +
   warnAndForcePortalRenderingOff + the IPConfig.onConfigChanged force-guard — BUT the D7
   iris-failure fallback needs SOME warn path: re-shape it before deleting (the fallback
@@ -53,7 +61,9 @@ block-era symbols (SodiumRendererRepoint's fallbacks etc.) survive the deletion 
 
 ## 3. WHAT SURVIVES (the permanent substrate — do NOT delete)
 
-The S15 pump family; the S18 additions (clouds/weather isolation, the particle
+**SodiumFogOverride + SodiumFogOverrideMixin** (flag-ON load-bearing since IS2 — the
+FIX-F extract belt + duck-ordering dependency, port-note `IS-iris-shaders-on.md` §3.2);
+the S15 pump family; the S18 additions (clouds/weather isolation, the particle
 isolated-extract family, the layer-0 hardening); the whole C2 compat family (the compat
 json + IPCompatMixinPlugin — gate 2 collapses to always-true —, the D1 swap machinery, the
 clip transport, the endFrame walk, the D11 feed — becomes the only state —, the D5/D8/D7

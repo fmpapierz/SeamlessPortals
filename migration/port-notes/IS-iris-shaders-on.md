@@ -215,8 +215,15 @@ shaders-OFF proof rows the :566 anchor is properly before the real vanilla hand.
   is the single entry running live mod render-logic during the nested render — IS1
   must-classify (clip bracket + iris-disable posture under the nested drive)**; [M12]
   EntityVisibility fires minor at render():274; M11 + Fabric's BEFORE_BLOCK_OUTLINE are
-  GATED OUT by the driver's renderOutline=FALSE (**the FALSE 3rd arg is doubly load-bearing
-  — fidelity AND neutralization; ledger as a driver constraint**); the rest are held-inert /
+  GATED OUT by the driver's renderOutline=FALSE (**ROW REVISED AT IS2 (FIX-O, the §3.1
+  defect-O verdict): the old "doubly load-bearing" claim is HALF-RETIRED — the Fabric-NPE
+  half was decomposed-era reasoning (jar-verified: the BEFORE_BLOCK_OUTLINE
+  WorldRenderContext is per-render-INSTANCE on 26.2, so the nested render carries its own),
+  and the fidelity half points the OTHER way (IP delivered dest outlines through its compat
+  renderer). The driver now passes renderOutline = cross-dim-only (vanilla's per-frame
+  predicate via the S18.5 invoker; mc.hitResult is the shell-swapped REMOTE hit); SAME-DIM
+  stays FALSE and THAT half remains load-bearing — destLRS==mainLRS would re-submit the
+  MAIN outline at the dest transform**); the rest are held-inert /
   accessor-only / default-inert / extract-scope / correctly-scoped-to-secondary. Sodium's
   and iris's own LevelRenderer mixins firing = WANTED (the arm / the mechanism).
 
@@ -1082,3 +1089,101 @@ off (levered; default unknown); **(G)** creative inventory MANGLED — vanilla t
 slots + blank tab icons, the IP tab INTACT, shaders-independent (levered; default/plain/
 pre-IS unknown; the static-init suspect: IrisCompatPaste's reflective RenderPipelines
 .register at class load). The user's observations outrank every screenshot reading.
+
+### §3.2 THE IS2 FIX BATCH (wf_ad533d56-9f9 synthesis verdict, implemented 2026-07-20)
+
+**FIX-F (defect F — no dest-dim fog in cross-dim windows, shaders-OFF + lever).**
+Two-part, both in `renderDestWorldFullPipeline`:
+
+1. **THE HOIST**: the whole Step-6 fog family (FIX-6 rain bracket, `fr.setupFog(newCamera,
+   ...)`, `destCameraState.fogData`/`fogType=NONE`, the `setCurrentRenderedFogColor`
+   publish, `writeFogSlice`) moved from after the Step-5 extract to BEFORE it (top of the
+   try). Verified root cause: the IS1 body INVERTED vanilla's order — 26.2
+   `GameRenderer.extract` runs `extractCamera` (setupFog → `cameraState.fogData`,
+   GameRenderer:631-640) BEFORE `levelExtractor.extract` (:389), and sodium's `cullTerrain`
+   runs INSIDE the extract reading fog through the FogRendererMixin duck — so the nested
+   pass served it SOURCE-poisoned fog. Step 9' keeps its slot; the finally's §8-3(c) SOURCE
+   setupFog re-run is unchanged; `LevelExtractor.extract` never writes `fogData`
+   (ref-verified), so the hoisted values survive the extract.
+2. **THE BELT**: the Step-5 extract is bracketed with `SodiumFogOverride.activate(
+   destFogData)` / `clear()` (clear FIRST in the existing SOG-feed finally — paired,
+   throw-safe). The P8-proven `SodiumFogOverrideMixin` HEAD-cancel on
+   `sodium$getFogParameters` serves the dest fog to `cullTerrain` deterministically;
+   reflection-built `FogParameters`, sodium-absent no-op.
+
+**THE DUCK-ORDERING DEPENDENCY (new, load-bearing):** sodium resolves fog AT CULL TIME
+inside the extract via the merged `sodium$getFogParameters` duck — any future re-ordering
+of the full-pipeline body MUST keep the dest fog computed (and the override armed) before
+the Step-5 extract. Corollary: **`SodiumFogOverride` + `SodiumFogOverrideMixin` are now
+FLAG-ON LOAD-BEARING** (no longer block-era-only) — the S20 deletion inventory and the
+§0.2 gate-audit entries are rewritten accordingly (`migration/S20_HANDOFF.md`); they must
+NOT be deleted at the sweep.
+
+**FIX-O (defect O — targeted-block outline missing).** The nested render()'s
+`renderOutline` arg: literal `false` → `destRenderOutline = !sharedState &&
+seamlessportals$invokeShouldRenderBlockOutline()` (CROSS-DIM ONLY). See the §1-E row
+revision above: the Fabric-NPE half of the old blanket-FALSE rationale was decomposed-era
+reasoning (per-instance context, jar-verified); IP delivered dest outlines through its
+compat renderer. SAME-DIM MUST STAY FALSE (destLRS==mainLRS re-submits the main outline at
+the dest transform). The decomposed path + the D23 fallback are untouched.
+
+**UNCONDITIONAL HARDENING (separable change-set): the clip uniform-location cache.**
+`GlCommandEncoderClipMixin`'s static programId→location cache moved to
+`ClipUniformLocationCache` (render pkg) and is invalidated by the new
+`GlDeviceClipCacheMixin` at `GlDevice.clearPipelineCache` RETURN (mc262 GlDevice:261,
+public; callers = ShaderManager:152/:162 on every resource reload — F3+T/pack apply — and
+GlDevice.close). Rationale: `clearPipelineCache` glDeleteProgram's every cached program;
+recycled ids then serve STALE locations to `glUniform4f` against the new current program —
+the leading suspect for the shaders-ON GL_INVALID_OPERATION spam. Seam choice evidence:
+the spec's `glIsProgram`-on-hit fallback is a NO-OP for this cache's shape (the looked-up
+id is `GL_CURRENT_PROGRAM`, always a live program; the hazard is id REUSE, undetectable by
+glIsProgram), so the clean vanilla seam was taken; iris 1.11.2 deletes its own programs
+via its own glDeleteProgram (never `clearPipelineCache` — jar-verified) but binds them
+outside the vanilla trySetup path this cache serves; a 512-entry cap bounds growth under
+any residual churn. Ledgered residual: non-trySetup program-id churn.
+
+**THE EM EVIDENCE LEGS (CrossingSmoke; defects O + G — NO fix for G, evidence rows only).**
+All under the screenshots lever, all fail-soft (maybeScreenshot never-throw discipline):
+EM-O-A (`em-o-a-ordinary-target-outline`: TestInput.lookAt at a platform block, no portal
+on the ray), EM-O-B (`em-o-b-window-target-outline`: repositioned before portal B, aimed
+through the window-bottom onto the nether bedrock roof — ~3.3-block total ray, in pick
+range through the portal), EM-G creative-browse checkpoint invoked TWICE
+(`em-g-pre-*` BEFORE any portal spawns / `em-g-post-*` after the leg-7 views): setScreen
+the creative inventory (the vanilla InventoryScreen:43-45 recipe), screenshot the default
+tab, cursor-click three vanilla tabs + the IP tab at vanilla's own tab geometry
+(reflective selectTab fallback for pagination/click misses), screenshot each
+(`em-g-<phase>-tab-<name>`), close. The pre/post pair discriminates whether the G mangle
+needs portal machinery to have run or is static-init-only (the IrisCompatPaste suspect).
+
+**§3.2-VERIFY: 6 Opus adversarial line-by-line verifiers + 3 Opus judges + a
+majority-bound fold (the Fable-unavailable depth protocol, memory
+`opus-verifier-depth-protocol`).** All 6 verifiers PASS, all 3 judges CLEAN. Applied (all
+judge-majority-backed): V4-1 (GlDeviceClipCacheMixin → string `targets=` form, decoupling
+its build from the unrelated S14.21 GlDevice access-widener line), V2-1 (belt comment
+rewrite — the hoist and the belt are INDEPENDENT and idempotent on 0.9.1, neither may be
+deleted believing the other covers it), V6-1 (`em-g` baseline shot renamed `-tab-initial`:
+`selectedTab` is static + re-selected at init, so the post-shot captures the leftover
+pre-phase tab), V5-1 (confirmed the always-on clip-cache clear is corrective not a
+regression — render-thread-only, no mid-frame race; NOT gating it behind the lever, which
+would reinstate the stale-id bug). Refuted with evidence (6, each majority NOT_REAL; the
+lone-REAL votes were all jB, the interaction judge running hot — the majority overrode
+correctly): the §8-3(c) doc nit, the cache javadoc tone, the EM pick-range comment values,
+the off-page pagination-tab click, the phantom cross-dim outline (byte-identical to the
+decomposed path = IP-faithful, FIX-O's goal is parity), and the cross-slice JX hunt (all
+verified safe: the FIX-O three-slice coupling, the writeFogSlice per-call distinct
+GpuBuffer, the integrated two-pass trace).
+
+**RESIDUAL V2-2 (judges 3/3 NEEDS_EVIDENCE — NOT an IS2 blocker; ledgered, do not
+guess-fix):** `SodiumFogOverride` holds a single non-re-entrant static `current` with a
+flat-null `clear()` (no save/restore stack). **The IS2 FIX-F belt is IMMUNE** — it brackets
+ONLY `destExtractor.extract` (builds CPU render-state, never recurses into a portal render),
+so this batch adds NO new hazard (verified by all three judges). The genuinely-unresolved
+risk is PRE-EXISTING and OUT-OF-SURFACE: the block-era `PortalContextSwitch` draw belt
+(activate ~1858 / clear ~1989) brackets the DRAW — IF that stencil-direct draw can recurse
+into a nested portal that also activate/clears the shared holder, the nested `clear()` would
+null the parent's override mid-draw. That belt is flag-OFF-only and S20-doomed, and never
+co-active with the flag-ON belt (different sessions). DISPOSITION: it most likely DIES at the
+S20 block-era sweep untouched; IF a pre-S20 flag-OFF fog defect ever surfaces there, the fix
+is to convert `SodiumFogOverride` to a save/restore stack (activate returns the prior value;
+clear restores it) — gated by a trace first confirming the decomposed draw actually recurses.
+Recorded so the S20 sweep does not delete it blind.
