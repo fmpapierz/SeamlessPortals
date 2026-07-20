@@ -539,3 +539,133 @@ return ✓; save-relog with pack on ✓. With this round the C2-5 INSTALL MATRIX
 plain (every suite/live round) / sodium (§3.7/§3.10) / iris-no-pack / iris+pack (this
 round). Outstanding: the C2-3b flicker fix (in flight) + its re-check; then the C2-5
 close-out decisions.
+## §3.14a C2-3b — LIVE-ROUND ARTIFACT: THE ASYNC-BAKED PREDICATE (the fix round's own mechanism record; renumbered from §3.12 at the cherry-pick — §3.12 is the C2-4 record)
+
+**THE OBSERVATION (user, 2026-07-19, sodium ACTIVE, lever ON):** with a RECURSIVE portal on
+screen, panning/moving makes SOURCE-world terrain flicker/vanish selectively — chunks beyond
+the standing one vanish; the standing chunk and far chunks do not; the recursive window's own
+terrain shows the same flicker class DESYNCED from the outer flicker. Non-recursive: clean.
+
+**THE MECHANISM (bytecode-complete; every claim javap'd against sodium-mc26.2-0.9.1):**
+1. On 0.9.1 the wrapped `Viewport.isBoxVisible(III)` sits on the TERRAIN path in exactly ONE
+   place: `OcclusionCuller.isWithinFrustum`, called on the "Sodium Async Cull Thread" inside
+   `CullTask.runTask → findVisible` — and there it gates ONLY the LOCAL tree's marking
+   (`visitNode` offsets 179-198: distance-gated `isWithinFrustum` → `blockLocalIncoming()`;
+   BFS enqueue + WIDE/REGULAR marks are frustum-free; `CullType.isFrustumTested` = LOCAL
+   alone; the LOCAL tree is a `RayOcclusionSectionTree`). So the C2-3 predicate was BAKED
+   into an ASYNC-BUILT, CROSS-FRAME-PERSISTENT structure (`RSM.cullResults[LOCAL]`,
+   re-selected by `findBestTree` whenever `SectionTree.isValidFor` passes — camera-section +
+   buildDistance only, NO predicate identity).
+2. The per-frame render-thread terrain path NEVER consults the wrap: `readRenderListFromTree`
+   → `SectionTree.traverse` → `TraversableTree.traverse` tests
+   `Viewport.getBoxIntersectionDirect(FFFF)` / `isBoxVisibleDirect(FFFF)` (the §3.11
+   "unhooked shortcuts" — they are in fact THE main per-frame path on 0.9.1), and
+   `renderOutOfGraph`'s fallback collector likewise. §3.11's "under-cull/perf-only" framing
+   of those shortcuts is hereby CORRECTED: leaving them unhooked while hooking the worker
+   INVERTED IP's architecture — the predicate applied ONLY async-persistent, never per-frame.
+3. IP ground truth (jar-pinned mc1.21.3-0.6.0 + IP source): sodium 0.6 had `RSM.update`
+   running `findVisible` SYNCHRONOUSLY on the render thread each time the graph/camera
+   changed; IP's `MixinSodiumViewport` redirect consumed the per-pass-fresh static during
+   that same-thread walk — the predicate was exactly as fresh as the visible set, sync-only
+   BY CONSTRUCTION, never on a worker, never in a persistent tree. The C2-3 landing's
+   worker-side application was an implicit, unledgered deviation. (IP also forced
+   `useOcclusionCulling=false` for the main pass — file #4; our null-passthrough main-pass
+   deviation is unrelated to this artifact: the cave-cull boolean AND-composes = render-more
+   only.)
+4. Why the artifact presents as it does: a predicate-baked LOCAL tree is installed into
+   `cullResults` at every bracket boundary (the driver's post-swap `scheduleTerrainUpdate`
+   forces a re-cull every portal frame, and the D1 consume-before-swap blocking-drains it
+   same-frame) and is re-collected on any later frame whose camera holds bit-identical
+   (real panning/movement is full of micro-pauses), while frames with a camera delta drop
+   LOCAL (`prepareRenderTrees` removes it on `cameraChanged`) and fall to the predicate-free
+   REGULAR/WIDE trees — the ALTERNATION between predicate-culled frames and full frames IS
+   the flicker. The spatial selectivity is the predicate cone/shadow geometry: the standing
+   chunk contains the cone apex/plane origin (a box containing the origin can never be fully
+   behind a through-origin plane — `Frustum4Planes` math) plus the worker's
+   `addNearbySections` loose path (`isBoxVisibleLooser`, unhooked) → immune; mid-range
+   chunks sit where the recursion-scene cones are still narrow (a section is "fully
+   outside"/"fully inside" only when the cone cross-section exceeds its size) → the
+   vanishing band; far chunks are either inside the widened cone / deep in both stale and
+   fresh shadows (correctly hidden behind the aperture) or outside both → immune. The
+   recursive window's DESYNCED flicker is the same class ticking on the per-portal contexts'
+   OWN tree clocks (per-(UUID,layer) contexts, independent install/collect cycles) — clocks
+   the main context does not share.
+5. What was RULED OUT by the same walk (recorded because it cost the round): the D1
+   swap/bookkeeping is sound — `cullResults` content-swap, pendingTask consume-before-swap,
+   SWR-five exchange, the GLOBAL_PASS_SERIAL forward-only jump, and vanilla's own gates
+   (`cameraStableSince <= task.frame` accept; `cameraChanged` LOCAL removal BEFORE the
+   same-pass collection) all check out bytecode-exact; sodium's own baked-frustum staleness
+   is fully protected by those gates BECAUSE the camera is the tree's only vanilla input —
+   the predicate added a NON-CAMERA input (portal state/selection) those gates were never
+   built to key on. The #3 per-layer render-list path and the draw-phase stored-ref model
+   are unaffected (`VisibleChunkCollector.visit` calls the @Overwritten `getRenderList()`
+   virtually).
+
+**THE FIX (candidate (a), SYNC-ONLY PREDICATE — landed):** `MixinSodiumViewport_CullConsumer`
+gains a `RenderSystem.isOnRenderThread()` guard after the null fast path: on the async cull
+worker the wrap passes sodium's own verdict through unchanged, so EVERY async tree is
+portal-agnostic (a superset — bigger, never wrong, vanilla-sodium-identical); render-thread
+callers keep IP's AND-compose (reachable set on 0.9.1: the `isSectionVisible` entity-culling
+chain — per-call-fresh = correct, and D5 additionally neutralizes it when portals rendered).
+This restores IP's sync-only semantics on the async architecture and closes BOTH observed
+flicker surfaces (main pass AND the recursive window) in one direction-safe cut. Candidate
+(b) (producer-side outer-func exclusion) was REJECTED as the primary fix: it leaves the INNER
+predicate baked into the portal contexts' own async trees — the window flicker would survive.
+The task-prompt premise "the collection path still applies the outer predicate fresh per
+frame" is DISPROVEN (point 2): with (a), the predicate's sodium-TERRAIN participation is
+ZERO — exactly the design floor C2_DESIGN names acceptable (culling = pure perf). Honest
+contract note for the D-ledger: D2's "portal-aware predicate AND-ed at Sodium's per-section
+test" now reads "…AND-ed at synchronous per-section tests only; the async cull-tree build is
+portal-agnostic". Perf: portal passes lose the sodium inner-frustum terrain cull (stencil
+still masks; superset draw cost bounded); the A/B lever's FPS attribution is RE-SCOPED (the
+predicate half no longer prunes sodium terrain — the lever's A/B discriminator this round is
+artifact-presence, not FPS). The cave-cull override is UNTOUCHED (lever-independent,
+AND-compose safe-direction, IP-faithful). Re-entry path if the perf floor ever matters:
+hook the render-thread Direct collection path (`getBoxIntersectionDirect`/`isBoxVisibleDirect`
+with expansion-adjusted boxes) — the per-frame-fresh re-expression IP's contract actually
+wants; ledgered, not landed.
+
+**LIVE ROUND (C2-3b re-check):** the recursion scene from the artifact report — recursive
+portal on screen, pan/move with micro-pauses: expect ZERO source-world flicker and ZERO
+recursive-window flicker, lever ON; lever A/B expects no visual delta either way now
+(both states predicate-free on terrain); a plain heavy portal scene re-check for the
+superset-cost envelope (no correctness delta expected in any state).
+
+## §3.14 C2-3b — THE RECURSIVE-FLICKER FIX (diagnose-first; lens PASS_WITH_CORRECTIONS, folded)
+
+**THE MECHANISM (the deepest diagnosis of the engagement; every claim javap'd)**: C2-3 landed
+the culling predicate EXCLUSIVELY on sodium 0.9.1's ASYNC persistent structure — the wrapped
+isBoxVisible(III) sits on the terrain path in exactly ONE place, the worker-thread
+OcclusionCuller.isWithinFrustum, and its verdict contaminates ONLY the LOCAL cull tree (a
+cross-frame-persistent RayOcclusionSectionTree that findBestTree re-selects by camera+distance
+alone, never predicate identity). The per-frame RENDER-THREAD terrain path (SectionTree.traverse
+→ the Direct shortcuts; renderOutOfGraph's fallback) NEVER consults the wrap — the exact
+INVERSION of IP 0.6's sync-only redirect. The flicker = alternation between predicate-baked
+LOCAL frames (collected on bit-identical-camera micro-pauses) and predicate-free REGULAR/WIDE
+frames. All four observed details derived: source-terrain culling (the outer/super-advanced
+func, both gates DEFAULT TRUE in IP too); standing-chunk immunity (the nearby path uses the
+unhooked Looser test + through-origin planes can never fully-cull the origin's box);
+far-chunk immunity (the stale-vs-fresh cone-shadow boundary sweeps mid-range flanks);
+the desynced window (per-(portal,layer) contexts carry their own INNER-baked trees on
+independent clocks). D1/#3/draw-path/cave-cull all walked and EXONERATED (negative evidence
+recorded).
+
+**THE FIX (candidate (a), sync-only guard)**: the wrap returns sodium's own verdict unchanged
+off the render thread → every async tree is a portal-agnostic superset (never wrong).
+**THE HONEST SUPERSESSION (lens-explicit)**: the predicate's sodium-TERRAIN participation is
+now ZERO in BOTH lever states — the C2-3 "perf chain" landed at its declared floor. What
+survives: the safety property (predicate never staler than the frame), the cave-cull override
+(lever-independent, safe-direction), and a per-call-fresh predicate on the chunk-rebuild
+PRESENTATION path (the lens corrected the earlier "entity chain" misattribution — the real
+surviving callers are RSM.isSectionImmediatePresentationCandidate/submitImportantSectionTasks;
+worst case defers a rebuild's presentation one frame). **PERF RE-ENTRY LEDGERED**: a
+render-thread-only hook on the traverse Direct shortcuts (isBoxVisibleDirect/
+getBoxIntersectionDirect) — per-frame-fresh by construction. The A/B lever's live
+discriminator is now ARTIFACT PRESENCE, not FPS. Lens caveat recorded: the sodium-0.6
+sync-walk claim is architecture-corroborated (no 0.6 jar on disk to re-javap); IP's own
+FrustumCuller comment refusing vanilla's lazy rebuild for exactly this artifact class is the
+strongest single witness.
+
+**LIVE RE-CHECK (rides the next round)**: the recursive-portal pan scene — flicker GONE with
+culling enabled; no FPS regression vs lever-off expected (both states now cull no terrain).
+>>>>>>> 10c9507 (C2-3b RECURSIVE-FLICKER FIX: the sync-only culling guard (diagnose-first; the engagement's deepest mechanism).)

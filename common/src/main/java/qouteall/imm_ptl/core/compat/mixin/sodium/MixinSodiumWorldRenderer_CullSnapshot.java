@@ -70,8 +70,14 @@ import qouteall.imm_ptl.core.render.context_management.PortalRendering;
  * The cave-cull override below is LEVER-INDEPENDENT (IP file #4 never lever-gated it either)
  * and safe-direction-only: it AND-composes, so it can only DISABLE occlusion culling (render
  * MORE terrain) — the mis-cull artifact class the lever exists to roll back cannot come from
- * it. Live-round A/B FPS deltas therefore attribute to the predicate half. No re-weave
- * needed; the toggle takes effect on the next pass.
+ * it. No re-weave needed; the toggle takes effect on the next pass.
+ * C2-3b RE-SCOPE (port-note §3.12): with the consumer's SYNC-ONLY guard
+ * ({@code MixinSodiumViewport_CullConsumer}), the predicate no longer participates in sodium
+ * TERRAIN culling at all (the async cull trees are portal-agnostic; the per-frame collection
+ * path never routed through the wrap — bytecode-proven there). The lever's remaining sodium
+ * surface is the render-thread {@code isSectionVisible} entity-culling chain, so A/B FPS
+ * deltas from the predicate half are NO LONGER expected under sodium; the A/B discriminator
+ * for this stage is artifact-presence, not FPS.
  *
  * <p><b>The legacy static:</b> {@code SodiumInterface.frustumCuller} is ALSO written each
  * pass — IP file #6 parity for debugging/inspection ONLY. It has NO consumer in this port

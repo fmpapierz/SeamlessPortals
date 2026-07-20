@@ -328,3 +328,20 @@ onto could mis-cull overhanging geometry at aperture seams. The landed consumer 
 ±Viewport.CHUNK_SECTION_PADDED_RADIUS (margin parity, strictly more conservative). Also
 lens-A precision: the A/B lever gates the PREDICATE half only; the cave-cull override is
 lever-independent (IP-faithful, AND-compose = safe-direction-only).
+
+### §7.2 C2-3b ADDENDUM: the D2 consumer is SYNC-ONLY (the §3.2 worker-side application is SUPERSEDED)
+The C2-3b live round (recursive portal: selective source-terrain flicker + desynced window
+flicker) exposed that §3.2's consumer applied the predicate on the ASYNC cull worker — where
+0.9.1 bakes it into the persistent LOCAL (`RayOcclusionSectionTree`) cull tree
+(`cullResults`), re-collected across frames by camera-only validity gates that cannot key on
+portal state — while the actual per-frame render-thread terrain path
+(`SectionTree.traverse` → `getBoxIntersectionDirect`/`isBoxVisibleDirect`) never routes
+through the wrap at all. IP 0.6's redirect was sync-only by construction (the render-thread
+`RSM.update` walk). LANDED: a `RenderSystem.isOnRenderThread()` guard in the wrap — async
+trees are now portal-agnostic supersets; the predicate survives only on synchronous callers
+(the entity-cull `isSectionVisible` chain). Net: the portal predicate's sodium-TERRAIN
+participation is zero — the floor this design already declared acceptable (§0.2/§3.2
+"culling is pure perf"). D2's ledger row reads accordingly ("AND-ed at synchronous
+per-section tests only"); the A/B lever discriminates by artifact-presence, not FPS.
+Re-entry (perf, optional): hook the Direct collection path with expansion-adjusted boxes —
+the true per-frame-fresh re-expression. Full mechanism + rule-outs: port-note §3.12.

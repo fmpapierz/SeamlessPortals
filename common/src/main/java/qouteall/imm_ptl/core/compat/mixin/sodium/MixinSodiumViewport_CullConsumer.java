@@ -2,6 +2,7 @@ package qouteall.imm_ptl.core.compat.mixin.sodium;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
 import net.caffeinemc.mods.sodium.client.render.viewport.frustum.Frustum;
 import org.jetbrains.annotations.Nullable;
@@ -49,6 +50,49 @@ import qouteall.q_misc_util.my_util.BoxPredicateF;
  * IP's own conservative portal frustum math ({@code Frustum4Planes} fully-outside /
  * fully-behind tests), unchanged.
  *
+ * <p><b>C2-3b SYNC-ONLY GUARD (the live-round artifact fix; port-note §3.14a):</b> the predicate
+ * is consulted ONLY on the render thread. Bytecode ground truth (all javap, 0.9.1):
+ * <ul>
+ *   <li>the WORKER-side caller ({@code OcclusionCuller.isWithinFrustum}, inside
+ *       {@code CullTask.runTask}'s {@code findVisible} on the "Sodium Async Cull Thread") gates
+ *       ONLY the LOCAL ({@code RayOcclusionSectionTree}) tree's marking
+ *       ({@code visitNode} offsets 179-198: distance-gated {@code isWithinFrustum} →
+ *       {@code blockLocalIncoming()}; the BFS enqueue and the WIDE/REGULAR marks are
+ *       frustum-free — {@code CullType.isFrustumTested} is true for LOCAL alone). A predicate
+ *       applied there is BAKED into a CROSS-FRAME-PERSISTENT structure
+ *       ({@code RSM.cullResults[LOCAL]}, reused whenever {@code SectionTree.isValidFor} passes)
+ *       — IP 0.6's redirect ran on the render thread inside the same-pass synchronous
+ *       {@code RSM.update} walk and NEVER contaminated a persistent structure; baking it async
+ *       was an implicit deviation, and it is exactly what produced the C2-3b recursive-round
+ *       flicker (portal-state-baked trees collected on later frames + per-context tree clocks
+ *       = the desynced source/window flicker; see the port-note mechanism record);</li>
+ *   <li>the per-frame RENDER-THREAD terrain path does NOT route through this wrap at all:
+ *       {@code SectionTree.traverse} → {@code TraversableTree.traverse} tests
+ *       {@code Viewport.getBoxIntersectionDirect(FFFF)}/{@code isBoxVisibleDirect(FFFF)}
+ *       (unhooked by design), and {@code renderOutOfGraph}'s fallback likewise;</li>
+ *   <li>the surviving render-thread callers of {@code isBoxVisible(III)} (C2-3b lens
+ *       CORRECTED — this is NOT the entity chain, which routes tree-presence-only through
+ *       {@code SectionTree.isBoxVisible(DDDDDD, NotInTreePredicate)} frustum-free): the
+ *       jar-wide callers of {@code SectionTree.isSectionVisible} are
+ *       {@code RSM.isSectionImmediatePresentationCandidate} (updateWithResult, 7 sites) and
+ *       {@code RSM.submitImportantSectionTasks} — the chunk-REBUILD presentation/scheduling
+ *       path. The predicate there is per-call-fresh (correct) and worst-case defers a
+ *       rebuild's presentation by a frame; it culls no drawn terrain.</li>
+ * </ul>
+ * Net contract (supersedes the §3.11 wording): the async cull trees are PORTAL-AGNOSTIC
+ * supersets (bigger, never wrong — vanilla-sodium-identical), and the portal predicate's
+ * sodium-TERRAIN participation is ZERO IN BOTH LEVER STATES — the design's stated floor
+ * ("culling is pure perf with an acceptable floor", C2_DESIGN §0/§3.2). NAMED DEVIATION
+ * (lens-corrected wording): this does NOT restore IP's full sync semantics — IP's per-frame
+ * sync redirect actively portal-culled sodium terrain; ours now culls none via the predicate.
+ * What it restores is IP's SAFETY property (the predicate is never staler than the frame).
+ * The ledgered PERF RE-ENTRY: a render-thread-only hook on the traverse Direct shortcuts
+ * ({@code isBoxVisibleDirect}/{@code getBoxIntersectionDirect}) — per-frame-fresh by
+ * construction, the honest place to win the FPS back. The A/B lever's discriminator is now
+ * ARTIFACT PRESENCE, not FPS. Candidate (b) (producer-side outer-func exclusion only) was
+ * REJECTED: it would keep the INNER predicate baked into the portal contexts' own async trees,
+ * leaving the recursive window's observed desynced flicker in place.
+ *
  * <p>Registered in {@code seamlessportals-ip-compat.mixins.json}; the class name carries
  * {@code Sodium} for the plugin's substring gate.
  */
@@ -74,6 +118,14 @@ public class MixinSodiumViewport_CullConsumer {
         @Nullable BoxPredicateF predicate =
             ((IESodiumViewport) (Object) this).ip_getPortalCullPredicate();
         if (predicate == null) {
+            return true;
+        }
+
+        // C2-3b SYNC-ONLY GUARD (class javadoc): never bake the portal predicate into the
+        // async-built persistent cull trees — on the "Sodium Async Cull Thread" (the only
+        // non-render-thread caller: OcclusionCuller.isWithinFrustum inside findVisible) pass
+        // sodium's own verdict through unchanged. Render-thread callers keep IP's AND-compose.
+        if (!RenderSystem.isOnRenderThread()) {
             return true;
         }
 
