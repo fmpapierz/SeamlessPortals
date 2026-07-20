@@ -110,6 +110,12 @@ loom {
             // (The crossing gametest run carries the same flag — same JVM, same hot method;
             // without it the suite gate could go flaky on the same defect.)
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // IS0 probe-round crash (2026-07-20, hs_err_pid248404): the SAME Temurin 25.0.2
+            // C2-CompilerThread jvm.dll EXCEPTION_ACCESS_VIOLATION class, new victim method
+            // (CompileTask = vanilla IOWorker::storePendingChunk, during world save; crash on
+            // CompilerThread0, not any game thread — not mod logic, not the IS0 probes). Same
+            // surgical mitigation, same removal condition as the exclude above.
+            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
         }
         server {
             server()
@@ -130,6 +136,8 @@ loom {
             // Same Temurin 25.0.2 HotSpot C2 defect mitigation as the `client` run above
             // (EXCEPTION_ACCESS_VIOLATION JIT-compiling PortalRenderInfo::renderAndDecideVisibility).
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // + the second victim method (IS0 probe round, hs_err_pid248404 — see the client run).
+            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -181,6 +189,10 @@ loom {
             // same JVM + the suite teleports enough to heat the method — without this the
             // 8-leg gate could go flaky on the same JVM defect).
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // + the second victim method (IS0 probe round, hs_err_pid248404: CompilerThread0
+            // died JIT-compiling IOWorker::storePendingChunk during the suite's world saves —
+            // same jvm.dll defect class, not mod logic; see the client run's note).
+            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
             // IS0 shaderpack-views probe (mirror of the clientSodium lever above; the suite
             // runs sodium/iris-ABSENT, so with no pack the probe only logs its one-shot
             // waiting line — byte-inert for the 8-leg gate without the property) —
