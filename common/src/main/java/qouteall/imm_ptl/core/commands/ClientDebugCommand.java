@@ -346,12 +346,30 @@ public class ClientDebugCommand {
             .executes(context -> {
                 Minecraft.getInstance().execute(() -> {
                     ClientWorldLoader.getClientWorlds().forEach((world) -> {
-                        ImmPtlViewArea builtChunkStorage = (ImmPtlViewArea) ((IEWorldRenderer)
-                            ClientWorldLoader.getWorldRenderer(world.dimension()))
-                            .ip_getBuiltChunkStorage();
-                        CHelper.printChat(
-                            world.dimension().identifier().toString() + builtChunkStorage.getDebugString()
-                        );
+                        // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): under
+                        // Sodium the viewArea is sodium's IgnoringViewArea (the S12 install
+                        // redirect never runs — sodium$replace HEAD-cancels its enclosing
+                        // method), so the bare cast was a user-invokable CCE.
+                        // C2-1c vB fold: the fallback names sodium only when sodium is actually
+                        // the reason — the field is also legitimately NULL before the dim's
+                        // first extract (26.2 defers viewArea creation into extract), sodium
+                        // present or not.
+                        net.minecraft.client.renderer.ViewArea rawStorage =
+                            ((IEWorldRenderer) ClientWorldLoader.getWorldRenderer(world.dimension()))
+                                .ip_getBuiltChunkStorage();
+                        if (rawStorage instanceof ImmPtlViewArea builtChunkStorage) {
+                            CHelper.printChat(
+                                world.dimension().identifier().toString() + builtChunkStorage.getDebugString()
+                            );
+                        }
+                        else {
+                            CHelper.printChat(
+                                world.dimension().identifier().toString()
+                                    + (rawStorage == null
+                                        ? " (no viewArea yet — created at the dim's first extract)"
+                                        : " (no ImmPtlViewArea — sodium owns terrain)")
+                            );
+                        }
                     });
                 });
                 
@@ -1047,12 +1065,21 @@ public class ClientDebugCommand {
             str.append("Chunk Mesh Sections:\n");
             ClientWorldLoader.WORLD_RENDERER_MAP.forEach(
                 (dimension, worldRenderer) -> {
+                    // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): instanceof
+                    // instead of the bare cast — under Sodium the field holds IgnoringViewArea
+                    // (user-invokable CCE otherwise; also null-safe pre-first-extract).
+                    // C2-1c vB fold: blame sodium only when a FOREIGN viewArea exists — a null
+                    // field is the pre-first-extract state, sodium present or not.
+                    net.minecraft.client.renderer.ViewArea rawStorage =
+                        ((IEWorldRenderer) worldRenderer).ip_getBuiltChunkStorage();
                     str.append(String.format(
                         "%s %s\n",
                         dimension.identifier(),
-                        ((ImmPtlViewArea) ((IEWorldRenderer) worldRenderer)
-                            .ip_getBuiltChunkStorage()
-                        ).getManagedSectionNum()
+                        rawStorage instanceof ImmPtlViewArea immPtlViewArea
+                            ? immPtlViewArea.getManagedSectionNum()
+                            : (rawStorage == null
+                                ? "(no viewArea yet — created at the dim's first extract)"
+                                : "(no ImmPtlViewArea — sodium owns terrain)")
                     ));
                 }
             );

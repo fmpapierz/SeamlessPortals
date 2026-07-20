@@ -391,6 +391,68 @@ public class ClientWorldLoader {
         }
     }
 
+    /**
+     * C2-1d — THE SODIUM SECONDARY-SWR UNIFORM-RING endFrame WALK (the convergent VRAM-leak fix:
+     * BOTH C2-1c verify lenses found this leak independently and prescribed exactly this shape;
+     * same class + same discipline as the S18 endFrame fix — memory {@code gpu-buffer-leak-endframe}
+     * "mod buffers never endFramed → VRAM leak / multi-second stalls, fixed at GameRenderer.render
+     * TAIL"; CUTOVER_SPEC.md:446 "endFrame() on pooled/secondary buffers is REQUIRED 26.2 additive").
+     *
+     * <p>THE VERIFIED LEAK CHAIN: the C2-1c armed cross-dim dest draws are the FIRST-EVER writes
+     * into a ClientWorldLoader-SECONDARY SodiumWorldRenderer's
+     * {@code UniformBufferManager.uniformStorage}. {@code DynamicUniformStorage} rotates/frees ONLY
+     * in {@code endFrame()} ({@code nextBlock=0}, {@code ringBuffer.rotate()}, displaced old
+     * buffers closed). The only path to {@code SWR.endFrame} is sodium's inject on vanilla
+     * {@code LevelRenderer.endFrame} (javap 0.9.1 {@code LevelRendererMixin.sodium$endFrame}:
+     * {@code @Inject(method="endFrame", at=@At("RETURN"))} → {@code SodiumWorldRenderer.endFrame}),
+     * and vanilla calls {@code levelRenderer.endFrame()} ONLY on the INSTALLED
+     * {@code mc.levelRenderer} (Minecraft.runTick:1336). The mod's existing frame-end walks cover
+     * RenderBuffers (pool + per-secondary feature buffers, above) + the mod CloudRenderers
+     * ({@code SecondaryWorldRenderCore.endCloudFrames}) + the block-era renderer map
+     * ({@code PortalWorldManager.endSecondaryRenderFrames}) — NOTHING endFramed the flag-ON
+     * {@link #WORLD_RENDERER_MAP} secondaries. Result: monotonic {@code nextBlock}, capacity
+     * doublings ("Resizing Sodium terrain uniforms" log spam), every displaced
+     * {@code MappableRingBuffer} stranded forever — an UNBOUNDED VRAM leak whenever a cross-dim
+     * portal is in view under ACTIVE sodium.
+     *
+     * <p>IDENTITY-SKIP {@code mc.levelRenderer}: vanilla already endFrames the installed renderer
+     * at Minecraft.runTick:1336 — a second {@code endFrame()} would double-{@code rotate()} its
+     * ring buffers and HALVE the fencing margin the ring size provides.
+     *
+     * <p>SODIUM-PRESENCE gate ({@code SodiumCompat.isSodiumLoaded()} — PRESENCE, not the
+     * experimental gate/lever): under D11 feed-only the render path writes nothing into secondary
+     * uniform storages (the dest passes yield empty), so the walk would be a harmless no-op — but
+     * gating keeps the plain-run (no sodium) surface EXACTLY zero. With sodium present the walk is
+     * safe in every state: vanilla {@code LevelRenderer.endFrame}'s ONLY body is
+     * {@code this.cloudRenderer.endFrame()} (mc262-ref LevelRenderer.java:768-769 — a harmless
+     * rotation of the secondary's UNUSED vanilla cloud ring; dest clouds draw via the mod-owned
+     * isolated CloudRenderers, never this one), and sodium's RETURN-inject then reaches
+     * {@code SWR.endFrame}, whose body is null-guarded (javap: {@code ifnull} skip when
+     * {@code uniformBufferManager} is null, i.e. no {@code setLevel} yet) →
+     * {@code UniformBufferManager.endFrame} → {@code DynamicUniformStorage.endFrame} +
+     * {@code uniformData=null}.
+     *
+     * <p>EXPLICITLY NOT per-pass in {@code ip_onDestTerrainDrawsFinished} (both lenses agree):
+     * per-pass endFrame is the WRONG CADENCE — on a shared-SWR frame (same-dim portal / A→B→A
+     * nesting) it would rotate the MAIN renderer's storage mid-frame, freeing slices the main
+     * pass's later draws still read. endFrame is a per-FRAME lifecycle, so it rides the same
+     * GameRenderer.render-TAIL walk as every other mod frame-end (called from
+     * {@link qouteall.imm_ptl.core.render.MyGameRenderer#endFramePooled()}, AFTER all portal
+     * passes and after MyGameRenderer's finally restored {@code mc.levelRenderer}).
+     */
+    public static void endFrameOnSecondaryLevelRenderers() {
+        if (!com.warwa.seamlessportals.compat.SodiumCompat.isSodiumLoaded()) {
+            return;
+        }
+        LevelRenderer installedRenderer = CLIENT.levelRenderer;
+        for (LevelRenderer renderer : WORLD_RENDERER_MAP.values()) {
+            if (renderer == installedRenderer) {
+                continue; // vanilla endFrames the installed one at Minecraft.runTick:1336
+            }
+            renderer.endFrame();
+        }
+    }
+
     /** S15: core-owned (non-per-dim) mod RenderBuffers that need the same per-frame endFrame
      *  as the per-secondary map above (memory gpu-buffer-leak-endframe). Render thread only.
      *  First registrant: SecondaryWorldRenderCore's same-dim entity pipeline. */

@@ -200,6 +200,15 @@ public class MyGameRenderer {
         // S18.3: the dest-clouds isolation's per-frame lifecycle (draw-budget reset + main-texture
         // mirror + per-instance ubo rotate) rides the same TAIL walk.
         SecondaryWorldRenderCore.endCloudFrames();
+        // C2-1d (the convergent VRAM-leak fix — both C2-1c verify lenses): endFrame every
+        // SECONDARY WORLD_RENDERER_MAP LevelRenderer (identity-skipping mc.levelRenderer,
+        // which vanilla endFrames itself at Minecraft.runTick:1336) so sodium's
+        // LevelRendererMixin RETURN-inject reaches each secondary SWR's UniformBufferManager
+        // .endFrame — the ONLY place its DynamicUniformStorage rotates/frees. Without this,
+        // the C2-1c armed cross-dim dest draws grow the secondary's uniform ring unboundedly
+        // ("Resizing Sodium terrain uniforms" spam + stranded MappableRingBuffers). Full
+        // chain + javap cites + the deliberate NOT-per-pass cadence decision at the callee.
+        ClientWorldLoader.endFrameOnSecondaryLevelRenderers();
     }
 
     public static void renderWorldNew(

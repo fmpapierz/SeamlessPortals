@@ -151,6 +151,14 @@ byte-equivalent un-sodium).
 - **Perf watch**: per-pass blocking consume (mitigation b — option (a) if frame cost);
   renderOutOfGraph frustum-only overdraw; prepareFrame telemetry pollution; per-iteration
   frame advance when armed; a scale-oscillating portal would recreate+arm every frame.
+- **Dest-BE 1-pass latency (C2-1d vA-NOTE fold — live watch item)**: under ACTIVE sodium the
+  Step-5 dest extract collects visible block entities from the D1-swapped context's renderLists
+  (javap LevelExtractorMixin.extractVisibleBlockEntities → SWR.extractBlockEntities), but the
+  cull drive runs at the Step-9 slot (needs Step-6 dest FogData) — so BEs ride the PREVIOUS
+  pass's renderLists: cold-context first pass shows NO dest BEs, steady-state is a bounded
+  1-pass lag (sodium's own intra-pass order is same-pass-fresh). In-code ledger at the
+  SecondaryWorldRenderCore Step-5 extract site. Live round: check chests/signs appear in
+  cross-dim windows by the second pass.
 - **Comment notes (informational, recorded not fixed)**: the GLOBAL_PASS_SERIAL javadoc says
   "above" for a map declared below; the repair comment's "147-175 null/close tail" is
   conservative (actual null@161/close@166 — covers strictly more throw points than claimed);
@@ -176,6 +184,114 @@ notice says so); portal-pass frame cost unoptimized (culling = C2-3).
 FAILURE DISCRIMINATORS (pre-registered): aperture shows YOUR world's terrain → P1 routing;
 outer-world translucent corruption same-dim → swap/#3; main-world sections vanish one frame
 after a portal pass → pending-task; portal terrain NEVER appears → convergence (P3 fork).
+
+
+## §3 THE C2-0/C2-1 LIVE ROUNDS + THE C2-1b/c/d FIX CHAIN (2026-07-19, user-run, log-verified)
+
+### 3.1 Round results (the baseline §5 script + the levered §2.5 script, first attempt)
+
+- **ROUND 1 (gate OFF, probes on): main world BLANK** — only sky, block outlines, particles;
+  teleport worked. **= P2 ANSWERED**: without the invoker the chunk-tracker feed is dead and
+  sodium (which owns ALL terrain when present) meshes nothing. The pre-decided D11
+  contingency fired.
+- **ROUND 2 (lever ON): main world rendered NORMALLY** (the feed works under the full
+  invoker). Creating a portal **CRASHED**: CCE `IgnoringViewArea → ImmPtlViewArea` at
+  `SecondaryWorldRenderCore.renderDestWorld:885` (Step 9's vanilla armed-discovery). The GOLD
+  experimental notice displayed correctly.
+- **PROBE HARVEST (all pre-registered questions answered)**: **P1** = per-dim LevelRenderers
+  get their OWN SWR+RSM instances (two nether lines, distinct identities). **P7a** =
+  `sodium:blocks/block_layer_opaque` VERTEX+FRAGMENT DO flow through the ShaderManager
+  source seam → **M1 is GO for C2-2**. **P7b** = trySetup sees patched (loc 0/1/2) and
+  unpatched (loc=-1) programs — candidate-A upload plausible, candidate-B certain. **P5
+  baseline** = reset/s ~200-320, frameTransitions/s 32-81, portals off. **P8** = the
+  block-era SodiumFogOverrideMixin FIRES flag-ON (activeOverride=false — reachable, inert;
+  feeds the S20 pre-deletion gate-audit).
+
+### 3.2 C2-1b (fix round; lenses PASS / PASS_WITH_CORRECTIONS)
+
+- **D11 LANDED**: `SodiumInterface.FeedOnlyOnSodiumPresent` — feed-only invoker installed
+  whenever sodium present but not ACTIVE (iris rows included); isSodiumPresent() stays
+  false on it (every consumer keeps un-levered behavior — enumerated + walked). Install
+  ordering proven safe (mod init precedes any ClientLevel construction — the feed cannot
+  miss a chunk).
+- **THE CCE MECHANISM (javap-proven)**: sodium's `sodium$replace` @Inject(HEAD, cancellable)
+  on `invalidateCompiledGeometry` ci.cancel()s UNCONDITIONALLY and installs
+  IgnoringViewArea + IgnoringSectionRenderDispatcher — our S12 ImmPtlViewArea @Redirect
+  targets bytecode inside the cancelled body: **sodium wins deterministically for every
+  renderer; ImmPtlViewArea never exists under sodium**. Fixes: Step-2/Step-9
+  instanceof-null rewrites + the Step-9 vanilla-discovery block sodium-gated (the IP
+  ip_allowOverrideTerrainSetup yield precedent) + Step-5 SOG-feed/drain gates +
+  tickSecondaryDeltaPump gate + ClientDebugCommand instanceof guards (also fixed a latent
+  sodium-absent NPE). Full sweep with per-site dispositions in the C2-1b record.
+- **TWO MATERIAL FINDINGS pre-registered by the fix walk** (the dest pass would draw
+  NOTHING): sodium's cull hook anchors in the `capturedFrustum == null` branch our dest
+  pass never takes; the draw instance is an un-armed @Overwrite dummy. → C2-1c.
+
+### 3.3 C2-1c (the dest drive; lens A PASS_WITH_CORRECTIONS / lens B FAIL→C2-1d)
+
+- **THE DRIVE**: `ip_driveDestTerrainSetup` — sodium's cullTerrain hook body replicated
+  1:1 (viewport via ViewportProvider on the dest frustum; FogParameters built with
+  sodium's exact capture mapping from the dest FogData; the cull matrix reconstructed
+  byte-identically to vanilla `Frustum.calculateFrustum` — the FrustumAccessor mixin class
+  is unloadable from mod code, a documented forced choice; smartCull from the dest camera
+  state) — called at the Step-9 slot inside the swap bracket. The captured-frustum
+  discipline stays (the drive is explicit).
+- **THE ARM**: `ip_armDestChunkRenders` — replicates sodium's own getRenderState
+  WrapOperation (SodiumChunkSection.sodium$setRendering with the dest draw projection +
+  view matrix + camera pos), with ONE deliberate omission (the LevelRendererMixin.matrices
+  putfield — jar-proven consumer-free; avoids clobbering the main renderer's stored
+  matrices on shared-renderer frames; iris-C2-4 revisit line ledgered). canDraw gains the
+  minimal `|| sodiumArmed` bypass (the dummy's maxIndices is -1). drawChunkLayer's
+  OPAQUE→SOLID+CUTOUT / TRANSLUCENT slots match the S18 submit order exactly.
+- **HAZARD CAUGHT MID-WALK + FIXED**: the UniformBufferManager per-frame latch — dest
+  draws latch the manager onto the DEST globals slice; on shared-SWR frames the main
+  translucent pass would then skip its own write → `ip_onDestTerrainDrawsFinished` resets
+  the latch in the outermost finally (throw-safe, nesting self-heals); correctness also
+  rests on the D1 five-swap restoring lastFogParameters (cross-referenced in-code).
+- **Cold-context anatomy verified**: first pass = renderOutOfGraph sync fallback (ACTC
+  null→sync + the FlawlessFrames n=1 arm); async cull consumed at swap-out; trees persist
+  via the cullResults content-swap.
+
+### 3.4 C2-1d (the convergent VRAM-leak fix; focused lens PASS)
+
+**BOTH C2-1c lenses independently found the same leak**: the armed cross-dim dest draws
+are the FIRST-ever writes into a secondary SWR's UniformBufferManager, and NOTHING flag-ON
+endFrames secondary LevelRenderers (vanilla ends only the installed renderer; the block-era
+walk covers the block-era map) → DynamicUniformStorage never rotates → capacity doublings
+strand MappableRingBuffers forever — unbounded VRAM leak, the ledgered 2026-07-05
+driver-paging freeze class, invisible in a short round. **FIX**:
+`ClientWorldLoader.endFrameOnSecondaryLevelRenderers` at the existing S18 render-TAIL
+walk (MyGameRenderer.endFramePooled) — presence-gated, WORLD_RENDERER_MAP walk,
+identity-skip of the installed renderer (a double rotate would halve the fencing margin);
+explicitly NOT per-pass (both lenses' wrong-fix warning: shared-SWR frames would
+double-rotate the main storage). The S18 gpu-buffer-leak-endframe discipline, same class.
+
+### 3.5 Verify tally for the C2-1 family (through C2-1d)
+
+**7 rounds** (C2-1 impl 4 + C2-1b 2 + C2-1c 2 + C2-1d 1, counting the C2-1b/c pairs as
+their rounds): **3 BLOCKERS** (cross-dim setLevel NPE + main-SWR corruption; frame
+lockstep; the endFrame VRAM leak) **+ the CCE + the empty-dest findings + the UBM latch +
+~8 corrections** — every one caught before it reached a user session (except the CCE +
+blank world, which the ROUND-1/2 script caught by design in one minute each). The
+convergent-independent-derivation events (the strict serial; the endFrame leak) are the
+highest-confidence signals the process has produced.
+
+### 3.6 THE RE-RUN SCRIPT (supersedes §2.5's; three parts, one sitting)
+
+1. **Feed-only boot** (`-PsodiumRuntime=true -PcompatProbe=true`, NO lever): the main
+   world must now MESH NORMALLY with portal views forced off (red warn) — closes the
+   feed-only inference (the one unproven row). Teleport both ways.
+2. **Levered round** (add `-PsodiumCompatLever=true`): GOLD notice; create a portal —
+   NO crash, and the aperture shows REAL DEST TERRAIN (first-frames blank while chunks
+   build = accepted; bleed-through at the plane = accepted until C2-2). Then: the
+   decisive same-dim pair near water/glass; nested portal; entities beside the portal;
+   walk-through both ways + post-crossing; a chest/sign through a FRESH cross-dim portal
+   (the dest-BE latency watch: visible by the second pass); save-relog; lever-off A/B.
+3. **The S19 leftover**: title screen → Mods → Seamless Portals → config = the real IP
+   cloth screen, no raw translation keys.
+   WATCH (report if seen): "Resizing Sodium terrain uniforms" log spam (the leak fix's
+   regression signal); FPS through portals (the phase-relocation watch); fog correctness
+   in the aperture (P8 interplay).
 
 ## §4 C2-0 verify record (the catches)
 

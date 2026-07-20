@@ -66,4 +66,20 @@ public interface IESodiumWorldRenderer {
 
     @Accessor("cullMatrix")
     void ip_setCullMatrix(Matrix4f cullMatrix);
+
+    /**
+     * C2-1c (the dest-draw wiring): read-only reach to the NEVER-SWAP per-SWR
+     * {@code UniformBufferManager} — javap 0.9.1:
+     * {@code private net.caffeinemc.mods.sodium.client.render.chunk.UniformBufferManager
+     * uniformBufferManager} (non-final). Needed by
+     * {@code OnSodiumPresent.ip_onDestTerrainDrawsFinished} to reset the
+     * {@code hasUpdatedThisFrame} once-per-frame latch after a dest pass wrote its own
+     * GlobalUniforms slice — without the reset, on a SHARED-SWR (same-dim / A→B→A nested) frame
+     * the main pass's later {@code renderLayer → UniformBufferManager.update} would latch-skip
+     * (javap update offsets 0-7: early-return on the flag) and bind the DEST pass's slice —
+     * main translucent terrain drawn with dest matrices/fog.
+     */
+    @Accessor("uniformBufferManager")
+    net.caffeinemc.mods.sodium.client.render.chunk.UniformBufferManager
+    ip_getUniformBufferManager();
 }

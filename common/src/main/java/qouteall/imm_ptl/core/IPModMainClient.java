@@ -41,6 +41,7 @@ public class IPModMainClient {
             () -> Minecraft.getInstance().level == null,
             MyTaskList.oneShotTask(() -> {
                 if (IPMcHelper.isNvidiaVideocard()) {
+                    // C2-1c ledger (cosmetic, no fix): under D11 feed-only, isSodiumPresent() is FALSE with sodium installed — this "install sodium" line then shows spuriously; dies with the feed-only state.
                     if (!SodiumInterface.invoker.isSodiumPresent()) {
                         CHelper.printChat(
                             Component.translatable("imm_ptl.nvidia_warning")

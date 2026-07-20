@@ -305,16 +305,27 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // iris-present install (iris keeps warn+force until C2-4 — design §0.2). The subject
             // names what was detected so a shader user knows shaders are the issue.
             //
-            // D11-SEAM (contingency, NOT active — design D-ledger D11 / §0.3 conflict 10): THIS
-            // branch is where the A5/A6 chunk-tracker feed would be re-gated
-            // unconditional-when-sodium-present if the baseline round shows a BLANK main world
-            // (sodium present, gate off, flag-ON: ImmPtlClientChunkMap replaces the client chunk
-            // cache and Sodium's own load hook never fires while the invoker is the no-op base).
-            // The carve-out shape: install here a minimal tracker-feed-only Invoker subclass
-            // (onClientChunkLoaded/onClientChunkUnloaded = OnSodiumPresent's bodies, everything
-            // else no-op) BEFORE warnAndForcePortalRenderingOff — pure correctness plumbing
-            // outside the experimental gate, same family as the D3 unconditional-worldgen seam.
-            // See the matching D11-SEAM comment on SodiumInterface.OnSodiumPresent.
+            // D11-LANDED (2026-07-19 C2-1b; design D-ledger D11 / §0.3 conflict 10): the C2
+            // baseline round (gate OFF) PROVED the contingency — the main world was BLANK (only
+            // sky/outlines/particles) because flag-ON's ImmPtlClientChunkMap replaces the client
+            // chunk cache and Sodium's own load hook never fires while the invoker is the no-op
+            // base. The A5/A6 chunk-tracker feed is therefore installed here PRESENCE-gated,
+            // BEFORE warnAndForcePortalRenderingOff: a tracker-feed-only Invoker whose
+            // isSodiumPresent() stays FALSE, so everything else (swap driver, terrain-setup
+            // yield, pool-split, notices) still behaves exactly as the un-levered world — pure
+            // correctness plumbing outside the experimental gate, same family as the D3
+            // unconditional-worldgen seam. With the feed live, this state = a NORMALLY MESHED
+            // main world with portal views forced off (the warn text below claims only "portal
+            // views are disabled" — still honest). Gated on isSodiumPresent (never iris alone):
+            // FeedOnlyOnSodiumPresent classloads sodium types.
+            // See the matching D11-LANDED comment on SodiumInterface.FeedOnlyOnSodiumPresent.
+            if (isSodiumPresent) {
+                SodiumInterface.invoker = new SodiumInterface.FeedOnlyOnSodiumPresent();
+                SeamlessPortalsConstants.LOGGER.info(
+                    "Seamless Portals: sodium present but compat inactive — installed the D11 "
+                        + "presence-gated chunk-tracker feed (main-world meshing only; portal "
+                        + "views stay disabled)");
+            }
             String subject = isIrisPresent
                 ? (isSodiumPresent ? "Sodium + Iris (shaders)" : "Iris (shaders)")
                 : "Sodium";

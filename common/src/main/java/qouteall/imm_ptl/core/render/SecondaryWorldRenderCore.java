@@ -55,6 +55,7 @@ import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.ClientWorldLoader;
 import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.IPGlobal;
+import qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface;
 import qouteall.imm_ptl.core.ducks.IEWorldRenderer;
 import qouteall.imm_ptl.core.render.renderer.RendererUsingStencil;
 import qouteall.imm_ptl.core.render.context_management.FogRendererContext;
@@ -289,8 +290,21 @@ public class SecondaryWorldRenderCore {
             }
             // Pump-owned window: mutation is safe (nothing else references the CURRENT side;
             // the LRS only ever captures the FROZEN side at an extract's flip).
-            applyLoadedDeltasResolved(world, sog, addedL, removedL, true);
-            sog.updateEmptySections(addedE, removedE);
+            // C2-1c vB fold — the SAME sodium-active gate as the Step-5(b)/(c) yields (same
+            // class: the vanilla SOG is dead machinery under Sodium — visibility lives in the
+            // D1-swapped context's SectionTree, so this per-tick SOG application is pure wasted
+            // work there). The window CLEARS below are deliberately kept OUTSIDE the gate:
+            // sodium's terrain freshness rides the D11 chunk-tracker feed, not these windows,
+            // and never draining them would grow the delta sets unboundedly over a session.
+            // FEED-ONLY CORNER, named: under D11 feed-only (sodium present, isSodiumPresent()
+            // FALSE) the gate is INERT and the application still runs — safe for the same
+            // reason as 5(b): bounded SOG set bookkeeping whose consumers dead-end on sodium's
+            // substrate (IgnoringViewArea.getRenderSection returns null; visibleSections stays
+            // always-empty under sodium).
+            if (!SodiumInterface.invoker.isSodiumPresent()) {
+                applyLoadedDeltasResolved(world, sog, addedL, removedL, true);
+                sog.updateEmptySections(addedE, removedE);
+            }
             addedL.clear();
             removedL.clear();
             addedE.clear();
@@ -559,8 +573,24 @@ public class SecondaryWorldRenderCore {
         // (same-dim portals). Object-identity test — composes under nesting.
         boolean sharedState = (destLRS == mc.gameRenderer.gameRenderState().levelRenderState);
 
+        // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): under Sodium the renderer's
+        // viewArea field is NOT ours — sodium's LevelRendererMixin.sodium$replace HEAD-cancels the
+        // whole invalidateCompiledGeometry body (javap-proven: unconditional ci.cancel()), so the
+        // S12 ImmPtlViewArea install @Redirect inside that body NEVER RUNS and sodium installs its
+        // own IgnoringViewArea + IgnoringSectionRenderDispatcher instead. A bare (ImmPtlViewArea)
+        // cast here is the round-2 CCE class (the live crash fired at the Step-9 re-read because
+        // on the FIRST pass this field is still null until Step 5's extract consumes
+        // shouldInvalidateCompiledGeometry and sodium installs mid-pass; this Step-2 cast would
+        // crash every SUBSEQUENT pass). instanceof-null form: sodium (or any foreign ViewArea)
+        // yields null and every vanilla-terrain drive below self-skips — IP's own
+        // ip_allowOverrideTerrainSetup returns-false-under-sodium precedent. instanceof (not an
+        // isSodiumPresent() branch) also covers the D11 feed-only state, where sodium is present
+        // but the invoker reports absent while config-gated layer-0 callers
+        // (CrossPortalViewRendering / GUI-portal API) can still reach this path.
+        net.minecraft.client.renderer.ViewArea rawViewArea =
+            ((IEWorldRenderer) destRenderer).ip_getBuiltChunkStorage();
         ImmPtlViewArea viewArea =
-            (ImmPtlViewArea) ((IEWorldRenderer) destRenderer).ip_getBuiltChunkStorage();
+            rawViewArea instanceof ImmPtlViewArea ipViewArea ? ipViewArea : null;
         // S14-A FIX-10: the tracker is READ at Step 9 (right before the discovery arm), AFTER
         // Step 5's extract — extract() can trip its render-distance allChanged, which REPLACES
         // sectionUpdateTracker (the §2.1 identity rule: "always re-read from the extractor, never
@@ -605,7 +635,12 @@ public class SecondaryWorldRenderCore {
             destProjection, PortalRendering.getExtraModelViewScaling());
         // 3.4 cull/extract frustum — CONVENTIONAL-Z culling projection (I7 / §2.3: feeding the
         // reversed-Z render projection to offsetToFullyIncludeCameraCube deterministically hangs).
-        Frustum destFrustum = new Frustum(destViewMatrix, buildCullingProjection(destProjection));
+        // C2-1c: the cull projection is hoisted into a local — the Step-9 sodium drive
+        // reconstructs the frustum's private combined matrix from it (Frustum.calculateFrustum:
+        // projection.mul(modelView) — sodium's own FrustumAccessor on that field is a registered
+        // mixin class we cannot classload).
+        Matrix4f destCullProjection = buildCullingProjection(destProjection);
+        Frustum destFrustum = new Frustum(destViewMatrix, destCullProjection);
         destFrustum.prepare(destCameraPos.x, destCameraPos.y, destCameraPos.z);
         // 3.5 capture it: makes LevelExtractor.extract skip applyFrustum (the 26.2 re-expression of
         // IP's setupRender HEAD-cancel) so the discovery-built visibleSections is authoritative and
@@ -617,6 +652,9 @@ public class SecondaryWorldRenderCore {
         // never runs render(), which is vanilla's only repositionCamera caller — LevelRenderer.java:
         // 168-169). Same-dim shares the main renderer's grid (already positioned this frame); moving
         // it would corrupt the main frame (§4-I9).
+        // C2-1b sodium yield: viewArea is null under Sodium (instanceof-null at Step 2), so this
+        // vanilla grid reposition self-skips — sodium tracks the camera in its own RSM/tree state
+        // via the D1 swapped context.
         if (!sharedState && viewArea != null) {
             SectionPos camSec = SectionPos.of(destCameraPos);
             viewArea.repositionCamera(camSec);
@@ -699,6 +737,20 @@ public class SecondaryWorldRenderCore {
                         if (!IPGlobal.debugAllowDestParticleExtract) {
                             destLRS.particlesRenderState.particles.clear();
                         }
+                        // C2-1d vA-NOTE LEDGER — dest BLOCK ENTITIES have a 1-PASS LATENCY under
+                        // ACTIVE sodium (accepted; joins the C2 live watch list — port-note
+                        // C2-sodium-iris.md C2-1 ledger): sodium collects visible BEs INSIDE this
+                        // extract (javap 0.9.1 LevelExtractorMixin.extractVisibleBlockEntities →
+                        // SWR.extractBlockEntities), reading the D1-swapped context's RSM
+                        // renderLists — but this decomposition's cull drive
+                        // (ip_driveDestTerrainSetup, the Step-9 slot) runs AFTER this Step-5
+                        // extract (it needs the Step-6 dest FogData), so the BE walk sees the
+                        // PREVIOUS pass's renderLists. Sodium's own intra-pass order is
+                        // same-pass-fresh (cullTerrain anchors earlier in this same extract).
+                        // Consequence: a COLD context's first pass shows NO dest BEs (empty
+                        // renderLists), then converges one pass later — renderLists persist in
+                        // the swapped context (cullResults content-swap), so steady-state is a
+                        // bounded 1-pass BE lag, invisible for static BEs.
                         isDestExtracting = true;
                         try {
                             destExtractor.extract(deltaTracker, newCamera, partialTick);
@@ -738,8 +790,23 @@ public class SecondaryWorldRenderCore {
                     // decomposition never runs destRenderer.render(), vanilla's only delta consumer,
                     // so feed the dest SOG here under the set-object IDENTITY window guard — applied
                     // once per flip window, idempotent within a window, NEVER lost on throw.
+                    // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): skip under
+                    // Sodium — the vanilla SOG is dead machinery there (visibility comes from the
+                    // D1-swapped context's SectionTree; sodium's sodium$replace waitAndReset the
+                    // SOG against IgnoringViewArea) and feeding it only schedules wasted graph
+                    // work. IP precedent: ip_allowOverrideTerrainSetup false under sodium.
+                    // C2-1c vB fold — THE FEED-ONLY CORNER, named: under D11 feed-only (sodium
+                    // PRESENT, compat inactive, isSodiumPresent() reports FALSE) this gate is
+                    // INERT and the feed RUNS against the sodium-owned SOG — reachable only via
+                    // the config-gated layer-0 callers (CrossPortalViewRendering / GUI-portal
+                    // API). SAFE: the SOG delta ops are bounded set bookkeeping, and every
+                    // downstream consumer dead-ends on sodium's substrate
+                    // (IgnoringViewArea.getRenderSection returns null; visibleSections stays
+                    // always-empty — applyFrustum's sole call site is sodium-@Redirect-ed to a
+                    // no-op). Wasted-but-harmless, dies with the feed-only state at C2-2+.
                     ChunkLoadingRenderState destDeltas = destLRS.chunkLoadingRenderState;
-                    if (!IPGlobal.debugSkipSogFeed // S14.39 sub-lever
+                    if (!SodiumInterface.invoker.isSodiumPresent()
+                        && !IPGlobal.debugSkipSogFeed // S14.39 sub-lever
                         && lastAppliedDeltaWindow.get(destDim) != destDeltas.addedLoadedChunks) {
                         lastAppliedDeltaWindow.put(destDim, destDeltas.addedLoadedChunks);
                         SectionOcclusionGraph destSog = destRenderer.sectionOcclusionGraph();
@@ -763,7 +830,22 @@ public class SecondaryWorldRenderCore {
                     // Safe mid-main-framegraph (no GPU RenderPass open; compileAsync scheduling). The
                     // GPU upload half rides MyRenderHelper.earlyRemoteUpload (pre-frame pump, already
                     // wired flag-ON) — required BY CONSTRUCTION here (no render() upload tail runs).
-                    if (!IPGlobal.debugSkipCompileDrain) { // S14.39 sub-lever
+                    // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): skip under
+                    // Sodium — meshing belongs to sodium's own builder (the dispatcher is
+                    // IgnoringSectionRenderDispatcher). Already a structural no-op there
+                    // (sectionUpdateRenderStates fills from visibleSections, which stays empty
+                    // under sodium: applyFrustum's sole call site is @Redirect-ed to a no-op by
+                    // sodium's LevelExtractorMixin and Step 9 yields above), but the gate removes
+                    // the dependence on that empty-list invariant — compileSections:625 would
+                    // getRenderSection on the foreign IgnoringViewArea if it ever ran non-empty.
+                    // C2-1c vB fold — THE FEED-ONLY CORNER, named: under D11 feed-only
+                    // (isSodiumPresent() FALSE with sodium present) this gate is INERT and the
+                    // drain RUNS — safe by the SAME always-empty-visibleSections invariant just
+                    // described (the drain over an empty list is a no-op, and
+                    // IgnoringViewArea.getRenderSection returns null if it ever were consulted);
+                    // reachable only via the config-gated layer-0 callers.
+                    if (!SodiumInterface.invoker.isSodiumPresent()
+                        && !IPGlobal.debugSkipCompileDrain) { // S14.39 sub-lever
                         ((LevelRendererAccessorMixin) destRenderer)
                             .seamlessportals$invokeCompileSections(destCameraState);
                     }
@@ -873,42 +955,110 @@ public class SecondaryWorldRenderCore {
                     == TextureFilteringMethod.RGSS
             );
 
-            // ===== Step 9 — visibleSections: ARMED discovery ====================================
-            ObjectArrayList<SectionRenderDispatcher.RenderSection> resultList =
-                ((IEWorldRenderer) destRenderer).portal_getChunkInfoList();
-            // S14.6 (fix-verify MINOR): re-read the grid too — Step 5's extract can consume
-            // shouldInvalidateCompiledGeometry (RD change, or the FIX-9 reload cascade on ANY
-            // main reload with a portal visible), which RELEASES and REPLACES the renderer's
-            // viewArea (same §2.1 identity class as the FIX-10 tracker re-read below). The
-            // Step-3 repositionCamera on the pre-extract read stays as-is (a replacement grid is
-            // repositioned by invalidateCompiledGeometry itself).
-            viewArea = (ImmPtlViewArea) ((IEWorldRenderer) destRenderer).ip_getBuiltChunkStorage();
-            if (viewArea != null) {
-                RenderRegionCache cache = new RenderRegionCache();
-                Set<Long> schedSet =
-                    portalCompileScheduled.computeIfAbsent(destDim, k -> new HashSet<>());
-                // FIX-10: post-extract read — see the Step-2 note.
-                SectionUpdateTracker sut = destExtractor.sectionUpdateTracker;
-                // S14.51 F1: a nested/return pass whose dest dim IS the main dim arms against
-                // the MAIN tracker — flag it so the fold compiles UNCOMPILED-only and never
-                // consumes the main extract's dirty marks (trace wf_1e07ce4b-f53 tracer B).
-                VisibleSectionDiscovery.armCompileScheduling(
-                    destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS,
-                    destExtractor == mc.levelExtractor
-                );
-                // IP-verbatim call shape (IP:MixinLevelRenderer.java:252-257): the offset frustum is
-                // built from destFrustum (conventional-Z, I7). Discovery auto-disarms in its finally.
-                VisibleSectionDiscovery.discoverVisibleSections(
-                    destLevel, viewArea, newCamera,
-                    new Frustum(destFrustum).offsetToFullyIncludeCameraCube(8),
-                    resultList
+            // ===== Step 9 — dest terrain visibility: ARMED discovery / sodium drive =============
+            // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): the WHOLE armed-
+            // discovery block is vanilla-terrain machinery and yields under Sodium — IP's own
+            // ip_allowOverrideTerrainSetup-returns-false-under-sodium precedent. This is the
+            // round-2 CRASH SITE (live CCE 2026-07-19: IgnoringViewArea -> ImmPtlViewArea at the
+            // re-read below — sodium's LevelRendererMixin.sodium$replace installed
+            // IgnoringViewArea when Step 5's extract consumed shouldInvalidateCompiledGeometry
+            // mid-pass, HEAD-cancelling the body that contains our S12 install redirect). Under
+            // Sodium the dest visible set belongs to the D1-swapped SodiumRenderingContext (the
+            // per-portal RSM tree/list state), produced by the C2-1c drive in the else-branch
+            // below; resultList stays as the bracket installed it (empty) — sodium never reads
+            // it, and compileSections stays an empty-list no-op. The inner instanceof-null
+            // re-read is kept as the second wall for the presence-without-invoker corners
+            // (D11 feed-only + config-gated layer-0 callers — those states have NO drive and
+            // NO arm, so their dest passes stay yielded-empty exactly as C2-1b shipped them).
+            if (!SodiumInterface.invoker.isSodiumPresent()) {
+                ObjectArrayList<SectionRenderDispatcher.RenderSection> resultList =
+                    ((IEWorldRenderer) destRenderer).portal_getChunkInfoList();
+                // S14.6 (fix-verify MINOR): re-read the grid too — Step 5's extract can consume
+                // shouldInvalidateCompiledGeometry (RD change, or the FIX-9 reload cascade on ANY
+                // main reload with a portal visible), which RELEASES and REPLACES the renderer's
+                // viewArea (same §2.1 identity class as the FIX-10 tracker re-read below). The
+                // Step-3 repositionCamera on the pre-extract read stays as-is (a replacement grid is
+                // repositioned by invalidateCompiledGeometry itself).
+                net.minecraft.client.renderer.ViewArea rawViewArea9 =
+                    ((IEWorldRenderer) destRenderer).ip_getBuiltChunkStorage();
+                viewArea = rawViewArea9 instanceof ImmPtlViewArea ipViewArea9 ? ipViewArea9 : null;
+                if (viewArea != null) {
+                    RenderRegionCache cache = new RenderRegionCache();
+                    Set<Long> schedSet =
+                        portalCompileScheduled.computeIfAbsent(destDim, k -> new HashSet<>());
+                    // FIX-10: post-extract read — see the Step-2 note.
+                    SectionUpdateTracker sut = destExtractor.sectionUpdateTracker;
+                    // S14.51 F1: a nested/return pass whose dest dim IS the main dim arms against
+                    // the MAIN tracker — flag it so the fold compiles UNCOMPILED-only and never
+                    // consumes the main extract's dirty marks (trace wf_1e07ce4b-f53 tracer B).
+                    VisibleSectionDiscovery.armCompileScheduling(
+                        destLevel, sut, cache, schedSet, PORTAL_VIEW_COMPILE_BUDGET_NS,
+                        destExtractor == mc.levelExtractor
+                    );
+                    // IP-verbatim call shape (IP:MixinLevelRenderer.java:252-257): the offset frustum is
+                    // built from destFrustum (conventional-Z, I7). Discovery auto-disarms in its finally.
+                    VisibleSectionDiscovery.discoverVisibleSections(
+                        destLevel, viewArea, newCamera,
+                        new Frustum(destFrustum).offsetToFullyIncludeCameraCube(8),
+                        resultList
+                    );
+                }
+            }
+            else {
+                // C2-1c F1 fix — THE SODIUM DEST TERRAIN-SETUP DRIVE (ACTIVE invoker only; base +
+                // feed-only invokers no-op, keeping the C2-1b yielded-empty envelope there).
+                // sodium's own cullTerrain hook anchors at INVOKE SectionOcclusionGraph
+                // .consumeFrustumUpdate inside LevelExtractor.extract's
+                // `else if (capturedFrustum == null)` branch (javap 0.9.1; mc262-ref :125-135) —
+                // Step 3.5's captured frustum skips that branch every dest pass, so without this
+                // drive the D1-swapped context NEVER got a cull scheduled and the window stayed
+                // empty. We drive EXPLICITLY inside the swap bracket instead; the frustum STAYS
+                // captured (un-capturing would change the vanilla-path extract semantics — the
+                // applyFrustum/SPIKE-R1 skip is load-bearing). Slot: after Step 6 (dest FogData
+                // exists) and BEFORE Step 10's prepareChunkRenders — cull → render lists → draw,
+                // sodium's own intra-frame order. Runs for BOTH sharedState (shared RSM, swapped
+                // context) and cross-dim (per-dim RSM) passes — exactly the passes the bracket
+                // swapped a context in for. Args reuse what Steps 3-6 computed: the dest camera,
+                // the prepared dest Frustum (viewport source), the reconstructed conventional-Z
+                // cull matrix (camera-delta basis only), the dest FogData (Step 6 — carries the
+                // graduated dest radius in renderDistanceEnd), and destCameraState.smartCull
+                // (Step 4 extract). First-frames + shared-state safety ledger: the
+                // OnSodiumPresent.ip_driveDestTerrainSetup javadoc (cold pass = same-pass
+                // renderOutOfGraph frustum-only list; cull trees converge via the swap-out
+                // blocking consume into the persistent context).
+                SodiumInterface.invoker.ip_driveDestTerrainSetup(
+                    newCamera, destFrustum,
+                    new Matrix4f(destCullProjection).mul(destViewMatrix),
+                    destFogData, destCameraState.smartCull
                 );
             }
 
             // ===== Step 10 — the DRAW sequence (masked by the live stencil) =======================
             // ChunkSectionsToRender is produced by prepareChunkRenders — now that visibleSections is
             // authoritative. NEVER bail on maxIndices==0 (draws are empty while async meshes compile).
+            // C2-1b/C2-1c sodium (javap-verified, 0.9.1): under Sodium this direct call hits
+            // sodium's @Overwrite of prepareChunkRenders, which IGNORES visibleSections and returns
+            // an UN-ARMED dummy ChunkSectionsToRender (shared empty STATIC_MAP, maxIndices = -1,
+            // no buffers). Sodium's ChunkSectionsToRenderMixin.renderGroup HEAD-inject delegates
+            // to SWR.drawChunkLayer ONLY when the instance was armed via sodium$setRendering —
+            // in vanilla-sodium that happens solely at the @WrapOperation'd prepareChunkRenders
+            // call site inside LevelRenderer.render, which this decomposition never runs — so
+            // C2-1c arms the instance HERE, replicating that WrapOperation save one deliberate
+            // omission (the LevelRendererMixin.matrices putfield — jar-proven consumerless +
+            // shared-renderer-frame clobber hazard; the vB NOTE-2 ledger lives at
+            // OnSodiumPresent.ip_armDestChunkRenders) (the F2 fix;
+            // matrices = the Step-7 dest draw projection + the same destViewMatrix passed above;
+            // camera pos; dest fog color — see OnSodiumPresent.ip_armDestChunkRenders). Armed,
+            // the Step-10.6/10.9 renderGroup calls cancel into drawChunkLayer (OPAQUE →
+            // SOLID+CUTOUT, TRANSLUCENT → TRANSLUCENT — the same layer slots this sequence
+            // already draws at, S18 submit-order discipline preserved) over the D1-swapped
+            // context's renderLists. Un-armed (base/feed-only invoker, or the null-RSM degrade):
+            // sodiumArmed=false and the un-armed dummy falls through to the vanilla body over the
+            // empty map — the C2-1b yielded-empty envelope, crash-safe.
             ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix);
+            boolean sodiumArmed = SodiumInterface.invoker.ip_armDestChunkRenders(
+                destChunks, destDrawProjection, destViewMatrix, destCameraPos, destFogData
+            );
 
             GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
             // S14.38 lever: skip the dest fog INSTALL (dest draws use the ambient main fog — wrong
@@ -954,7 +1104,15 @@ public class SecondaryWorldRenderCore {
 
                 try {
                     // S14.24 lever: debug_skip_portal_terrain attributes residue to the renderGroup draws.
-                    boolean canDraw = mainChunkSampler != null && destChunks.maxIndicesRequired() > 0
+                    // C2-1c: the sodium-ARMED case bypasses the maxIndicesRequired() > 0 test —
+                    // sodium's dummy hard-codes -1 (javap: the @Overwrite ctor arg), so the
+                    // vanilla-emptiness gate would permanently skip every armed dest draw (the F2
+                    // finding's second half). mainChunkSampler stays required: the armed
+                    // renderGroup cancel passes it through to drawChunkLayer → renderLayer (the
+                    // block-atlas sampler — same capture, vanilla main render() still creates it
+                    // under sodium).
+                    boolean canDraw = mainChunkSampler != null
+                        && (destChunks.maxIndicesRequired() > 0 || sodiumArmed)
                         && !IPGlobal.debugSkipPortalTerrain;
                     if (canDraw) {
                         // 10.6 solid+cutout into the OPAQUE output (== the real main target), masked by
@@ -1052,6 +1210,14 @@ public class SecondaryWorldRenderCore {
             }
         } finally {
             // ===== Step 10.13 finally — restore everything the core changed =====================
+            // C2-1c: reset the sodium UniformBufferManager once-per-frame latch the dest
+            // drive/draws consumed (throw-safe; mc.levelRenderer is still the dest renderer
+            // here — the shell restores it after this invoke returns). Without this, on a
+            // SHARED-SWR frame (same-dim portal / A→B→A nesting) the main pass's later
+            // renderGroup(TRANSLUCENT) → UniformBufferManager.update would latch-skip and bind
+            // the DEST pass's GlobalUniforms slice — main translucent terrain drawn with dest
+            // matrices/fog. Facade no-op when sodium is absent/inactive.
+            SodiumInterface.invoker.ip_onDestTerrainDrawsFinished();
             // Restore the Globals UBO with the SOURCE camera + game time (the main frame's remaining
             // passes — translucent-after-terrain, clouds, hand — read it).
             RenderTarget mainRT = mc.gameRenderer.mainRenderTarget();

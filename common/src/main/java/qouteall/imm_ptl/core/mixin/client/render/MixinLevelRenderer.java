@@ -117,6 +117,14 @@ public class MixinLevelRenderer implements IEWorldRenderer {
                 + "Lnet/minecraft/client/renderer/ViewArea;"
         )
     )
+    // C2-1b sodium evidence (javap 0.9.1 LevelRendererMixin, round-2-confirmed live): under
+    // Sodium this redirect NEVER FIRES — sodium's sodium$replace is an @Inject(HEAD,
+    // cancellable) on invalidateCompiledGeometry whose first instruction is ci.cancel(); it
+    // re-implements the body and installs IgnoringViewArea + IgnoringSectionRenderDispatcher
+    // into the fields, so the vanilla `new ViewArea` NEW instruction this @Redirect claims is
+    // bytecode-present but unreachable. Sodium wins deterministically for main AND secondary
+    // renderers; no weave conflict (different injection kinds on different instructions). All
+    // ImmPtlViewArea consumers therefore instanceof-guard (the C2-1b sodium-yield sweep).
     private ViewArea seamlessportals$installImmPtlViewArea(
         SectionRenderDispatcher dispatcher,
         int minY,

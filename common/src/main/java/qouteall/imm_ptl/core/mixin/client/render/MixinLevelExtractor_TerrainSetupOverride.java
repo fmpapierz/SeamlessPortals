@@ -72,6 +72,12 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
         if ((Object) this != Minecraft.getInstance().levelExtractor) {
             return;
         }
+        // C2-1b sodium evidence: under Sodium this whole injection is STRUCTURALLY DEAD —
+        // applyFrustum's single call site (LevelExtractor.extract:130) is @Redirect-ed to an
+        // empty no-op by sodium's LevelExtractorMixin.sodium$cancel (javap 0.9.1), so the
+        // method never runs. The isSodiumPresent() yield below (IP's ip_allowOverrideTerrainSetup
+        // precedent) and the instanceof-ImmPtlViewArea guard are the second and third walls
+        // (they also cover the D11 feed-only state, where the invoker reports absent).
         if (SodiumInterface.invoker.isSodiumPresent()
             || IrisInterface.invoker.isRenderingShadowMap()
         ) {
