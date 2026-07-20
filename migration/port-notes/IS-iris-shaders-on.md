@@ -797,3 +797,133 @@ firing order at `MixinGameRenderer_IPPostLevelAnchor`).
 
 **Compile gate after the fold**: `.\gradlew.bat :common:compileJava :fabric:compileJava
 --console=plain` — green (see below).
+
+### §2.6 THE ROW-1 AIOOBE (IS1 live defect; diagnose-first per the C2-3b pattern —
+tasked as "§2.5" but that slot is the Fable fold; all code comments reference §2.6)
+
+**The repro (2 runs, deterministic):** the 8-leg crossing gametest with the IS1 lever
+(`-PshaderpackViews=true`), PLAIN install. `ArrayIndexOutOfBoundsException: Index 923 out of
+bounds for length 27` — IDENTICAL index both runs — at `RenderSectionRegion.getSection(:64)
+<- getBlockState(:40) <- SectionCompiler.compile(:76)` on a ForkJoin meshing worker
+("Batching sections", `CompileTask.doTask:472`), surfaced on the Render thread via
+`BlockableEventLoop` delayed-crash, in `the_nether` as MAIN at client ticks ~465-467 —
+immediately after leg 4's overworld->nether promote. Lever-OFF suite green in the same tree.
+Length 27 = the 3x3x3 region; index 923 => (compiled-section, region-origin) pairing
+INCONSISTENT — an identity/coords bug, not content.
+
+**The mechanism (SAME-DIM STALE-STATE RE-CONSUMPTION THROUGH THE UNGUARDED ImmPtlViewArea
+WRAP):** the IS1 same-dim full-pipeline pass violates vanilla's
+one-LRS/one-camera/one-consume-per-frame invariant. sharedState passes skip the extract
+(`renderDestWorldFullPipeline` Step 5 is cross-dim-only) and run a real 8-arg
+`destRenderer.render()` on the MAIN renderer with the dest camera. `render()` first
+repositions the MAIN `ImmPtlViewArea` to the DEST camera section (LevelRenderer.render:169
+-> ImmPtlViewArea.repositionCamera — swaps the coord-pinned preset), then its internal
+`compileSections` (:255 -> :608-640) RE-consumes the SAME main-LRS
+`sectionUpdateRenderStates` the main pass already consumed this frame (the list clears only
+at the next extract head — LevelRenderState.reset:35 / LevelExtractor:161; vanilla
+compileSections never removes entries). Each stale state's node is re-resolved at :625 via
+`ImmPtlViewArea.getRenderSection(long)`, which — unlike vanilla
+`RotatingSectionStorage.getValue` (:104-123: `containsSection` window guard +
+`repositionCenter` re-noding => in-window occupant ALWAYS exact-match, else null) — did a
+bare `positiveModulo` wrap into the current preset with NO window check and NO occupant-node
+verification. Our RenderSections are coord-PINNED (`createColumn`), so an out-of-window
+query returns a live section at congruent-mod-W DIFFERENT coords. Geometry lock: arena node
+A=(-4,y,-4) queried against the leg-7 portal-C far-dest preset centered at section (87,y,87)
+(dest 1400.5,250,1400.5; renderDistance 6 -> W=13; -4 ≡ 87 ≡ 9 mod 13 on both axes) returns
+the pinned B=(87,y,87); `compileAsync` pairs region(A) with section(B); `doTask` reads B's
+node at RUN time (SectionRenderDispatcher:432) and iterates B's origin against region(A):
+index = 92 + 3 + 828 = **923 exactly**, every run. The bad task is CREATED on the last
+overworld-main frame(s) of the leg-4 crossing (portal C renders same-dim every frame; the
+crossing machinery dirties exactly one arena section that frame — one state, one task);
+the promote then flips main to the nether and the worker throws within ms — hence
+"the_nether as MAIN". Leg 7 passes because its 150 ticks are static (empty states list on
+every portal-C frame). Lever-OFF is green because the decomposed path never calls
+`render()`: same-dim never repositions and its drain is cross-dim-only after its own
+reposition. Cross-dim IS1 passes are consistent (Step-5 extract resets+refills destLRS;
+`render()` repositions to the dest camera before compiling). The
+`seamlessportals$suppressFrameObsidian` redirect in the stack is pass-through (incidental).
+
+**The fix (both halves landed together — the diagnostician's spec verbatim, one placement
+refinement):**
+
+1. **PRIMARY (pairing-rule, `SecondaryWorldRenderCore.renderDestWorldFullPipeline`):**
+   sharedState passes only — immediately before the nested `destRenderer.render()`, copy
+   `destLRS.sectionUpdateRenderStates` to a local ArrayList and clear the (final) list; in
+   the outermost finally's sharedState branch, `addAll` the contents back. The nested
+   render()'s compileSections sees an EMPTY list (no re-consumption, no re-resolution
+   against the dest-repositioned preset), while the restore keeps the states available for
+   their ONE legitimate consumer on any pass ordering (protects pre-main layer-0 callers —
+   CrossPortalViewRendering/GUI-portal — from starving the main compileSections: the
+   ow-holes-consumed-compile-queue class). Per-pass bracketing handles multiple same-dim
+   portals per frame. Cross-dim passes are NOT bracketed (their Step-5 extract+render() is
+   the correct one-shot pairing); §8-13 honored — render() still self-drains, it is only
+   denied someone else's already-consumed one-shots. PLACEMENT REFINEMENT vs the spec's
+   "next to the cloudColor suppression" option: the swap sits INSIDE the try (the spec's
+   alternative "just before :1601"), because a stranded EMPTY states list on a pre-try
+   throw would be silent compile loss (the holes class) — worse than the accepted
+   cloudColor pre-try window; the finally only runs for an entered try.
+2. **HARDENING (vanilla-parity occupant guard, `ImmPtlViewArea.getRenderSection(long)`):**
+   after resolving a non-null result, `if (result.getSectionNode() != sectionNode) return
+   null;` — transplants exactly the guarantee vanilla's containsSection+repositionCenter
+   congruence provides (in-window => exact match; else null), for EVERY node-keyed consumer
+   (compileSections re-resolution, SOG BFS, ...). Landed WITH the primary, never instead
+   (VERIFY-LENS AMENDMENT: the original "alone it would NPE at compileSections:626"
+   rationale was inaccurate for THIS codebase — `LevelRendererCompileSectionsMixin`
+   already @Redirects the states field-get and pre-filters null-resolving states, so the
+   hardening alone would have SILENTLY ABSORBED the mis-paired state, dropping the
+   compile; that mixin is the THIRD protective layer. The primary fix is still required
+   to restore the one-consume invariant rather than mask its violation).
+
+**Ledgered (no code change now):**
+
+- `getRenderSectionAt(BlockPos)` shares the wrap hazard for BlockPos-keyed callers — queued
+  for the S20 audit (also noted in-code at the §2.6 hardening comment).
+- The same-dim pass leaves the main ViewArea on the DEST preset until the NEXT main
+  frame's `render()`:169 reposition — and (VERIFY-LENS CORRECTION: the original
+  "only same-frame reader = playerCompiledSectionCallback" claim was WRONG) the next
+  frame's EXTRACT runs BEFORE that reposition, where TWO readers can hit the dest-centered
+  preset: (a) `LevelExtractorFlashBridgeMixin`'s applyFrustum flood (live in the <=30s
+  promote-bridge window — i.e. right after every crossing): post-hardening its lookups
+  return null → possible multi-frame main-terrain BLANK (lever-ON + same-dim portal
+  rendered the previous frame + bridge window); pre-hardening it returned wrapped WRONG
+  sections (the same corruption family as the AIOOBE) — the hardening made this strictly
+  SAFER, but the window is real. (b) An off-thread SOG full-update overlapping the window
+  builds an empty/boundary-seeded graph instead of a garbage one. DECISION DEFERRED to
+  the re-run per the lens: if watch row 7 shows blanking, restore the main preset in the
+  outermost finally's sharedState branch (weigh against the PortalContextSwitch:1191
+  DISAPPEAR-FIX history first).
+
+**Residual uncertainty (from the verdict, not load-bearing):** (1) the precise dirty-source
+of the single arena state on the fatal frame is inferred (ANY dirty visible section on a
+portal-C frame triggers the mechanism); (2) arena spawn sections (-4,\*,-4) derived from the
+923 algebra, not read from a log; (3) candidates (d)/(e) cleared by the I10-exclusivity
+header note + absent probe property, not an exhaustive walk. The discriminating probe (log
+occupant-mismatch in getRenderSection + dump the states list at sharedState entry) is
+recorded in the verdict should a pre-fix run ever be wanted.
+
+**REGRESSION WATCH (the §2.6 rows):**
+
+1. Leg 4 (the crash leg): AIOOBE gone across x2 lever-ON runs (determinism => one clean
+   pair is strong evidence).
+2. Leg 7 (same-dim far-dest, 150 ticks): still passes; portal C windows keep their ledgered
+   IS1 same-dim observables (no entities, no vanilla terrain on the PLAIN row) — the fix
+   removes only wrong-paired compiles, which never produced valid meshes.
+3. The ow-holes class: break/place a block near a visible same-dim portal — the main world
+   must still recompile that section the same frame (the swap-out+restore never starves the
+   MAIN compileSections, incl. layer-0 CrossPortalViewRendering/GUI-portal orderings).
+4. Cross-dim window freshness (legs 2/3/4 views): nether/overworld window content still
+   updates on block changes — the cross-dim Step-5 extract + render() self-drain pairing
+   untouched.
+5. Lever-OFF full suite: decomposed path stays green. NOTE (lens): the decomposed path is
+   code-untouched but NOT byte-identical in BEHAVIOR — the ImmPtlViewArea occupant guard
+   is live lever-OFF too (all lever-OFF consumers audited null-tolerant; vanilla-parity
+   says no visible change) — watch for any new holes/visibility regressions regardless.
+6. The 12-point checklist's far-walk item (SOG delta feed adjacent but untouched): walk
+   away from and back to a portal — no distant-chunk vanish recurrence.
+7. (Lens CORRECTION row) The dest-preset residue window: post-crossing (the <=30s bridge
+   window) with a same-dim portal visible and a static camera — watch for multi-frame
+   MAIN-terrain blanking (the two next-frame extract-time readers of the dest-centered
+   preset). Blanking observed => land the preset-restore in the sharedState finally.
+
+**Compile gate after §2.6**: `.\gradlew.bat :common:compileJava :fabric:compileJava
+--console=plain` — green.

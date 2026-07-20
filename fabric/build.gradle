@@ -202,6 +202,9 @@ loom {
             // died JIT-compiling IOWorker::storePendingChunk during the suite's world saves —
             // same jvm.dll defect class, not mod logic; see the client run's note).
             vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
+            // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
+            vmArg('-XX:-OmitStackTraceInFastThrow')
             // IS0 shaderpack-views probe (mirror of the clientSodium lever above; the suite
             // runs sodium/iris-ABSENT, so with no pack the probe only logs its one-shot
             // waiting line — byte-inert for the 8-leg gate without the property) —

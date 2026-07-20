@@ -39,6 +39,7 @@ import net.minecraft.client.renderer.fog.FogRenderer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.ChunkLoadingRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.client.resources.model.sprite.AtlasManager;
 import net.minecraft.core.SectionPos;
@@ -66,7 +67,9 @@ import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1439,6 +1442,11 @@ public class SecondaryWorldRenderCore {
         long savedLevelGameTime = sourceLevel.getGameTime();
 
         boolean diffuseChangedToDest = false;
+        // §2.6 THE ROW-1 AIOOBE FIX (same-dim stale-state re-consumption): holder for the
+        // swapped-out MAIN sectionUpdateRenderStates contents. Assigned INSIDE the try
+        // (immediately before render()) so a throw can never strand an emptied list —
+        // the finally restore below is the only other toucher.
+        List<SectionUpdateRenderState> savedSectionUpdateStates = null;
         GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
         try {
             // ===== Step 5 — dest EXTRACT [cross-dim only] + identity-guarded SOG feed ============
@@ -1598,6 +1606,27 @@ public class SecondaryWorldRenderCore {
             // renders the dest sky where vanilla would suppress it (immaterial, ledgered).
             // Iris hooks fire on this secondary instance (class weave); iris finalizing the
             // nested render INTO MAIN is the mechanism, not a hazard (design §2.1-2).
+            // §2.6 THE ROW-1 AIOOBE FIX — restore vanilla's one-consume-per-frame invariant:
+            // for SHARED-STATE passes the nested render() would RE-consume the MAIN LRS's
+            // sectionUpdateRenderStates (already consumed by the main compileSections this
+            // frame; the list clears only at the next extract head — LevelRenderState.reset),
+            // re-resolving each state's node via ImmPtlViewArea's wrap-around
+            // getRenderSection(long) AFTER render()'s repositionCamera moved the MAIN preset
+            // to the DEST camera section. An out-of-window node then wraps to a coord-PINNED
+            // section at congruent-mod-W DIFFERENT coords, and compileAsync pairs region(A)
+            // with section(B) — the deterministic AIOOBE 923/27 in SectionCompiler on the
+            // meshing worker (port-note §2.6). Swap the contents OUT for the nested render
+            // (empty list = nothing to re-consume) and restore in the outermost finally so
+            // the states stay available for their ONE legitimate consumer on any pass
+            // ordering (protects pre-main layer-0 callers from main-compileSections
+            // starvation — the ow-holes-consumed-compile-queue class). Cross-dim passes are
+            // NOT bracketed: their Step-5 extract+render() is the correct one-shot pairing,
+            // and render() still self-drains (§8-13 honored — we only deny it someone
+            // else's already-consumed one-shots).
+            if (sharedState && !destLRS.sectionUpdateRenderStates.isEmpty()) {
+                savedSectionUpdateStates = new ArrayList<>(destLRS.sectionUpdateRenderStates);
+                destLRS.sectionUpdateRenderStates.clear();
+            }
             destRenderer.render(
                 GraphicsResourceAllocator.UNPOOLED,
                 deltaTracker,
@@ -1631,6 +1660,13 @@ public class SecondaryWorldRenderCore {
             }
             // Camera-state / fog-field restores (mirrors the decomposed Step-10.13 split).
             if (sharedState) {
+                // §2.6 restore — put the swapped-out section-update states back on the MAIN
+                // LRS (per-pass bracketing: each same-dim portal pass empties during its own
+                // nested render only). null when the list was empty at swap time or the
+                // throw happened before the swap.
+                if (savedSectionUpdateStates != null) {
+                    destLRS.sectionUpdateRenderStates.addAll(savedSectionUpdateStates);
+                }
                 destLRS.cameraRenderState = savedSharedCameraState;
                 destLRS.cloudColor = savedSharedCloudColor;
                 if (dispatcher != null && savedDispatcherCamPos != null) {
