@@ -130,6 +130,13 @@ public class CrossingSmoke implements FabricClientGameTest {
             ));
             context.waitTicks(40);
 
+            // IS2 EM-G PRE-PORTAL CHECKPOINT (defect G evidence; port-note IS-iris-shaders-on
+            // §3.1/§3.2): the creative-browse BEFORE any portal entity exists — the
+            // discriminator for whether the inventory mangle needs portal machinery to have
+            // RUN or is static-init-only (the IrisCompatPaste reflective-register suspect).
+            // Lever-gated + fail-soft; inert in the default suite.
+            maybeCreativeBrowse(context, "em-g-pre");
+
             // ---- Portal geometry (identity transform: axisW=+X, axisH=+Y → normal +Z,
             // facing the player standing south of the plane) ----
             double planeZ = pz - PORTAL_OFFSET_Z + 0.5;
@@ -333,6 +340,19 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "leg 7 PASS — both far-dest same-dim portals rendered 150 ticks, client coherent");
+
+            // IS2 EM EVIDENCE LEGS (defects O + G; port-note IS-iris-shaders-on §3.1/§3.2):
+            // outline-target shots + the post-portal creative-browse checkpoint. All
+            // lever-gated + fail-soft (the maybeScreenshot never-throw discipline) — these
+            // legs CAPTURE state as evidence, they assert nothing.
+            emOutlineEvidenceLegs(context, px, py, pz, planeZ);
+            maybeCreativeBrowse(context, "em-g-post");
+            // EM-G-R3 the untested trigger: my 3 static-shaders harness configs never
+            // reproduced the creative-inventory mangle, so the trigger is the ONE thing they
+            // omit — a shader TOGGLE mid-session (iris pipeline destroy+recreate; the leading
+            // icon-atlas-poison suspect + the clip-cache stale-id event). Toggle off/on twice
+            // with frames rendered between, then re-browse creative. iris-only, fail-soft.
+            maybeShaderToggleThenBrowse(context, "em-g-toggle");
 
             // The vanilla branch preserves the owner's ROTATION+DELTA as RELATIVES
             // (Relative.union(ROTATION, DELTA)); the first fix cut dropped them (verify
@@ -583,6 +603,302 @@ public class CrossingSmoke implements FabricClientGameTest {
      */
     private static boolean screenshotsLeverOn() {
         return Boolean.getBoolean("seamlessportals.gametest.screenshots");
+    }
+
+    // =============================================================================================
+    // IS2 EM EVIDENCE LEGS (iris shaders-ON engagement; port-note IS-iris-shaders-on §3.1
+    // defects O + G, §3.2). All under the screenshots lever; all fail-soft — a failed aim or
+    // screen interaction LOGS and continues, never fails a functional leg. These legs implement
+    // NO fix: they capture the outline/creative-screen state as screenshot evidence rows.
+    // =============================================================================================
+
+    /**
+     * EM-O-A + EM-O-B (defect O evidence): targeted-block-outline shots.
+     * <ul>
+     *   <li><b>EM-O-A</b>: aim (player rotation via {@code TestInput.lookAt}) at an ORDINARY
+     *       obsidian platform block with NO portal on the pick ray — the target sits SOUTH
+     *       (+Z, away from the portal row at {@code planeZ}) and one block down, ~2.9 blocks
+     *       from the eye (creative pick range 5.0).</li>
+     *   <li><b>EM-O-B</b>: reposition ~3 blocks south of the cross-dim portal B and aim INTO
+     *       its window at the window-bottom point, so the transformed ray lands on the solid
+     *       nether bedrock roof (y&le;127) just past the plane — total ray ~3.3 blocks, inside
+     *       pick range even measured through the portal.</li>
+     * </ul>
+     */
+    private static void emOutlineEvidenceLegs(
+        ClientGameTestContext context, int px, int py, int pz, double planeZ
+    ) {
+        if (!screenshotsLeverOn()) {
+            return;
+        }
+        // ---- EM-O-A: ordinary platform block, no portal anywhere near the ray ----
+        // HIGH-CONTRAST TARGET: the platform is obsidian (near-black) — a 2px black outline
+        // is unreadable on it. Swap the aimed block for white_concrete so the outline (if
+        // present) is unmistakable; this is the EM-O-A gate's whole point (present => FIX-O
+        // scope correct; absent on an ordinary target => a second, global mechanism).
+        try {
+            // EYE-LEVEL target 3 blocks SOUTH (pz+3, away from the north portal row so no
+            // portal is ever on the pick ray) so the crosshair lands face-on, not grazing a
+            // foreshortened floor block. white_concrete for the black-outline contrast.
+            runCommands(context, List.of(
+                "setblock " + px + " " + (py + 1) + " " + (pz + 3) + " minecraft:white_concrete"
+            ));
+            context.getInput().lookAt(new BlockPos(px, py + 1, pz + 3));
+            context.waitTicks(5);
+            maybeScreenshot(context, "em-o-a-ordinary-target-outline");
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(LOG + "EM-O-A FAILED (non-fatal)", t);
+        }
+        // ---- EM-O-B: through the cross-dim window at the nether bedrock roof behind it ----
+        try {
+            final double standX = px + 4.5; // portal B's center column
+            final double standZ = planeZ + 3.0;
+            // HIGH-CONTRAST nether target: pave the roof patch the window ray lands on with
+            // white_concrete (netherrack is dark-red — same unreadable-black-outline problem).
+            // The forceloaded nether region (-16..16) covers the dest B area (0.5,129.5,0.5);
+            // the ray hits block-tops at y=128, so replace the y=127 layer.
+            runCommands(context, List.of(
+                inDim("minecraft:the_nether",
+                    "fill -6 127 -6 6 127 6 minecraft:white_concrete")
+            ));
+            runOnServer(context, server -> {
+                CommandSourceStack src = server.createCommandSourceStack().withSuppressedOutput();
+                server.getCommands().performPrefixedCommand(src,
+                    "tp @p " + standX + " " + py + " " + standZ + " 180 0");
+            });
+            // TitleCardCapture idiom: pin the client too so the server tp can't rubber-band.
+            context.runOnClient(mc -> {
+                mc.player.setPos(standX, py, standZ);
+                mc.player.xo = standX;
+                mc.player.yo = py;
+                mc.player.zo = standZ;
+                mc.player.setDeltaMovement(Vec3.ZERO);
+            });
+            context.waitTicks(5);
+            // Aim at the WINDOW-BOTTOM point (x=standX, y=py+0.15, z=planeZ): entry maps to
+            // nether y~128.1 with a steep downward slope — the ray hits the bedrock roof
+            // (block tops at y=128.0) ~0.3 blocks past the plane.
+            float pitchDeg = context.computeOnClient(mc -> {
+                Vec3 eye = mc.player.getEyePosition();
+                double dy = eye.y - (py + 0.15);
+                double dz = eye.z - planeZ; // positive: eye is south of the plane
+                return (float) Math.toDegrees(Math.atan2(dy, dz));
+            });
+            context.getInput().lookAt(180f, pitchDeg); // yaw 180 = north (-Z); pitch > 0 = down
+            context.waitTicks(5);
+            maybeScreenshot(context, "em-o-b-window-target-outline");
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(LOG + "EM-O-B FAILED (non-fatal)", t);
+        }
+    }
+
+    /**
+     * The EM-G creative-browse checkpoint (defect G evidence — vanilla tabs showed empty
+     * slots + blank tab icons while the IP tab stayed intact): open the creative inventory
+     * via {@code ClientGameTestContext.setScreen}, screenshot the default tab, click through
+     * three vanilla tabs + the IP tab ({@code TestInput.setCursorPos} + click at vanilla's
+     * own tab geometry; reflective {@code selectTab} fallback when a click misses — e.g. the
+     * IP tab living on a Fabric pagination page), screenshot each, close. Invoked TWICE:
+     * {@code "em-g-pre"} (before any portal is spawned) and {@code "em-g-post"} (after the
+     * leg-7 portal views). Fail-soft throughout.
+     */
+    private static void maybeCreativeBrowse(ClientGameTestContext context, String phase) {
+        if (!screenshotsLeverOn()) {
+            return;
+        }
+        try {
+            context.setScreen(() -> {
+                net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+                // The vanilla open-site recipe (26.2 InventoryScreen:43-45).
+                return new net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen(
+                    mc.player, mc.player.connection.enabledFeatures(),
+                    mc.options.operatorItemsTab().get());
+            });
+            context.waitTicks(5);
+            // "-tab-initial", NOT "-tab-default": CreativeModeInventoryScreen.selectedTab is a
+            // STATIC field and init() re-selects the previously-selected tab, so on the "em-g-post"
+            // re-open this shot captures whatever tab "em-g-pre" left selected (the IP tab via the
+            // reflective fallback), not the true default tab. Label it for what it actually is —
+            // the screen's initial state on open (IS2 fold V6-1). The explicit per-tab shots below
+            // still capture each tab deterministically.
+            maybeScreenshot(context, phase + "-tab-initial");
+            // Three vanilla tabs (the display-ordered head of CreativeModeTabs.tabs()) + IP.
+            for (int i = 0; i < 3; i++) {
+                emBrowseTab(context, phase, i);
+            }
+            emBrowseTab(context, phase, -1); // the IP tab (PeripheralModMain.TAB)
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                LOG + "EM-G '" + phase + "' browse FAILED (non-fatal)", t);
+        } finally {
+            try {
+                context.setScreen(() -> null);
+                context.waitTicks(2);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "EM-G '" + phase + "' screen close FAILED (non-fatal)", t);
+            }
+        }
+    }
+
+    /**
+     * EM-G-R3: reproduce the user's creative-inventory mangle by exercising the untested
+     * trigger — a shader TOGGLE (iris destroyPipeline + recreate) mid-session, the leading
+     * icon-atlas-poison suspect. Off→render→on→render, twice, then re-browse creative under
+     * {@code phase}. iris-only (reflection; no-op + skip when iris absent); fail-soft.
+     */
+    private static void maybeShaderToggleThenBrowse(ClientGameTestContext context, String phase) {
+        if (!screenshotsLeverOn()) {
+            return;
+        }
+        try {
+            if (!isIrisPackActive(context)) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "EM-G toggle skipped (no iris shaderpack active this run)");
+                return;
+            }
+            context.runOnClient(mc -> mc.player.setYRot(180f)); // face the portal row
+            for (int cycle = 0; cycle < 2; cycle++) {
+                setShadersEnabled(context, false);
+                context.waitTicks(40); // destroy + render frames shaders-OFF (our renderer live)
+                setShadersEnabled(context, true);
+                context.waitTicks(60); // recreate + settle, render frames shaders-ON
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "EM-G toggle cycle " + (cycle + 1) + " done (off→on)");
+            }
+            maybeCreativeBrowse(context, phase);
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(LOG + "EM-G toggle leg FAILED (non-fatal)", t);
+        }
+    }
+
+    private static boolean isIrisPackActive(ClientGameTestContext context) {
+        return context.computeOnClient(mc -> {
+            try {
+                Class<?> apiC = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
+                Object api = apiC.getMethod("getInstance").invoke(null);
+                return (Boolean) apiC.getMethod("isShaderPackInUse").invoke(api);
+            } catch (Throwable t) {
+                return false;
+            }
+        });
+    }
+
+    private static void setShadersEnabled(ClientGameTestContext context, boolean enabled) {
+        context.runOnClient(mc -> {
+            try {
+                Class<?> apiC = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
+                Object api = apiC.getMethod("getInstance").invoke(null);
+                Object cfg = apiC.getMethod("getConfig").invoke(api);
+                Class<?> cfgC = Class.forName("net.irisshaders.iris.api.v0.IrisApiConfig");
+                cfgC.getMethod("setShadersEnabledAndApply", boolean.class).invoke(cfg, enabled);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "iris setShadersEnabled(" + enabled + ") failed", t);
+            }
+        });
+    }
+
+    /** The browse target: index into {@code CreativeModeTabs.tabs()}, or -1 = the IP tab. */
+    private static net.minecraft.world.item.CreativeModeTab emTab(int tabIndex) {
+        return tabIndex < 0
+            ? qouteall.imm_ptl.peripheral.PeripheralModMain.TAB
+            : net.minecraft.world.item.CreativeModeTabs.tabs().get(tabIndex);
+    }
+
+    /**
+     * Select one creative tab via a real cursor click ({@code TestInput.setCursorPos} +
+     * {@code pressMouse}) at vanilla's own tab geometry (26.2
+     * {@code CreativeModeInventoryScreen.getTabX/getTabY/checkTabClicked}: tab cell 26x32 at
+     * {@code 27*column} / {@code row==TOP ? -32 : imageHeight}, relative to
+     * {@code leftPos/topPos}); selection happens on mouseReleased, verified against the
+     * screen's {@code selectedTab}, with a reflective {@code selectTab} fallback (26.2 ships
+     * unobfuscated — mojmap names at runtime). Fail-soft.
+     */
+    private static void emBrowseTab(ClientGameTestContext context, String phase, int tabIndex) {
+        try {
+            String name = context.computeOnClient(mc ->
+                emTab(tabIndex).getDisplayName().getString());
+            String shotName = phase + "-tab-" + emSanitize(name);
+            // Click point in RAW window pixels (TestInput.setCursorPos speaks raw window
+            // coords; GUI coords scale by screenWidth/guiScaledWidth).
+            double[] raw = context.computeOnClient(mc -> {
+                // 26.2: the current screen moved off Minecraft onto Gui (mc.gui.screen()).
+                net.minecraft.client.gui.screens.Screen scr = mc.gui.screen();
+                if (!(scr
+                    instanceof net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen)) {
+                    return null;
+                }
+                net.minecraft.world.item.CreativeModeTab tab = emTab(tabIndex);
+                Class<?> acs = net.minecraft.client.gui.screens.inventory.AbstractContainerScreen.class;
+                java.lang.reflect.Field fLeft = acs.getDeclaredField("leftPos");
+                java.lang.reflect.Field fTop = acs.getDeclaredField("topPos");
+                java.lang.reflect.Field fW = acs.getDeclaredField("imageWidth");
+                java.lang.reflect.Field fH = acs.getDeclaredField("imageHeight");
+                fLeft.setAccessible(true);
+                fTop.setAccessible(true);
+                fW.setAccessible(true);
+                fH.setAccessible(true);
+                int leftPos = fLeft.getInt(scr);
+                int topPos = fTop.getInt(scr);
+                int imageWidth = fW.getInt(scr);
+                int imageHeight = fH.getInt(scr);
+                int tabX = 27 * tab.column();
+                if (tab.isAlignedRight()) {
+                    tabX = imageWidth - 27 * (7 - tab.column()) + 1;
+                }
+                int tabY = tab.row() == net.minecraft.world.item.CreativeModeTab.Row.TOP
+                    ? -32 : imageHeight;
+                double guiX = leftPos + tabX + 13.0; // tab cell center (26 wide, 32 tall)
+                double guiY = topPos + tabY + 16.0;
+                var w = mc.getWindow();
+                return new double[]{
+                    guiX * w.getScreenWidth() / (double) w.getGuiScaledWidth(),
+                    guiY * w.getScreenHeight() / (double) w.getGuiScaledHeight()
+                };
+            });
+            if (raw != null) {
+                context.getInput().setCursorPos(raw[0], raw[1]);
+                context.waitTicks(1);
+                context.getInput().pressMouse(0); // GLFW_MOUSE_BUTTON_LEFT
+                context.waitTicks(2);
+            }
+            boolean selected = context.computeOnClient(mc -> {
+                Class<?> cls = net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen.class;
+                java.lang.reflect.Field f = cls.getDeclaredField("selectedTab");
+                f.setAccessible(true);
+                return f.get(null) == emTab(tabIndex);
+            });
+            if (!selected) {
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "EM-G tab click missed for '{}' — reflective selectTab fallback", name);
+                context.runOnClient(mc -> {
+                    if (!(mc.gui.screen()
+                        instanceof net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen screen)) {
+                        return;
+                    }
+                    java.lang.reflect.Method m =
+                        net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen.class
+                            .getDeclaredMethod("selectTab",
+                                net.minecraft.world.item.CreativeModeTab.class);
+                    m.setAccessible(true);
+                    m.invoke(screen, emTab(tabIndex));
+                });
+                context.waitTicks(2);
+            }
+            maybeScreenshot(context, shotName);
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                LOG + "EM-G tab " + tabIndex + " FAILED (non-fatal)", t);
+        }
+    }
+
+    /** Screenshot-name-safe form of a tab display name. */
+    private static String emSanitize(String s) {
+        String out = s.toLowerCase(java.util.Locale.ROOT)
+            .replaceAll("[^a-z0-9]+", "-")
+            .replaceAll("(^-+)|(-+$)", "");
+        return out.isEmpty() ? "tab" : out;
     }
 
     /** Spawn an item 2 blocks south of the portal plane, flying north through it. */

@@ -49,6 +49,7 @@
     "client.NetherPortalUninteractableMixin",
     "client.ShaderManagerCompilationCacheMixin",
     "client.GlCommandEncoderClipMixin",
+    "client.GlDeviceClipCacheMixin",
     "client.ViewAreaInvokerMixin",
     "client.LevelRendererCompileSectionsMixin",
     "client.LevelExtractorWindowHardeningMixin",

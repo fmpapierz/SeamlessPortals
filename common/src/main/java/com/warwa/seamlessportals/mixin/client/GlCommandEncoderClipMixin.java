@@ -1,6 +1,7 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import com.mojang.blaze3d.opengl.GlStateManager;
+import com.warwa.seamlessportals.render.ClipUniformLocationCache;
 import com.warwa.seamlessportals.render.FrontClipping;
 import com.warwa.seamlessportals.render.ShaderCodeTransformation;
 import org.lwjgl.opengl.GL20;
@@ -8,9 +9,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Upload the {@code seamlessportals_ClipPlane} vec4 to every shader
@@ -20,12 +18,17 @@ import java.util.Map;
  * Programs that don't have the uniform get location == -1 once and we
  * remember that as "not applicable". Targets package-private
  * {@code GlCommandEncoder} via string {@code targets=}.
+ *
+ * <p>IS2 UNCONDITIONAL HARDENING: the cache moved to
+ * {@link ClipUniformLocationCache} (a plain holder both mixins can reach)
+ * and is invalidated by {@link GlDeviceClipCacheMixin} whenever
+ * {@code GlDevice.clearPipelineCache} deletes the cached programs —
+ * without that, id reuse after F3+T / pack applies feeds stale locations
+ * to {@code glUniform4f} (GL_INVALID_OPERATION spam + wrong-uniform-write
+ * hazard). Rationale + seam evidence on the holder's javadoc.
  */
 @Mixin(targets = "com/mojang/blaze3d/opengl/GlCommandEncoder")
 public abstract class GlCommandEncoderClipMixin {
-
-    /** Cache: programId → uniform location (or -1 if absent). */
-    private static final Map<Integer, Integer> seamlessportals$locationCache = new HashMap<>();
 
     @Inject(
         method = "trySetup(Lcom/mojang/blaze3d/opengl/GlRenderPass;Ljava/util/Collection;)Z",
@@ -42,11 +45,11 @@ public abstract class GlCommandEncoderClipMixin {
     private static void seamlessportals$uploadForProgram(int programId) {
         if (programId <= 0) return;
 
-        Integer cached = seamlessportals$locationCache.get(programId);
+        Integer cached = ClipUniformLocationCache.get(programId);
         int loc;
         if (cached == null) {
             loc = GlStateManager._glGetUniformLocation(programId, ShaderCodeTransformation.UNIFORM_NAME);
-            seamlessportals$locationCache.put(programId, loc);
+            ClipUniformLocationCache.put(programId, loc);
         } else {
             loc = cached;
         }
