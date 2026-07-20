@@ -1576,6 +1576,10 @@ public class SecondaryWorldRenderCore {
                     new Matrix4f(destCullProjection).mul(destViewMatrix),
                     destFogData, destCameraState.smartCull
                 );
+                // §2.7 diagnose-first probe (lever-gated + 1Hz; no-op at default) — the
+                // positive half of the same-dim sodium-supply evidence the screenshot rows
+                // cannot carry alone. See the helper's javadoc.
+                logSameDimSupplyProbe(destDim);
             }
 
             // Dest diffuse lighting (mc.level == dest under the shell swap): the nested render()'s
@@ -2351,6 +2355,70 @@ public class SecondaryWorldRenderCore {
             return registerFrameTransientUbo(RenderSystem.getDevice().createBuffer(
                 () -> "seamlessportals_portal_proj", GpuBuffer.USAGE_UNIFORM, buf
             ));
+        }
+    }
+
+    // ===== §2.7 the same-dim sodium-supply probe (lever-gated, 1Hz; diagnose-first) ==============
+    // Port-note IS-iris-shaders-on §2.7: the shipped same-dim gametest windows hover MID-AIR at
+    // y=250 where sodium's ~96-block collection/draw envelope (min(fog cullDistance,
+    // renderDistance·16)) holds ZERO sections, so their sky-only pixels cannot discriminate a
+    // working Step-9' drive from a broken one (the IS1 "sodium row looks like the plain floor"
+    // observation was NON-DISCRIMINATING, not a defect). This probe is the positive half of the
+    // fixed evidence: read the visible-section count IMMEDIATELY after ip_driveDestTerrainSetup,
+    // while the D1-swapped per-(portal,layer) context is still installed on the shared main RSM —
+    // NONZERO with terrain inside the dest envelope = the drive's renderLists delivering into the
+    // nested render()'s renderGroup draws. Gated by the self-run rounds' screenshot lever
+    // (-Dseamlessportals.gametest.screenshots) so the default suite stays byte-identical, and
+    // throttled to 1Hz per the render-thread-logging discipline (I5 above). Reflection-only so no
+    // sodium type appears in this class and NO facade/seam file changes:
+    // LevelRendererExtension.sodium$getWorldRenderer() -> SodiumWorldRenderer
+    // .getVisibleChunkCount() (both public on sodium 0.9.1; the latter javap-proven in the §2.7
+    // verdict). Any reflection failure (sodium absent/renamed) disarms the probe for the session
+    // with one log line — never a throw, never a misleading number.
+    private static final boolean SUPPLY_PROBE_LEVER =
+        Boolean.getBoolean("seamlessportals.gametest.screenshots");
+    // VERIFY-LENS CORRECTION (§2.7): the throttle is keyed PER PASS IDENTITY
+    // (dim + layer + rendering-portal UUID), not globally — a global 1Hz gate is claimed
+    // by the FIRST same-dim pass after each boundary (deterministically portal A, whose
+    // correct count is 0), starving the discriminating portal-D line forever. Render
+    // thread only; bounded by live portal count (cleared on disarm).
+    private static final java.util.HashMap<String, Long> supplyProbeLastLogNanos =
+        new java.util.HashMap<>();
+    private static boolean supplyProbeDisarmed = false;
+
+    private static void logSameDimSupplyProbe(ResourceKey<Level> destDim) {
+        if (!SUPPLY_PROBE_LEVER || supplyProbeDisarmed) {
+            return;
+        }
+        qouteall.imm_ptl.core.portal.Portal renderingPortal =
+            PortalRendering.getRenderingPortal();
+        String passKey = destDim.identifier() + ":" + PortalRendering.getPortalLayer()
+            + ":" + (renderingPortal != null ? renderingPortal.getUUID() : "null");
+        long now = System.nanoTime();
+        Long last = supplyProbeLastLogNanos.get(passKey);
+        if (last != null && now - last < 1_000_000_000L) {
+            return;
+        }
+        supplyProbeLastLogNanos.put(passKey, now);
+        try {
+            LevelRenderer renderer = client.levelRenderer;
+            Object swr = renderer.getClass()
+                .getMethod("sodium$getWorldRenderer").invoke(renderer);
+            if (swr == null) {
+                supplyProbeDisarmed = true;
+                supplyProbeLastLogNanos.clear();
+                return;
+            }
+            Object count = swr.getClass().getMethod("getVisibleChunkCount").invoke(swr);
+            qouteall.q_misc_util.Helper.log(
+                "[same-dim sodium supply probe] pass=" + passKey
+                    + " visibleSectionsAfterDrive=" + count);
+        } catch (Throwable t) {
+            supplyProbeDisarmed = true;
+            supplyProbeLastLogNanos.clear();
+            qouteall.q_misc_util.Helper.log(
+                "[same-dim sodium supply probe] disarmed (sodium absent or reflection failed): "
+                    + t);
         }
     }
 

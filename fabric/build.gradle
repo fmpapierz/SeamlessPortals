@@ -210,6 +210,10 @@ loom {
             // waiting line — byte-inert for the 8-leg gate without the property) —
             //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViewsProbe=true
             if (project.findProperty('shaderpackViewsProbe') == 'true') { vmArg('-Dseamlessportals.shaderpackViewsProbe=true') }
+            // IS1 visual pre-screen screenshots (CrossingSmoke.maybeScreenshot; the self-run
+            // rounds capture portal-view frames for multimodal classification) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PgametestScreenshots=true
+            if (project.findProperty('gametestScreenshots') == 'true') { vmArg('-Dseamlessportals.gametest.screenshots=true') }
             // IS1 shaderpack-views renderer lever (mirror; the suite runs sodium/iris-ABSENT —
             // with the lever the compat renderer routes even shaders-OFF, so an armed suite run
             // exercises the full-pipeline driver under the 8 legs) —

@@ -927,3 +927,124 @@ recorded in the verdict should a pre-fix run ever be wanted.
 
 **Compile gate after §2.6**: `.\gradlew.bat :common:compileJava :fabric:compileJava
 --console=plain` — green.
+
+### §2.7 THE SAME-DIM SODIUM SUPPLY (Fable verdict, 2026-07-20 — NOT A BROKEN LINK:
+### a NON-DISCRIMINATING OBSERVATION; evidence fixed, chain untouched)
+
+**The observation (self-run screenshot rounds, deterministic):** SODIUM row (lever ON) =
+pixel-identical to the PLAIN row — same-dim windows sky-only after leg 7's 150-tick hold;
+cross-dim window carries real nether terrain+fog+entities. The pre-registered expectation
+(design §2.4-4) treated the same-dim row as DECISIVE for the Step-9'
+`ip_driveDestTerrainSetup` drive. That expectation is VOID for this arena.
+
+**MECHANISM (the verdict, statically walked end-to-end — every link engaged and sound):**
+
+- Bracket engaged: the sibling full-pipeline shell carries the D1 sodium context swap
+  (`MyGameRenderer.switchAndRenderTheWorldFullPipeline` — createNewContext +
+  switchContextWithCurrentWorldRenderer swap-in after the repoint; symmetric swap-back in
+  the finally; the PAIRING CONTRACT lists it in both SWAP-IN and RESTORE).
+- Swap payload sound: `MixinSodiumRenderSectionManager.ip_swapContext` reference-swaps the
+  renderLists/tree/frame/camera-cache family + content-swaps cullResults/ACTC;
+  consume-before-swap; GLOBAL_PASS_SERIAL absorb-then-increment; the SodiumInterface
+  five-swap + scheduleTerrainUpdate bracket marks needsGraphUpdate per swapped-in pass.
+- The drive runs: Step 9' (`SecondaryWorldRenderCore` sharedState-only, BEFORE the nested
+  8-arg render(), inside the bracket) calls the full 6-arg `SWR.setupTerrain` on the
+  call-time-resolved current renderer. Sodium 0.9.1's setupTerrain has NO once-per-frame
+  gate (bytecode: prepareFrame -> prepareRender -> prepareRenderTrees ->
+  finalizeRenderLists end-to-end on every call), and finalizeRenderLists always publishes
+  dest-camera renderLists (sync renderOutOfGraph frustum-flood fallback, or findBestTree
+  over the content-swapped persistent cullResults with a blocking-consume retry).
+- Consumption live: sodium's own LevelRendererMixin WrapOperation at prepareChunkRenders
+  arms the ChunkSectionsToRender with this SWR + destCameraState.pos; the renderGroup
+  calls execute inside render() = inside the D1 bracket, HEAD-cancelling into
+  SWR.drawChunkLayer -> RSM.getRenderLists() read LIVE. ip_armDestChunkRenders is
+  correctly excluded on this path (design §2.4-3).
+- Culling/clip cannot blank it: terrain collection tests the UNHOOKED Direct viewport
+  functions (C2-3b sync-only discipline); async trees are portal-agnostic supersets; the
+  C2-2 in-shader clip uploads keep-all {0,0,0,1} under the DEF-G whole-pass disable.
+
+**THE GEOMETRY VERDICT:** both same-dim dest cameras hover MID-AIR at y=250
+(`CrossingSmoke` destA = (px+100.5, 250, planeZ); portal C dest = (1400.5, 250, 1400.5))
+with client renderDistance 6. Sodium's collection/draw envelope = min(fog cullDistance,
+renderDistance*16 ~= 96 blocks) (RSM getSearchDistance bytecode); the ground sits >=180
+blocks below both cameras -> ZERO renderable sections in range -> the CORRECT, fully
+converged dest view is sky+fog — pixel-identical to the plain row's by-design no-extract
+floor. A working drive and a broken drive produce the SAME image there. Cross-dim "works"
+in reverse: destB = (0.5, 129.5, 0.5) sits 2 blocks above the solid bedrock roof (terrain
+in range), and its setupTerrain fires naturally at extract time (capture dropped
+cross-dim -> sodium's LevelExtractorMixin cullTerrain anchor) on the dest dim's own SWR.
+
+**THE FIX (evidence only — ZERO change to the sodium chain; no seam file touched):**
+
+1. `CrossingSmoke` leg-7 block, lever-gated (`-Dseamlessportals.gametest.screenshots`,
+   via `screenshotsLeverOn()` — default suite byte-identical): PORTAL D above portal A
+   (origin (px+0.5, py+4.5, planeZ), spans y py+3..py+6 inside the cleared box; no plane
+   overlap with A; clear of the item/pearl paths and of window B's screen region) with a
+   same-dim ZERO-VERTICAL-OFFSET dest (px+100.5, py+4.5, planeZ). VERIFY-LENS GEOMETRY
+   FIX (round-1 BLOCKER: D's window sits ABOVE the eye so all window rays point UP — the
+   original floor pad was never hit, and the (+100,-3,0) dest embedded the through-portal
+   camera inside the pad slab): the dest camera now sits at eye height (~py+1.62) in
+   cleared air, and the terrain in the rays' path is a south-facing obsidian WALL across
+   the transformed window frustum (x px+94..px+106, z pz-12..pz-11, y py+3..py+13 —
+   bottom/top rays land at ~py+4.6..~py+11.2 on z=pz-12), ray corridor air-cleared
+   (x px+94..106, z pz-10..pz+2, y py..py+13), inside the already-forceloaded dest area
+   and ~12 blocks into the ~96-block envelope. Second screenshot
+   `is1-leg7-samedim-ground-dest-converged` at the 150-tick hold.
+2. The positive-half probe (diagnose-first): `SecondaryWorldRenderCore
+   .logSameDimSupplyProbe` — immediately after the Step-9' drive, while the D1 context is
+   still installed, log `SodiumWorldRenderer.getVisibleChunkCount()` (reflection-only:
+   `sodium$getWorldRenderer` -> `getVisibleChunkCount`, both public on 0.9.1; disarms on
+   any failure). Same lever; the 1Hz throttle is keyed PER PASS IDENTITY
+   (dim:layer:portal-UUID — VERIFY-LENS CORRECTION: a global gate is deterministically
+   claimed by portal A whose correct count is 0, starving the discriminating portal-D
+   line forever). Render-thread-logging discipline I5 preserved.
+
+**EXPECTED VISUALS (the fixed rows):**
+
+- SODIUM row, portal D: real dest-camera terrain (the obsidian WALL filling the window's
+  upper region). Pass 1 may be the renderOutOfGraph frustum-flood (no occlusion) or
+  briefly blank while fresh dest chunks mesh; occlusion-tree lists within ~2-3 passes;
+  150-tick hold = converged. Probe: portal D's pass line shows
+  visibleSectionsAfterDrive > 0 (A/C legitimately log 0 — empty envelope).
+- PLAIN row, portal D: stays SKY-ONLY (same-dim runs no extract — the pre-registered
+  floor). THIS pair (sodium terrain vs plain sky in the same window) is the real decisive
+  discriminator the design's SD-ROW wanted.
+- The two y=250 windows legitimately remain sky-only on EVERY row — correct content, not
+  a defect. Same-dim windows still draw NO entities and NO clouds/weather (pre-registered
+  IS1 observables, unchanged).
+- Ledgered: scaled portals (scale>2) may show a projection mismatch in nested-arm terrain
+  (sodium's GameRendererMixin captures the MAIN projection; the nested arm cannot receive
+  destDrawProjection — identical at scale 1). Untested until a scale>2 same-dim row
+  exists.
+
+**RESIDUAL UNCERTAINTY:** (i) the drive's positive delivery is proven statically, not yet
+live — one sodium-row run with the fixed evidence settles it (pad in D's window and/or
+nonzero probe line); (ii) if the consistent-settings seed held terrain >= y~154 within 96
+blocks of either y=250 dest, the verdict flips back to a chain defect — the same probe
+discriminates (typical spawn gen makes this unlikely; no terrain fragment in any
+screenshot); (iii) the scale>2 nested-arm projection question (ledgered above); (iv) the
+FlawlessFrames n=1 cold-arm interplay is asserted from the C2-1c ledger, not re-walked
+(benign either way — it only forces the sync path harder).
+
+**REGRESSION WATCH (the §2.7 rows):**
+
+1. C2 same-dim water/glass OUTER-WORLD INTEGRITY: main-world visibility/translucency
+   uncorrupted after same-dim full-pipeline passes — guarded by the untouched symmetric
+   swap-back, consume-before-swap + GLOBAL_PASS_SERIAL, the SWR five-swap, and the UBM
+   latch reset (`ip_onDestTerrainDrawsFinished`); all four stayed byte-untouched in this
+   fix (verified: no seam file in the diff).
+2. The §2.6 rows stay green: leg 4 x2 lever-ON (no AIOOBE), leg 7 held 150 ticks, the
+   ow-holes block-break row, cross-dim freshness (legs 2/3/4), lever-OFF full suite,
+   far-walk item, watch-row-7 dest-preset-residue blanking.
+3. Cross-dim unaffected: the nether window keeps real terrain+fog+entities on both rows —
+   portal D does not sit in window B's screen region (D is stacked above A).
+4. Lever-OFF byte-identical: portal D + pad + second screenshot + probe are all gated on
+   the same screenshots lever; the probe additionally self-disarms sodium-absent.
+5. "Resizing Sodium terrain uniforms" spam absent (the C2-1d endFrame-leak signal — D's
+   draws ride the same shared-SWR UBM).
+6. With the ground-level row live: first-pass envelope may exceed the converged set
+   (frustum-flood, acceptable <=3 passes); on the PLAIN row watch the §2.3 row-8 far
+   same-dim recompile-storm class (sodium row immune via IgnoringViewArea).
+
+**Compile gate after §2.7**: `.\gradlew.bat :common:compileJava :fabric:compileJava
+--console=plain` — green.
