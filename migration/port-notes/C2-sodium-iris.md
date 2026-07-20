@@ -442,3 +442,17 @@ portal backside must NOT show; nose-against-aperture both sides; slow crouch-cro
 ways (no through-pop); water/translucent portal; same-dim mirror; a MOB in the dest dim
 (the C2-1e check); vanilla-clip regression leg (plain runClient, no sodium: stand at the
 plane, no new artifacts); NO JVM args needed — this round tests the shipped default.
+
+## §3.10 C2-2 LIVE ROUND (2026-07-19, user-run): ALL FOUR PASS — THE SODIUM TIER IS COMPLETE
+
+1-4 all good: the wall-embedded portal shows NO bleed-through; nose-against-aperture clean
+both sides; crouch-cross no through-pop; the dest-dim MOB renders (C2-1e live-proven);
+same-dim water/glass still clean; the vanilla regression leg clean. Sodium compat is
+DEFAULT-ON and live-proven end-to-end: views + clipping + entities + crossing + persistence.
+
+**USER-ROUTED POLISH (post-S20; IP-INHERITED — the user confirmed ORIGINAL IP behaves
+identically, the side-by-side court):** when a portal has solid terrain directly behind it
+(on the dest side): (a) you cannot teleport INTO the portal from that side, and (b) looking
+at the portal from the terrain side, the terrain visibly clips INTO the portal. Long-standing
+in this port AND in upstream IP — an inherited-improvement candidate (the
+melee-through-portal class), NOT a port defect. Joins the polish backlog.
