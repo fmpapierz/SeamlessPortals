@@ -1681,6 +1681,21 @@ public class SecondaryWorldRenderCore {
             // (lever-gated -Dseamlessportals.clipProbe; byte-inert at the default). The vanilla
             // trySetup handler feeds it per-draw; endPass() dumps in the finally.
             com.warwa.seamlessportals.render.ClipDiscriminatorProbe.beginPass(String.valueOf(destDim.identifier()));
+            // IS5 §5 shadow-emptiness probe — ARM a 1Hz capture for this full-pipeline pass, but
+            // only for a SUN-WORLD dest (hasSkyLight; nether/end have no sun-cast shadow map to
+            // probe). Lever-gated -Dseamlessportals.shadowProbe; byte-inert at the default. The
+            // read is in endPass() (in the finally, after render()), when the pipeline manager
+            // slot / current dim / shadow counters reflect the OW nested pass.
+            // §7 [5]/[6] gate inputs: destDrawProjection (Step-7 installed draw projection = the [5]
+            // compare target), mainCameraState.projectionMatrix (the second compare target), and the
+            // dest camera pos (the [6] reality-test builds this camera's own section AABB). Log-only;
+            // the probe deep-copies the matrices at arm time (no aliasing / no behavior change).
+            com.warwa.seamlessportals.render.ShadowEmptinessProbe.beginPass(
+                String.valueOf(destDim.identifier()),
+                destLevel.dimensionType().hasSkyLight(),
+                destDrawProjection,
+                mainCameraState.projectionMatrix,
+                destCameraPos);
             // §8-14 LRS-identity HARD assert immediately before render() (port-note §1-E):
             // extract writes the extractor's LRS; render() reads the renderer's field — a
             // divergence here silently drops entities/clouds/particles.
@@ -1797,6 +1812,13 @@ public class SecondaryWorldRenderCore {
             // §4.7 discriminator probe — close + dump this pass's capture window (byte-inert at
             // the default; the clip is now disarmed so the recorded draws reflect the armed pass).
             com.warwa.seamlessportals.render.ClipDiscriminatorProbe.endPass();
+            // IS5 §5 shadow-emptiness probe — CAPTURE + dump this pass's OW shadow state (steps
+            // [1]-[4]: pass-fired flags, the crux counts + sodium shadow HUD text, the pipeline/
+            // dim/sun cross-check, and the decisive shadow-depth readback). mc.level is still the
+            // dest here (the shell restores it after this returns), so getCurrentDimension / sun
+            // angle resolve to the dest — the [3] stale-global cross-check. Byte-inert at default;
+            // disarms itself on any reflection/GL failure.
+            com.warwa.seamlessportals.render.ShadowEmptinessProbe.endPass();
             // §8-3(c) — re-run SOURCE setupFog so any capture-at-setupFog observer serves SOURCE
             // fog for the frame's remainder (block-era Step-9 discipline). Compute-only for the
             // UBO on 26.2; the shared AtmosphericFogEnvironment takes one extra lerp step toward

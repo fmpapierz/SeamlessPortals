@@ -1969,3 +1969,122 @@ downstream in the same synchronous method.
 `.\gradlew.bat :common:compileJava :fabric:compileJava --console=plain` from the worktree root —
 **GREEN** (BUILD SUCCESSFUL; both `:common:compileJava` and `:fabric:compileJava` executed) after
 the four doc corrections.
+
+## §7 THE IS5 SHADOW-FIX SPEC
+
+**Status: RECONCILE (Opus, Fable depth, 2026-07-20). Verdict = REFUTE-AND-REDIRECT + DIAGNOSE-FIRST GATE.**
+Three recon reports were synthesized (A = iris shadow-drive mechanism; B = why-empty; C = diagnose-first/fix-spec). Every load-bearing claim below was re-verified by re-opening the iris/sodium jars (javap) and the worktree source; the citations are this session's, not the recons'. The headline: **the Option-1 premise the probe's own javadoc and recon-A carry — "our shell drives the dest CAMERA-frustum terrain but NOT iris's SHADOW-scope terrain, so mirror `ip_driveDestTerrainSetup` for the shadow frustum" — is REFUTED by bytecode.** Iris self-drives the shadow-scope terrain, on the correct renderer, at the correct camera. The leading real cause is recon-B's: a **stale projection feeding iris's shadow CULL FRUSTUM**. But recon-C's objection survives — static analysis cannot prove that stale projection is *degenerate* (vs merely mismatched) for an unscaled portal, so the fix is written AND GATED behind a probe extension that reads the actual frustum inputs. This honors the standing NO-GUESSING rule.
+
+### §7.0 The confirmed defect + the root cause
+
+**The defect (probe-proven, `[IS5-SHADOW-PROBE]`).** Under a shaderpack, looking at a SUN-world (OW) dest through a cross-dim portal (nether->OW), the OW shadow depth map is EMPTY: readback min=max=mean=1.0 (res 2048, all-cleared), sodium shadow HUD terrain "C: 0/0", `renderedShadowEntities=0`, `renderedShadowBlockEntities=0`, WHILE iris is correctly OW-targeted (pipeline=IrisRenderingPipeline, getCurrentDimension=overworld, getSunAngle=27.5deg). The pack's in-shadow depth-compare returns "lit" everywhere -> full-bright, shadowless. This is a CROSS-dim capture (the probe cannot answer same-dim — it aliases the main-frame OW targets; `ShadowEmptinessProbe` javadoc lines 27-33).
+
+**The verified architecture (both drives hit the SAME renderer — recon-A's mismatch is WRONG).**
+- Our nested pass calls the full 8-arg `destRenderer.render(...)` at `SecondaryWorldRenderCore.java:1740`, which runs `addMainPass`, so iris's shadow inject (`MixinLevelRenderer.iris$renderTerrainShadows2`) re-fires for the dest.
+- Iris's `ShadowRenderer.renderShadows(LevelRendererAccessor arg1, Camera arg2, CameraRenderState)` resolves its sodium world renderer from `arg1` = the renderer `render()` was invoked on (jar: `sodium$getWorldRenderer()` invokeinterface @ renderShadows off. 528), then self-drives `swr.setupTerrain(...)` (off. 630) inside `iris$beginShadowRenderListScope()`.
+- **CRUX RESOLUTION (recon-A vs recon-C):** recon-A claimed cross-dim `destRenderer` != `mc.levelRenderer`, so iris's shadow drives a DIFFERENT (possibly null-RSM) SWR than our terrain drive. **FALSE.** `MyGameRenderer.java:307` (`ip_setWorldRenderer(worldRenderer)`) repoints `client.levelRenderer` to the dest secondary renderer BEFORE the render invoke. So during the nested pass `Minecraft.getInstance().levelRenderer` == `destRenderer`; our `SodiumInterface.ip_driveDestTerrainSetup` (:375, reads `Minecraft.getInstance().levelRenderer`) and iris's `renderShadows` (reads arg1 == destRenderer) resolve the **same SWR / same per-dim RSM**. Recon-A's "null/empty secondary RSM" hypothesis is refuted — same renderer; the camera pass proves that RSM's tree is populated (dest terrain renders, just full-bright).
+- **Therefore `ip_driveDestTerrainSetup` is NOT missing for the shadow.** Note also it is only called for `sharedState` (same-dim) at Step 9' (`SecondaryWorldRenderCore.java:1616-1627`); cross-dim terrain is driven by the extract. Either way, iris re-drives its OWN `setupTerrain` for the shadow scope inside `render()`. A pre-render "mirror drive for the shadow frustum" would be re-culled/overwritten by iris — **dead code**. (Recon-A's own risk note reached the same correction; recon-C led with it.)
+
+**The root cause (recon-B, verified — the shadow CULL FRUSTUM rejects all dest geometry).**
+Both empty facts (terrain=0 AND entities=0) travel through DISJOINT machinery: terrain = `setupTerrain` -> sodium `renderOutOfGraph` over the shadow viewport; entities = `extractVisibleEntities` -> `EntityRenderDispatcher.shouldRender(entity, entityFrustum, ...)`. Their ONLY shared input is the frustum built by `ShadowRenderer.createShadowFrustum`:
+- Jar-verified: `terrainFrustumHolder = createShadowFrustum(...)` (renderShadows off. 414-417) feeds the shadow terrain viewport (off. 563-566 -> setupTerrain off. 630); `entityFrustumHolder = createShadowFrustum(...)` (off. 849-852) feeds `extractVisibleEntities` (off. 908) and `renderEntities` (off. 1054). They are DIFFERENT `FrustumHolder` instances but produced by the SAME method reading the SAME inputs. (Recon-B's "same instance" phrasing is imprecise; the causal conclusion — a shared corrupting input — is correct.)
+- The default-pack arm of `createShadowFrustum` (off. 488-571) builds `new AdvancedShadowCullingFrustum(gbufferProjection.mul(gbufferModelView), PROJECTION, lightVec, BoxCuller)` where the clipping planes come from `CapturedRenderingState.getGbufferProjection() x getGbufferModelView()` (off. 491/497/507).
+- Jar-verified seed: `MixinLevelRenderer.iris$setupPipeline` (render() HEAD) sets `setGbufferModelView(arg5)` (off. 20-22) = `render()`'s viewMatrix = **destViewMatrix (CORRECT)**, and `setGbufferProjection(new Matrix4f(GameRendererStorage.sodium$getProjectionMatrix()))` (off. 25-49) = a copy of **sodium's cached projection**.
+- Jar-verified sole writer: sodium's `GameRendererMixin.sodium$setProjection` is a `@WrapOperation` that `putfield projection` (off. 12) — it fires ONLY at the `ProjectionMatrixBuffer.getBuffer` INVOKE inside `GameRenderer.renderLevel`. Our dest projection install is `SecondaryWorldRenderCore.writeProjectionSlice` (:2475-2482), which calls `RenderSystem.getDevice().createBuffer(...)` DIRECTLY and never touches `ProjectionMatrixBuffer.getBuffer`. **So `sodium$getProjectionMatrix()` is never refreshed for the dest pass — iris's `gbufferProjection` for the nested shadow is stale (the main frame's projection).**
+
+**Frustum-input elimination (strengthens B, my own pass).** For the ENTITY cull the ONLY inputs to `AdvancedShadowCullingFrustum` are: (a) `gbufferProjection x gbufferModelView`; (b) the shadow `PROJECTION` ortho; (c) the `BoxCuller` distance; (d) `lightVec`. `gbufferModelView` = destViewMatrix (correct); the `BoxCuller`/`PROJECTION` distance in `createShadowFrustum` uses `Options.getEffectiveRenderDistance()*16` (off. 74/91/284/306 — the PLAYER render distance, NOT the portal fog, so non-degenerate); `lightVec` = the OW sun (probe sun=27.5 confirms). The one remaining degenerate-capable frustum input is **`gbufferProjection`** — exactly the stale value. This narrows the cause to the projection with the boxCuller/light/modelview ruled out.
+
+**THE UNREFUTED CAVEAT (recon-C, decisive for the gate).** `destProjection = new Matrix4f(mainCameraState.projectionMatrix)` (`SecondaryWorldRenderCore.java:1398`); sodium's cached main projection also derives from the same player projection. For an UNSCALED portal (`getExtraModelViewScaling()` == identity) the stale `gbufferProjection` ~= the correct dest projection, so `gbufferProjection x destViewMatrix` ~= the correct dest view-projection — a frustum that should PARTIALLY populate, not empty completely. A merely-mismatched frustum does not obviously produce min=max=mean=1.0 + entities=0. **Static analysis cannot prove the stale value is actually degenerate.** So recon-B is the strongest lead and identifies a genuinely real staleness bug, but the leap "stale -> causes-complete-emptiness" is a runtime claim that MUST be instrumented before we commit. (`destDrawProjection` DOES diverge from `destProjection` for SCALED portals — the staleness is unambiguously wrong there, and would be for any iris depth-reproject; but the probed portal is presumed unscaled.)
+
+**Bottom line.** Fix target = make iris's `gbufferProjection` dest-correct for the nested pass. Written below (§7.1), but GATED behind the probe extension (§7.4) that reads the actual `gbufferProjection` and runs an `isVisible` reality test. If the probe shows the value is degenerate -> ship. If it shows the value is already ~=dest yet the frustum still rejects -> the cause is elsewhere in the frustum build or the sodium shadow SectionTree, which may require iris-internal hooks (§7.5 deep-end flag; user decision).
+
+### §7.1 The fix (REFRAMED — NOT a shadow-scope terrain drive)
+
+**The task's original §7.1 framing ("the shadow-scope terrain drive: method sig + body") is RETIRED as refuted** (iris self-drives; a mirror drive is dead code — §7.0). The real primary fix is the projection repoint the task filed under §7.2. It is promoted here.
+
+**Fix: repoint sodium's cached projection to the dest draw projection for the duration of the nested `render()`.** Iris copies `sodium$getProjectionMatrix()` into `gbufferProjection` at `render()` HEAD (`iris$setupPipeline`); mutating sodium's cache to `destDrawProjection` immediately before `destRenderer.render(...)` makes that copy dest-correct, which flows into `createShadowFrustum` -> the `AdvancedShadowCullingFrustum` for BOTH the terrain and entity shadow culls.
+
+**Feasibility (verified in-reach — NOT an iris-internal hook).** `GameRendererStorage.sodium$getProjectionMatrix()` is PUBLIC on the sodium duck (already used by iris) and returns the live backing `Matrix4f` (field `private final Matrix4f projection`; the `@WrapOperation` `putfield`s it). The value is mutable — cast `Matrix4fc`->`Matrix4f` and `set(...)` it in place, save/restore around the render. No new mixin into sodium OR iris is required (a defensive `@Accessor` getter into sodium's `GameRendererMixin` is an equally valid alternative if the cast is judged fragile).
+
+**Placement.** `SecondaryWorldRenderCore.renderDestWorldFullPipeline`, immediately AFTER Step 7's `RenderSystem.setProjectionMatrix(writeProjectionSlice(destDrawProjection), ...)` (:1598-1601) and BEFORE the `destRenderer.render(...)` invoke (:1740), inside the existing outer try (whose `finally` begins :1750). Facade discipline: route through `SodiumInterface.invoker` (a new `ip_repointShadowProjection(Matrix4f)` / `ip_restoreShadowProjection(Object)` pair) so no sodium type appears in the core and the no-sodium build stays a no-op — mirrors the existing `ip_driveDestTerrainSetup` / `ip_onDestTerrainDrawsFinished` facade.
+
+Sketch (facade body, `OnSodiumPresent`):
+
+```java
+// C2/IS5 — repoint sodium's cached gbuffer projection to the dest draw projection so iris's
+// iris$setupPipeline copies a DEST-correct gbufferProjection into its shadow cull frustum.
+// Save/restore bracketed by the caller's finally. destDrawProjection is base*bob*spin of the
+// dest projection — the exact matrix the dest rasterizes with, and the matrix sodium WOULD have
+// cached had render() gone through ProjectionMatrixBuffer.getBuffer.
+@Override
+public Object ip_repointShadowProjection(Matrix4f destDrawProjection) {
+    Matrix4f cached = (Matrix4f) ((GameRendererStorage) Minecraft.getInstance().gameRenderer)
+        .sodium$getProjectionMatrix();
+    Matrix4f saved = new Matrix4f(cached);   // deep copy of the outgoing value
+    cached.set(destDrawProjection);          // in-place mutate (iris copies it at setupPipeline)
+    return saved;                            // opaque token for the restore
+}
+
+@Override
+public void ip_restoreShadowProjection(Object savedToken) {
+    if (savedToken == null) return;
+    Matrix4f cached = (Matrix4f) ((GameRendererStorage) Minecraft.getInstance().gameRenderer)
+        .sodium$getProjectionMatrix();
+    cached.set((Matrix4f) savedToken);
+}
+```
+
+**Shadow projection & frustum source (unchanged by the fix — for the record).** The shadow ortho `PROJECTION` (`ShadowMatrices.createOrthoMatrix`), the shadow MODELVIEW, the shadow frustum center (`getUnshiftedCameraPosition()` = `mainCamera().position()` = the dest camera, since `MyGameRenderer` `ip_setCamera(newCamera)` repoints `mainCamera`), and the `lightVec` (OW sun) are all already dest-correct and are NOT touched. Only `gbufferProjection` (the player-view planes half of `AdvancedShadowCullingFrustum`) is corrected.
+
+**Ordering.** `iris$setupPipeline` runs at `render()` HEAD (before the `addMainPass` shadow inject), so the cache must be repointed BEFORE `render()` — the placement above satisfies this. There is no dependency on Step 9's `ip_driveDestTerrainSetup` ordering (that drives the CAMERA-frustum terrain, a separate concern; iris's shadow `setupTerrain` runs later, inside `render()`).
+
+### §7.2 (folded into §7.1)
+
+The projection repoint IS the fix; see §7.1. No separate shadow-scope terrain drive exists to spec.
+
+### §7.3 The bracket / restore + the main-frame-shadow-safety proof
+
+**Bracket.** `saved = ip_repointShadowProjection(destDrawProjection)` right before `destRenderer.render(...)`; `ip_restoreShadowProjection(saved)` in the outermost `finally` (:1750+), alongside the existing `ip_onDestTerrainDrawsFinished()` / Globals-UBO / fog restores. Throw-safe (the finally always runs); nested passes self-bracket recursively (each layer saves+restores its own token — same discipline as the Step-7 projection locals and the UBM latch reset).
+
+**Safety proof (why the main frame's shadow is not clobbered).**
+1. **Same-dim / shared-SWR frame.** The dest `render()` runs DURING the main frame; the MAIN frame's iris shadow pass already ran (its `gbufferProjection` already consumed by the main `createShadowFrustum`) BEFORE the portal nested pass. The repoint mutates sodium's cached `Matrix4f` in place and the `finally` restores the exact prior value, so any later main-frame consumer of `sodium$getProjectionMatrix()` (e.g. sodium's own main-pass projection reads, or a subsequent frame's iris `setupPipeline`) sees the original. The window is strictly [repoint .. restore] within one nested pass. This is the same in-place-mutate-then-restore contract the mod already relies on for the `SWR.lastFogParameters` five-swap and the FogStorage duck.
+2. **Cross-dim frame.** Per-dim secondary renderer, but `sodium$getProjectionMatrix()` lives on the SINGLE `GameRenderer` (one instance, not per-dim), so the repoint still touches shared state — the restore is equally mandatory. Proven by the same window argument.
+3. **Leak class if restore is skipped.** Without the finally-restore, the dest projection would persist in sodium's cache and the NEXT main-frame `iris$setupPipeline` would seed `gbufferProjection` from the stale DEST value -> a whole-frame main shadow warp. The finally forecloses it. (Recon-C flagged exactly this; it is the decisive belt.)
+
+### §7.4 The probe-confirmation criterion + the self-run plan (THE GATE — diagnose-first)
+
+The current `ShadowEmptinessProbe` proves EMPTY but does NOT read WHICH frustum input is at fault. **Before shipping §7.1, extend the probe to read the shadow-cull inputs, so we confirm B (degenerate `gbufferProjection`) rather than guess it.** All reads stay reflection-only, lever-gated (`-Dseamlessportals.shadowProbe`), 1Hz, self-disarming — the existing binding discipline.
+
+Add to `endPass()` (post-render; these are persistent instance/static fields, not tail-nulled statics — verify each handle):
+- **[5] gbufferProjection value + identity.** Read `CapturedRenderingState.INSTANCE.getGbufferProjection()` (javap: `Matrix4fc getGbufferProjection()`), log its 16 floats + `identityHashCode`, and compare against `destDrawProjection` and `mainCameraState.projectionMatrix`. Also read `((GameRendererStorage) mc.gameRenderer).sodium$getProjectionMatrix()`. **Decisive:** a value that is NOT a sane dest perspective (degenerate near/far, wrong aspect, or plainly != destDrawProjection) confirms B.
+- **[6] FRUSTUM-REALITY test.** Reflect `ShadowRenderer.terrainFrustumHolder` -> `getFrustum()` (retains the last shadow frustum post-render) and call `Frustum.isVisible(AABB)` / `cubeInFrustum` against the AABB of a KNOWN-loaded dest section the CAMERA pass drew (e.g. the dest camera's own section). **Decisive:** `false` for a plainly-in-view section => the shadow frustum is degenerate (-> B, ship the repoint). Also log `terrainFrustumHolder.getDistanceInfo()` / `getCullingInfo()` (the pack's frustum-mode strings) to confirm the AdvancedShadowCullingFrustum arm (vs NonCulling/BoxCulling/CullEverything — a `CullEverythingFrustum` would be a separate pack-config cause).
+- **[7] SEARCH-DISTANCE.** Log `((GameRendererStorage) mc.gameRenderer).sodium$getFogParameters()` (alpha, cullDistance, renderDistanceEnd) so a collapsed sodium shadow search radius is ruled in/out for the terrain half (does NOT affect the entity half).
+
+**CONFIRMATION CRITERION (unchanged, decisive).** The fix is correct iff, at a nether->OW cross-dim portal under a shaderpack, the probe's [4] depth readback flips from ALL-CLEARED (min~=max~=1.0) to POPULATED (min<1.0), AND [2] `renderedShadowEntities`/`renderedShadowBlockEntities` go non-zero when entities/BEs stand in the OW shadow frustum.
+
+**Decision tree from the extended probe (run BEFORE committing §7.1):**
+- [5] gbufferProjection degenerate/non-dest AND [6] isVisible rejects an in-view section => **B CONFIRMED** -> ship §7.1, re-run, expect the [4] flip.
+- [5] gbufferProjection ~= sane dest yet [6] isVisible STILL rejects => the defect is elsewhere in the frustum build (back/edge planes, lightVec, or the `PROJECTION` ortho) OR in the sodium shadow SectionTree population => §7.1 will NOT move the probe; **re-open toward the deep end (§7.5).**
+- [6] isVisible PASSES (frustum fine) yet terrain "C: 0/0" => the fault is downstream of the frustum (sodium shadow render-list / SectionTree), NOT the projection => deep end.
+
+**Self-run plan.** Worktree `is5-shadow`, iris 1.11.2 + sodium 0.9.1 + a shadow pack, `-Dseamlessportals.shadowProbe=true`. Stand at a nether->OW portal (dest = OW sun-world). (1) Capture the baseline block (already have: EMPTY). (2) Land the [5]/[6]/[7] probe extension, re-capture, READ the decision tree. (3) If B confirmed, land §7.1, re-capture, confirm the [4] flip + non-zero counts + visible shadows in-world. (4) Regression: a same-dim OW->OW portal frame + a main-frame shadow check (no warp) to prove §7.3's restore. All screenshots via the existing gametest lever; suite stays byte-identical at the default.
+
+### §7.5 Risks + the deep-Opus verify plan
+
+**Risks / adversarial notes.**
+1. **The fix is CONDITIONAL.** If [5]/[6] show `gbufferProjection` is already ~=dest (recon-C's unscaled case), §7.1 is a near no-op and will NOT flip [4]. A green "no crash + no warp" build could be mistaken for a fix — ONLY the [4] depth flip + non-zero counts prove correctness. Do not ship §7.1 as "the fix" until the probe confirms B.
+2. **Deep-end reclassification (task NOTE).** If the probe refutes B, the surviving candidates — a degenerate `PROJECTION` ortho, a bad `lightVec`, or an unpopulated sodium shadow SectionTree / `ShadowRenderRegion` shadow-list — live INSIDE iris's shadow flow. Correcting those would require a mixin INTO iris's shadow render (e.g. wrapping `createShadowFrustum` or the shadow-list swap), a materially larger and riskier change than the projection repoint, and one the D1 context swap deliberately does not touch. **That is a user decision — surface it before committing.** Say so explicitly rather than forcing a clean secondary-drive that does not exist.
+3. **In-place mutate fragility.** `sodium$setProjection` `putfield`s a NEW `Matrix4f` reference each main capture; our `set(...)`+restore acts on the CURRENT object within one nested pass — sound within the frame, but if a future sodium revision returns a defensive copy from `sodium$getProjectionMatrix()` the in-place mutate would silently no-op. The `@Accessor`-getter alternative (§7.1) is more robust; choose it if the cast is judged fragile. Either way the value MUST be restored in the finally (§7.3).
+4. **[6] handle liveness.** `renderShadows` nulls some statics at its tail (`visibleBlockEntities` off. 1420). Verify each new reflective handle ([5] `getGbufferProjection`, [6] `terrainFrustumHolder`) is a persistent instance/static field NOT tail-nulled, or the probe misleads. `terrainFrustumHolder` is an instance field re-`putfield`ed each pass (not nulled) — safe; confirm at implementation.
+5. **Pack-arm dependency.** `createShadowFrustum` has NonCulling/BoxCulling/CullEverything arms besides the default Advanced arm. The [6] `getCullingInfo` dump identifies the tested pack's arm; a `CullEverythingFrustum` (pack config) would be an entirely separate cause. Confirm the Advanced arm before attributing to `gbufferProjection`.
+6. **Scaled-portal correctness (independent win).** Even if unscaled proves B false, the repoint is a genuine correctness fix for SCALED portals (`destDrawProjection` diverges from the stale main projection there) — worth keeping as a latent-bug fix regardless, but NOT as "the IS5 shadow fix" unless [4] flips.
+
+**Deep-Opus verify plan (6 verifiers + 3 judges + fold).**
+- **V1 (jar-symbol re-audit):** independently re-javap every iris/sodium symbol this spec relies on — `renderShadows` swr resolution (off. 528), `setupTerrain` (off. 630), `createShadowFrustum` gbuffer read (off. 488-571), `iris$setupPipeline` gbuffer seed (off. 20-49), `GameRendererMixin.sodium$setProjection` putfield, `GameRendererStorage.sodium$getProjectionMatrix` return type. Confirm no naming assumption survives.
+- **V2 (renderer-identity):** re-prove `MyGameRenderer.java:307` repoints `client.levelRenderer` to the dest for BOTH the same-dim and cross-dim paths through `renderDestWorldFullPipeline`, so both drives hit one SWR. Attack the claim that a cross-dim path could bypass the repoint.
+- **V3 (frame-ordering):** establish what `sodium$getProjectionMatrix()` actually holds at nested `iris$setupPipeline` time — does the main `renderLevel` capture fire before the portal nested passes? Determines whether the stale value is the main projection (~=dest, benign) or an older/degenerate one (the B-confirming case). Name the instrument if unresolved statically.
+- **V4 (shared-input completeness):** adversarially confirm the terrain AND entity shadow culls share ONLY the `createShadowFrustum` output and that its non-projection inputs (BoxCuller=player-RD, PROJECTION ortho, lightVec) are non-degenerate — i.e. `gbufferProjection` is the sole degenerate-capable input. Try to find a second shared corrupting input.
+- **V5 (bracket-safety):** prove the §7.3 save/restore leaves the main frame's `gbufferProjection` and every other `sodium$getProjectionMatrix()` consumer untouched after the pass, under nesting and under same-dim shared-SWR. Attack for a leak path.
+- **V6 (probe-validity):** verify the [5]/[6]/[7] extension reads live, non-tail-nulled handles and that the [4]-flip criterion is truly decisive (not confounded by pack arm or entity absence). Confirm the isVisible AABB choice is a section the camera pass provably drew.
+- **Judges (3):** J1 rules on B-vs-C (is the projection the cause, or must the probe decide? — grade the gate). J2 rules on the refutation of recon-A (shadow drive not missing; renderer identity). J3 rules on deep-end classification (does any live probe outcome force an iris-internal mixin, and is that correctly surfaced as a user decision?).
+- **Fold:** reconcile verifier catches + judge verdicts into a corrections list; re-verify each correction; only then implement the probe extension, run the gate, and (conditionally) land §7.1.
