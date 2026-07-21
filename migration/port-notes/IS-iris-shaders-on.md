@@ -1969,3 +1969,376 @@ downstream in the same synchronous method.
 `.\gradlew.bat :common:compileJava :fabric:compileJava --console=plain` from the worktree root —
 **GREEN** (BUILD SUCCESSFUL; both `:common:compileJava` and `:fabric:compileJava` executed) after
 the four doc corrections.
+
+
+---
+
+## §6 THE IS6 RECURSION SPEC
+
+*(Opus reconcile of the IS6 recon set — rDriver + rReentrancy; rStack and rFidelity returned null.
+Load-bearing claims re-verified against the worktree source at the IS0–IS4 state. The route choice
+— ROUTE (c) recursive-stamp in the compat shape — is the governing decision from wf_73d3c546-011 and
+is NOT relitigated here; this section specifies how to build it.)*
+
+### §6.0 Framing + the load-bearing post-finalize condition
+
+**Design scope.** The shipped default is faithful to IP's own compat renderer, which is **explicitly
+one-layer** (`ImmersivePortalsMod/.../IrisCompatibilityPortalRenderer.java:81` — "this renderer only
+supports one-layer portal"). Today `IrisCompatOn262Renderer.doRenderPortal:247`
+(`if (PortalRendering.isRendering()) return;`) reproduces that floor. IS6 lifts the floor to a
+**bounded N-deep recursion** for the shaders-ON path, matching the multi-layer fidelity the
+stencil/decomposed path already ships.
+
+**ROUTE (c) is a SYNTHESIS, not a verbatim port.** There is no single IP analog:
+
+- the per-layer **deferred-buffer STACK** is borrowed from IP's multi-layer stencil renderer
+  `IrisPortalRenderer` (`deferredFbs[getMaxPortalLayer()+1]`, indexed by `getPortalLayer()`);
+- the **stamp** mechanism (`IrisCompatPaste.stampPortalArea`, GEQUAL depth-tested stencil-free mesh
+  copy — D20) is from IP's one-layer `IrisCompatibilityPortalRenderer`;
+- the **explicit post-finalize driver** is forced by our D16 substrate (the direct 8-arg
+  `LevelRenderer.render` in `renderDestWorldFullPipeline` does NOT re-fire the post-main
+  `GameRenderer.renderLevel` hook that IP recursed through).
+
+Because it composes two IP mechanisms that never met in IP, IP fidelity does **not** transitively
+cover the composition; the buffer-stack ↔ stamp-target interaction is verified from our source in
+§6.2, not assumed.
+
+**THE DE-RISKING PRECEDENT (verified — this is the single most important reconcile finding).**
+The decomposed/stencil path in THIS codebase ALREADY drives N-deep recursion by exactly the shape
+IS6 needs, and it is live-proven. `SecondaryWorldRenderCore.java:1166-1169`, inside `renderDestWorld`
+(the decomposed dest render), from within the swapped dest bracket with the dest view matrix:
+
+```
+// 10.10 nested portal layers — the driver-invoked re-expression of IP's per-pass translucent hook
+IPCGlobal.renderer.onBeforeTranslucentRendering(destViewMatrix);
+```
+
+So "a static core method calls `IPCGlobal.renderer.<hook>(destViewMatrix)` from inside the swapped
+bracket, and for the stencil renderer that dispatches into a deeper `doRenderPortal`" is a PROVEN
+pattern here. IS6 is the SAME mechanism relocated for the full-pipeline path — the only change is
+WHERE it lands (see §6.1), because the full-pipeline `render()` is atomic and has no mid-pass
+Step-10.10 slot.
+
+**THE LOAD-BEARING POST-FINALIZE CONDITION (verified; a HARD design invariant).** The recursion
+driver MUST fire **after `destRenderer.render()` has fully RETURNED, with the world still swapped in.**
+`render()` at `SecondaryWorldRenderCore.java:1732-1741` runs iris's whole shadow+finalize pass
+atomically and returns before the method's `finally` at :1742. Because `render()` uses
+`GraphicsResourceAllocator.UNPOOLED` (:1733) it allocates, executes AND frees its own framegraph
+within the call. Driving the next layer only after that return means the framegraph shell is entered
+**strictly sequentially, never re-entrantly** — each layer's iris render builds AND consumes its OWN
+shadow map with zero cross-layer overlap, the identical clean-finalize property that makes today's
+top-level main→dest0 view correct. **REJECTED:** driving from the mid-pass `onBeforeTranslucentRendering`
+re-fire (the Step-10.10 slot at :1169) — for the full-pipeline path that would nest
+`render()`-inside-`render()` = the D21 iris-shadow-per-layer deep-end. A future edit that moves the
+driver into any mid-pass hook silently collapses ROUTE (c) into the rejected deep-end **with no
+compile error** — guard this with the probe-asserted invariant in §6.4.
+
+The IS5 shadow-quality fix is a FOLLOWING gate, not a prerequisite: each nested layer already gets its
+own shadow pass naturally and inherits the top-level's shadow fidelity.
+
+### §6.1 The recursion driver + layer-aware re-entry
+
+**Driver location — DECISION: Point A (inside `renderDestWorldFullPipeline`, in-try, after `render()`).**
+The two recon reports diverged on the exact call-site; reconciled from source:
+
+- **Point A (rDriver — CHOSEN):** `SecondaryWorldRenderCore.renderDestWorldFullPipeline`, immediately
+  after the `destRenderer.render(...)` call returns (after :1741) and BEFORE the method's `finally`
+  at :1742.
+- **Point B (rReentrancy — recorded alternative):** `MyGameRenderer.switchAndRenderTheWorldFullPipeline`,
+  after `renderDestWorldFullPipeline(...)` returns (after :659) and before the shell `finally` at :661.
+
+Both are post-finalize with the world still swapped (the shell un-swap lives in the :661 `finally`,
+which has not run at either point; MAIN still holds the finalized dest color at both — the intervening
+`finally` at :1742 touches UBO/camera/clip/fog/stencil but never draws to MAIN's color). **Point A is
+chosen because:** (1) `destViewMatrix` is the exact LOCAL that `render()` consumed (computed at
+:1393-1395) — Point B would have to recompute or field-stash it, an avoidable drift risk; (2) the
+shipped §2.6 comment (:1765 "each same-dim portal pass empties during its own nested render only") and
+the IS3 clip comment (:1466 "nested full-pipeline passes stack correctly") were authored anticipating
+**nested-within-the-try** recursion, which is Point A; (3) Point A is the faithful relocation of the
+decomposed Step-10.10 driver ("inside the core method, after the main content is drawn, before method
+cleanup"). Keep Point B as the sanctioned fallback location ONLY if the §6.4 probe shows the outer
+pass's still-active in-try state (emptied §2.6 list / armed clip) interfering with a nested pass — the
+stacking analysis in §6.3 says it will not.
+
+**The hook.** Add an empty base method to `PortalRenderer` (inert for every renderer that never reaches
+the full-pipeline path — stencil, decomposed):
+
+```java
+public void onDestWorldFinalizedFullPipeline(Matrix4f destViewMatrix) {}
+```
+
+Call it from Point A: `IPCGlobal.renderer.onDestWorldFinalizedFullPipeline(destViewMatrix);` — a NEW,
+distinct hook, NOT a reuse of `onBeforeTranslucentRendering` (whose compat override has a different job:
+the F1 `AFTER_TRANSLUCENT_TERRAIN` layer-0 capture that must early-return on the fabric re-fire —
+conflating the two would corrupt the layer-0 `passingModelView` capture).
+
+**The override on `IrisCompatOn262Renderer`:**
+
+```java
+@Override
+public void onDestWorldFinalizedFullPipeline(Matrix4f destViewMatrix) {
+    if (!isInsideOwnRenderPortals) return;                                          // D23: only within our own loop
+    if (PortalRendering.getPortalLayer() >= PortalRendering.getMaxPortalLayer()) return; // bound (derivation below)
+    if (!IrisCompatPaste.arePipelinesReady()) return;
+    RenderTarget mainRT = client.gameRenderer.mainRenderTarget();
+    if (mainRT == null || mainRT.getColorTextureView() == null || mainRT.getDepthTextureView() == null) return;
+    runNestedPortalPass(PortalRendering.getPortalLayer(), destViewMatrix);
+}
+```
+
+**Bound derivation (verified against `renderPortalContent:288`).** `renderPortalContent` renders
+content iff `getPortalLayer() <= getMaxPortalLayer()` (it early-returns when `> max`, :288). The driver
+at pushed layer L renders CHILD portals; each child pushes to L+1 and renders content iff
+`L+1 <= max`, i.e. `L < max`. So gate the driver at `getPortalLayer() >= getMaxPortalLayer()` (skip at
+`L == max`). With `IPGlobal.maxPortalLayer == 5` (default) the driver runs at L=1..4 and stops at L=5.
+`getMaxPortalLayer()` (`PortalRendering.java:78-83`) clamps to **1** when `RenderStates.isLaggy`, so the
+driver **never runs** under lag or when the user sets `maxPortalLayer<=1` → byte-identical to today's
+one-layer behavior. *(Alternative considered and rejected: letting the driver run at `L==max` to stamp
+the deepest children as see-through fallback(a) — costs a wasted occlusion query + stamp per deepest
+child for no content; the `>= max` gate is cleaner and the deepest nested portal simply shows the
+enclosing dest world behind it, which is the intended bounded floor.)*
+
+**Layer-aware re-entry.** REMOVE the one-layer guard at `doRenderPortal:247`
+(`if (PortalRendering.isRendering()) return;`). Do NOT replace it with an inner layer check — the bound
+is already enforced in three composing places: (i) the driver's `>= getMaxPortalLayer()` gate (won't
+call `renderPortals` at the deepest layer), (ii) `renderPortalContent:288`, (iii)
+`getPortalsToRender → shouldSkipRenderingPortal` which already applies `isInvalidRecursionRendering`
+(kills A→B→A reverse loops, `PortalRendering.java`), `cannotRenderInMe` (outer-portal filter,
+`PortalRenderer:234`), the `getRenderRange()` per-layer shrink (:271-281), and the render predicate.
+`doRenderPortal` is thus re-entered indirectly and ONLY after a full finalize — the SAME
+`doRenderPortal/renderPortals/renderPortalContent` chain is reused at every layer (maximal reuse of the
+proven layer-0 path); there is no bespoke recursive routine.
+
+**Discovery is already correct.** `renderPortals(destViewMatrix)` → `getPortalsToRender` reads
+`client.level` (== destL under the swap, `PortalRenderer:187`), so the nested pass finds exactly the
+portals visible in the dest world. No new discovery mechanism.
+
+### §6.2 The deferred-buffer stack — per-layer snapshot / stamp / blit / depth / clip choreography
+
+Convert the single field `IrisCompatOn262Renderer.deferredBuffer` (:111) into a STACK:
+
+```java
+private SecondaryFrameBuffer[] deferredBuffers = null;   // sized getMaxPortalLayer()+1, lazily (re)allocated at layer-0 entry
+```
+
+- Allocate/resize the array **only at layer-0 entry** (`onBeforeHandRendering`), honoring the `isLaggy`
+  clamp: `int n = PortalRendering.getMaxPortalLayer() + 1;` re-create if `deferredBuffers == null ||
+  deferredBuffers.length != n` (dispose the old members first). `teardown()` / `onSwitchedAway()`
+  dispose every non-null member. This IP-verbatim shape mirrors `IrisPortalRenderer:93-102`.
+- **Refactor** the existing `onBeforeHandRendering` snapshot/loop/blit body (:204-240) into a
+  layer-parameterized helper:
+
+```java
+private void runNestedPortalPass(int layer, Matrix4f modelView) {
+    SecondaryFrameBuffer deferred = deferredBuffers[layer];
+    deferred.prepare();                                        // auto-resize to mainRT BEFORE copyDepthFrom (OQ5 ordering)
+    if (deferred.fb == null || deferred.fb.getColorTextureView() == null) return;
+    RenderTarget mainRT = client.gameRenderer.mainRenderTarget();
+    RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
+        deferred.fb.getColorTexture(), new Vector4f(1,0,0,0), deferred.fb.getDepthTexture(), 0.0); // depth 0 = R5 reversed-Z FAR
+    deferred.fb.copyDepthFrom(mainRT);                         // snapshot THIS layer's dest depth
+    IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);     // snapshot THIS layer's dest color
+    try {
+        renderPortals(modelView);                             // children clobber MAIN + stamp into deferred[layer]
+    } finally {
+        IrisCompatPaste.drawStraightCopy(deferred.fb, mainRT); // composite back so the ENCLOSING stamp sees destL+children
+    }
+}
+```
+
+- `onBeforeHandRendering` (layer 0) becomes: allocate/resize the array, then
+  `isInsideOwnRenderPortals = true; try { runNestedPortalPass(0, passingModelView); } finally {
+  isInsideOwnRenderPortals = false; glDisable(STENCIL); }`.
+- The driver (§6.1) calls `runNestedPortalPass(getPortalLayer(), destViewMatrix)` at each deeper layer.
+- **Stamp target becomes layer-indexed.** `doRenderPortal:281-287` changes its target from
+  `deferredBuffer.fb` to `deferredBuffers[PortalRendering.getPortalLayer()].fb`. At stamp time the
+  portal has been popped, so `getPortalLayer() == L` == the layer whose `runNestedPortalPass(L)`
+  snapshotted `deferred[L]`.
+
+**Layer-indexing correctness (verified by trace — the buffer-stack composite claim).**
+
+- `runNestedPortalPass(L)` runs at `getPortalLayer() == L` and snapshots into `deferred[L]`.
+- The portals it renders via `renderPortals → doRenderPortal(p_k)` execute at layer L; `doRenderPortal`
+  stamps `p_k` into `deferredBuffers[getPortalLayer()==L]` after popping. Match: stamp target == the
+  buffer this driver snapshotted. ✓
+- `doRenderPortal(p_k)` pushes → L+1, `renderPortalContent` → `render(destL)` finalizes destL into MAIN
+  → the driver fires at L+1 → `runNestedPortalPass(L+1)` snapshots MAIN(destL)→`deferred[L+1]`, renders
+  p_k's children into `deferred[L+1]`, blits `deferred[L+1]`→MAIN so MAIN = destL + child views → then
+  `doRenderPortal(p_k)` pops → L → stamps MAIN(destL+children) into `deferred[L]`. ✓
+- Unwind: `runNestedPortalPass(L)`'s `finally` blits `deferred[L]`→MAIN, restoring MAIN for the
+  enclosing `doRenderPortal` (layer L-1) to stamp into `deferred[L-1]`. ✓
+
+This is the proven layer-0 pattern replicated verbatim per layer; the inner view appears inside the
+outer because each stamp is GEQUAL depth-tested (`IrisCompatPaste`) against that layer's own snapshot
+depth.
+
+**Alignment (why `modelView == destViewMatrix` and projection line up).** destL was rendered with
+`destViewMatrix` + `destDrawProjection` (:1399-1400, :1732-1741). At the driver `getCurrentProjectionMatrix()`
+(`PortalRenderer:155-162`) returns `getPortalDrawProjection(cameraRenderState.projectionMatrix,
+getExtraModelViewScaling())` at the SAME `getPortalLayer()` as `destDrawProjection`, so they are equal;
+the stamp mesh is built camera-relative to `CHelper.getCurrentCameraPos()` (== destL's `newCamera`).
+The nested aperture clip therefore lands exactly where the portal sits in the full-screen destL render
+in MAIN.
+
+**Clip choreography.** `FullPipelineClipState` composes via per-invocation stacking (§6.3); the
+nested pass's `renderDestWorldFullPipeline` re-derives its clip through `PortalRendering`'s pushed-layer
+plane composition (`getActiveClippingPlane`) — the outer plane is inherited, not lost.
+
+**Inherited caveats (ledger, not introduced by IS6 — they recur per layer):**
+- Multi-sibling occlusion (`doRenderPortal → testShouldRenderPortal`, ledgered :336-343): the 2nd+
+  sibling at a layer is occlusion-tested against MAIN depth already clobbered by sibling-1's nested
+  render (nothing restores MAIN depth between siblings). The STAMP stays correct (tested vs the
+  `deferred[L]` snapshot depth); only show/hide of siblings 2+ may be wrong. Now applies at every layer.
+- Ordering delta (benign): the full-pipeline `render()` draws the enclosing dest's clouds/weather
+  INTERNALLY before returning, so nested views stamp AFTER the enclosing clouds/weather (immaterial for
+  a depth-tested stamp; confirm no cloud-over-portal artifact under shaders).
+
+### §6.3 N-deep reentrancy hazards — what stacks by construction vs what needs the stack
+
+**Stacks cleanly BY CONSTRUCTION — no per-layer stacking to add:**
+
+| Concern | Why it composes | Source anchor |
+|---|---|---|
+| §2.6 `sectionUpdateRenderStates` swap-out | per-invocation local `savedSectionUpdateStates` + `sharedState && !isEmpty()` guard; the outer same-dim pass empties the MAIN list, inner same-dim passes see empty → no swap → no-op finally; restored once in the outermost finally. Cross-dim passes touch a DIFFERENT per-dim LRS. | `:1464` local, `:1724-1727` swap, `:1769-1771` restore |
+| sodium D1 context | keyed by `Key(portalUUID, getPortalLayer())` — layer IS in the key, so depth-2+ get DISTINCT contexts; `GLOBAL_PASS_SERIAL` absorb+increment gives distinct frame counters; swap-in/out nest LIFO with the shell. LRU cap `max(16, maxPortalLayer*16)`. | `SodiumContextRegistry` |
+| `FullPipelineClipState` | singleton store BUT saved to per-invocation local `savedFullPipelineClip` (:1468) + restored in finally (:1795); immutable `State` record; `PortalRendering.getActiveClippingPlane` composes the plane through all pushed layers. | `:1468`, `:1795` |
+| RenderBuffers pool / VisibleSectionDiscovery lists | `Stack`/LIFO pools; grow to max simultaneous depth N and unwind; `endFramePooled` walks all at the frame tail. Already exercised N-deep by the decomposed path. | `MyGameRenderer` acquire/return, `VisibleSectionDiscovery.takeList/returnList` |
+| same-dim scratch cameraRenderState / cloudColor / dispatcher pos | per-invocation locals `savedSharedCameraState` (:1422), `savedSharedCloudColor` (:1450), `savedDispatcherCamPos` (:1416); LIFO restore in finally. | `:1416-1454`, `:1772-1776` |
+
+**NEEDS the new per-layer stack (the ONE structural build):** the deferred buffer — the single
+`deferredBuffer` field → `deferredBuffers[]` array indexed by `getPortalLayer()` (§6.2). Without it,
+layer N's snapshot clobbers layer N-1's.
+
+**RUNTIME-ONLY UNKNOWNS — cannot be settled statically; gate on §6.4 before trusting depth:**
+
+1. **[SHARPEST — plausible HARD BLOCKER] same-dim `render()` re-using the MAIN `FeatureRenderDispatcher`
+   `PreparedFrame` at depth.** For a same-dim dest (`sharedState == true`, i.e. `destLRS ==
+   mc.gameRenderer.gameRenderState().levelRenderState`, :1376) the dest renderer IS `mc.levelRenderer`
+   and `render()` runs `submitFeatures` on the MAIN FRD — the FRD isolation assert at :1382 is
+   **cross-dim only** (`!sharedState`), so same-dim sharing is deliberately un-isolated (the decomposed
+   path built `renderPortalEntitiesSameDim` precisely to avoid re-running this shared dispatcher). At
+   depth ≥2 (a mirror-in-mirror, or A→A→A, or a loop-home A→B→A→B) a nested `render()` re-enters the
+   same FRD; if any layer's `PreparedFrame` is not fully closed when the next nested `render()` begins,
+   it throws **"PreparedFrame already in use"** from inside the shell bracket = whole-frame abort. This
+   is THE framegraph-reentrancy discriminator.
+2. **[MEDIUM] cross-dim revisit clouds/weather double-drive.** `renderDestWorldFullPipeline` draws the
+   dest's clouds INTERNALLY via `render()` and does NOT route through the decomposed `renderPortalClouds`,
+   so it loses the `cloudsDrawnThisFrame` once-per-dim cap. A recursion that revisits a dim (A→B→A→B, or
+   two nested paths reaching the same dim) drives that dim's secondary `CloudRenderer` utb ring >1
+   rotation/frame = the S18.3 "Cannot wait on a fence for the current submit" deterministic crash class.
+   Same-dim is safe (`cloudColor = 0`, :1451). Cross-dim revisit is not. Arguably already latent at IS4
+   for two sibling cross-dim portals to the same dim; recursion amplifies it.
+3. **[LOW/latent] §2.6 no-mid-frame-refill assumption.** The whole §2.6 stack rests on the MAIN LRS
+   `sectionUpdateRenderStates` not being refilled between the outer clear and its restore. Structurally
+   safe: it refills only at the next extract head (`LevelRenderState.reset`) and Step-5 extract is
+   cross-dim only (:1512 `!sharedState`). The residual runtime question: does the outer `render()`'s OWN
+   `compileSections` refill the emptied MAIN list mid-pass? — probe item.
+4. **[LOW] memory — unbounded-per-max-depth allocation.** `secondaryRenderBuffers` pool grows to max
+   depth with no cap (`MAX_SECONDARY_BUFFER_NUM` commented out, `MyGameRenderer`); depth-5 retains 5
+   `RenderBuffers` + 5 deferred FBOs + 5 sodium contexts. Not a crash. Verify `endFrame` covers all
+   acquired buffers and `usingRenderBuffersObjectNum` returns to 0 each frame (imbalance → the
+   `gpu-buffer-leak-endframe` VRAM class).
+5. **[LOW] `isDestExtracting` is a boolean not a counter** (:1533) — safe only because extracts never
+   nest (recursion is post-render, extracts run inside each pass's own try/finally before `render()`).
+   Assert non-nesting in the probe; a future extract-inside-nested-render would corrupt the
+   `MixinParticleEngine` guard.
+
+### §6.4 THE INSTRUMENT-FIRST SPIKE (build + run FIRST — gates all N-deep work)
+
+**Mandate (verdict order-critical): probe a MIRROR + a SAME-DIM portal-in-portal BEFORE trusting
+cross-dim depth.** The same-dim path is the maximal-risk locus at the shallowest depth (it exercises
+the shared-FRD `PreparedFrame` reuse AND the §2.6 empty-list path AND the scratch cameraRenderState
+swap simultaneously). If the same-dim probe shows `PreparedFrame` throwing, DO NOT proceed to N-deep —
+ship fallback (a) (§6.5).
+
+**Lever.** `-Dseamlessportals.reentrancyProbe` (byte-inert at default). Independently, cap depth to 2
+for the spike (a temporary driver cap or `IPGlobal.maxPortalLayer = 2`).
+
+**Scenes, IN ORDER (do not skip ahead):**
+- **(A) MIRROR** — a single `Mirror` (self-recursive SAME-DIM, `sharedState == true`): forces the
+  shared-FRD `render()`-on-main-renderer path + the §2.6 swap + scratch camera-state at layer 1.
+- **(B) SAME-DIM portal-in-portal** (A→A→A) — the framegraph-reentrancy discriminator: exercises the
+  §2.6 empty-list + main-FRD `PreparedFrame` reuse at depth 2-3.
+- **(C) cross-dim** (A→B→A loop-back and A→B→C) — ONLY after A + B pass.
+
+**Per-pass 1Hz log** (key by `dim:layer:portalUUID`, reusing the `logSameDimSupplyProbe` cadence,
+`SecondaryWorldRenderCore` ~:2497):
+1. `System.identityHashCode(destLRS.sectionUpdateRenderStates)` + `.size()` at swap-out AND restore
+   — prove one-owner + non-refill (identity differing between an inner swap and the outer restore ⇒
+   double-swap corruption).
+2. the MAIN FRD `PreparedFrame` state before/after each nested `render()` — the "already in use"
+   discriminator (the single most likely hard blocker).
+3. sodium context identity + `getVisibleChunkCount` per layer (reflection as in `logSameDimSupplyProbe`)
+   — cross-contamination between layers ⇒ D1 keying failure.
+4. a cloud-utb-rotation counter per dest dim per frame — `>1` ⇒ the S18.3 fence-crash precondition.
+5. assert `isDestExtracting` never true at a nested-`render()` boundary (extract non-nesting).
+
+**Discriminators:** states-list identity differs inner-swap vs outer-restore ⇒ §2.6 double-swap;
+`PreparedFrame` "in use" at a nested `render()` entry ⇒ same-dim FRD blocker (→ fallback (a));
+`visibleChunkCount` cross-contaminated between layers ⇒ sodium keying failure; cloud-utb `>1`/frame
+⇒ pre-fence-crash on cross-dim revisit.
+
+### §6.5 Staging, levers, flip decision + fidelity / shadow / cost ledger
+
+**Staging.**
+1. Build the deferred `[]` stack + the `onDestWorldFinalizedFullPipeline` hook + the driver override +
+   the base no-op + remove `doRenderPortal:247`. Do NOT flip the default yet.
+2. Build + run the §6.4 spike at depth-2 (mirror → same-dim → cross-dim). Gate.
+3. On green: raise the cap to `IPGlobal.maxPortalLayer` default (5); re-run the self-run discriminators
+   (§6.6) at full depth.
+4. Recursion behind a lever until live rounds pass: keep a `-Dseamlessportals.irisNestedPortals`
+   (default the FLOOR = one-layer fallback (a)) until §6.6 clears, then flip default-on. The `isLaggy`
+   auto-clamp to 1 is retained regardless — it is the always-on safety floor.
+
+**Fidelity / shadow ledger.** Each nested layer runs its own atomic `render()` and thus its own iris
+shadow pass; nested layers inherit the top-level's shadow fidelity. IS5 (shadow quality) is a FOLLOWING
+gate, not a prerequisite. The composite is depth-tested per layer, so ordering deltas (clouds drawn
+before the stamp) are immaterial.
+
+**Cost ledger.** At max depth N the frame retains N deferred FBOs + N `RenderBuffers` + N sodium
+contexts (§6.3 hazard 4) and pays N sequential full-pipeline dest renders down the deepest chain — the
+same cost profile the stencil path already pays for nested portals, plus the per-layer straight-copy
+snapshot/blit. `getRenderRange()` shrinks by layer (:271-281) and `isLaggy` clamps to 1, bounding the
+worst case.
+
+**Fallback (a) — the honest one-layer floor (keep armed).** Nested portal = seamless see-through: the
+deepest (or, if the probe fails, the ONLY) layer shows the enclosing dest world behind the aperture.
+Reachable at any time via `maxPortalLayer <= 1` / the recursion lever off / `isLaggy`. If the §6.4
+same-dim probe shows `PreparedFrame` throwing, this IS the shipped behavior — do not force N-deep.
+
+### §6.6 The deep-Opus verify plan (6 verifiers + 3 judges + fold) + self-run discriminators
+
+**6 verifiers (parallel, Fable depth — line-by-line, adversarial, no naming assumptions, concrete
+traces, name the probe for any runtime claim):**
+1. **Driver/anchor verifier** — the Point-A insertion is post-finalize + context-swapped; the new hook
+   is inert for stencil/decomposed; the bound `>= getMaxPortalLayer()` matches `renderPortalContent:288`;
+   `isLaggy`/`maxPortalLayer<=1` reduces to byte-identical one-layer.
+2. **Buffer-stack verifier** — the layer-indexing trace (snapshot[L] ↔ stamp-target[L] ↔ blit[L]→MAIN);
+   array sizing/resize/teardown; `copyDepthFrom` ordering (prepare→resize→copyDepthFrom); depth-0 clear.
+3. **§2.6 / same-dim state verifier** — per-invocation locals compose N-deep; the empty-list guard; the
+   no-mid-frame-refill assumption named for the probe; scratch camera/cloud/dispatcher restores.
+4. **Reentrancy-hazard verifier** — the shared-FRD `PreparedFrame` blocker; the cross-dim clouds
+   double-drive; sodium D1 layer-keying; pool depth-safety; `isDestExtracting` non-nesting.
+5. **Guard-removal + recursion-filter verifier** — removing `doRenderPortal:247` is safe because the
+   bound is enforced by the driver gate + `renderPortalContent:288` + `getPortalsToRender`
+   (`isInvalidRecursionRendering`, `cannotRenderInMe`, range shrink, predicate).
+6. **Fidelity-synthesis verifier** — the IP `IrisPortalRenderer` stack shape + IP compat-renderer stamp
+   compose (stack-index-by-layer vs stamp-target-by-layer); the D16 hook substitutes IP's renderLevel
+   re-fire without changing the deferred/stamp/composite order.
+
+**3 judges:** (i) route/architecture judge — post-finalize invariant held, no mid-pass driver, fallback
+armed; (ii) reentrancy judge — every static "composes" claim has a source anchor and every runtime claim
+has a named probe; (iii) fidelity judge — the synthesis is a defensible IP composition, deviations
+ledgered. **Fold:** reconcile, apply only bound corrections, re-run the compile gate
+(`:common:compileJava :fabric:compileJava`).
+
+**Self-run discriminators (live, after the spike gates):**
+- **Mirror** — self-recursive same-dim; the mirror-in-mirror tunnel should deepen to `maxPortalLayer`
+  then floor to see-through; no `PreparedFrame` throw.
+- **Same-dim nested** — portal→portal within one dim; inner window shows the correct twice-transformed
+  view, not the static snapshot scene (the multi-sibling caveat is the known exception).
+- **Cross-dim nested** — A→B→C visible three layers deep; A→B→A loop-back terminates (not infinite) via
+  `isInvalidRecursionRendering`; no cloud fence-crash on revisit.
+- **Walk-through** — cross each nested layer physically; terrain/entities/clip correct one layer down
+  (the IS3 clip defect must NOT resurface at a nested layer); no VRAM growth across repeated crossings
+  (`endFrame` / `usingRenderBuffersObjectNum` balance).
