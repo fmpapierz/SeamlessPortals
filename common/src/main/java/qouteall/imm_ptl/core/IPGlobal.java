@@ -49,20 +49,47 @@ public class IPGlobal {
 
     // ===== IS1 — the iris shaders-ON compat renderer activation (design §0.4-11) ================
     // Lives QOUTEALL-SIDE (the IPGlobal family), deliberately NOT in ExperimentalCompatGate
-    // (which S20 deletes per decision C2-5(b)) — the S20 sweep cannot strand it. Default FALSE:
-    // every committed default stays byte-identical (shaders-ON = D8 dummy+notice; shaders-OFF =
-    // the stencil family). OR'd with the JVM lever below; consumed by
-    // PortalRenderer.switchToCorrectRenderer (the D8-EVO routing, lever-only until the IS3/IS4
-    // default-flip decision Q-U1).
-    public static boolean experimentalShaderpackPortalViews = false;
+    // (which S20 deletes per decision C2-5(b)) — the S20 sweep cannot strand it.
+    // IS4 Q-U1 DEFAULT-FLIP (user-decided 2026-07-20, after IS3 live-proved clipping): DEFAULT
+    // TRUE. A shaderpack user now gets real portal views by default. The flip is SHADERS-GATED at
+    // the routing site (isShaderpackPortalViewsActive below): the flag path activates ONLY when a
+    // shaderpack is actually running, so shaders-OFF / no-pack / plain users fall through to the
+    // proven stencil renderer UNCHANGED — the flip's blast radius is exactly "shaderpack-ON users",
+    // nothing wider (the recon §4.5 over-reach the naive flip would have caused is foreclosed).
+    // renderMode=none remains the master off-switch. experimentalShaderpackPortalViews=false is a
+    // CODE-LEVEL opt-out ONLY — this field is NOT bound to IPConfig / IPConfigGUI (grep-confirmed:
+    // it lives solely in IPGlobal), so it is neither serialized nor exposed in the config screen; a
+    // real user cannot toggle it at runtime (their only fall-back off this renderer is
+    // renderMode=none, which disables ALL portal rendering). Consumed by
+    // PortalRenderer.switchToCorrectRenderer (the D8-EVO routing).
+    public static boolean experimentalShaderpackPortalViews = true;
 
-    /** The IS1 JVM lever (read once at class-init; wired via gradle -PshaderpackViews=true). */
+    /** The IS1 JVM lever (read once at class-init; wired via gradle -PshaderpackViews=true).
+     *  Forces the compat renderer for BOTH shader states — the dev proof rows (IS1/IS2/IS3 sans
+     *  a pack). Independent of the shaders gate below. */
     public static final boolean SHADERPACK_VIEWS_JVM_LEVER =
         Boolean.getBoolean("seamlessportals.shaderpackViews");
 
-    /** True when the iris shaders-ON compat renderer is armed (config flag OR JVM lever). */
+    /** True when the iris shaders-ON compat renderer is armed at all (config flag OR JVM lever).
+     *  Retained for docs / the "is the feature enabled" question; has NO live caller after the IS4
+     *  Q-U1 flip (renderer SELECTION moved to the shaders-gated method below).
+     *  CAUTION: never wire renderer selection to this method — it OMITS the shadersActive gate, so
+     *  at the default-TRUE flag it returns true for shaders-OFF / no-pack / plain users too and
+     *  would reintroduce the recon §4.5 over-reach (routing everyone off the stencil renderer).
+     *  Routing MUST use {@link #isShaderpackPortalViewsActive(boolean)}. */
     public static boolean isShaderpackPortalViewsArmed() {
         return experimentalShaderpackPortalViews || SHADERPACK_VIEWS_JVM_LEVER;
+    }
+
+    /**
+     * IS4 Q-U1: whether the shaders-ON compat renderer should be SELECTED this frame. The JVM
+     * lever forces it regardless of shader state (dev proof rows); the config flag activates it
+     * only when a shaderpack is actually active ({@code shadersActive}), so the default-ON flag
+     * NEVER pulls shaders-OFF / no-pack / plain users off the stencil renderer. renderMode=none is
+     * gated separately at the call site.
+     */
+    public static boolean isShaderpackPortalViewsActive(boolean shadersActive) {
+        return SHADERPACK_VIEWS_JVM_LEVER || (experimentalShaderpackPortalViews && shadersActive);
     }
     
     public static boolean doCheckGlError = true;

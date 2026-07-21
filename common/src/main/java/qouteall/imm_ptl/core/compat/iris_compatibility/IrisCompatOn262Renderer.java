@@ -47,12 +47,18 @@ import static org.lwjgl.opengl.GL11.GL_STENCIL_TEST;
  * only its presentation contract ("the final image lands in the main target",
  * P-B2 live-confirmed, port-note §1.6).
  *
- * <p><b>Selection (IS1 = LEVER-ONLY, zero committed-default change)</b>:
- * {@code PortalRenderer.switchToCorrectRenderer} routes here only when
- * {@code IPGlobal.isShaderpackPortalViewsArmed()} (qouteall-side flag OR the
- * {@code -Dseamlessportals.shaderpackViews} JVM lever — design §0.4-11, S20-safe). Unarmed:
- * byte-identical D8 (shaders-ON → dummy+notice) / stencil-family selection. At IS1 the lever
- * also routes shaders-OFF plain/sodium installs here (the proof rows, deliverable 6).
+ * <p><b>Selection (IS4 Q-U1 = DEFAULT-ON, shaders-gated — supersedes the IS1 lever-only rule)</b>:
+ * {@code PortalRenderer.switchToCorrectRenderer} routes here when
+ * {@code IPGlobal.isShaderpackPortalViewsActive(IrisInterface.invoker.isShaders())} — i.e. the
+ * default-TRUE {@code experimentalShaderpackPortalViews} flag WHILE a shaderpack is actually
+ * running, OR the {@code -Dseamlessportals.shaderpackViews} JVM lever (which forces BOTH shader
+ * states — the dev proof rows, deliverable 6; design §0.4-11, S20-safe). This class is therefore
+ * DEFAULT-LIVE for any shaderpack-ON user with NO lever — it is no longer "lever-only" nor a
+ * "zero committed-default change" (the IS1 wording was retired at IS4). The shaders gate caps the
+ * flip's blast radius: shaders-OFF / no-pack / plain users fall through to the pre-IS1 selection
+ * (byte-identical D8 shaders-ON → dummy+notice / stencil-family), so the default-ON flag NEVER
+ * pulls them here (recon §4.5). NOTE for any S20 dormancy/deletion pass: this is a DEFAULT-LIVE
+ * renderer, NOT a dormant/lever-only held source — do not strand it.
  *
  * <p><b>Held-source deltas</b> (each design-mandated): {@code prepareRendering} = the raw
  * stencil-disable belt ONLY — the deferred-buffer prepare/clear moved into the post-main

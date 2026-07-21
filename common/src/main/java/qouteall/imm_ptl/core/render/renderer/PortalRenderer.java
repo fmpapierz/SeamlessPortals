@@ -416,8 +416,10 @@ public abstract class PortalRenderer {
     // announced once; pack-off frames restore full views immediately via the fall-through below.
     private static boolean shadersOnPassThroughNotified = false;
 
-    // IS1: one-shot (per session) notice that the EXPERIMENTAL shaderpack-views renderer is
-    // live under an active pack (lever-armed sessions only — never fires at default).
+    // IS1/IS4: one-shot (per session) notice that the EXPERIMENTAL shaderpack-views renderer is
+    // live under an active pack. After the IS4 Q-U1 default-flip this FIRES AT THE DEFAULT config
+    // whenever a shaderpack is active — isShaderpackPortalViewsActive(isShaders()==true) is true via
+    // the default-TRUE flag, no lever needed; it also fires under the JVM lever.
     private static boolean shaderpackViewsExperimentNotified = false;
 
     public static void switchToCorrectRenderer() {
@@ -439,15 +441,17 @@ public abstract class PortalRenderer {
 
         IPModInfoChecking.checkShaderpack();
 
-        // ===== IS1 — the lever-only compat-renderer routing (design §1 IS1 deliverables 5/6;
-        // D8-EVO, lever-only until the Q-U1 default-flip decision). UNARMED (the committed
-        // default) this whole block is byte-inert: the flag defaults false and the JVM lever is
-        // absent, so every path below falls through to the pre-IS1 selection verbatim.
-        // ARMED: shaders-ON routes to the new renderer INSTEAD of the D8 dummy; shaders-OFF
-        // (plain/sodium/iris-no-pack) ALSO routes there — the IS1 proof rows (the mechanism is
-        // provable sans iris). renderMode mapping at IS1: none stays dummy (respected), debug →
-        // debugModeInstance (the live-round diagnostic), else → instance.
-        if (IPGlobal.isShaderpackPortalViewsArmed()
+        // ===== IS4 Q-U1 (user-decided 2026-07-20) — the shaders-ON compat-renderer routing, now
+        // DEFAULT-ON but SHADERS-GATED. isShaderpackPortalViewsActive(isShaders()) is true when a
+        // shaderpack is actually running (the default-ON flag) OR the JVM lever forces it (dev
+        // proof rows, both shader states). CRITICAL (recon §4.5): passing isShaders() into the
+        // flag path is what keeps the default-ON flip's blast radius to shaderpack-ON users only —
+        // shaders-OFF / no-pack / plain fall THROUGH this block to the pre-IS1 selection (the
+        // stencil family), byte-identical to before the flip. renderMode=none stays the master
+        // off-switch (falls through → dummy). renderMode mapping: debug → debugModeInstance, else
+        // → instance. The suite runs iris-ABSENT (isShaders()==false) so it is unaffected by the
+        // flip and stays a valid gate for the unchanged paths.
+        if (IPGlobal.isShaderpackPortalViewsActive(IrisInterface.invoker.isShaders())
             && IPGlobal.renderMode != IPGlobal.RenderMode.none
         ) {
             if (IrisInterface.invoker.isShaders() && !shaderpackViewsExperimentNotified) {
