@@ -1721,6 +1721,15 @@ public class SecondaryWorldRenderCore {
             // NOT bracketed: their Step-5 extract+render() is the correct one-shot pairing,
             // and render() still self-drains (§8-13 honored — we only deny it someone
             // else's already-consumed one-shots).
+            // IS6 §6.4 reentrancy probe (item 1) — the MAIN LRS sectionUpdateRenderStates identity
+            // + size at swap-OUT (before the clear). The list OBJECT identity must be stable
+            // across an inner swap and the outer restore (differing ⇒ §2.6 double-swap corruption).
+            // Byte-inert at default.
+            if (sharedState) {
+                com.warwa.seamlessportals.render.IrisNestedReentrancyProbe.logSectionUpdateStateSwap(
+                    "swap-out", String.valueOf(destDim.identifier()),
+                    PortalRendering.getPortalLayer(), destLRS.sectionUpdateRenderStates);
+            }
             if (sharedState && !destLRS.sectionUpdateRenderStates.isEmpty()) {
                 savedSectionUpdateStates = new ArrayList<>(destLRS.sectionUpdateRenderStates);
                 destLRS.sectionUpdateRenderStates.clear();
@@ -1729,6 +1738,12 @@ public class SecondaryWorldRenderCore {
             boolean destRenderOutline = !sharedState
                 && ((GameRendererAccessorMixin) mc.gameRenderer)
                     .seamlessportals$invokeShouldRenderBlockOutline();
+            // IS6 §6.4 reentrancy probe — BEFORE the nested render(): reads the MAIN FRD
+            // PreparedFrame "in use" state (the hard-blocker discriminator), isDestExtracting
+            // (extract-non-nesting assert), the per-layer sodium context, and the cloud-utb
+            // per-dim-per-frame counter. Byte-inert at default (-Dseamlessportals.reentrancyProbe).
+            com.warwa.seamlessportals.render.IrisNestedReentrancyProbe.beforeNestedRender(
+                String.valueOf(destDim.identifier()), PortalRendering.getPortalLayer(), sharedState);
             destRenderer.render(
                 GraphicsResourceAllocator.UNPOOLED,
                 deltaTracker,
@@ -1739,6 +1754,17 @@ public class SecondaryWorldRenderCore {
                 destFogData.color,
                 WorldRenderInfo.getTopRenderInfo().doRenderSky
             );
+            // IS6 §6.4 reentrancy probe — AFTER the nested render(): the MAIN FRD PreparedFrame
+            // must have closed (context null) and the sodium visible count settled.
+            com.warwa.seamlessportals.render.IrisNestedReentrancyProbe.afterNestedRender(
+                String.valueOf(destDim.identifier()), PortalRendering.getPortalLayer(), sharedState);
+            // ===== IS6 §6.1 POINT A — THE RECURSION DRIVER ======================================
+            // Post-finalize, dest world STILL swapped in (the shell un-swap lives in
+            // MyGameRenderer's :661 finally; this method's finally below touches UBO/camera/clip/
+            // fog/stencil but never draws to MAIN's color). destViewMatrix is the exact LOCAL
+            // render() just consumed. For the stencil/decomposed renderers this dispatches the
+            // inert base no-op; only IrisCompatOn262Renderer (lever-gated) recurses. See §6.1.
+            IPCGlobal.renderer.onDestWorldFinalizedFullPipeline(destViewMatrix);
         } finally {
             // ===== the outermost finally — restore everything this core changed ==================
             // C2 UBM latch reset (shared-SWR same-dim frames; facade no-op when sodium inactive).
@@ -1769,6 +1795,11 @@ public class SecondaryWorldRenderCore {
                 if (savedSectionUpdateStates != null) {
                     destLRS.sectionUpdateRenderStates.addAll(savedSectionUpdateStates);
                 }
+                // IS6 §6.4 reentrancy probe (item 1) — identity + size at RESTORE; must match the
+                // swap-out identity (one-owner, non-refill). Byte-inert at default.
+                com.warwa.seamlessportals.render.IrisNestedReentrancyProbe.logSectionUpdateStateSwap(
+                    "restore", String.valueOf(destDim.identifier()),
+                    PortalRendering.getPortalLayer(), destLRS.sectionUpdateRenderStates);
                 destLRS.cameraRenderState = savedSharedCameraState;
                 destLRS.cloudColor = savedSharedCloudColor;
                 if (dispatcher != null && savedDispatcherCamPos != null) {

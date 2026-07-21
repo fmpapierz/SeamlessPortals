@@ -11,6 +11,7 @@ import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
 import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPCGlobal;
+import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.portal.PortalRenderInfo;
 import qouteall.imm_ptl.core.render.IrisCompatPaste;
@@ -108,7 +109,17 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         });
     }
 
-    private final SecondaryFrameBuffer deferredBuffer = new SecondaryFrameBuffer();
+    // IS6 §6.2 — THE PER-LAYER DEFERRED-BUFFER STACK (was a single field
+    // {@code SecondaryFrameBuffer deferredBuffer}). Sized to the isLaggy-INDEPENDENT ceiling
+    // {@code IPGlobal.maxPortalLayer+1} (grow-only), lazily allocated at layer-0 entry
+    // ({@link #ensureDeferredBuffers}); each layer L snapshots the
+    // finished dest frame into {@code deferredBuffers[L]}, renders its children into MAIN + stamps
+    // them into {@code deferredBuffers[L]}, then blits {@code deferredBuffers[L]}→MAIN so the
+    // ENCLOSING layer's stamp sees dest+children. Without the stack, layer N's snapshot would
+    // clobber layer N-1's (port-note §6.2 / §6.3 "the ONE structural build"). null until first use.
+    // With the recursion lever OFF only index 0 is ever used — the exact one-layer behavior of the
+    // old single field.
+    private SecondaryFrameBuffer[] deferredBuffers = null;
 
     // IP-verbatim field (the held source's onBeforeTranslucentRendering capture); consumed by
     // the post-main workhorse — set every frame by the F1 AFTER_TRANSLUCENT_TERRAIN driver
@@ -198,57 +209,162 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // Stencil belt (anchor slot; §6 hazard row 8-2's raw-disable family).
         GL11.glDisable(GL_STENCIL_TEST);
 
-        // Deferred-buffer prepare — the auto-resize to the main RT runs BEFORE copyDepthFrom
-        // (LOAD-BEARING ordering, port-note §1-E OQ5: copyDepthFrom copies DEST.width x
-        // DEST.height and throws if either target lacks depth).
-        deferredBuffer.prepare();
-        if (deferredBuffer.fb == null || deferredBuffer.fb.getColorTextureView() == null) {
-            return;
-        }
-
-        // Held-source G7 re-expression: device-clear the deferred target; depth = 0.0
-        // (R5 reversed-Z FAR). Belt only — the snapshot pair below overwrites the whole target.
-        RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-            deferredBuffer.fb.getColorTexture(), new Vector4f(1, 0, 0, 0),
-            deferredBuffer.fb.getDepthTexture(), 0.0
-        );
-
-        // SNAPSHOT the finished main frame: depth via copyDepthFrom (replace; D19 — no stencil
-        // bits, the stencil-free shape consumes none), color via the STRAIGHT-COPY pass
-        // (blitAndBlendToTexture is ALPHA-BLEND — settled OQ5, never on this path).
-        deferredBuffer.fb.copyDepthFrom(mainRT);
-        IrisCompatPaste.drawStraightCopy(mainRT, deferredBuffer.fb);
-
-        CHelper.checkGlError();
+        // IS6 §6.2 — ensure the deferred-buffer stack at LAYER-0 entry. Sized to the
+        // isLaggy-INDEPENDENT ceiling IPGlobal.maxPortalLayer+1 (NOT getMaxPortalLayer()+1):
+        // getMaxPortalLayer() collapses to 1 whenever RenderStates.isLaggy, so sizing off it would
+        // make `n` oscillate on every lag-attack transition and churn the layer-0 GPU FBO
+        // (dispose+recreate) — a per-frame-FBO delta the OLD single `final deferredBuffer` never
+        // had (vInert BLOCKER, port-note §6.2 lifecycle). The isLaggy-independent ceiling keeps `n`
+        // stable across lag flips, so index 0 persists frame-to-frame exactly like OLD; the driver
+        // still clamps EFFECTIVE recursion depth via getMaxPortalLayer()/effectiveMax at call time,
+        // and its `layer >= deferredBuffers.length` guard stays safe against the larger array.
+        // ensureDeferredBuffers is GROW-ONLY, so a maxPortalLayer config DECREASE keeps the live
+        // buffers too — zero churn on any transition. With the recursion lever OFF the driver never
+        // fires, so only index 0 is ever touched below (== the old single-buffer path).
+        int n = IPGlobal.maxPortalLayer + 1;
+        ensureDeferredBuffers(n);
 
         isInsideOwnRenderPortals = true;
         try {
-            renderPortals(passingModelView);
+            // Layer 0: snapshot the finished MAIN frame into deferredBuffers[0], render the
+            // top-level portals into MAIN + stamp them into deferredBuffers[0], then blit
+            // deferredBuffers[0]→MAIN (§6.2 choreography, the proven layer-0 sequence). The
+            // driver (onDestWorldFinalizedFullPipeline) recurses this at deeper layers.
+            runNestedPortalPass(0, passingModelView);
         } finally {
             isInsideOwnRenderPortals = false;
             // anchor-state neutralize (the CrossPortalViewRendering:170 precedent — §6 row 8-2)
             GL11.glDisable(GL_STENCIL_TEST);
-
-            // BLIT-BACK: the deferred buffer (main scene + the stamped portal views) → main,
-            // full-screen straight copy. After this the main target is the pre-portal frame
-            // plus portal-shaped dest views — whole-screen-dest-world here is the
-            // pre-registered blit-order discriminator (design §1 IS1).
-            // IN THE FINALLY (Fable-fold BLOCKER companion, port-note §2.5): the snapshot was
-            // taken unconditionally above, so on a mid-loop throw this restores the composited
-            // snapshot instead of leaving the last portal's raw dest render on the main target.
-            IrisCompatPaste.drawStraightCopy(deferredBuffer.fb, mainRT);
         }
 
         CHelper.checkGlError();
     }
 
-    /** §2.2-4 — one layer: occlusion test → push → full-pipeline content → pop → stamp. */
-    protected void doRenderPortal(Portal portal, Matrix4f modelView) {
-        if (PortalRendering.isRendering()) {
-            // this renderer only supports one-layer portal (IP-verbatim)
+    /**
+     * IS6 §6.2 — THE PER-LAYER CHOREOGRAPHY (was the inline layer-0 body of
+     * {@code onBeforeHandRendering}). Snapshot THIS layer's finished dest frame from MAIN into
+     * {@code deferredBuffers[layer]} (depth via {@code copyDepthFrom} = replace; color via the
+     * straight-copy pass), render this layer's portals (each clobbers MAIN with its own dest
+     * render + stamps into {@code deferredBuffers[layer]}), then blit {@code deferredBuffers[layer]}
+     * → MAIN so the ENCLOSING layer's stamp sees dest+children. Called at layer 0 by the anchor
+     * workhorse and at each deeper layer by the recursion driver.
+     *
+     * <p>Layer-indexing correctness (port-note §6.2 trace): {@code runNestedPortalPass(L)} snapshots
+     * into {@code deferred[L]}; the portals it renders execute at {@code getPortalLayer()==L} and
+     * {@code doRenderPortal} stamps them into {@code deferredBuffers[L]} (== this buffer) after
+     * popping — snapshot target == stamp target. The blit-back in the finally restores MAIN for the
+     * enclosing {@code doRenderPortal} (layer L-1) to stamp into {@code deferred[L-1]}.
+     */
+    private void runNestedPortalPass(int layer, Matrix4f modelView) {
+        SecondaryFrameBuffer deferred = deferredBuffers[layer];
+
+        // Deferred-buffer prepare — the auto-resize to the main RT runs BEFORE copyDepthFrom
+        // (LOAD-BEARING ordering, port-note §1-E OQ5: copyDepthFrom copies DEST.width x
+        // DEST.height and throws if either target lacks depth).
+        deferred.prepare();
+        if (deferred.fb == null || deferred.fb.getColorTextureView() == null) {
             return;
         }
 
+        RenderTarget mainRT = client.gameRenderer.mainRenderTarget();
+
+        // Held-source G7 re-expression: device-clear the deferred target; depth = 0.0
+        // (R5 reversed-Z FAR). Belt only — the snapshot pair below overwrites the whole target.
+        RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
+            deferred.fb.getColorTexture(), new Vector4f(1, 0, 0, 0),
+            deferred.fb.getDepthTexture(), 0.0
+        );
+
+        // SNAPSHOT the finished frame currently in MAIN: depth via copyDepthFrom (replace; D19 —
+        // no stencil bits, the stencil-free shape consumes none), color via the STRAIGHT-COPY pass
+        // (blitAndBlendToTexture is ALPHA-BLEND — settled OQ5, never on this path).
+        deferred.fb.copyDepthFrom(mainRT);
+        IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
+
+        CHelper.checkGlError();
+
+        try {
+            // Children clobber MAIN + stamp into deferred[layer]. At deeper layers each child's
+            // full-pipeline render() fires the recursion driver (post-finalize), which re-enters
+            // runNestedPortalPass at layer+1 (§6.1).
+            renderPortals(modelView);
+        } finally {
+            // BLIT-BACK: the deferred buffer (this layer's dest scene + the stamped child views)
+            // → MAIN, full-screen straight copy. At layer 0 the result is the pre-portal frame
+            // plus portal-shaped dest views (the pre-registered blit-order discriminator, design
+            // §1 IS1); at deeper layers it restores MAIN for the enclosing stamp. IN THE FINALLY
+            // (Fable-fold BLOCKER companion, port-note §2.5): the snapshot was taken
+            // unconditionally above, so on a mid-loop throw this restores the composited snapshot
+            // instead of leaving the last child's raw dest render on MAIN.
+            IrisCompatPaste.drawStraightCopy(deferred.fb, mainRT);
+        }
+    }
+
+    /**
+     * IS6 §6.1 — THE RECURSION DRIVER. Fired by {@code renderDestWorldFullPipeline} at Point A
+     * (post-finalize, dest world still swapped). LEVER-GATED: with
+     * {@code -Dseamlessportals.irisNestedPortals} OFF (the default) this returns immediately, so
+     * {@code doRenderPortal} is never re-entered at a deeper layer and behavior is byte-identical
+     * to the one-layer floor. See port-note §6.1.
+     */
+    @Override
+    public void onDestWorldFinalizedFullPipeline(Matrix4f destViewMatrix) {
+        // Default OFF = the one-layer FLOOR (byte-identical to pre-IS6).
+        if (!IPGlobal.IRIS_NESTED_PORTALS_LEVER) {
+            return;
+        }
+        // D23: only recurse from within OUR OWN renderPortals loop (a layer-0 direct invocation
+        // from CrossPortalViewRendering/GuiPortalRendering falls back to the decomposed path in
+        // invokeWorldRendering and has no snapshot context to recurse into).
+        if (!isInsideOwnRenderPortals) {
+            return;
+        }
+        int layer = PortalRendering.getPortalLayer();
+        // Bound (§6.1 derivation vs renderPortalContent:288): the driver at pushed layer L renders
+        // CHILD portals into L+1, whose content renders iff L+1 <= max, i.e. L < max — so skip at
+        // L >= max. §6.4 SPIKE CAP: while the reentrancy probe is armed, depth is capped to 2
+        // (mirror → same-dim → cross-dim at the shallowest depth). getMaxPortalLayer() already
+        // clamps to 1 under isLaggy / maxPortalLayer<=1 (→ driver never runs → one-layer).
+        int configuredMax = PortalRendering.getMaxPortalLayer();
+        int effectiveMax = IPGlobal.IRIS_NESTED_REENTRANCY_PROBE_LEVER
+            ? Math.min(configuredMax, 2)
+            : configuredMax;
+        if (layer >= effectiveMax) {
+            return;
+        }
+        if (!IrisCompatPaste.arePipelinesReady()) {
+            return;
+        }
+        RenderTarget mainRT = client.gameRenderer.mainRenderTarget();
+        if (mainRT == null
+            || mainRT.getColorTextureView() == null
+            || mainRT.getDepthTextureView() == null) {
+            return;
+        }
+        // Defensive: the stack was sized IPGlobal.maxPortalLayer+1 (grow-only) at layer-0 entry, so
+        // for any layer < effectiveMax <= getMaxPortalLayer() <= IPGlobal.maxPortalLayer this index
+        // is in bounds. Kept as a belt against a mid-frame maxPortalLayer config change: refuse
+        // rather than index OOB (a shrink leaves the array LARGER, so this never trips falsely).
+        if (deferredBuffers == null || layer >= deferredBuffers.length) {
+            return;
+        }
+        runNestedPortalPass(layer, destViewMatrix);
+    }
+
+    /** §2.2-4 — one layer: occlusion test → push → full-pipeline content → pop → stamp. */
+    protected void doRenderPortal(Portal portal, Matrix4f modelView) {
+        // IS6 §6.1 — THE ONE-LAYER GUARD ({@code if (PortalRendering.isRendering()) return;}) IS
+        // REMOVED. The recursion bound is enforced by three composing places: (i) the driver's
+        // {@code >= getMaxPortalLayer()} gate (won't call renderPortals at the deepest layer),
+        // (ii) renderPortalContent:288, (iii) getPortalsToRender → shouldSkipRenderingPortal
+        // (isInvalidRecursionRendering kills A→B→A loops, cannotRenderInMe, the per-layer range
+        // shrink, the render predicate). BYTE-IDENTICAL AT DEFAULT: with the recursion lever OFF
+        // the driver returns immediately, so nothing re-invokes renderPortals — this method is
+        // only ever called at layer 0 (from onBeforeHandRendering → runNestedPortalPass(0) →
+        // renderPortals), where the removed guard never fired anyway (it pops its own layer before
+        // the loop continues). The guard was dead on this substrate even pre-IS6: the nested
+        // render() is a direct 8-arg LevelRenderer.render (D16) that never re-fires the anchor,
+        // so onBeforeHandRendering/renderPortals never re-entered.
         if (!testShouldRenderPortal(portal, modelView)) {
             return;
         }
@@ -266,7 +382,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // → base renderPortalContent → invokeWorldRendering (below) → the sibling driver's
             // direct 8-arg render() INTO THE MAIN TARGET (D16). The nested render re-fires the
             // F1 driver + F2 with PortalRendering.isRendering()==TRUE (we are inside the pushed
-            // layer) — their early-returns are the load-bearing recursion guards (§2.4-7).
+            // layer) — their early-returns are the load-bearing recursion guards (§2.4-7). AT
+            // Point A after that render() returns, the recursion driver fires and (lever-ON) may
+            // re-enter runNestedPortalPass at this deeper layer.
             renderPortalContent(portal);
         } finally {
             PortalRendering.popPortalLayer();
@@ -274,14 +392,19 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
         CHelper.enableDepthClamp();
 
+        // IS6 §6.2 — LAYER-INDEXED stamp target. The portal has been popped, so getPortalLayer()
+        // == L == the layer whose runNestedPortalPass(L) snapshotted deferredBuffers[L].
+        int layer = PortalRendering.getPortalLayer();
+        SecondaryFrameBuffer deferred = deferredBuffers[layer];
+
         if (!isDebugMode) {
-            // THE STAMP (D20): portal-shaped copy main→deferred, snapshot-depth-tested.
-            // Matrices per the held source: the passing model view + the live layer-0 draw
-            // projection (we are OUTSIDE the pushed layer again — scaling back to 1).
+            // THE STAMP (D20): portal-shaped copy main→deferred[L], snapshot-depth-tested.
+            // Matrices per the held source: the passing model view + the live layer draw
+            // projection (we are OUTSIDE the pushed layer again — this layer's scaling).
             IrisCompatPaste.stampPortalArea(
                 portal,
                 client.gameRenderer.mainRenderTarget(),
-                deferredBuffer.fb,
+                deferred.fb,
                 modelView,
                 getCurrentProjectionMatrix()
             );
@@ -291,7 +414,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // the live-round diagnostic that splits "render() produced nothing" from "stamp/copy
             // defect" (design §1 IS1 discriminators).
             IrisCompatPaste.drawStraightCopy(
-                client.gameRenderer.mainRenderTarget(), deferredBuffer.fb
+                client.gameRenderer.mainRenderTarget(), deferred.fb
             );
         }
 
@@ -359,16 +482,59 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
     }
 
-    /** Mining §8-20: destroy the deferred buffer (re-created lazily by prepare() on next use). */
-    public void teardown() {
-        if (deferredBuffer.fb != null) {
-            try {
-                deferredBuffer.fb.destroyBuffers();
-            } catch (Throwable t) {
-                // disposal is best-effort
-            }
-            deferredBuffer.fb = null;
+    /**
+     * IS6 §6.2 — ensure the deferred-buffer stack holds at least {@code n} members. GROW-ONLY: when
+     * the array is already {@code >= n} long it is kept verbatim (its live buffers untouched) so a
+     * maxPortalLayer DECREASE never disposes+recreates the layer-0 GPU FBO — the per-frame-FBO churn
+     * class the project has repeatedly fought (vInert BLOCKER, port-note §6.2). When it must grow,
+     * the EXISTING members are carried into the larger array (no live buffer is destroyed) and only
+     * the new tail slots are allocated empty ({@code fb == null}; filled lazily by
+     * {@code SecondaryFrameBuffer.prepare()} in {@link #runNestedPortalPass}). Called at layer-0
+     * entry only. Combined with the isLaggy-independent {@code IPGlobal.maxPortalLayer+1} sizing at
+     * the call site, index 0 persists frame-to-frame exactly like the OLD single field — zero churn
+     * on isLaggy flips and on config transitions. Mirrors IP's {@code IrisPortalRenderer}
+     * deferredFbs[] allocation shape.
+     */
+    private void ensureDeferredBuffers(int n) {
+        if (deferredBuffers != null && deferredBuffers.length >= n) {
+            return;
         }
+        // GROW: preserve the existing live buffers (never destroyBuffers() on a resize) — carry
+        // them into the extended array, allocate only the new tail slots.
+        SecondaryFrameBuffer[] old = deferredBuffers;
+        int carried = old == null ? 0 : old.length;
+        deferredBuffers = new SecondaryFrameBuffer[n];
+        for (int i = 0; i < carried; i++) {
+            deferredBuffers[i] = old[i];
+        }
+        for (int i = carried; i < n; i++) {
+            deferredBuffers[i] = new SecondaryFrameBuffer();
+        }
+    }
+
+    private void disposeDeferredBuffers() {
+        if (deferredBuffers == null) {
+            return;
+        }
+        for (SecondaryFrameBuffer b : deferredBuffers) {
+            if (b != null && b.fb != null) {
+                try {
+                    b.fb.destroyBuffers();
+                } catch (Throwable t) {
+                    // disposal is best-effort
+                }
+                b.fb = null;
+            }
+        }
+    }
+
+    /**
+     * Mining §8-20: destroy every deferred buffer in the stack (re-created lazily by
+     * {@link #ensureDeferredBuffers} / {@code prepare()} on next use).
+     */
+    public void teardown() {
+        disposeDeferredBuffers();
+        deferredBuffers = null;
     }
 
     /** Called by {@code PortalRenderer.switchRenderer} when routing AWAY from this family. */

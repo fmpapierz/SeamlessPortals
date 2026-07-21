@@ -165,6 +165,15 @@ loom {
             // full-pipeline pass (terrain->loc>=0/enabled, entity+sky->loc==-1/disabled) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PclipProbe=true
             if (project.findProperty('clipProbe') == 'true') { vmArg('-Dseamlessportals.clipProbe=true') }
+            // IS6 STAGE 1 — bounded N-deep recursion for the shaders-ON compat renderer
+            // (port-note IS-iris-shaders-on.md §6.5 staging). Default OFF = the one-layer FLOOR
+            // (byte-identical to pre-IS6). Arm the recursion driver —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViews=true -PirisNestedPortals=true
+            if (project.findProperty('irisNestedPortals') == 'true') { vmArg('-Dseamlessportals.irisNestedPortals=true') }
+            // IS6 §6.4 the instrument-first spike: arms the reentrancy probe AND caps recursion
+            // depth to 2 (mirror → same-dim → cross-dim at the shallowest depth) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViews=true -PirisNestedPortals=true -PreentrancyProbe=true
+            if (project.findProperty('reentrancyProbe') == 'true') { vmArg('-Dseamlessportals.reentrancyProbe=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -229,6 +238,14 @@ loom {
             // clipProbe run dumps the per-draw enable-decisions under the 8 legs —
             //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PclipProbe=true
             if (project.findProperty('clipProbe') == 'true') { vmArg('-Dseamlessportals.clipProbe=true') }
+            // IS6 STAGE 1 recursion driver (mirror of the clientSodium lever; the suite runs
+            // sodium/iris-ABSENT, so with -PshaderpackViews the full-pipeline driver runs and the
+            // recursion lever exercises the depth machinery under the 8 legs) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PirisNestedPortals=true
+            if (project.findProperty('irisNestedPortals') == 'true') { vmArg('-Dseamlessportals.irisNestedPortals=true') }
+            // IS6 §6.4 spike probe (arms the reentrancy probe + caps depth to 2) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PirisNestedPortals=true -PreentrancyProbe=true
+            if (project.findProperty('reentrancyProbe') == 'true') { vmArg('-Dseamlessportals.reentrancyProbe=true') }
         }
     }
 }

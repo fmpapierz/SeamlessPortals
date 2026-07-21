@@ -91,6 +91,32 @@ public class IPGlobal {
     public static boolean isShaderpackPortalViewsActive(boolean shadersActive) {
         return SHADERPACK_VIEWS_JVM_LEVER || (experimentalShaderpackPortalViews && shadersActive);
     }
+
+    // ===== IS6 — bounded N-deep recursion for the shaders-ON compat renderer (port-note ==========
+    // IS-iris-shaders-on.md §6). STAGE 1 = machinery behind a lever; default = the one-layer FLOOR.
+    /**
+     * IS6 §6.1/§6.5 — the recursion driver lever (read once at class-init;
+     * {@code -Dseamlessportals.irisNestedPortals=true}, wired via gradle -PirisNestedPortals=true).
+     * DEFAULT FALSE = the one-layer FLOOR: {@code IrisCompatOn262Renderer.onDestWorldFinalizedFullPipeline}
+     * returns immediately, so {@code doRenderPortal} is NEVER re-entered at a deeper layer and behavior
+     * is byte-identical to pre-IS6 (nested portals stay see-through). Recursion is active ONLY with
+     * this lever on. The {@code isLaggy}/{@code maxPortalLayer<=1} auto-clamp to one layer stays the
+     * always-on safety floor regardless.
+     */
+    public static final boolean IRIS_NESTED_PORTALS_LEVER =
+        Boolean.getBoolean("seamlessportals.irisNestedPortals");
+
+    /**
+     * IS6 §6.4/§6.5 — the instrument-first-spike lever (read once at class-init;
+     * {@code -Dseamlessportals.reentrancyProbe=true}, wired via gradle -PreentrancyProbe=true).
+     * Two independent effects: (1) arms the reentrancy probe
+     * ({@code com.warwa.seamlessportals.render.IrisNestedReentrancyProbe}, which reads the same
+     * property for its own {@code ENABLED}); (2) CAPS recursion depth to 2 for the spike
+     * (mirror → same-dim → cross-dim at the shallowest depth — §6.4 "cap depth to 2 for the spike").
+     * DEFAULT FALSE = no cap change / no probe.
+     */
+    public static final boolean IRIS_NESTED_REENTRANCY_PROBE_LEVER =
+        Boolean.getBoolean("seamlessportals.reentrancyProbe");
     
     public static boolean doCheckGlError = true;
     

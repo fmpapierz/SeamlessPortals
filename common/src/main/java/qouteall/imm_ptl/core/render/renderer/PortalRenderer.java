@@ -409,6 +409,22 @@ public abstract class PortalRenderer {
 
     public void onBeginIrisTranslucentRendering(Matrix4f modelView) {}
 
+    /**
+     * IS6 §6.1 — THE RECURSION DRIVER HOOK. Called from
+     * {@code SecondaryWorldRenderCore.renderDestWorldFullPipeline} at "Point A": immediately after
+     * the direct 8-arg {@code destRenderer.render()} has fully RETURNED, with the dest world still
+     * swapped in (before the method's own {@code finally} un-does the swap). {@code destViewMatrix}
+     * is the exact view matrix that {@code render()} consumed.
+     *
+     * <p>Inert base no-op — reached only on the FULL-PIPELINE dest path, which is driven ONLY by
+     * {@link qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer}. The stencil
+     * and decomposed renderers never call {@code renderDestWorldFullPipeline}, so this dispatch is
+     * dead for every receiver except that one, whose override (lever-gated) re-expresses IP's
+     * per-layer {@code renderLevel} recursion onto our atomic-render substrate (D16). See
+     * port-note {@code IS-iris-shaders-on.md} §6.1.
+     */
+    public void onDestWorldFinalizedFullPipeline(Matrix4f destViewMatrix) {}
+
     private static boolean fabulousWarned = false;
 
     // C2-4 D8: one-shot (per session) notice that a shaderpack-ON frame routes portal views to
