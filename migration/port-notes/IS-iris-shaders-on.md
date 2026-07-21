@@ -1846,3 +1846,126 @@ enable scope). REMAINING = the experiential VISUAL confirmation (does dest terra
 portal now clip at the plane instead of showing through) — user pack round, with the C4 A/B
 lever (`IPGlobal.enableClippingMechanism`) as the independent convict — + the Q-U1
 default-flip decision (§4.5).
+
+## §5 THE IS4 DEFAULT-FLIP (Q-U1, user-decided 2026-07-20; worktree `is4-flip`, branch `iris-on/is4-flip`)
+
+**Decision Q-U1 (user):** after IS3 live-proved the clip, the experimental shaderpack portal
+views become the DEFAULT for shaderpack users. `experimentalShaderpackPortalViews` flips
+`false -> true`, but the flip is made SHADERS-GATED at the routing site so it does not retire the
+proven stencil renderer for everyone (the recon §4.5 naive-flip over-reach).
+
+### The change (2 files)
+
+- **`IPGlobal.java`** — (a) `experimentalShaderpackPortalViews` default `false -> true`;
+  (b) NEW `isShaderpackPortalViewsActive(boolean shadersActive)` =
+  `SHADERPACK_VIEWS_JVM_LEVER || (experimentalShaderpackPortalViews && shadersActive)`.
+  `isShaderpackPortalViewsArmed()` (= `flag || lever`) is RETAINED but now has **zero live
+  callers** (docs-only; a CAUTION was added — never wire routing to it, it omits the shaders gate).
+- **`PortalRenderer.switchToCorrectRenderer`** — the Block-1 predicate changed from
+  `isShaderpackPortalViewsArmed()` to `isShaderpackPortalViewsActive(IrisInterface.invoker.isShaders())`.
+  The `&& renderMode != none` guard is UNCHANGED (master off-switch, sits OUTSIDE `active()`).
+
+### The routing fold
+
+`Active(S) = LEVER || (FLAG && S)`, where `S = IrisInterface.invoker.isShaders()`
+(base `Invoker` returns literal `false` when iris absent; `OnIrisPresent` returns
+`Iris.getCurrentPack().isPresent()` — i.e. **a pack is actually loaded AND on**).
+
+Block 1 fires iff `Active(S) && M != none`, then folds `renderMode`:
+`debug -> debugModeInstance`, **`normal` AND `compatibility` both -> `instance`** (the iris compat
+renderer has NO framebuffer variant; vanilla `rendererUsingFrameBuffer` is inapplicable while a
+pack is active). Otherwise control falls through to the pre-IS1 selection (D8 iris block, then the
+`switch(renderMode)` stencil family).
+
+### Truth table
+
+DEFAULT config (`FLAG=true`, `LEVER=false`):
+
+| S (pack on) | iris present | renderMode | Active(S) | Route | vs pre-flip |
+|---|---|---|---|---|---|
+| true | yes | normal | true | `IrisCompatOn262Renderer.instance` | **FLIP DELTA** (was D8 dummy+notice) |
+| true | yes | compatibility | true | `instance` (folds to it) | **FLIP DELTA** (was D8 dummy) |
+| true | yes | debug | true | `debugModeInstance` | **FLIP DELTA** (was D8 dummy) |
+| true | yes | none | false | falls -> D8 iris block -> `rendererDummy` + pass-through notice | identical |
+| false | yes (no pack) | normal | false | falls -> stencil (`rendererUsingStencil`) | byte-identical |
+| false | no | normal | false | `rendererUsingStencil` | byte-identical |
+| false | no | compatibility | false | `rendererUsingFrameBuffer` | byte-identical |
+| false | no | debug | false | `rendererDebug` | byte-identical |
+| false | any | none | false | `rendererDummy` | byte-identical |
+
+DEV lever (`LEVER=true`, FLAG irrelevant): any `M != none` -> `instance`/`debugModeInstance`
+regardless of shader state (proof rows, unchanged from IS1); `M=none` falls through (`S=true` ->
+D8 dummy+notice if iris present; `S=false` -> `switch none` -> dummy).
+
+**The single behavioral delta of the flip = `{S=true, LEVER=false}` non-`none` rows**: pre-flip
+D8 dummy pass-through -> post-flip the compat renderer (real portal views). Every shaders-OFF /
+no-pack / plain / `none` row is byte-identical to pre-flip. Blast radius = exactly shaderpack-ON
+users. Confirmed by all four verifiers' break-attempt traces (`active(false) = false||(true&&false)
+= false -> stencil family`).
+
+### Verify verdict
+
+4 verifiers: v1 PASS, v2 PASS, v3 PASS_WITH_CORRECTIONS, v4 PASS_WITH_CORRECTIONS. 3 judges
+(jA/jB/jC): all CORRECTIONS_REQUIRED. The FLIP LOGIC itself is adjudicated CORRECT and ships as
+written — every correction is documentation-only. The recon §4.5 over-reach is genuinely
+foreclosed by the shaders gate; no NoClassDefFoundError (base `Invoker.isShaders()` touches no
+`net.irisshaders.*` class; `OnIrisPresent` installs only when iris is present); `invoker` never
+null (static-init `new Invoker()`, only reassigned to `OnIrisPresent`); the eager `isShaders()`
+argument is side-effect-free (pure `Optional.isPresent()` / constant `false`) and already called
+downstream in the same synchronous method.
+
+### Corrections APPLIED (>=2/3 judges REAL — MUST-APPLY)
+
+1. **`IrisCompatOn262Renderer.java` Selection javadoc** (v1-1/v2-2/v3-1/v4-2; jA/jB/jC all REAL;
+   jA JX-3 CORRECTION) — rewrote the `<b>Selection</b>` block: it claimed "IS1 = LEVER-ONLY, zero
+   committed-default change" routing via `isShaderpackPortalViewsArmed()`. Now describes the IS4
+   default-ON, shaders-gated routing via `isShaderpackPortalViewsActive(isShaders())`, and adds an
+   explicit "DEFAULT-LIVE renderer, NOT a dormant/lever-only held source — do not strand it" note
+   for the S20 dormancy/deletion pass (the load-bearing reason: the project treats these comments
+   as the S20 deletion inventory's source of truth).
+2. **`PortalRenderer.java:419-420` field comment** on `shaderpackViewsExperimentNotified`
+   (v4-1; jA/jB/jC all REAL) — said "lever-armed sessions only — never fires at default". That is
+   now false: at the default config the GOLD experiment notice fires whenever a pack is active.
+   Rewrote to state it fires at the default under an active pack (via the default-TRUE flag) OR the
+   lever.
+3. **`IPGlobal.java` `isShaderpackPortalViewsArmed()` javadoc** (v2-1/v3-2; jA/jB/jC all REAL) —
+   noted zero live callers post-flip and added a CAUTION: never wire renderer selection to
+   `armed()` (it omits the shaders gate; at default-TRUE it would route shaders-OFF users to the
+   compat renderer = the recon §4.5 over-reach). Routing MUST use `isShaderpackPortalViewsActive`.
+4. **`IPGlobal.java` `experimentalShaderpackPortalViews` comment** (v4-3; jA/jB/jC all REAL) — the
+   "opt-out" wording implied a user control that does not exist. Clarified it is a CODE-LEVEL
+   opt-out only: the field is not bound to `IPConfig`/`IPConfigGUI` (grep-confirmed sole-file),
+   so it is neither serialized nor exposed; a real user's only runtime fall-back off this renderer
+   is `renderMode=none` (which disables all portal rendering).
+
+### NOT applied (below the >=2/3 threshold or no-action) — ledgered for completeness
+
+- **isShaders() eager-eval (v2-3):** all judges REAL but "no defect, fix = none" — side-effect-free
+  and already invoked downstream. No code change.
+- **D8 pass-through message text "not yet supported — disable shaders" (jC JX-1 CORRECTION):**
+  only jC rates it a required correction; jA JX-1 covers the same area as a NOTE and states "No
+  action required for the flip"; jB silent. Below the >=2/3 bar, so NOT changed. It is a
+  pre-existing message (not introduced by the flip), now reachable by a shaders-ON user only at
+  `renderMode=none` (or the code-level `FLAG=false` opt-out) — where its "disable shaders" advice
+  is stale (a `none` user has already disabled portal rendering). Flagged for a future cleanup, not
+  a flip blocker.
+- **`ENABLE_SODIUM_IRIS_COMPAT` coupling (jB JX-1 NOTE):** the flip's effectiveness depends on the
+  independent default-true gate `ExperimentalCompatGate.ENABLE_SODIUM_IRIS_COMPAT`, which gates the
+  `OnIrisPresent` invoker install (`SeamlessPortalsClientFabric` ~:294-307). If that gate were ever
+  set false, the invoker stays base `Invoker`, `isShaders()==false`, `active(false)==false` -> the
+  flip nullifies gracefully to the stencil family (byte-identical to pre-flip gate-off), and the D8
+  notice also does not fire (`isIrisPresent()==false`). The blast-radius claim holds in BOTH gate
+  states; the two default-true switches must stay aligned for the feature to FUNCTION, but a
+  gate-off change nullifies the flip, it does not regress anything.
+- **Sibling stale comment (observed, NOT adjudicated):** `PortalRenderer.switchRenderer` ~:517-518
+  still reads "oldRenderer can only BE one after an armed route — byte-inert at the committed
+  default." Post-flip that eviction path is live at the default (a shaders-ON default route makes
+  `oldRenderer` an `IrisCompatOn262Renderer`), so "byte-inert at the committed default" is now stale
+  — same staleness class as the applied fixes. No verifier/judge raised it, so it was left
+  UNCHANGED per the bound-corrections discipline; surfaced here for the user's S20 doc pass.
+
+### Compile gate
+
+`.\gradlew.bat :common:compileJava :fabric:compileJava --console=plain` from the worktree root —
+**GREEN** (BUILD SUCCESSFUL; both `:common:compileJava` and `:fabric:compileJava` executed) after
+the four doc corrections.
