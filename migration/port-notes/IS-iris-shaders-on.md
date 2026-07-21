@@ -1821,3 +1821,28 @@ reads the frozen belt plane, never the M4-mutated live store).
 
 `.\gradlew.bat :common:compileJava :fabric:compileJava --console=plain` from the worktree root —
 GREEN (both tasks executed) after the fold.
+
+### §4.9 THE CLIP-PROBE SELF-RUN (2026-07-20) — mechanism LIVE-CONFIRMED, both residuals settled
+
+`runCrossingGametest -PirisRuntime -PshaderpackViews -PclipProbe -PgametestScreenshots`
+(Complementary Reimagined active): ALL 8 LEGS PASS, no AIOOBE. The `[IS3-CLIP-PROBE]`
+per-draw dump settles §4.7 discriminators 1+2 and the two fold residuals:
+- **TransformPatcher fired** (discriminator 3 = compat-profile, patched; core-profile WARN
+  count = 0): 6 iris-sodium terrain shaders clip-patched — `sodium_terrain_{solid,cutout,
+  translucent}` + the 3 `shadow_` variants. Complementary routes through `SodiumTransformer`
+  (compat) → `getVertexPosition()` present → patched; no core-profile residual.
+- **Discriminator 2 (terrain gets loc>=0/enabled at opaque AND translucent):** terrain
+  programs 480/483 report `loc=27/28 armed=true -> TERRAIN(inject) CLIP-ENABLED` across
+  every full-pipeline pass (overworld + nether, opaque + translucent draws present).
+- **Discriminator 1 (non-terrain iris draws DO reach the vanilla trySetup chokepoint, and
+  the guard fires):** non-terrain programs 345/372/474 report `loc=-1 armed=true ->
+  NON-TERRAIN clip-disabled` — so entity/sky draws pass through `GlCommandEncoder.trySetup`
+  (the guard sees them) and the §4.0 definedness guard correctly DISABLES GL_CLIP_DISTANCE0
+  for them (defined-unclipped, not undefined). Tally: 155 enable / 107 disable decisions,
+  all correctly keyed on loc sign.
+
+The IS3 mechanism is wired correctly end to end (injection → location resolve → per-program
+enable scope). REMAINING = the experiential VISUAL confirmation (does dest terrain near the
+portal now clip at the plane instead of showing through) — user pack round, with the C4 A/B
+lever (`IPGlobal.enableClippingMechanism`) as the independent convict — + the Q-U1
+default-flip decision (§4.5).
