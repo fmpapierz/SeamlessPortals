@@ -452,10 +452,12 @@ public abstract class PortalRenderer {
         ) {
             if (IrisInterface.invoker.isShaders() && !shaderpackViewsExperimentNotified) {
                 shaderpackViewsExperimentNotified = true;
+                // IS3 §4.4: clipping is now real (the dest terrain clips at the portal plane
+                // through the shaderpack), so the old no-clip / expect-artifacts clause is dropped.
                 CHelper.printChat(Component.literal(
-                    "[Seamless Portals] EXPERIMENTAL shaderpack portal views (IS1): one portal "
-                        + "layer; dest terrain is not clipped at the portal plane; expect "
-                        + "artifacts and frame cost with portals visible."
+                    "[Seamless Portals] Experimental shaderpack portal views are ON — portals "
+                        + "render through your shaderpack (one recursion layer). Expect some added "
+                        + "frame cost while portals are on screen."
                 ).withStyle(net.minecraft.ChatFormatting.GOLD));
             }
             switchRenderer(

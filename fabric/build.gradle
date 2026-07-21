@@ -160,6 +160,11 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PshaderpackViews=true
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // IS3 clip discriminator probe (port-note IS-iris-shaders-on.md §4.7 discriminators
+            // 1+2): 1Hz per-draw dump at the vanilla trySetup handler for the first N draws of a
+            // full-pipeline pass (terrain->loc>=0/enabled, entity+sky->loc==-1/disabled) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PclipProbe=true
+            if (project.findProperty('clipProbe') == 'true') { vmArg('-Dseamlessportals.clipProbe=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -219,6 +224,11 @@ loom {
             // exercises the full-pipeline driver under the 8 legs) —
             //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // IS3 clip discriminator probe (mirror of the clientSodium lever; §4.7). With the
+            // shaderpackViews lever armed the suite runs the full-pipeline driver, so an armed
+            // clipProbe run dumps the per-draw enable-decisions under the 8 legs —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PclipProbe=true
+            if (project.findProperty('clipProbe') == 'true') { vmArg('-Dseamlessportals.clipProbe=true') }
         }
     }
 }

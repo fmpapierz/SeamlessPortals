@@ -1315,9 +1315,15 @@ public class SecondaryWorldRenderCore {
     //     framegraph, unlike the mod's try/catch'd direct draws). cloudColor is zeroed
     //     (alpha-0 gates addCloudsPass off) + weatherRenderState reset (columnCount==0 no-ops)
     //     for the pass; cloudColor restored in the finally, weather re-extracts next main frame.
-    //   * DEF-G belt (port-note §1.1 RE-DECIDED row): whole-pass clip disable through the
-    //     CACHED OWNER (FrontClipping.disableClipping — never raw-GL a cached state) before
-    //     render() and re-asserted in the finally; retired at IS3.
+    //   * DEF-G belt (port-note §1.1 RE-DECIDED row -> IS3 §4.1 THE BELT SWAP): the whole-pass
+    //     clip-DISABLE belt is RETIRED. Before render() the clip is now ARMED via
+    //     FrontClipping.setupInnerClipping (byte-for-byte the decomposed ~:1098 arm) so dest
+    //     terrain clips at the portal plane through the iris shaderpack (the IS3-injected
+    //     Patch.SODIUM terrain clip uniform). Un-injected iris NON-terrain programs stay
+    //     defined-and-unclipped via the per-draw definedness guards in the vanilla
+    //     GlCommandEncoderClipMixin + the sodium MixinSodiumGLDrawContext_ClipUpload (§4.0). The
+    //     finally still re-asserts FrontClipping.disableClipping() (post-pass disarm) through the
+    //     cached owner — never raw-GL a cached state.
     //   * finally tail adds the §8-3(c) source setupFog re-run (any capture-at-setupFog
     //     observer re-captures SOURCE fog THIS frame) — the block-era Step-9 discipline the
     //     decomposed path never needed (it installs/restores the shader-fog slice per draw).
@@ -1457,6 +1463,10 @@ public class SecondaryWorldRenderCore {
         // the finally restore below is the only other toucher.
         List<SectionUpdateRenderState> savedSectionUpdateStates = null;
         GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
+        // IS3 V6 FOLD — snapshot the full-pipeline clip OVERRIDE before the pass so the finally can
+        // restore it (nested full-pipeline passes stack correctly). Armed at the belt arm below.
+        com.warwa.seamlessportals.render.FullPipelineClipState.State savedFullPipelineClip =
+            com.warwa.seamlessportals.render.FullPipelineClipState.save();
         try {
             // ===== Step 6 — dest FOG, HOISTED BEFORE the Step-5 extract (IS2 FIX-F; port-note ====
             // IS-iris-shaders-on §3.2) — the verbatim decomposed body (FIX-6 rain bracket +
@@ -1622,11 +1632,55 @@ public class SecondaryWorldRenderCore {
             diffuseChangedToDest = true;
 
             // ===== THE INVOKE — one direct 8-arg full-pipeline render INTO THE MAIN TARGET =======
-            // DEF-G whole-pass belt: clip disable through its CACHED OWNER (FrontClipping —
-            // never raw-GL a GlStateManager-cached/mirrored state) + raw stencil disable
-            // (26.2 vanilla caches no stencil state — the mod idiom). Retired at IS3.
+            // IS3 §4.1 THE BELT SWAP: the DEF-G whole-pass clip-DISABLE belt is retired and
+            // replaced by the decomposed path's ARM (byte-for-byte the ~:1098 decomposed arm) so
+            // dest terrain clips at the portal plane through the iris shaderpack (the IS3-injected
+            // Patch.SODIUM terrain uniform) exactly as on the stencil path — EXCEPT the dest SKY:
+            // render() draws sky internally AFTER this single arm (the decomposed path draws sky
+            // BEFORE its :1098 arm precisely because the dome spans both sides of the plane), so on
+            // the shaders-OFF proof config the injected vanilla sky shader (loc>=0) is bisected at the
+            // portal plane. That is a lever-only test-config artifact, NOT a shaders-ON regression
+            // (the iris sky is Patch.VANILLA, un-injected, loc<0 → the guard disables clip →
+            // unclipped) and is spec-accepted (port-note IS-iris-shaders-on.md §4.6, "sky bisected
+            // shaders-OFF"). The raw stencil disable
+            // beside it is KEPT (the §2.1-3 stencil-free shape; 26.2 vanilla caches no stencil
+            // state — the mod idiom). The isRendering() guard is mandatory:
+            // getActiveClippingPlane() peeks the portal-layer stack and throws at layer-0 callers
+            // (D23 routes those to the decomposed renderWorldNew, so isRendering()==true here in
+            // practice, but setupInnerClipping(null,...) collapses to disableClipping() — a
+            // layer-0 full-frame render stays unclipped, exactly like the decomposed path). The
+            // per-draw definedness belt for un-injected iris NON-terrain programs (entities/sky/
+            // particles that write no gl_ClipDistance while this global clip is armed) is carried
+            // by the vanilla GlCommandEncoderClipMixin + sodium MixinSodiumGLDrawContext_ClipUpload
+            // guards (port-note §4.0). The finally re-asserts disableClipping() after render().
             GL11.glDisable(GL11.GL_STENCIL_TEST);
-            FrontClipping.disableClipping();
+            FrontClipping.setupInnerClipping(
+                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                destViewMatrix, -FrontClipping.ADJUSTMENT
+            );
+            // IS3 V6 FOLD — FREEZE the just-armed view-space plane into the pass-scoped full-pipeline
+            // override. render() runs submitFeatures (its entity submit) BEFORE the framegraph terrain
+            // execute, and M4 (MixinLevelRenderer_CrossPortalEntity submitEntities-TAIL) disarms the
+            // live com.warwa store there (disableClipping() -> keep-all plane + glClipEnabled=false).
+            // Without this override the per-draw uploaders would read capture().enabled==false / a
+            // keep-all plane at terrain draw and render UNCLIPPED — the belt-swap arm defeated. Only
+            // arm the override if the belt actually armed a plane (layer-0 null -> unclipped, matching
+            // the decomposed path). The uploaders consult FullPipelineClipState as an alternate arm
+            // source so terrain re-asserts THIS plane regardless of M4's live-store disarm; the finally
+            // restores the prior override + hard-disables the raw GL cap.
+            com.warwa.seamlessportals.render.FrontClipping.Snapshot armedClipPlane =
+                com.warwa.seamlessportals.render.FrontClipping.capture();
+            if (armedClipPlane.enabled) {
+                com.warwa.seamlessportals.render.FullPipelineClipState.arm(
+                    armedClipPlane.x, armedClipPlane.y, armedClipPlane.z, armedClipPlane.w);
+            }
+            else {
+                com.warwa.seamlessportals.render.FullPipelineClipState.disarm();
+            }
+            // §4.7 discriminator probe — arm a 1Hz capture window for this full-pipeline pass
+            // (lever-gated -Dseamlessportals.clipProbe; byte-inert at the default). The vanilla
+            // trySetup handler feeds it per-draw; endPass() dumps in the finally.
+            com.warwa.seamlessportals.render.ClipDiscriminatorProbe.beginPass(String.valueOf(destDim.identifier()));
             // §8-14 LRS-identity HARD assert immediately before render() (port-note §1-E):
             // extract writes the extractor's LRS; render() reads the renderer's field — a
             // divergence here silently drops entities/clouds/particles.
@@ -1733,6 +1787,16 @@ public class SecondaryWorldRenderCore {
             // re-asserted through its cached owner.
             GL11.glDisable(GL11.GL_STENCIL_TEST);
             FrontClipping.disableClipping();
+            // IS3 V6 FOLD — disarm the full-pipeline override + HARD-disable the raw GL clip cap. The
+            // per-draw uploaders re-assert GL_CLIP_DISTANCE0 with RAW glEnable (bypassing the com.warwa
+            // glClipEnabled cache), and M4 may have already driven that cache to false mid-pass, so the
+            // disableClipping() above can no-op while raw GL_CLIP_DISTANCE0 is left ON — force it off at
+            // the pass boundary (GL_CLIP_DISTANCE0 is not GlStateManager-cached; the store's own idiom).
+            com.warwa.seamlessportals.render.FullPipelineClipState.restore(savedFullPipelineClip);
+            GL11.glDisable(org.lwjgl.opengl.GL30.GL_CLIP_DISTANCE0);
+            // §4.7 discriminator probe — close + dump this pass's capture window (byte-inert at
+            // the default; the clip is now disarmed so the recorded draws reflect the armed pass).
+            com.warwa.seamlessportals.render.ClipDiscriminatorProbe.endPass();
             // §8-3(c) — re-run SOURCE setupFog so any capture-at-setupFog observer serves SOURCE
             // fog for the frame's remainder (block-era Step-9 discipline). Compute-only for the
             // UBO on 26.2; the shared AtmosphericFogEnvironment takes one extra lerp step toward

@@ -8,9 +8,12 @@ import java.util.Map;
  * IS-iris-shaders-on §3.2): the {@code programId -> seamlessportals_ClipPlane
  * uniform location} cache shared between
  * {@link com.warwa.seamlessportals.mixin.client.GlCommandEncoderClipMixin}
- * (the per-draw uploader — the sole reader/writer on the hot path) and
+ * (the per-draw uploader on the vanilla trySetup chokepoint),
+ * {@code MixinSodiumGLDrawContext_ClipUpload} (the sodium per-pass uploader —
+ * a second reader/writer since the IS3 §4.3 fold-in) and
  * {@link com.warwa.seamlessportals.mixin.client.GlDeviceClipCacheMixin}
- * (the invalidation seam).
+ * (the invalidation seam). Program ids are globally unique and all three run
+ * render-thread-only, so the shared map is coherent across both uploaders.
  *
  * <p><b>WHY INVALIDATION IS MANDATORY:</b> GL program ids are recycled.
  * {@code GlDevice.clearPipelineCache} (mc262 {@code GlDevice:261} — public;
