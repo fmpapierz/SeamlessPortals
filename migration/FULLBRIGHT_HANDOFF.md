@@ -1,7 +1,10 @@
-# IN-PORTAL FULLBRIGHT — DEBUG HANDOFF (2026-07-22)
+# IN-PORTAL FULLBRIGHT — DEBUG HANDOFF (2026-07-22, rev 2 — PROBE NOW FULLY DESIGNED)
 
 Continue debugging the **shaders-ON in-portal fullbright** here. Read `§0 STANDING RULES` first, then
-`§4 THE NEXT MOVE` (it is a PROBE, not a fix — diagnose-first).
+`§5 THE PROBE` (it is a PROBE, not a fix — diagnose-first). The 2026-07-22 recon (rev 2) javap-confirmed
+every iris symbol and turned §5 into a build-ready design; the symbol table is `§8`. **Next session = BUILD
+the §5 probe, run it (A/B), read the full log, then design the fix. No code was written this recon; the
+working tree is unchanged (uncommitted counter-bump + dead shadow-sync WIP still present — isolate on commit).**
 
 ---
 
@@ -105,23 +108,73 @@ phantom-fix residual — not from this.)
 
 ---
 
-## §5 THE NEXT MOVE — RUN THE PROBE (diagnose-first; the recon designed it)
-Do NOT iterate the fix blind. Build the lever-gated **live uniform-readback probe** and run it on the exact
-same-dim OW-dest view, once, 1Hz, log-only:
-1. During a dest terrain draw (hook near `MixinGlCommandEncoder.iris$setupState` after `program.iris$setupState`,
-   gated to the dest-extract flag), reflect the bound `gbuffers_terrain` `ExtendedShader`'s private `uniforms`
-   (`ProgramUniforms`) field → read `lastFrame`; read `SystemTimeUniforms.COUNTER.getAsInt()`. Log both.
-2. `glGetUniformLocation` + `glGetUniformfv` the LIVE bound-program `cameraPosition`, one column of
-   `gbufferModelView`, and `shadowLightPosition` (or `sunPosition`). Log as **dest-expected vs main-expected**
-   (capture the saved main camera pos pre-swap for the contrast).
+## §5 THE PROBE — FULLY DESIGNED (2026-07-22 rev-2 recon), BUILD THIS FIRST
+Diagnose-first: build this lever-gated, log-only, reflection-only probe and run it BEFORE touching the fix.
+The recon javap-confirmed every symbol (§8) and settled the design below. The OLD sketch (read `lastFrame`
+"after `program.iris$setupState`") was WRONG — see the ⚠ corrections at the end.
 
-**Reading (settles §4):**
-- Bump ON: `lastFrame != COUNTER` during the dest draw ⇒ the bump DID cause a re-upload. Then check the values:
-  live cameraPosition/celestial ≈ **MAIN** ⇒ **hypothesis 1 confirmed → add the re-source (Option B)**. Values ≈
-  DEST but still fullbright ⇒ **hypothesis 3 → pivot to lmcoord** (adapt `LightSectionDump` to the dest ClientLevel).
-- Bump ON but `lastFrame == COUNTER` during the dest draw ⇒ the bump did NOT re-upload ⇒ **hypothesis 2 → fix the
-  bump reach/timing** (e.g. bump inside `renderDestWorldFullPipeline` right before `destRenderer.render:1747`, or
-  reflect each reused `ExtendedShader.uniforms.lastFrame = -1`).
+**Shape — clone the two proven precedents:**
+- A reflection-only `IrisFullbrightProbe` in `com.warwa.seamlessportals.render` (discipline = `ShadowEmptinessProbe`:
+  NO iris `@Mixin`, javap-confirmed reflective symbols, self-disarming on any throw, 1Hz-latched, render-thread only).
+- A thin per-draw hook mixin cloned from `MixinSodiumProbe_GlCommandEncoder`:
+  `@Mixin(targets="com/mojang/blaze3d/opengl/GlCommandEncoder")`, `@Inject` into
+  `trySetup(GlRenderPass, Collection)Z` at **RETURN**, `require = 0`, that forwards `(cir.getReturnValue())` to the probe.
+
+**Lever:** `-Dseamlessportals.fullbrightProbe=true` (DEFAULT-OFF). Add the `-PfullbrightProbe` passthrough to BOTH
+the `runClientSodium` and gametest blocks in `fabric/build.gradle` (idiom:
+`if (project.findProperty('fullbrightProbe') == 'true') { vmArg('-Dseamlessportals.fullbrightProbe=true') }`).
+
+**Pass discriminator (bytecode-confirmed):** `PortalRendering.isRendering()` — FALSE = the MAIN pass, TRUE = inside
+the compat nested dest render (`renderWorldFullPipeline`, via `pushPortalLayer` in `doRenderPortal`). ⚠ NOT
+`isDestExtracting` (that brackets only the vanilla extract sub-phase, NOT the compat full-pipeline terrain draws).
+
+**The key recon insight — no pre-update `lastFrame` read needed:** same-dim reuses the SAME `ProgramUniforms`
+instance across the main + dest passes, and `update()` re-uploads perFrame IFF `COUNTER` advanced since that
+instance last updated. So "did the dest draw re-upload?" ⇔ **`COUNTER(dest-pass) != COUNTER(main-pass)` in the SAME
+frame**. No need to read `lastFrame` (post-`update()` it is ALWAYS `==COUNTER` → useless). Both COUNTERs AND both
+uniform value-sets are readable at the `trySetup` RETURN seam (iris injects its setup at trySetup HEAD, so by
+RETURN `update()` has already run and the GL program carries the post-update uniforms).
+
+**Per-frame state machine** (in `IrisFullbrightProbe`, driven from the trySetup-RETURN hook; entry gated on:
+enabled + successful setup + an iris program bound = `GL_CURRENT_PROGRAM > 0` AND
+`glGetUniformLocation(prog,"cameraPosition") >= 0`):
+- `armed` ⇔ `now - lastEmit >= 1s`.
+- MAIN draw (`!isRendering()`), armed, once per frame (refresh only when `COUNTER` changed): capture
+  `mainSlot = { cMain = COUNTER.getAsInt(), programId, vals = readUniforms(programId) }`.
+- DEST draw (`isRendering()`), `mainSlot` present: capture `destSlot = { cDest, programId, vals }` PLUS the reflected
+  SOURCE — `CapturedRenderingState.getGbufferModelView()` / `getGbufferProjection()` (what iris WOULD upload) — PLUS
+  the live dest camera pos. EMIT one comparison block; reset `mainSlot`; `lastEmit = now`.
+- `readUniforms(programId)`: `glGetUniformfv` into a 16-float zero-init buffer (program-explicit, no bind needed) for
+  each PRESENT uniform of: `cameraPosition`, `gbufferModelView`, `gbufferModelViewInverse`, `shadowLightPosition`,
+  `sunPosition`, `upPosition`, `shadowModelView`. **Strong discriminators = `gbufferModelView` (the view matrix —
+  dest≠main clearly) + the celestial dirs (`shadowLightPosition`/`sunPosition`/`upPosition`, the direction-dependent
+  terms).** `cameraPosition` is WEAK (iris may use camera-relative fract coords ≈ equal both passes) — read it, but
+  never decide on it alone.
+- Log, per pass, the bound `programId` (+ a label if cheap) so a run SELF-VERIFIES the seam catches sodium TERRAIN
+  draws (see the RISK note).
+
+**The 3-way decision (settles §4 in ONE run):**
+
+| dest-vs-main GL values | `C_dest` vs `C_main` | VERDICT |
+|---|---|---|
+| DIFFER (dest) yet STILL fullbright | (either) | **H3 → per-vertex lmcoord** — uniforms are fine; adapt `LightSectionDump` to the dest `ClientLevel` |
+| EQUAL (main) | `!=` (re-upload happened) | **H1 → re-source (Option B):** push dest cameraPosition + celestial sun/shadowLight/up + shadow matrices before the dest render. Cross-check the reflected SOURCE: source `main` ⇒ H1 firm; source `dest` yet GL `main` ⇒ the perFrame upload isn't propagating that source (plumbing, closer to H2) |
+| EQUAL (main) | `==` (no re-upload) | **H2 → bump didn't reach:** fix reach/timing — bump inside `renderDestWorldFullPipeline` right before `destRenderer.render:1747`, or reset each reused `ExtendedShader.uniforms.lastFrame = -1` |
+
+**Run matrix (A/B):** (i) bump ON (default): `.\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PfullbrightProbe=true`;
+(ii) bump OFF: add `-PdisableIrisPerFrameRefresh=true`. Bump-OFF is the baseline — expect `C_dest==C_main` +
+EQUAL(main) values. Bump-ON flipping `C_dest` to `!= C_main` proves the bump reaches; the values then split H1 vs H3.
+
+**⚠ Corrections to the pre-recon sketch (do NOT repeat):** (1) reading `lastFrame` after `iris$setupState` is
+useless (always `==COUNTER` post-update) — use the cross-pass COUNTER compare. (2) gate on
+`PortalRendering.isRendering()`, NOT `isDestExtracting`. (3) the seam is Mojang `GlCommandEncoder.trySetup` RETURN
+(the P7b idiom), NOT an iris `@Mixin`.
+
+**RISK (the probe self-diagnoses it):** if sodium terrain draws do NOT route through Mojang
+`GlCommandEncoder.trySetup` in this sodium/iris build, the dest-pass hook catches only entity/particle draws, not
+terrain. §8 bytecode says they DO (iris's `MixinGlCommandEncoder` injects `trySetup` HEAD and drives the sodium
+terrain `ExtendedShader`). The per-pass `programId` logging confirms it live — "no terrain-like program in the dest
+pass" is itself the finding, and the pivot is to hook sodium's terrain draw path directly.
 
 ---
 
@@ -145,3 +198,47 @@ same-dim OW-dest view, once, 1Hz, log-only:
   (predates the phantom + fullbright work). Rebuild once the fullbright lands. Main branch `claude/nifty-kepler`
   has flash + depth only (fast-forwarded to `e8e4767`); the phantom (`e408a0d`) is on `iris-on/is5-shadow`, not
   yet merged to main.
+
+## §8 JAVAP-CONFIRMED SYMBOL TABLE + STRUCTURE FACTS (2026-07-22 rev-2 recon)
+Every symbol below was `javap`-verified against
+`iris-1.11.2+26.2-fabric.jar` (`…/maven.modrinth/iris/1.11.2+26.2-fabric/f7d526b…/`) THIS recon — no guessing.
+
+**iris internals (reflect these):**
+- `net.irisshaders.iris.gl.program.ProgramUniforms`: `int lastFrame;` (PACKAGE-private, NOT `private`).
+  `public void update()` — bci 94+: `frameNow = SystemTimeUniforms$FrameCounter.getAsInt()` (bci 97), compare
+  `lastFrame` (bci 102), if advanced `updateStage(perFrame)` + `lastFrame = frameNow` (bci 111). Also
+  `private static ProgramUniforms active;` (set to `this` at bci 12, BEFORE the gate).
+- `net.irisshaders.iris.uniforms.SystemTimeUniforms`: `public static final SystemTimeUniforms$FrameCounter COUNTER;`.
+  `FrameCounter`: `public int getAsInt()`, `public void beginFrame()` (advances `private int count` `(count+1)%720720`),
+  `public void reset()`. — the bump = `SystemTimeUniforms.COUNTER.beginFrame()`.
+- `net.irisshaders.iris.pipeline.programs.ExtendedShader extends com.mojang.blaze3d.opengl.GlProgram implements IrisProgram`:
+  `private final ProgramUniforms uniforms;`, `private static ExtendedShader lastApplied;`,
+  `public void iris$setupState(HashMap, GpuTextureView)`, `public boolean iris$isSetUp()`,
+  `public Map<String,com.mojang.blaze3d.opengl.Uniform> getUniforms()`. Inside `iris$setupState`: sets
+  modelViewInverse/normalMat/projectionInverse DIRECTLY (ungated, bci 19-153 → why dest GEOMETRY is correctly framed),
+  then bci 261 `ProgramSamplers.update()`, **bci 268 `this.uniforms.update()` = THE GATE**, bci 276
+  `customUniforms.push()`, bci 283 `ProgramImages.update()`.
+- `net.irisshaders.iris.mixin.MixinGlCommandEncoder`: injects `private void iris$setupState(GlRenderPass, Collection,
+  CallbackInfoReturnable)` into `com.mojang.blaze3d.opengl.GlCommandEncoder.trySetup(GlRenderPass, Collection)Z` at
+  **`@At("HEAD")`** (verified); calls `IrisProgram.iris$setupState(HashMap, GpuTextureView)` at bci 127 ⇒ sodium
+  terrain draws hit the gate through this seam.
+- `net.irisshaders.iris.uniforms.CapturedRenderingState`: `public static final … INSTANCE;`
+  `public org.joml.Matrix4fc getGbufferModelView()`, `public org.joml.Matrix4fc getGbufferProjection()` — the reflected
+  SOURCE reads (precedent: `ShadowEmptinessProbe` already resolves these).
+- Stale PER_FRAME set (skipped for dest draws): `CameraUniforms` (cameraPosition…), `MatrixUniforms`
+  (gbufferModelView/Proj…), shadow matrices, `CelestialUniforms` (sunPosition/shadowLightPosition/upPosition…).
+
+**mod-side structure:**
+- `qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()` = cached static (`getPortalLayer()!=0`)
+  — the pass discriminator (cheap boolean).
+- `IrisCompatOn262Renderer.invokeWorldRendering` lines **338/343** bracket `IrisInterface.invoker.bumpPerFrameUniformCounter()`
+  around `MyGameRenderer.renderWorldFullPipeline` (the dest render runs there with `isRendering()==TRUE`).
+- per-draw hook precedent: `MixinSodiumProbe_GlCommandEncoder` (trySetup RETURN, `GL20.glGetInteger(GL_CURRENT_PROGRAM)`,
+  `GlStateManager._glGetUniformLocation`, 1Hz-throttled — package `qouteall.imm_ptl.core.compat.mixin.sodium`, registered
+  in `seamlessportals-ip-compat.mixins.json`).
+- reflection-probe precedent: `ShadowEmptinessProbe` (self-disarming; 1Hz latch; javadoc'd binding discipline).
+- `fabric/build.gradle` `-P`→`-D` passthrough idiom lives in the `runClientSodium` block (~L146-187) AND the gametest block
+  (~L236-270); the existing `-PdisableIrisPerFrameRefresh` A/B lever is at L187/L270.
+
+## §9 FRESH-SESSION STARTER PROMPT
+The prompt to open the next session is saved alongside this doc as `migration/FULLBRIGHT_NEXT_PROMPT.md` (paste it verbatim).
