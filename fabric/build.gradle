@@ -165,6 +165,17 @@ loom {
             // full-pipeline pass (terrain->loc>=0/enabled, entity+sky->loc==-1/disabled) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PclipProbe=true
             if (project.findProperty('clipProbe') == 'true') { vmArg('-Dseamlessportals.clipProbe=true') }
+            // IS5 shadow-emptiness probe (port-note IS-iris-shaders-on.md §5): 1Hz per-pass dump of
+            // the OW-dest shadow state (pass-fired flags, the drawn counts + sodium shadow HUD text,
+            // pipeline/dim/sun cross-check, and the decisive shadow-depth readback) — settles
+            // whether the nested OW shadow map is EMPTY —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshadowProbe=true
+            if (project.findProperty('shadowProbe') == 'true') { vmArg('-Dseamlessportals.shadowProbe=true') }
+            // C2-1 SAME-DIM FLASH FIX A/B (2026-07-21): the per-portal-layer MultiDrawBatch isolation
+            // is DEFAULT-ON; pass this to force it OFF and reproduce the same-dim source-terrain vanish
+            // (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
+            if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -229,6 +240,16 @@ loom {
             // clipProbe run dumps the per-draw enable-decisions under the 8 legs —
             //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PclipProbe=true
             if (project.findProperty('clipProbe') == 'true') { vmArg('-Dseamlessportals.clipProbe=true') }
+            // IS5 shadow-emptiness probe (mirror of the clientSodium lever; §5). The suite runs
+            // iris-ABSENT, so the probe self-disarms on the first capture (iris ClassNotFound) —
+            // byte-inert for the 8-leg gate without the property; armed only for a manual iris run —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PshadowProbe=true
+            if (project.findProperty('shadowProbe') == 'true') { vmArg('-Dseamlessportals.shadowProbe=true') }
+            // C2-1 SAME-DIM FLASH FIX A/B (2026-07-21): the per-portal-layer MultiDrawBatch isolation
+            // is DEFAULT-ON; pass this to force it OFF and reproduce the same-dim source-terrain vanish
+            // (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
+            if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
         }
     }
 }

@@ -92,8 +92,42 @@ public class IPGlobal {
         return SHADERPACK_VIEWS_JVM_LEVER || (experimentalShaderpackPortalViews && shadersActive);
     }
     
+    // C2-1 SAME-DIM FLASH FIX (2026-07-21; root-caused via the user's git bisect + the deep-Opus panel to
+    // commit 712f595's D1 shared-RSM design). The shaders-OFF/ON same-dim flicker (SOURCE terrain beyond
+    // the standing chunk vanishes on pan/move, only with a SAME-DIM portal in view; cross-dim never
+    // flashes) is the shared per-region DRAW-COMMAND cache: RenderRegion.cachedBatches
+    // (Map<TerrainRenderPass,MultiDrawBatch>, keyed by pass ONLY, gated by MultiDrawBatch.isFilled) is NOT
+    // in the D1 swap set, and MixinSodiumRenderRegion previously isolated ONLY the ChunkRenderList (its
+    // per-layer list is `new ChunkRenderList(this)` on the SAME region -> resolves to the SAME batch). The
+    // same-dim portal terrain draw fills that shared batch with its narrower through-portal subset
+    // (isFilled=true); the later main draw finds isFilled==true, SKIPS its refill, and draws the portal
+    // subset -> every main-visible-but-not-portal-visible section is absent from the reused batch and
+    // VANISHES (count-stable, DRAW-not-cull, same-dim-only, first appears at C2-1 -> uniquely fits every
+    // symptom; verified to sodium 0.9.1 bytecode). Fix = the MISSING HALF of the #3 isolation: give each
+    // portal recursion layer its OWN per-region MultiDrawBatch (MixinSodiumRenderRegion.getCachedBatch
+    // redirect), so the portal draw never touches the region-own (main) batch. ORDER-INDEPENDENT (the two
+    // batches are simply never the same instance -> no reliance on portal-fills-first or main-self-heals,
+    // the concern all three judges flagged), covers shaders-OFF + shaders-ON (both route terrain through
+    // the shared-RSM drive/arm), and is a no-op for cross-dim (separate per-dim RSM/regions). DEFAULT TRUE
+    // (defect fix on the sodium-compat path); A/B OFF via -Dseamlessportals.disablePortalBatchIsolation.
+    public static final boolean PORTAL_BATCH_ISOLATION_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disablePortalBatchIsolation");
+    public static boolean portalBatchIsolation = true;
+
+    /** True when each portal recursion layer should own a distinct per-region MultiDrawBatch (the
+     *  batch-analog of the #3 per-layer ChunkRenderList isolation). Default-on; the JVM lever forces it OFF
+     *  for A/B comparison. Behavior is identical to vanilla sodium outside portal rendering. */
+    public static boolean isPortalBatchIsolationActive() {
+        return portalBatchIsolation && !PORTAL_BATCH_ISOLATION_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: incremented by MixinSodiumRenderRegion each time getCachedBatch is redirected to a
+     *  per-portal-layer batch. A self-run round can read it to prove the isolation fires during same-dim
+     *  portal terrain draws. Render-thread-only plain int; no atomic needed. */
+    public static int portalBatchIsolationRedirectCount = 0;
+
     public static boolean doCheckGlError = true;
-    
+
     public static boolean renderYourselfInPortal = true;
     
     public static boolean activeLoading = true;
