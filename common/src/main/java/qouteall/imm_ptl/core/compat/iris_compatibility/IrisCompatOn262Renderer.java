@@ -221,6 +221,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
         CHelper.checkGlError();
 
+        // IS5-P phantom fix (IrisTemporalTargetGuard): SAVE iris's clear=false temporal color targets
+        // (Complementary's colortex2 TAA history, etc.) BEFORE the dest render pollutes them; RESTORE in the
+        // finally after the blit-back. Kills the whole-screen phantom (LIVE-CONFIRMED via TAA-off) while
+        // preserving the main view's TAA. Lever-gated (default-on), same-dim-scoped, throw-safe (never throws).
+        boolean guardSaved = IrisTemporalTargetGuard.save();
+
         isInsideOwnRenderPortals = true;
         try {
             renderPortals(passingModelView);
@@ -237,6 +243,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // taken unconditionally above, so on a mid-loop throw this restores the composited
             // snapshot instead of leaving the last portal's raw dest render on the main target.
             IrisCompatPaste.drawStraightCopy(deferredBuffer.fb, mainRT);
+
+            // IS5-P phantom fix: undo the dest render's pollution of iris's persistent temporal targets
+            // (byte-identical restore of the pre-dest history) — the phantom carrier the mainRT blit above
+            // can never reach. AFTER the blit-back (which reads mainRT, not iris colortex). Throw-safe.
+            if (guardSaved) {
+                IrisTemporalTargetGuard.restore();
+            }
         }
 
         CHelper.checkGlError();
@@ -372,6 +385,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
                 // disposal is best-effort
             }
             deferredBuffer.fb = null;
+        }
+        // IS5-P phantom fix: free the static scratch textures (idempotent — shared by both instances).
+        try {
+            IrisTemporalTargetGuard.teardown();
+        } catch (Throwable t) {
+            // disposal is best-effort
         }
     }
 
