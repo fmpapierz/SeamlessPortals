@@ -176,6 +176,10 @@ loom {
             // (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
             if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
+            // IS5-P phantom fix A/B (2026-07-22): the iris temporal-target guard is DEFAULT-ON; pass this to
+            // force it OFF and reproduce the whole-screen phantom overlay (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisTemporalGuard=true
+            if (project.findProperty('disableIrisTemporalGuard') == 'true') { vmArg('-Dseamlessportals.disableIrisTemporalGuard=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -250,6 +254,10 @@ loom {
             // (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
             if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
+            // IS5-P phantom fix A/B (2026-07-22): the iris temporal-target guard is DEFAULT-ON; pass this to
+            // force it OFF and reproduce the whole-screen phantom overlay (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisTemporalGuard=true
+            if (project.findProperty('disableIrisTemporalGuard') == 'true') { vmArg('-Dseamlessportals.disableIrisTemporalGuard=true') }
         }
     }
 }

@@ -126,6 +126,30 @@ public class IPGlobal {
      *  portal terrain draws. Render-thread-only plain int; no atomic needed. */
     public static int portalBatchIsolationRedirectCount = 0;
 
+    // IS5-P IRIS TEMPORAL-TARGET GUARD (2026-07-22) — the shaders-ON whole-screen PHANTOM fix. The compat
+    // renderer runs the dest world through iris's full deferred pipeline, polluting iris's PERSISTENT
+    // clear=false color targets (Complementary's colortex2 = TAA history, etc.); the mainRT-only blit-back
+    // never restores those, so the next frame's TAA reprojects the dest terrain into view = the faint
+    // whole-screen ghost (LIVE-CONFIRMED: TAA-off kills it). Fix = IrisTemporalTargetGuard save/restores
+    // iris's clear=false color targets (both ping-pong textures) around the per-portal dest render, so the
+    // dest pollution is undone in iris's own buffers while the MAIN view's TAA history survives byte-identical.
+    // DEFAULT TRUE (defect fix on the experimental shaderpack-portal path); A/B OFF via
+    // -Dseamlessportals.disableIrisTemporalGuard. Same-dim-scoped implicitly (touches only the main pipeline's
+    // targets; cross-dim uses a separate per-dim pipeline). Byte-identical when off (save() early-returns).
+    public static final boolean IRIS_TEMPORAL_GUARD_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisTemporalGuard");
+    public static boolean irisTemporalGuard = true;
+
+    /** True when the iris temporal-target guard should save/restore iris's clear=false color targets around
+     *  the portal dest render (the phantom fix). Default-on; the JVM lever forces it OFF for A/B comparison. */
+    public static boolean isIrisTemporalGuardActive() {
+        return irisTemporalGuard && !IRIS_TEMPORAL_GUARD_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: incremented by IrisTemporalTargetGuard per texture saved (2 per clear=false target).
+     *  A self-run round can read it to prove the guard fired during shaders-ON portal frames. Render-thread int. */
+    public static int irisTemporalGuardCopyCount = 0;
+
     public static boolean doCheckGlError = true;
 
     public static boolean renderYourselfInPortal = true;
