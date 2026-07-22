@@ -46,12 +46,23 @@ import java.util.OptionalDouble;
  *       {@code gl_FragCoord} — the 1:1 screen-space UV law, mining §3-8: the dest content was
  *       rendered full-screen with the same projection, so it already sits at the correct
  *       pixels), DEPTH-TESTED against the deferred buffer's SNAPSHOT depth.
- *       <b>Depth compare = {@code GREATER_THAN_OR_EQUAL}, NO write (R5 reversed-Z):</b> on 26.2
- *       reversed-Z, CLOSER-to-camera = LARGER depth value, so the portal surface passes exactly
- *       where it is in front of (or coincident with, hence GEQUAL not GREATER — the portal
- *       entity's own quad may have written plane depth) the snapshotted scene = occlusion
- *       correct against the pre-portal frame. A frame-edge halo in the live round is the
- *       pre-registered wrong-compare-direction discriminator (design §1 IS1).</li>
+ *       <b>Depth compare = {@code GREATER_THAN_OR_EQUAL}, depth WRITE ON (R5 reversed-Z):</b> on
+ *       26.2 reversed-Z, CLOSER-to-camera = LARGER depth value, so the portal surface passes
+ *       exactly where it is in front of (or coincident with, hence GEQUAL not GREATER) the
+ *       snapshotted scene = occlusion correct against the pre-portal frame.
+ *       <b>#13 FIX (2026-07-21) — the write was RESTORED to match IP's original stamp</b>
+ *       ({@code MyRenderHelper.drawPortalAreaWithFramebuffer} did {@code _depthMask(true)}): the
+ *       port kept the reversed-Z-flipped GEQUAL test but had DROPPED the write, so with TWO
+ *       non-recursive portals (nearest-first stamp order) the NEAR portal left no depth footprint
+ *       and the FAR portal's later stamp GEQUAL-passed over it — the "second portal paints on top
+ *       of the first" bug. Writing the near portal's plane depth into the deferred buffer now
+ *       GEQUAL-rejects the far stamp exactly where it sits behind = IP parity. The deferred
+ *       buffer's depth is discarded at the depth-test-OFF blit-back and re-cleared + re-snapshotted
+ *       each frame in {@code IrisCompatOn262Renderer.onBeforeHandRendering}
+ *       ({@code clearColorAndDepthTextures} then {@code copyDepthFrom(mainRT)}), so the write has
+ *       NO effect beyond inter-portal occlusion. A frame-edge
+ *       halo in the live round is the pre-registered wrong-compare-direction discriminator
+ *       (design §1 IS1).</li>
  *   <li><b>{@code portalStraightCopy}</b>: the full-screen STRAIGHT-COPY pass used for both
  *       snapshot color (main→deferred) and blit-back (deferred→main). Exists because
  *       {@code RenderTarget.blitAndBlendToTexture} is ALPHA-BLEND source-over (the settled OQ5,
@@ -101,9 +112,10 @@ public class IrisCompatPaste {
             // D20 — the portal-shaped stamp. POSITION_COLOR mesh (the ViewAreaRenderer route;
             // vertex color is WHITE = identity in the fragment multiply), transformed by ONE
             // combined clip matrix (projection * modelView, column-form M·v) uploaded as the
-            // Projection UBO — no DynamicTransforms dependency. Reversed-Z GEQUAL, no depth
-            // write (class javadoc); blend off (no blend function declared); cull off (the
-            // aperture mesh is visible from both sides, matching the query/aperture draws).
+            // Projection UBO — no DynamicTransforms dependency. Reversed-Z GEQUAL + depth WRITE
+            // (the #13 multi-portal-occlusion fix — class javadoc); blend off (no blend function
+            // declared); cull off (the aperture mesh is visible from both sides, matching the
+            // query/aperture draws).
             RenderPipeline portalAreaSample = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/portal_area_sample"))
                 .withVertexShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
@@ -112,7 +124,7 @@ public class IrisCompatPaste {
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, false))
+                .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true))
                 .withCull(false)
                 .build();
             PORTAL_AREA_SAMPLE = (RenderPipeline) registerMethod.invoke(null, portalAreaSample);

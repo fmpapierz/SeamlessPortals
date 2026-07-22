@@ -336,11 +336,15 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // MULTI-PORTAL LEDGER (Fable-fold NOTE, port-note §2.5): for the 2nd+ portal in a frame
         // this query tests against the CURRENT main-target depth, which the previous portal's
         // nested full render replaced with DEST-world depth (nothing restores main depth between
-        // portals — inherited one-layer-era shape, faithful to the held IP source; the STAMP
-        // itself stays correct, tested against the untouched deferred snapshot depth). Wrong
+        // portals — inherited one-layer-era shape, faithful to the held IP source). Wrong
         // show/hide decisions possible for portals 2+; pre-registered discriminator: two portals
         // side-by-side, the second window shows the static snapshot scene. IS2+ candidate fix:
         // query against the deferred buffer's snapshot depth.
+        // #13 UPDATE (2026-07-21): the SEPARATE "second portal paints ON TOP of the first" bug was
+        // the STAMP's missing depth write (IrisCompatPaste PORTAL_AREA_SAMPLE had writeDepth=false
+        // — the port had dropped IP's _depthMask(true)); FIXED by restoring the write so the near
+        // portal's plane depth GEQUAL-rejects the far stamp. This QUERY-vs-stale-main-depth issue
+        // is the DISTINCT still-latent item (wrong show/hide, NOT paint-over) and remains a candidate.
         return PortalRenderInfo.renderAndDecideVisibility(portal, () -> {
             ViewAreaRenderer.renderPortalArea(
                 portal, Vec3.ZERO,
