@@ -380,6 +380,10 @@ public abstract class MixinSodiumRenderSectionManager implements IESodiumRenderS
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (RenderStates.portalsRenderedThisFrame != 0) {
+            // §2b probe: count the D5 neutralize firing (nd5 in the [ENT-PROBE] line).
+            if (qouteall.imm_ptl.core.render.EntityVisibilityProbe.ENABLED) {
+                qouteall.imm_ptl.core.render.EntityVisibilityProbe.neutralizeD5++;
+            }
             cir.setReturnValue(true);
         }
     }

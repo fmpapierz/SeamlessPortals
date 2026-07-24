@@ -40,6 +40,12 @@ public class MixinEntityRenderDispatcher {
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (!CrossPortalEntityRenderer.shouldRenderEntityNow(entity_1)) {
+            // §2b probe: count the cross-portal hide vetoing entities during a DEST extract
+            // (hid in the [ENT-PROBE] line — over-hiding here is a culprit candidate).
+            if (qouteall.imm_ptl.core.render.EntityVisibilityProbe.ENABLED
+                && qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
+                qouteall.imm_ptl.core.render.EntityVisibilityProbe.hiddenByGate++;
+            }
             cir.setReturnValue(false);
             cir.cancel();
         }
