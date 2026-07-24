@@ -9,6 +9,7 @@
     "sodium.IESodiumCameraTimingControl",
     "sodium.MixinSodiumRenderSectionManager",
     "sodium.MixinSodiumRenderRegion",
+    "sodium.MixinSodiumRenderRegionManager_PortalBatchClear",
     "sodium.MixinSodiumFlawlessFrames",
     "sodium.MixinSodiumShaderManagerCompilationCache_ClipSourcePatch",
     "sodium.MixinSodiumGLDrawContext_ClipUpload",
@@ -18,6 +19,7 @@
     "sodium.MixinSodiumOcclusionCuller_CaveCull",
     "sodium.MixinSodiumProbe_ShaderSources",
     "sodium.MixinSodiumProbe_GlCommandEncoder",
+    "sodium.MixinSodiumFullbrightProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe",
     "iris.MixinIrisSodiumTransformPatcher_ClipInject"
   ],

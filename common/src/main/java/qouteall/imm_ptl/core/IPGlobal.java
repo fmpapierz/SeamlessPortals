@@ -91,7 +91,14 @@ public class IPGlobal {
     public static boolean isShaderpackPortalViewsActive(boolean shadersActive) {
         return SHADERPACK_VIEWS_JVM_LEVER || (experimentalShaderpackPortalViews && shadersActive);
     }
-    
+
+    // ===== IS5 shadow-sync fix — RETIRED TOMBSTONE (2026-07-23) ====================================
+    // The old theory ("sodium async shadow cull lags rotation; force getShouldRenderSync sync") was
+    // WRONG about the wave: the getShouldRenderSync mixin was LIVE-PROVEN DEAD
+    // (forcedSyncSinceLastCapture=0 every window — iris short-circuits before that callsite), and the
+    // theory-restart identified the real causes (the clip leak = the wash; the prev-camera tracker = the
+    // ghost). The mixin + lever + counter are deleted; this tombstone prevents a naive re-add.
+
     // C2-1 SAME-DIM FLASH FIX (2026-07-21; root-caused via the user's git bisect + the deep-Opus panel to
     // commit 712f595's D1 shared-RSM design). The shaders-OFF/ON same-dim flicker (SOURCE terrain beyond
     // the standing chunk vanishes on pan/move, only with a SAME-DIM portal in view; cross-dim never
@@ -150,8 +157,143 @@ public class IPGlobal {
      *  A self-run round can read it to prove the guard fired during shaders-ON portal frames. Render-thread int. */
     public static int irisTemporalGuardCopyCount = 0;
 
-    public static boolean doCheckGlError = true;
+    // IS5-G DEST-PASS TAA-HISTORY CLEAR (2026-07-23) — the "ghost terrain" fix (the wave's SECOND component,
+    // unmasked once the wash died). Live-proven carrier (user toggle chain: stamp exonerated by the magenta
+    // lever; Real-Time Shadows OFF -> persists; SSAO OFF -> persists; Temporal Filtering OFF -> GONE): the
+    // dest pass's TAA composite READS the main view's persistent history (which the IS5-P guard rightly
+    // preserves) as its own -> SOURCE-world surfaces blended over the dest terrain, reprojected against the
+    // mismatched camera = the moving surface-shaped ghost. Fix = IrisTemporalTargetGuard.clearForDestPass():
+    // per-portal glClearTexImage of the guard-saved clear=false targets to ZERO before the nested dest render
+    // (Complementary's taa.glsl black-history early-out then returns the pure current frame — no blend, no
+    // darkening); the guard's restore() returns the main history byte-whole. Composed on the guard lever so
+    // the clear can never run unguarded. DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableIrisDestTaaClear.
+    public static final boolean IRIS_DEST_TAA_CLEAR_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisDestTaaClear");
+    public static boolean irisDestTaaClear = true;
 
+    /** True when the per-portal dest render should neutralize (zero) the guard-saved TAA/temporal history
+     *  before rendering (the ghost fix). Composes on the IS5-P guard: guard off => clear off. */
+    public static boolean isIrisDestTaaClearActive() {
+        return irisDestTaaClear && !IRIS_DEST_TAA_CLEAR_DISABLED_LEVER && isIrisTemporalGuardActive();
+    }
+
+    /** Confirm-counter: incremented per texture cleared (2 per saved target, per portal, per frame).
+     *  Expected with Complementary sans Voxy: 10/portal/frame (5 saved targets). Render-thread int. */
+    public static int irisDestTaaClearCount = 0;
+
+    // IS5-PH PREV-UNIFORM HEAL (2026-07-23 late) — the GHOST-TERRAIN root fix (ghost panel wf_98e3a1ee-634,
+    // unanimous javap+GLSL-exact). The nested dest render ticks iris's FrameUpdateNotifier (no re-entrancy
+    // guard in iris) with the DEST camera → the next MAIN frame uploads previousCameraPosition = destCameraPos
+    // → the pack's TAA REPROJECTION displaces the (byte-correct) history by the portal offset → source-shading
+    // painted over terrain, camera-tracked (the ghost). History clears provably could not fix it (carrier =
+    // uniform state, not texture content); Temporal-Filtering-off kills it (the reprojection is the painter).
+    // Fix = ONE onNewFrame() re-tick on the MAIN pipeline after the per-portal loop (camera restored) — the
+    // next frame's natural tick then shifts previous←main before any upload. DEFAULT TRUE; A/B OFF via
+    // -Dseamlessportals.disablePrevUniformHeal.
+    public static final boolean PREV_UNIFORM_HEAL_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disablePrevUniformHeal");
+    public static boolean prevUniformHeal = true;
+
+    /** True when the post-portal prev-uniform heal should re-tick iris's frame notifier (the ghost fix).
+     *  Default-on; the JVM lever forces it OFF for A/B comparison. */
+    public static boolean isPrevUniformHealActive() {
+        return prevUniformHeal && !PREV_UNIFORM_HEAL_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: incremented once per healed frame. Render-thread int. */
+    public static int prevUniformHealCount = 0;
+
+    // IS5-L IN-PORTAL FULLBRIGHT FIX (2026-07-22) — the shaders-ON dest terrain (seen through a same-dim portal)
+    // is lit with the MAIN camera's PER_FRAME lighting uniforms, giving a main-camera direction-dependent
+    // fullbright that toggles on pan. Bytecode-confirmed root: iris re-uploads per-frame lighting uniforms only
+    // when SystemTimeUniforms.COUNTER advanced since a program last bound; the counter advances once/frame at
+    // GameRenderer.render HEAD, and the nested dest render (a re-entrant LevelRenderer.render) never re-advances
+    // it, so the reused same-dim programs (lastFrame==COUNTER from the main pass) SKIP the perFrame upload for
+    // dest draws. Fix = bump COUNTER before+after the dest render (IrisInterface.bumpPerFrameUniformCounter) so
+    // ProgramUniforms.update() re-runs the perFrame stage, re-reading the already-dest-primed sources (iris sets
+    // dest gbufferModelView at render() HEAD; the camera is dest-swapped). IP precedent: ExperimentalIrisPortal\
+    // Renderer did exactly this; the live full-pipeline path dropped it. DEFAULT TRUE; A/B OFF via
+    // -Dseamlessportals.disableIrisPerFrameRefresh. Same-dim/shaders-on-scoped (only the compat dest path bumps).
+    public static final boolean IRIS_PER_FRAME_REFRESH_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisPerFrameRefresh");
+    // IS5 RETIREMENT (2026-07-23, ghost panel wf_98e3a1ee-634 Fix B): DEFAULT flipped true->FALSE. The bump
+    // never fixed the fullbright (live-proven ineffective, probe v1 A/B), and the panel proved it ENABLES the
+    // leg-B poisoning (extra COUNTER advance makes the dest pass re-upload gbufferPrevious* MATRICES from
+    // dest-framed state into the next main frame's TAA reprojection). The wash was the clip leak (Fix 1); the
+    // ghost was the prev-camera tracker (IS5-PH heal). Kept as opt-in dead code pending a full removal pass.
+    public static boolean irisPerFrameRefresh = false;
+
+    /** True when the nested dest pass should force iris to re-upload its per-frame lighting uniforms (the
+     *  in-portal fullbright fix). Default-on; the JVM lever forces it OFF for A/B comparison. */
+    public static boolean isIrisPerFrameRefreshActive() {
+        return irisPerFrameRefresh && !IRIS_PER_FRAME_REFRESH_DISABLED_LEVER;
+    }
+
+    // IS5-W FIX 1 — SHADOW-SCOPE CLIP SUPPRESSION (2026-07-23; theory-restart wf_2d369c84-97c + the
+    // ShadowAliasProbe run + fix panel wf_a2d7890c-115, 3/3 SOUND-WITH-FIXES). THE WASH CARRIER: the
+    // portal front-clip plane is armed in CAMERA view space for the whole nested dest render, and the
+    // IS3 clip inject patched iris's SODIUM SHADOW terrain programs too (live-log-confirmed:
+    // shadow_sodium_terrain_solid/_cutout/_translucent clip-patched, loc>=0). Both clip uploaders fire
+    // during the dest SHADOW pass with the armed camera-space plane, which the shadow program evaluates
+    // against the SUN's model-view — a wrong-space half-space whose effective offset swings ~+/-100
+    // blocks with yaw/pitch, clipping the dest shadow casters out of the 2048^2 map AT RASTER STAGE
+    // (invisible to every batch/list counter: #587 = 254 sections collected+filled+drawn, 0/2304 texels).
+    // Empty map -> deferred shading finds no occluders -> the yaw-keyed brightness wash on terrain that
+    // renders fine (entity shadows survive: Patch.VANILLA programs un-injected). Fix = when
+    // isRenderingShadowMap(), both uploaders upload keep-all {0,0,0,1} instead of the armed plane (and
+    // skip the enable re-assert) — the shadow pass draws unclipped casters; the CAMERA pass keeps its
+    // correct clip. DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableShadowScopeClipFix.
+    public static final boolean SHADOW_SCOPE_CLIP_FIX_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableShadowScopeClipFix");
+    public static boolean shadowScopeClipFix = true;
+
+    /** True when the clip uploaders should suppress the portal front-clip plane (upload keep-all) for
+     *  draws inside an iris SHADOW pass (the wash fix). Default-on; the JVM lever forces it OFF. */
+    public static boolean isShadowScopeClipFixActive() {
+        return shadowScopeClipFix && !SHADOW_SCOPE_CLIP_FIX_DISABLED_LEVER;
+    }
+
+    /** Confirm-counters (render-thread ints; ShadowAliasProbe reads + resets per capture): suppressed =
+     *  shadow-scope armed uploads replaced by keep-all (fix ON — must be nonzero while a portal is on
+     *  screen under shaders); armed = shadow-scope armed uploads that went through UNSUPPRESSED (fix
+     *  OFF A/B leg — must be nonzero there, proving the wash carrier fires). */
+    public static int shadowScopeClipSuppressedCount = 0;
+    public static int shadowScopeClipArmedUploadCount = 0;
+
+    // IS5-W FIX 2+3 — SHADOW/CAMERA SCOPE SPLIT + PER-UPLOAD BATCH CLEAR (same panel). Leg B: the C2-1
+    // per-portal-layer isolation keys ONLY on (isRendering, layer), bypassing iris's shadow/regular
+    // PHYSICAL FIELD SWAP on RenderRegion — inside the portal pass the dest SHADOW and dest CAMERA
+    // scopes share ONE layer ChunkRenderList + ONE layer MultiDrawBatch per region (probe-proven live:
+    // camera freshFill=0 with reuseCross>0 in 50/50 passes; camera collect never ran while the shadow
+    // collect rewrote the shared lists). Benign today only because the shadow selection happens to
+    // superset the view frustum — latent correctness. Fix 2 = split the layer key by scope:
+    // index = 2*(layer-1) + (isRenderingShadowMap() ? 1 : 0) in BOTH structures (PortalScopeKey).
+    // Leg d: iris @Redirects RenderRegion.clearAllCachedBatches at uploadResults to
+    // iris$forceClearAllBatches, so the mod's HOOK-2 upload-clear mirror NEVER fires under iris — layer
+    // batches miss per-upload invalidation (stale draw commands after mesh re-uploads). Fix 3 =
+    // MixinSodiumRenderRegionManager_PortalBatchClear clears the layer batches at the REAL uploadResults
+    // RETURN (orthogonal to iris's redirect). Both share this lever (A/B ambiguity accepted + noted).
+    // DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableShadowScopeIsolation.
+    public static final boolean SHADOW_SCOPE_ISOLATION_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableShadowScopeIsolation");
+    public static boolean shadowScopeIsolation = true;
+
+    /** True when each portal layer's ChunkRenderList/MultiDrawBatch key splits by shadow-vs-camera scope
+     *  (fix 2) and the per-upload layer-batch clear runs (fix 3). Default-on; the JVM lever forces both
+     *  OFF together for A/B (lever-off = exactly the pre-fix (layer-1) key + no upload clear). */
+    public static boolean isShadowScopeIsolationActive() {
+        return shadowScopeIsolation && !SHADOW_SCOPE_ISOLATION_DISABLED_LEVER;
+    }
+
+    /** IS5-G GHOST-WAVE DISCRIMINATOR (ghost panel wf_ac30cdc3-265): tint the IrisCompatPaste portal-area
+     *  STAMP magenta (channel-killing {1,0,1} in the fragment multiply) so a live run settles whether the
+     *  "phantom colored-blocks terrain" wave IS the stamp's own paint overreaching the aperture (ghost
+     *  turns magenta => B3 confirmed) vs the snapshot/other carrier (window magenta, ghost full-color).
+     *  DEFAULT-OFF, byte-identical (the white Vec3 is the identity multiply). Restart-bound sysprop. */
+    public static final boolean debugTintStamp = Boolean.getBoolean("seamlessportals.debugTintStamp");
+
+    public static boolean doCheckGlError = true;
+    
     public static boolean renderYourselfInPortal = true;
     
     public static boolean activeLoading = true;
@@ -236,6 +378,14 @@ public class IPGlobal {
     public static boolean debugSkipPortalTerrain = false;
     public static boolean debugDyeViewAreaMesh = false;
     public static boolean debugNoApertureDepthClamp = false;
+
+    /** IS5-G GHOST-WAVE DISCRIMINATOR run 2 (ghost panel wf_ac30cdc3-265): skip the depth-clamp bracket
+     *  around the IrisCompatPaste STAMP ONLY (IrisCompatOn262Renderer:288/311). DEDICATED lever — do NOT
+     *  reuse debugNoApertureDepthClamp: that one also gates the occlusion-query aperture draw
+     *  (ViewAreaRenderer), which can cull the portal at plane-hugging frames and fake the verdict.
+     *  Splits sub-cause (b) clamp-wedge-overreach (ghost shrinks with this ON) from (a)/(b'). Runtime
+     *  debug command: /imm_ptl_client_debug debug_no_stamp_depth_clamp enable. Default-OFF. */
+    public static boolean debugNoStampDepthClamp = false;
     public static boolean debugFrameBoundaryProbe = false;
     public static boolean debugSkipPortalEntities = false;
     // S15 (recursive-view entities): kills ONLY the new same-dim/loop-back entity pass

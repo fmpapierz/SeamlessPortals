@@ -83,4 +83,21 @@ public final class ClipUniformLocationCache {
     public static void clear() {
         CACHE.clear();
     }
+
+    /**
+     * IS5-H PER-PROGRAM INVALIDATION (2026-07-23) — drop one entry when ITS program is deleted.
+     * Called by {@code GlProgramClipCacheMixin} at {@code GlProgram.close()} HEAD — the UNIVERSAL
+     * deletion funnel: vanilla {@code clearPipelineCache} closes its cached {@code GlProgram}s
+     * through it, and iris's {@code ExtendedShader extends GlProgram} inherits {@code close()}
+     * un-overridden (javap-confirmed), so IRIS-SIDE recompiles (in-game shader-settings applies —
+     * the path that NEVER calls {@code clearPipelineCache}) are covered too. This closes the
+     * ledgered IS3 V4-3 residual FOR REAL: it went acute live (2026-07-23: an in-game TAA re-enable
+     * recycled iris program ids and the stale locations fed ~248k wrong-uniform {@code glUniform4f}
+     * writes — "operation is invalid when the uniform is a matrix" spam + arbitrary uniform
+     * corruption on live programs). The old "iris programs bind outside the trySetup path" ledger
+     * rationale was REFUTED by probe v1 (iris terrain programs provably bind at trySetup).
+     */
+    public static void remove(int programId) {
+        CACHE.remove(programId);
+    }
 }

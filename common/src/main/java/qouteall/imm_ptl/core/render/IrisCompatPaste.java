@@ -229,11 +229,17 @@ public class IrisCompatPaste {
         // The IDENTICAL geometry route as every aperture draw (ViewAreaRenderer, incl. the
         // S14.36 near-plane clip): camera-relative POSITION_COLOR triangles, color = WHITE
         // (identity in the fragment multiply — the copy stays exact).
+        // IS5-G GHOST DISCRIMINATOR: under -Dseamlessportals.debugTintStamp the color becomes
+        // channel-killing MAGENTA {1,0,1} — every stamped pixel loses its green channel, so a
+        // live run settles whether the "phantom colored-blocks" wave IS this stamp's paint
+        // (ghost turns magenta) or another carrier (window magenta, ghost full-color).
         try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
             256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
         )) {
             MeshData mesh = ViewAreaRenderer.buildPortalViewAreaMesh(
-                new Vec3(1.0, 1.0, 1.0), portal,
+                qouteall.imm_ptl.core.IPGlobal.debugTintStamp
+                    ? new Vec3(1.0, 0.0, 1.0) : new Vec3(1.0, 1.0, 1.0),
+                portal,
                 CHelper.getCurrentCameraPos(), RenderStates.getPartialTick(),
                 modelView, byteBuffer
             );
@@ -272,7 +278,8 @@ public class IrisCompatPaste {
                 }
 
                 // Fix (4) backstop: blend OFF for the stamp (depth state is pipeline-declared
-                // GEQUAL-no-write; between two stamps a whole nested render() ran, so the
+                // GEQUAL with depth WRITE — write=true since the #13 two-portal fix restored
+                // IP's _depthMask(true); between two stamps a whole nested render() ran, so the
                 // lastPipeline short-circuit cannot skip the stamp's own depth state).
                 GlStateManager._disableBlend(0);
                 try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(

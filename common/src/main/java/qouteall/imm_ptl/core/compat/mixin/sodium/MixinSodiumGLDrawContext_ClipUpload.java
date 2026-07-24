@@ -8,6 +8,8 @@ import com.warwa.seamlessportals.render.FrontClipping;
 import com.warwa.seamlessportals.render.FullPipelineClipState;
 import com.warwa.seamlessportals.render.ShaderCodeTransformation;
 import net.caffeinemc.mods.sodium.client.gpu.device.context.GLDrawContext;
+import qouteall.imm_ptl.core.IPGlobal;
+import qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
@@ -148,6 +150,27 @@ public abstract class MixinSodiumGLDrawContext_ClipUpload {
         }
 
         if (loc >= 0) {
+            // IS5-W FIX 1 — SHADOW-SCOPE CLIP SUPPRESSION (the yaw-keyed shadow-wash killer; fix
+            // panel wf_a2d7890c-115). The IS3 clip inject patched iris's SODIUM SHADOW terrain
+            // programs too (shadow_sodium_terrain_* — live-log-confirmed loc>=0), and this seam
+            // fires inside the dest SHADOW pass with the CAMERA-space plane armed. The shadow
+            // program evaluates that plane against the SUN's model-view — a wrong-space half-space
+            // whose offset swings ~+/-100 blocks with yaw, clipping the dest casters out of the
+            // shadow map at raster stage (empty map -> no occluders -> the brightness wash).
+            // Suppress: upload keep-all {0,0,0,1} (defined-never-clips) and SKIP the enable
+            // re-assert — the shadow pass draws unclipped casters; the camera pass keeps its
+            // correct clip. Short-circuits BOTH the override-armed and live-store branches.
+            // Main-world shadow was already receiving keep-all (store disarmed) — byte-identical.
+            if (clipArmed && IrisInterface.invoker.isRenderingShadowMap()) {
+                if (IPGlobal.isShadowScopeClipFixActive()) {
+                    GL20.glUniform4f(loc, 0f, 0f, 0f, 1f);
+                    IPGlobal.shadowScopeClipSuppressedCount++;
+                    return;
+                }
+                // A/B baseline (fix lever OFF): count the un-suppressed armed shadow upload —
+                // the wash carrier provably firing — then fall through to the pre-fix behavior.
+                IPGlobal.shadowScopeClipArmedUploadCount++;
+            }
             // The upload — keep-all {0,0,0,1} when clipping is disabled (byte-neutral). Under the
             // full-pipeline override, source the FROZEN belt plane (the live store was reset to
             // keep-all by M4's mid-pass disableClipping(), so reading it would clip nothing).

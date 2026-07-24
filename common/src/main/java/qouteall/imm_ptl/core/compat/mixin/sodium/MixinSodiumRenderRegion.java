@@ -85,7 +85,8 @@ import java.util.Map;
  * <p>The class name carries {@code Sodium} for the compat plugin's substring gate.
  */
 @Mixin(value = RenderRegion.class, remap = false)
-public abstract class MixinSodiumRenderRegion {
+public abstract class MixinSodiumRenderRegion
+    implements qouteall.imm_ptl.core.compat.sodium_compatibility.IPPortalLayerBatchClearable {
 
     @Shadow
     @Final
@@ -122,13 +123,25 @@ public abstract class MixinSodiumRenderRegion {
             this.ip_chunkRenderListsForPortalRendering = new ObjectArrayList<>();
         }
 
-        int index = PortalRendering.getPortalLayer() - 1;
+        // IS5-W FIX 2: the layer key now splits by shadow-vs-camera scope (PortalScopeKey —
+        // even slot = camera, odd = shadow), restoring iris's two-scope separation that this
+        // overwrite bypasses (it never consults iris's swapped region fields). Lever-off returns
+        // exactly the pre-fix layer-1. The outer !isRendering() gate above is UNCHANGED.
+        int index = qouteall.imm_ptl.core.compat.sodium_compatibility.PortalScopeKey.index();
 
-        return Helper.arrayListComputeIfAbsent(
+        ChunkRenderList layerList = Helper.arrayListComputeIfAbsent(
             this.ip_chunkRenderListsForPortalRendering,
             index,
             () -> new ChunkRenderList((RenderRegion) (Object) this)
         );
+        // IS5-W shadow-alias probe feed (LOG-ONLY; static-final lever guard, dead when off). The
+        // theory-restart adjudicated THIS overwrite as the scope collapse: it returns the SAME
+        // layer list to iris's dest SHADOW scope and the dest CAMERA scope. The probe records
+        // which scope touched which list object (identity + lastVisibleFrame at emit).
+        if (com.warwa.seamlessportals.render.ShadowAliasProbe.ENABLED) {
+            com.warwa.seamlessportals.render.ShadowAliasProbe.onLayerListAccess(this, layerList, index);
+        }
+        return layerList;
     }
 
     // ===== C2-1 SAME-DIM FLASH FIX — per-portal-layer MultiDrawBatch isolation (4 hooks) =========
@@ -151,15 +164,28 @@ public abstract class MixinSodiumRenderRegion {
             this.ip_cachedBatchesForPortalRendering = new ObjectArrayList<>();
         }
 
-        int index = PortalRendering.getPortalLayer() - 1;
+        // IS5-W FIX 2: scope-split key (see getRenderList). The outer lever+isRendering gate
+        // above is UNCHANGED (the asymmetric-gates discipline — the helper adds ONLY the scope bit).
+        int index = qouteall.imm_ptl.core.compat.sodium_compatibility.PortalScopeKey.index();
         Map<TerrainRenderPass, MultiDrawBatch> layerMap = Helper.arrayListComputeIfAbsent(
             this.ip_cachedBatchesForPortalRendering, index, HashMap::new
         );
 
         MultiDrawBatch batch = layerMap.get(pass);
-        if (batch == null) {
+        boolean created = batch == null;
+        if (created) {
             batch = MultiDrawBatch.newBatch(ModelQuadFacing.COUNT * 256 + 1);
             layerMap.put(pass, batch);
+        }
+
+        // IS5-W shadow-alias probe feed (LOG-ONLY; static-final lever guard, dead when off). The
+        // theory-restart adjudicated THIS hand-out as the batch half of the scope collapse: both
+        // the dest SHADOW and dest CAMERA scopes receive the SAME layer batch, isFilled-gated. The
+        // probe tags fills {passSerial, scope} and classifies reuses (cross-scope = malignant).
+        // isFilled is read BEFORE the consumer's fill decision — the on-entry state.
+        if (com.warwa.seamlessportals.render.ShadowAliasProbe.ENABLED) {
+            com.warwa.seamlessportals.render.ShadowAliasProbe.onLayerBatchAccess(
+                batch, created, batch.isFilled, index);
         }
 
         IPGlobal.portalBatchIsolationRedirectCount++;
@@ -199,6 +225,33 @@ public abstract class MixinSodiumRenderRegion {
             if (layerMap != null) {
                 MultiDrawBatch batch = layerMap.get(pass);
                 if (batch != null) {
+                    batch.clear();
+                }
+            }
+        }
+    }
+
+    /**
+     * IS5-W FIX 3 (leg d) — the duck body: clear every per-layer batch after a REAL mesh upload.
+     * Called by {@code MixinSodiumRenderRegionManager_PortalBatchClear} at the private
+     * {@code uploadResults(RenderRegion,...)} RETURN, because under iris the vanilla
+     * {@code clearAllCachedBatches} call HOOK 2 mirrors is {@code @Redirect}ed away
+     * ({@code iris$forceClearAllBatches}) and HOOK 2 never fires on uploads — leaving layer
+     * batches holding stale draw commands after region storage re-uploads. First-statement
+     * null early-out keeps the non-portal path cost-identical; the shared FIX-2 lever gates it
+     * (lever-off = exactly the pre-fix behavior). Clears only — HOOK 4 owns the delete.
+     */
+    @Override
+    public void ip_clearPortalLayerBatches() {
+        if (this.ip_cachedBatchesForPortalRendering == null) {
+            return;
+        }
+        if (!IPGlobal.isShadowScopeIsolationActive()) {
+            return;
+        }
+        for (Map<TerrainRenderPass, MultiDrawBatch> layerMap : this.ip_cachedBatchesForPortalRendering) {
+            if (layerMap != null) {
+                for (MultiDrawBatch batch : layerMap.values()) {
                     batch.clear();
                 }
             }

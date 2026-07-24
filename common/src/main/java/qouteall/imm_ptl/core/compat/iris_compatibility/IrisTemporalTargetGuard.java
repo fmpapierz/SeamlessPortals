@@ -12,7 +12,10 @@ import net.irisshaders.iris.targets.RenderTarget;
 import net.irisshaders.iris.targets.RenderTargets;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30C;
+import org.lwjgl.opengl.GL33C;
 import org.lwjgl.opengl.GL43C;
+import org.lwjgl.opengl.GL44C;
 import org.lwjgl.opengl.GL45C;
 import org.slf4j.Logger;
 import qouteall.imm_ptl.core.IPGlobal;
@@ -88,6 +91,10 @@ public final class IrisTemporalTargetGuard {
     private static final boolean COPY_SUPPORTED =
         GL.getCapabilities().glCopyImageSubData != 0L && GL.getCapabilities().glCreateTextures != 0L;
 
+    /** IS5-G GL gate: glClearTexImage (4.4) for the dest-pass history neutralization. Absent -> the
+     *  clear no-ops (the ghost persists, no crash; save/restore unaffected). */
+    private static final boolean CLEAR_SUPPORTED = GL.getCapabilities().glClearTexImage != 0L;
+
     private static boolean reflectionReady = false;
     private static boolean reflectionAttempted = false;
     private static Field fRenderTargets;
@@ -96,8 +103,18 @@ public final class IrisTemporalTargetGuard {
     /** colortex index -> {mainScratchId, altScratchId, w, h, glSizedFormat}. Scratch persists across frames. */
     private static final Map<Integer, int[]> scratch = new HashMap<>();
 
-    /** per-save records, cleared each frame: {idx, dstMain, dstAlt, w, h, scratchMain, scratchAlt}. */
+    /** per-save records, cleared each frame: {idx, dstMain, dstAlt, w, h, scratchMain, scratchAlt, fmt}.
+     *  (fmt = the GL-queried sized internal format, appended for the IS5-G dest-pass clear's
+     *  integer-vs-float format selection; restore() reads only indices 1..6.) */
     private static final List<int[]> savedList = new ArrayList<>();
+
+    /** IS5-G once-only log latches (the clear fires per-portal-per-frame — an unlatched per-frame
+     *  render-thread log is the known ~130ms log4j-stall class). */
+    private static boolean clearFailLogged = false;
+    private static boolean clearGlErrorLogged = false;
+    /** Once-only LIVENESS log: the counter-bump lesson — a fix that produces zero log evidence of
+     *  firing cannot be A/B-judged. Emitted on the first successful clear of a session. */
+    private static boolean clearLiveLogged = false;
 
     private IrisTemporalTargetGuard() {}
 
@@ -169,7 +186,7 @@ public final class IrisTemporalTargetGuard {
                 }
                 copy(dstMain, s[0], w, h);
                 copy(dstAlt, s[1], w, h);
-                savedList.add(new int[]{idx, dstMain, dstAlt, w, h, s[0], s[1]});
+                savedList.add(new int[]{idx, dstMain, dstAlt, w, h, s[0], s[1], fmt});
             }
             IPGlobal.irisTemporalGuardCopyCount += savedList.size() * 2;
             return !savedList.isEmpty();
@@ -184,7 +201,7 @@ public final class IrisTemporalTargetGuard {
     public static void restore() {
         try {
             for (int[] sv : savedList) {
-                // sv = {idx, dstMain, dstAlt, w, h, scratchMain, scratchAlt}
+                // sv = {idx, dstMain, dstAlt, w, h, scratchMain, scratchAlt, fmt}
                 copy(sv[5], sv[1], sv[3], sv[4]); // scratchMain -> dstMain
                 copy(sv[6], sv[2], sv[3], sv[4]); // scratchAlt  -> dstAlt
             }
@@ -193,6 +210,101 @@ public final class IrisTemporalTargetGuard {
         } finally {
             savedList.clear();
         }
+    }
+
+    /**
+     * IS5-G — the DEST-pass TAA-history NEUTRALIZATION (the "ghost terrain" fix; fix panel
+     * wf_ab83a5fa-b39, 2x SOUND-WITH-FIXES).
+     *
+     * <p><b>The bug (live-proven by the user's toggle chain):</b> this guard's save/restore protects
+     * the MAIN view's persistent history from dest pollution — but DURING the dest render the live
+     * textures still HOLD the source frames, and the dest pass's TAA composite READS them as its own
+     * history → SOURCE-world surfaces blended over the dest terrain, reprojected against the
+     * mismatched camera = the moving "ghost terrain" wave (Temporal Filtering OFF killed it live;
+     * stamp/shadow-map/SSAO all exonerated by levers/toggles). The mirror direction of the phantom
+     * this guard fixed.
+     *
+     * <p><b>The fix:</b> clear every SAVED (clear=false) target pair to exact ZERO immediately before
+     * EACH portal's nested dest render. Complementary's taa.glsl black-history early-out
+     * ({@code tempColor == vec3(0.0) || isnan} → pure current frame) makes the dest view render
+     * blend-free — no ghost, no darkening (Catmull-Rom on all-black = exact ±0.0). PER-PORTAL is
+     * mandatory: the pack's composite chain writes each dest frame back into the history targets, so
+     * a once-after-save clear would hand portal 2 portal 1's frame (cross-portal ghost). The existing
+     * {@link #restore()} then returns the main history byte-whole — the phantom fix is untouched by
+     * construction. In-window cost: the dest view runs TAA-history-free (sub-pixel jitter wobble +
+     * fresh-per-frame temporal effects inside the aperture — accepted; the pack's gbuffer jitter and
+     * FXAA stay active). Cross-dim portals reach here too: the clear touches the MAIN pipeline's
+     * saved targets (restored later) while the dest reads its own per-dim pipeline —
+     * wasted-but-harmless.
+     *
+     * <p>Gated so it can NEVER touch an unsaved texture: {@code savedList} is non-empty only inside
+     * the save/restore bracket (save() clears it on catch, restore() clears in finally), and the
+     * lever composes on {@link IPGlobal#isIrisTemporalGuardActive()} — guard off ⇒ clear off.
+     * {@code glClearTexImage} binds nothing (GL-state invariant #1 safe). Integer-format targets get
+     * the {@code GL_RGBA_INTEGER} pixel format (a float format on an integer texture is
+     * GL_INVALID_OPERATION); the trailing error drain (once-only warn) keeps a rejected exotic
+     * format from being misattributed at the anchor's checkGlError.
+     */
+    public static void clearForDestPass() {
+        if (!CLEAR_SUPPORTED || !IPGlobal.isIrisDestTaaClearActive() || savedList.isEmpty()) {
+            return;
+        }
+        try {
+            for (int[] sv : savedList) {
+                // sv = {idx, dstMain, dstAlt, w, h, scratchMain, scratchAlt, fmt}
+                int pixelFormat = isIntegerFormat(sv[7]) ? GL30C.GL_RGBA_INTEGER : GL11.GL_RGBA;
+                int pixelType = isIntegerFormat(sv[7]) ? GL11.GL_INT : GL11.GL_FLOAT;
+                // data == null -> cleared to zeros (the black-history early-out trigger)
+                GL44C.glClearTexImage(sv[1], 0, pixelFormat, pixelType, (java.nio.ByteBuffer) null);
+                GL44C.glClearTexImage(sv[2], 0, pixelFormat, pixelType, (java.nio.ByteBuffer) null);
+            }
+            IPGlobal.irisDestTaaClearCount += savedList.size() * 2;
+            if (!clearLiveLogged) {
+                clearLiveLogged = true;
+                LOGGER.info("[Seamless Portals] IS5-G dest-pass TAA-history clear ACTIVE: zeroed {}"
+                    + " saved target pair(s) before a portal dest render (once-only liveness line)",
+                    savedList.size());
+            }
+            // Drain any queued error from an exotic-format rejection so it cannot be misattributed
+            // at the anchor's CHelper.checkGlError(). Once-only warn (per-portal-per-frame seam —
+            // the log4j render-thread stall rule).
+            int err;
+            boolean any = false;
+            while ((err = GL11.glGetError()) != GL11.GL_NO_ERROR) {
+                any = true;
+                if (!clearGlErrorLogged) {
+                    clearGlErrorLogged = true;
+                    LOGGER.warn("[Seamless Portals] dest-pass TAA clear raised GL error 0x{}"
+                        + " (exotic target format?); further occurrences suppressed",
+                        Integer.toHexString(err));
+                }
+            }
+            if (any && clearGlErrorLogged) {
+                // drained; nothing else to do (the clear of that target simply didn't take)
+            }
+        } catch (Throwable t) {
+            if (!clearFailLogged) {
+                clearFailLogged = true;
+                LOGGER.error("[Seamless Portals] dest-pass TAA clear failed; further occurrences"
+                    + " suppressed (the ghost may persist)", t);
+            }
+        }
+    }
+
+    /** Integer sized internal formats need GL_RGBA_INTEGER at glClearTexImage (else GL_INVALID_OPERATION). */
+    private static boolean isIntegerFormat(int fmt) {
+        return switch (fmt) {
+            case GL30C.GL_R8I, GL30C.GL_R8UI, GL30C.GL_R16I, GL30C.GL_R16UI,
+                 GL30C.GL_R32I, GL30C.GL_R32UI,
+                 GL30C.GL_RG8I, GL30C.GL_RG8UI, GL30C.GL_RG16I, GL30C.GL_RG16UI,
+                 GL30C.GL_RG32I, GL30C.GL_RG32UI,
+                 GL30C.GL_RGB8I, GL30C.GL_RGB8UI, GL30C.GL_RGB16I, GL30C.GL_RGB16UI,
+                 GL30C.GL_RGB32I, GL30C.GL_RGB32UI,
+                 GL30C.GL_RGBA8I, GL30C.GL_RGBA8UI, GL30C.GL_RGBA16I, GL30C.GL_RGBA16UI,
+                 GL30C.GL_RGBA32I, GL30C.GL_RGBA32UI,
+                 GL33C.GL_RGB10_A2UI -> true;
+            default -> false;
+        };
     }
 
     /** GPU->GPU copy of a full 2D texture; binds nothing (GL-state invariant #1 safe). */
