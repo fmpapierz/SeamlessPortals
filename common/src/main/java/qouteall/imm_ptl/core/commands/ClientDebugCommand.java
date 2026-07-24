@@ -644,6 +644,14 @@ public class ClientDebugCommand {
             "debug_no_aperture_depth_clamp",
             cond -> IPGlobal.debugNoApertureDepthClamp = cond
         );
+        // IS5-G ghost-wave discriminator run 2: skip the depth-clamp bracket around the
+        // IrisCompatPaste STAMP only (dedicated — debug_no_aperture_depth_clamp also gates the
+        // occlusion-query aperture draw and would fake the verdict).
+        registerSwitchCommand(
+            builder,
+            "debug_no_stamp_depth_clamp",
+            cond -> IPGlobal.debugNoStampDepthClamp = cond
+        );
         registerSwitchCommand(
             builder,
             "debug_frame_boundary_probe",

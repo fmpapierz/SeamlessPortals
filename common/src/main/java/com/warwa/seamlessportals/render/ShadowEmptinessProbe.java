@@ -360,7 +360,8 @@ public final class ShadowEmptinessProbe {
             LOGGER.info(P + "SHADOW-CULL INPUTS (§7 diagnose-first gate — is gbufferProjection the"
                 + " degenerate frustum input?):"
                 + "\n" + dumpProjection5()
-                + "\n" + frustumRealityTest6(shadowRenderer));
+                + "\n" + frustumRealityTest6(shadowRenderer)
+                + "\n" + edgeFrustumTest6b(shadowRenderer));
         }
         catch (Throwable t) {
             disarm(t);
@@ -496,6 +497,106 @@ public final class ShadowEmptinessProbe {
         }
         catch (Throwable t) {
             return "  [6] frustum reality test FAILED (" + t + ") — [5] carries the verdict";
+        }
+    }
+
+    /**
+     * §7 [6b] — the EDGE-CULL geometry test (the pan-wave discriminator). The center-only [6] proved
+     * the shadow terrain frustum accepts the dest camera's OWN section; the reported bug is a
+     * pan-dependent full-bright WAVE at the view EDGES. This samples sections at the periphery of the
+     * dest VIEW frustum (derived from gbufferProjection's fov half-angles + gbufferModelView's camera
+     * basis, both CapturedRenderingState-live) and asks the shadow terrain cull frustum whether each is
+     * visible. A rejected in-view edge section => the advanced-shadow-cull cone is NARROWER than the
+     * view frustum at that instant => the wave is iris culling the edges out of the shadow scope.
+     *
+     * Terrain-INDEPENDENT (pure frustum geometry) — so it discriminates on ANY dest (mid-air harness or
+     * ground), unlike the [2]/[4] readback which need real terrain. A STATIC capture that rejects proves
+     * a SPATIAL cull-cone gap; rejects that appear ONLY while the camera rotates prove a TEMPORAL lag
+     * (shadow frustum built one value behind the gbuffer draw). All-TRUE static + persistent wave =>
+     * cause is downstream (sodium shadow SectionTree population lag) — a rotating capture separates them.
+     */
+    private static String edgeFrustumTest6b(Object shadowRenderer) {
+        try {
+            if (shadowRenderer == null || !camPosValid) {
+                return "  [6b] edge-cull test SKIPPED (shadowRenderer==null or no dest camera pos)";
+            }
+            Object capturedInstance = fCapturedInstance.get(null);
+            if (capturedInstance == null) {
+                return "  [6b] edge-cull test SKIPPED — CapturedRenderingState.INSTANCE==null";
+            }
+            float[] mv = toFloats(mGetGbufferModelView.invoke(capturedInstance));
+            float[] pr = toFloats(mGetGbufferProjection.invoke(capturedInstance));
+            if (mv == null || pr == null) {
+                return "  [6b] edge-cull test SKIPPED — gbufferModelView/Projection not readable as Matrix4fc";
+            }
+            // Column-major float[16] (toFloats == Matrix4fc.get). View matrix = world->view; the world-
+            // space camera axes are the ROWS of the 3x3 rotation: right=(m00,m01,m02)=(f0,f4,f8),
+            // up=(m10,m11,m12)=(f1,f5,f9), forward=-(m20,m21,m22)=-(f2,f6,f10).
+            double rx = mv[0], ry = mv[4], rz = mv[8];
+            double ux = mv[1], uy = mv[5], uz = mv[9];
+            double fx = -mv[2], fy = -mv[6], fz = -mv[10];
+            // Perspective proj: m00=1/(aspect*tan(fovy/2)), m11=1/tan(fovy/2).
+            double tanx = (pr[0] != 0.0f) ? 1.0 / Math.abs(pr[0]) : 1.0;   // tan(fovx/2)
+            double tany = (pr[5] != 0.0f) ? 1.0 / Math.abs(pr[5]) : 1.0;   // tan(fovy/2)
+
+            Object holder = fTerrainFrustumHolder.get(shadowRenderer);
+            if (holder == null) {
+                return "  [6b] edge-cull test SKIPPED — terrainFrustumHolder==null (no shadow frustum this pass)";
+            }
+            Object frObj = mHolderGetFrustum.invoke(holder);
+            if (!(frObj instanceof Frustum fr)) {
+                return "  [6b] edge-cull test SKIPPED — terrain getFrustum() not a net.minecraft...Frustum ("
+                    + (frObj == null ? "null" : frObj.getClass().getName()) + ")";
+            }
+
+            double[] ds = {24.0, 48.0, 96.0};
+            // fractions of the view half-angle: center, the 4 edge midpoints, the 4 corners (0.9 = just
+            // inside the view-frustum boundary — sections the dest camera provably rasterizes).
+            double[][] cells = {{0,0},{-0.9,0},{0.9,0},{0,0.9},{0,-0.9},{-0.9,0.9},{0.9,0.9},{-0.9,-0.9},{0.9,-0.9}};
+            String[] names = {"C","L","R","U","D","LU","RU","LD","RD"};
+            StringBuilder grid = new StringBuilder();
+            StringBuilder rejList = new StringBuilder();
+            int rejects = 0, total = 0;
+            for (double D : ds) {
+                grid.append(" D").append((int) D).append("[");
+                for (int i = 0; i < cells.length; i++) {
+                    double h = cells[i][0] * tanx * D;
+                    double v = cells[i][1] * tany * D;
+                    double px = camX + fx * D + rx * h + ux * v;
+                    double py = camY + fy * D + ry * h + uy * v;
+                    double pz = camZ + fz * D + rz * h + uz * v;
+                    int bx = (int) Math.floor(px) & ~15;
+                    int by = (int) Math.floor(py) & ~15;
+                    int bz = (int) Math.floor(pz) & ~15;
+                    AABB s = new AABB(bx, by, bz, bx + 16.0, by + 16.0, bz + 16.0);
+                    boolean vis = fr.isVisible(s);
+                    total++;
+                    if (!vis) {
+                        rejects++;
+                        rejList.append(' ').append(names[i]).append("@D").append((int) D);
+                    }
+                    grid.append(names[i]).append(':').append(vis ? 'T' : 'F').append(i < cells.length - 1 ? " " : "");
+                }
+                grid.append("]");
+            }
+            int fovxDeg = (int) Math.round(Math.toDegrees(Math.atan(tanx)));
+            int fovyDeg = (int) Math.round(Math.toDegrees(Math.atan(tany)));
+            return "  [6b] EDGE-CULL geometry test (shadow TERRAIN frustum vs dest VIEW-frustum edges;"
+                + " fovx/2~=" + fovxDeg + "deg fovy/2~=" + fovyDeg + "deg):" + grid
+                + "\n      EDGE-VERDICT: rejects=" + rejects + "/" + total
+                + (rejects > 0
+                    ? " => CULL-CONE TOO NARROW: the shadow terrain frustum REJECTS in-view edge sections ["
+                        + rejList + " ] the dest camera rasterizes => the pan full-bright wave = iris advanced"
+                        + " shadow culling excluding the view edges from the shadow scope. Fix targets"
+                        + " createShadowFrustum / the shadow cull scope (iris-internal, §7.5). STATIC reject"
+                        + " = SPATIAL gap; reject only while ROTATING = TEMPORAL lag."
+                    : " => the shadow frustum CONTAINS every sampled view-edge section AT THIS INSTANT (no"
+                        + " spatial cull-cone gap). If the wave persists, the cause is TEMPORAL (frustum lags"
+                        + " the pan by a frame) or DOWNSTREAM (sodium shadow SectionTree population lag) —"
+                        + " compare a STATIC vs a ROTATING capture to separate them.");
+        }
+        catch (Throwable t) {
+            return "  [6b] edge-cull test FAILED (" + t + ")";
         }
     }
 

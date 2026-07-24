@@ -1696,6 +1696,11 @@ public class SecondaryWorldRenderCore {
                 destDrawProjection,
                 mainCameraState.projectionMatrix,
                 destCameraPos);
+            // IS5-W shadow-alias probe (theory-restart fold §3) — ARM a 1Hz capture for this dest
+            // pass. Its per-access feeds live in MixinSodiumRenderRegion (the adjudicated collapse
+            // seams); endPass() emits the provenance/roster/identity/occupancy block in the finally.
+            // Lever-gated -Dseamlessportals.shadowAliasProbe; byte-inert at the default.
+            com.warwa.seamlessportals.render.ShadowAliasProbe.beginPass(destCameraPos);
             // §8-14 LRS-identity HARD assert immediately before render() (port-note §1-E):
             // extract writes the extractor's LRS; render() reads the renderer's field — a
             // divergence here silently drops entities/clouds/particles.
@@ -1819,6 +1824,10 @@ public class SecondaryWorldRenderCore {
             // angle resolve to the dest — the [3] stale-global cross-check. Byte-inert at default;
             // disarms itself on any reflection/GL failure.
             com.warwa.seamlessportals.render.ShadowEmptinessProbe.endPass();
+            // IS5-W shadow-alias probe — CAPTURE + dump this pass's scope-collapse evidence
+            // (batch provenance split by shadow/camera scope, in-scope rosters, list identity
+            // collisions + woven-RSM snapshot state, and the whole-map occupancy grid + yaw).
+            com.warwa.seamlessportals.render.ShadowAliasProbe.endPass();
             // §8-3(c) — re-run SOURCE setupFog so any capture-at-setupFog observer serves SOURCE
             // fog for the frame's remainder (block-era Step-9 discipline). Compute-only for the
             // UBO on 26.2; the shared AtmosphericFogEnvironment takes one extra lerp step toward

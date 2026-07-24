@@ -3,6 +3,7 @@ package qouteall.imm_ptl.core.compat.iris_compatibility;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.shadows.ShadowRenderer;
+import net.irisshaders.iris.uniforms.SystemTimeUniforms;
 import net.minecraft.client.renderer.LevelRenderer;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -70,7 +71,16 @@ public class IrisInterface {
         }
         
         public void reloadPipelines() {}
-    
+
+        /** IS5-L in-portal-fullbright fix: advance iris's per-frame uniform counter so the nested dest
+         *  pass re-uploads its PER_FRAME lighting uniforms. No-op when iris is absent (byte-identical). */
+        public void bumpPerFrameUniformCounter() {}
+
+        /** IS5-PH prev-uniform heal (the ghost-terrain fix): re-tick iris's frame-update notifier on the
+         *  MAIN pipeline after the per-portal dest renders, so the next main frame's natural tick yields a
+         *  clean, MAIN-valued previousCameraPosition. No-op when iris is absent (byte-identical). */
+        public void healPreviousFrameUniforms() {}
+
         @Nullable
         public String getShaderpackName() {
             return null;
@@ -137,7 +147,98 @@ public class IrisInterface {
         public boolean isRenderingShadowMap() {
             return ShadowRenderer.ACTIVE;
         }
-        
+
+        /**
+         * IS5-L in-portal-fullbright fix (design panel SOUND; the IP {@code ExperimentalIrisPortalRenderer}
+         * precedent — "make Iris to update the uniforms"): advance iris's global per-frame counter
+         * ({@code SystemTimeUniforms.COUNTER.beginFrame()}) so the reused same-dim ExtendedShader programs'
+         * {@code ProgramUniforms.update()} sees {@code lastFrame != COUNTER} and re-runs
+         * {@code updateStage(perFrame)}, re-uploading the PER_FRAME lighting uniforms (cameraPosition,
+         * sun/shadowLight/celestial, gbuffer + shadow matrices) from the already-dest-primed sources for the
+         * nested dest draws. Without it the dest terrain is lit with the MAIN camera's uniforms = the
+         * direction-dependent fullbright. Bracketed before+after the dest render (the after-bump re-freshens
+         * the post-anchor hand/GUI). Lever-gated (default-on); try/catch so it never propagates into the pass.
+         */
+        @Override
+        public void bumpPerFrameUniformCounter() {
+            if (!qouteall.imm_ptl.core.IPGlobal.isIrisPerFrameRefreshActive()) {
+                return;
+            }
+            try {
+                SystemTimeUniforms.COUNTER.beginFrame();
+            }
+            catch (Throwable t) {
+                // never propagate into the render pass; a bump failure just leaves the (buggy) main uniforms
+            }
+        }
+
+        /**
+         * IS5-PH PREV-UNIFORM HEAL (ghost panel wf_98e3a1ee-634, 2x SOUND-WITH-FIXES, mechanism
+         * unanimous javap+GLSL-exact): the nested dest render reaches {@code IrisRenderingPipeline
+         * .beginLevelRendering} on the SAME per-dim pipeline (iris's MixinLevelRenderer has NO
+         * re-entrancy guard) → its unconditional {@code updateNotifier.onNewFrame()} ticks
+         * {@code CameraPositionTracker} (a one-deep shift register) with the DEST camera → the NEXT
+         * main frame uploads {@code previousCameraPosition = destCameraPos} (~the portal offset off)
+         * → Complementary's taa.glsl REPROJECTION displaces the (byte-correct, guard-restored)
+         * history by that offset and the TAA blend paints source-shading over the terrain = the
+         * camera-tracked "ghost terrain" wave. History-clearing provably could not fix it (the
+         * carrier is UNIFORM state, not texture content — live-proven: 740-820 clears/s, ghost
+         * unchanged); Temporal-Filtering-off kills it (the reprojection is the painter).
+         *
+         * <p>The heal: ONE extra {@code onNewFrame()} tick on the MAIN pipeline, called after the
+         * per-portal loop + guard restore, when the main camera is already restored — the tracker
+         * then holds current=main; the NEXT frame's own natural tick shifts previous←main before any
+         * upload = clean uniforms. (Without it, the next tick shifts previous←dest = the poison.)
+         * Deliberately NOT calling customUniforms.update() (would double-advance smoothed customs);
+         * NOT suppressing the nested tick (per-program lastFrame PER_FRAME gating depends on it).
+         * Known micro-cost: smoothed uniforms (eye adaptation etc.) take one extra decay step on
+         * portal frames — bounded, the nested ticks already do this k times today. Never propagates.
+         */
+        @Override
+        public void healPreviousFrameUniforms() {
+            if (!qouteall.imm_ptl.core.IPGlobal.isPrevUniformHealActive()) {
+                return;
+            }
+            try {
+                // Resolve via the PIPELINE MANAGER, not the woven LevelRenderer.pipeline field:
+                // live-proven (heal run #2) the field is NULL at the anchor-finally (a capture/
+                // null/restore bracket's window), while the manager slot resolves the main/same-dim
+                // pipeline correctly at this exact anchor every frame (IrisTemporalTargetGuard.save
+                // uses it successfully right before the portal loop).
+                Object pl = Iris.getPipelineManager().getPipelineNullable();
+                if (pl instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irisPipeline) {
+                    irisPipeline.getFrameUpdateNotifier().onNewFrame();
+                    qouteall.imm_ptl.core.IPGlobal.prevUniformHealCount++;
+                    if (!prevHealLiveLogged) {
+                        prevHealLiveLogged = true;
+                        LOGGER.info("[Seamless Portals] IS5-PH prev-uniform heal ACTIVE (once-only"
+                            + " liveness line): main-pipeline frame notifier re-ticked after the"
+                            + " portal dest renders");
+                    }
+                }
+                else if (!prevHealSkipLogged) {
+                    // FAILURE-PATH LIVENESS (the first heal build skipped SILENTLY here and the run
+                    // was unjudgeable — never leave a fix's miss path dark): name what we got.
+                    prevHealSkipLogged = true;
+                    LOGGER.warn("[Seamless Portals] IS5-PH prev-uniform heal SKIPPED: getPipeline"
+                        + " returned {} (expected IrisRenderingPipeline) — the ghost fix is NOT"
+                        + " applying; further occurrences suppressed",
+                        pl == null ? "null" : pl.getClass().getName());
+                }
+            }
+            catch (Throwable t) {
+                if (!prevHealFailLogged) {
+                    prevHealFailLogged = true;
+                    LOGGER.warn("[Seamless Portals] IS5-PH prev-uniform heal THREW (suppressed"
+                        + " hereafter; the ghost fix is NOT applying)", t);
+                }
+            }
+        }
+
+        private static boolean prevHealLiveLogged = false;
+        private static boolean prevHealSkipLogged = false;
+        private static boolean prevHealFailLogged = false;
+
         @Override
         public Object getPipeline(LevelRenderer worldRenderer) {
             if (worldRendererPipelineField == null) {

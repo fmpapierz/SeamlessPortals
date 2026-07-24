@@ -11,6 +11,7 @@ import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
 import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPCGlobal;
+import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.portal.PortalRenderInfo;
 import qouteall.imm_ptl.core.render.IrisCompatPaste;
@@ -120,6 +121,10 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
     // D23 detector: true exactly while THIS renderer's own renderPortals loop is on the stack
     // (the only context where the snapshot exists and the full-pipeline clobber is legal).
     private boolean isInsideOwnRenderPortals = false;
+
+    /** IS5-PH: set by invokeWorldRendering when a full-pipeline dest render ran this frame; consumed
+     *  (once per frame) by onBeforeHandRendering's finally to fire the prev-uniform heal. */
+    private boolean anyFullPipelineDestRendered = false;
 
     public IrisCompatOn262Renderer(boolean isDebugMode) {
         this.isDebugMode = isDebugMode;
@@ -250,6 +255,18 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             if (guardSaved) {
                 IrisTemporalTargetGuard.restore();
             }
+
+            // IS5-PH prev-uniform heal (the ghost-terrain fix — see IrisInterface.healPreviousFrame
+            // Uniforms javadoc): the nested dest renders ticked iris's frame notifier with the DEST
+            // camera; ONE re-tick here (main camera restored) makes the next frame's natural tick
+            // yield a clean MAIN-valued previousCameraPosition — otherwise Complementary's TAA
+            // reprojection displaces the history by the portal offset = the camera-tracked ghost.
+            // Gated on a full-pipeline dest render actually having run this frame (no-portal frames
+            // byte-identical). Once per FRAME, not per portal. Throw-safe (facade never propagates).
+            if (anyFullPipelineDestRendered) {
+                anyFullPipelineDestRendered = false;
+                IrisInterface.invoker.healPreviousFrameUniforms();
+            }
         }
 
         CHelper.checkGlError();
@@ -285,7 +302,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             PortalRendering.popPortalLayer();
         }
 
-        CHelper.enableDepthClamp();
+        // IS5-G ghost-wave discriminator run 2: the dedicated stamp-clamp lever skips ONLY this
+        // bracket (the aperture/occlusion-query draws keep their own clamp), splitting sub-cause
+        // (b) clamp-wedge-overreach from (a)/(b') — ghost shrinking with the clamp off = (b).
+        if (!IPGlobal.debugNoStampDepthClamp) {
+            CHelper.enableDepthClamp();
+        }
 
         if (!isDebugMode) {
             // THE STAMP (D20): portal-shaped copy main→deferred, snapshot-depth-tested.
@@ -308,7 +330,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             );
         }
 
-        CHelper.disableDepthClamp();
+        if (!IPGlobal.debugNoStampDepthClamp) {
+            CHelper.disableDepthClamp();
+        }
 
         // Color-mask restore — cache-coherent via GlStateManager._colorMask(15) (all buffers,
         // 15 = R|G|B|A), the S14.22 idiom (RendererUsingStencil:451). Fable-fold CORRECTION
@@ -329,7 +353,32 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             MyGameRenderer.renderWorldNew(worldRenderInfo, Runnable::run);
             return;
         }
-        MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
+        // IS5-PH gate: a full-pipeline dest render is about to run this frame — arm the once-per-
+        // frame prev-uniform heal in onBeforeHandRendering's finally (see there).
+        anyFullPipelineDestRendered = true;
+        // IS5-L in-portal-fullbright fix: bump iris's per-frame uniform counter BEFORE + AFTER the nested dest
+        // render so iris re-uploads the dest pass's PER_FRAME lighting uniforms from the (already dest-primed)
+        // sources — otherwise the reused same-dim programs skip the re-upload and the dest terrain is lit with
+        // the MAIN camera's uniforms (the direction-dependent fullbright). Facade is a no-op when iris is
+        // absent / the lever is off. The after-bump re-freshens the post-anchor hand/GUI programs. This is the
+        // full-pipeline (isInsideOwnRenderPortals==true) dest path only. IP precedent: ExperimentalIrisPortalRenderer.
+        IrisInterface.invoker.bumpPerFrameUniformCounter();
+        // IS5-G — the dest-pass TAA-history NEUTRALIZATION (the "ghost terrain" fix): clear the
+        // guard-SAVED persistent history targets to zero so THIS portal's nested composite reads a
+        // neutral history instead of the MAIN view's source frames (the live-proven ghost carrier;
+        // the mirror direction of the phantom the guard's save/restore fixed). Per-portal by design:
+        // the pack's composite chain writes each dest frame back into the history, so a once-per-
+        // frame clear would hand portal 2 portal 1's frame. restore() later returns the main history
+        // byte-whole. Cross-dim portals also reach here: the clear touches the MAIN pipeline's saved
+        // targets (restored later) while the dest reads its own per-dim pipeline — wasted-but-
+        // harmless; counts include cross-dim portals. No-op unless the guard saved this frame.
+        IrisTemporalTargetGuard.clearForDestPass();
+        try {
+            MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
+        }
+        finally {
+            IrisInterface.invoker.bumpPerFrameUniformCounter();
+        }
     }
 
     @Override
