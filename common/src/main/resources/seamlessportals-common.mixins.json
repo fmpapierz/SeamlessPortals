@@ -55,6 +55,7 @@
     "client.LevelRendererCompileSectionsMixin",
     "client.LevelExtractorWindowHardeningMixin",
     "client.LevelRendererEntityVisibilityMixin",
+    "client.LevelExtractorEntityProbeMixin",
     "client.LevelExtractorAccessor",
     "client.QuadParticleGroupMixin",
     "client.ParticleEnginePortalSkipMixin",

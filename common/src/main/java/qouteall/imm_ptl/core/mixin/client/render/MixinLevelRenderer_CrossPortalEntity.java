@@ -72,6 +72,15 @@ public abstract class MixinLevelRenderer_CrossPortalEntity {
         if (output instanceof SubmitNodeStorage storage) {
             PerEntityClipBracket.onFrameSubmitBegin(storage);
         }
+        // §2b probe (dp/sub in the [ENT-PROBE] line): dest submit passes + the entity-state count
+        // the submit stage RECEIVES — fires for all three routes (decomposed submitFeatures,
+        // same-dim invokeSubmitEntities, compat nested render) via this one submitEntities anchor.
+        if (qouteall.imm_ptl.core.render.EntityVisibilityProbe.ENABLED
+            && qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+            qouteall.imm_ptl.core.render.EntityVisibilityProbe.destPasses++;
+            qouteall.imm_ptl.core.render.EntityVisibilityProbe.submittedList +=
+                levelRenderState.entityRenderStates.size();
+        }
         CrossPortalEntityRenderer.onBeginRenderingEntitiesAndBlockEntities(
             levelRenderState.cameraRenderState.viewRotationMatrix
         );
@@ -109,12 +118,21 @@ public abstract class MixinLevelRenderer_CrossPortalEntity {
     ) {
         // The submit x/y/z are already camera-relative (state.pos - cameraPos, 26.2:LevelRenderer.java:660),
         // exactly what submitMainPassEntity → the seam feed back into dispatcher.submit.
+        // §2b probe (pes/h in the [ENT-PROBE] line): per-entity submits inside portal rendering.
+        boolean probeThis = qouteall.imm_ptl.core.render.EntityVisibilityProbe.ENABLED
+            && qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering();
+        if (probeThis) {
+            qouteall.imm_ptl.core.render.EntityVisibilityProbe.perEntitySubmits++;
+        }
         Entity tagged = ((IEEntityRenderState) state).ip_getClipContextEntity();
         if (tagged != null && output instanceof SubmitNodeStorage storage) {
             boolean handled = CrossPortalEntityRenderer.submitMainPassEntity(
                 dispatcher, state, cam, x, y, z, poseStack, storage, tagged
             );
             if (handled) {
+                if (probeThis) {
+                    qouteall.imm_ptl.core.render.EntityVisibilityProbe.perEntityHandled++;
+                }
                 return; // clipped submit performed by the seam; skip the vanilla submit
             }
         }

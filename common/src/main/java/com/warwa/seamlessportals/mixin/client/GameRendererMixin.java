@@ -67,6 +67,8 @@ public abstract class GameRendererMixin {
         // S14.45: teleport-flash/stutter ring row (always-on, in-memory only; one batched log
         // write when a promote-armed or lever-armed capture window closes).
         qouteall.imm_ptl.core.render.TeleportFlashProbe.onFrameEnd();
+        // §2b dest-entity funnel probe (1Hz; byte-inert without -Dseamlessportals.entityProbe).
+        qouteall.imm_ptl.core.render.EntityVisibilityProbe.onFrameEnd();
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }

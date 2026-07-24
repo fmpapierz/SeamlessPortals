@@ -198,6 +198,9 @@ loom {
             // 12x12 whole-shadow-map occupancy grid logged WITH the player's yaw —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshadowAliasProbe=true
             if (project.findProperty('shadowAliasProbe') == 'true') { vmArg('-Dseamlessportals.shadowAliasProbe=true') }
+            // §2b dest-entity funnel probe (1Hz [ENT-PROBE] lines; default OFF):
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PentityProbe=true
+            if (project.findProperty('entityProbe') == 'true') { vmArg('-Dseamlessportals.entityProbe=true') }
             // IS5-W FIX 1 A/B (2026-07-23): the shadow-scope clip suppression (the yaw-keyed shadow-wash
             // killer) is DEFAULT-ON; pass this to force it OFF and reproduce the wash (attribution proof;
             // the ShadowAliasProbe [FIX-1] counters classify the leg) —
@@ -317,6 +320,9 @@ loom {
             // 8-leg gate without the property —
             //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PshadowAliasProbe=true
             if (project.findProperty('shadowAliasProbe') == 'true') { vmArg('-Dseamlessportals.shadowAliasProbe=true') }
+            // §2b dest-entity funnel probe (1Hz [ENT-PROBE] lines; default OFF):
+            //   .\gradlew.bat :fabric:runCrossingGametest -PentityProbe=true
+            if (project.findProperty('entityProbe') == 'true') { vmArg('-Dseamlessportals.entityProbe=true') }
             // IS5-W FIX 1 + FIX 2/3 A/B (mirrors of the clientSodium levers; the suite runs iris-ABSENT,
             // so both fixes are inert there — isRenderingShadowMap() is constant false) —
             if (project.findProperty('disableShadowScopeClipFix') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeClipFix=true') }

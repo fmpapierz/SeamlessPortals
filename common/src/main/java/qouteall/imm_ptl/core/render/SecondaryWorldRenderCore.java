@@ -763,6 +763,11 @@ public class SecondaryWorldRenderCore {
                         finally {
                             isDestExtracting = false;
                         }
+                        // §2b probe: dest-level census + extract output (decomposed route).
+                        if (EntityVisibilityProbe.ENABLED) {
+                            EntityVisibilityProbe.recordDestExtract(
+                                "x", destLevel, destLRS.entityRenderStates.size());
+                        }
                         // S18 DEST PARTICLES (the §5 designed item LANDED — user-reported gap:
                         // break/fire particles absent in windows): the flag-ON global engine already
                         // HOLDS dest-tagged particles (IP's architecture — remote animateTick +
@@ -1537,6 +1542,11 @@ public class SecondaryWorldRenderCore {
                         finally {
                             isDestExtracting = false;
                         }
+                        // §2b probe: dest-level census + extract output (full-pipeline route).
+                        if (EntityVisibilityProbe.ENABLED) {
+                            EntityVisibilityProbe.recordDestExtract(
+                                "f", destLevel, destLRS.entityRenderStates.size());
+                        }
                         // Isolated world-filtered particle fill (S18 dest particles; render()'s
                         // submitFeatures submits particlesRenderState like any pass).
                         if (!IPGlobal.debugAllowDestParticleExtract
@@ -2124,6 +2134,18 @@ public class SecondaryWorldRenderCore {
             LevelRendererAccessorMixin acc = (LevelRendererAccessorMixin) destRenderer;
             SubmitNodeStorage storage = acc.seamlessportals$getSubmitNodeStorage();
             if (storage == null) {
+                // §2b once-only WARN (was a SILENT skip — dark-path discipline): a null storage
+                // aborts the WHOLE cross-dim dest entity/BE/outline pass for this frame.
+                if (!portalEntitiesStorageNullLogged) {
+                    portalEntitiesStorageNullLogged = true;
+                    qouteall.q_misc_util.Helper.err(
+                        "[renderPortalEntities] SubmitNodeStorage is NULL — dest entity pass "
+                            + "skipped (once-only warn; recurrences count in [ENT-PROBE] "
+                            + "STORAGE-NULL=)");
+                }
+                if (EntityVisibilityProbe.ENABLED) {
+                    EntityVisibilityProbe.storageNullSkips++;
+                }
                 return;
             }
             // S18.5 — dest targeted-block outline delivery (S18 (d)-round log-audit CORRECTION,
@@ -2182,6 +2204,17 @@ public class SecondaryWorldRenderCore {
 
     // S14.28: one-shot latch for the renderPortalEntities swallow log.
     private static boolean portalEntitiesSwallowLogged = false;
+    // §2b: one-shot latch for the storage-null warn (the formerly-silent skip above).
+    private static boolean portalEntitiesStorageNullLogged = false;
+
+    /** §2b probe: latch-state summary for the [ENT-PROBE] line (x = cross-dim swallow seen,
+     *  sn = storage-null seen, sd = same-dim swallowed-throw count toward the 3-strike
+     *  dead-latch — 3/3 means the same-dim entity pass is session-disabled). */
+    public static String entityProbeLatchSummary() {
+        return "x=" + (portalEntitiesSwallowLogged ? 1 : 0)
+            + " sn=" + (portalEntitiesStorageNullLogged ? 1 : 0)
+            + " sd=" + sameDimEntityThrowCount + "/3";
+    }
 
     /**
      * S18.5 (corrected form) — the dest-pass targeted-block outline submit: an @IPVanillaCopy-class
@@ -2357,6 +2390,11 @@ public class SecondaryWorldRenderCore {
                 }
                 TeleportFlashProbe.sameDimEntitiesExtracted +=
                     sameDimScratchLRS.entityRenderStates.size();
+                // §2b probe: same-dim census + extract output.
+                if (EntityVisibilityProbe.ENABLED) {
+                    EntityVisibilityProbe.recordDestExtract(
+                        "sd", client.level, sameDimScratchLRS.entityRenderStates.size());
+                }
 
                 ((LevelRendererAccessorMixin) destRenderer).seamlessportals$invokeSubmitEntities(
                     new com.mojang.blaze3d.vertex.PoseStack(), sameDimScratchLRS, sameDimSubmitStorage);
@@ -2446,6 +2484,13 @@ public class SecondaryWorldRenderCore {
             // registrations would otherwise linger keyed to a dead identity, with any deferred
             // Mechanism-B brackets orphaned).
             sameDimEntityThrowCount++;
+            if (sameDimEntityThrowCount == 3) {
+                // §2b once-only WARN (dark-path discipline): the third swallowed throw trips the
+                // session dead-latch at the method HEAD — same-dim portal entities OFF from here.
+                qouteall.q_misc_util.Helper.err(
+                    "[renderPortalEntitiesSameDim] DEAD-LATCH TRIPPED (3 swallowed throws) — "
+                        + "same-dim portal entity pass DISABLED for the rest of the session");
+            }
             qouteall.imm_ptl.core.render.PerEntityClipBracket.evictPassState(sameDimSubmitStorage);
             sameDimSubmitStorage = new net.minecraft.client.renderer.SubmitNodeStorage();
             if (!sameDimEntitiesSwallowLogged) {
