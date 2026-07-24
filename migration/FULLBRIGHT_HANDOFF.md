@@ -1,3 +1,9 @@
+# ★ CLOSED 2026-07-23 (commit 00d15cf) — THIS HANDOFF IS HISTORICAL. The wave was TWO components, BOTH fixed:
+# wash = the front-clip plane leaking into iris's clip-patched SHADOW programs (NOT the §3 uniform-staleness
+# theory — probe v1 REFUTED it); ghost = iris prev-camera-UNIFORM poisoning by the nested render's notifier
+# tick. Full story: the 00d15cf commit message + memory portal-shaders-lighting-wave. The NEXT engagement is
+# migration/PORTAL_VIEW_POLISH_HANDOFF.md. Kept for the probe-design reference (§5/§8) only.
+
 # IN-PORTAL FULLBRIGHT — DEBUG HANDOFF (2026-07-22, rev 2 — PROBE NOW FULLY DESIGNED)
 
 Continue debugging the **shaders-ON in-portal fullbright** here. Read `§0 STANDING RULES` first, then
