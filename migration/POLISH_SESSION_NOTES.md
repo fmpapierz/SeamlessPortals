@@ -425,3 +425,15 @@ Agent recon 2026-07-24 (iris decompiled + pack GLSL + MC 26.2 ref + worktree):
   FrontClipping.setupOuterClipping exists but is DEAD/uncalled (old memory concurs); whether particle
   shaders carry the clip injection is UNVERIFIED.
 - DO NOT touch the stamp's GEQUAL/write to "fix particles" — it would break correct in-front occlusion.
+
+**★★ §2f C3-BLOOM SHIPPED `d7cb09d` (2026-07-25, pending live confirm).** Design B aperture-mask
+(panel wf_4ae79f21-775: A REJECTED — ARR ship-gate + in-window bloom loss + pack-pin; B = mask c0 to the
+aperture footprint after its last writer / before the bloom gather inside the nested composite chain —
+new @Pseudo require=0 mixin at the single Program.unbind INVOKE + IrisBloomApertureMask helper;
+mutate-last; all 2×SOUND-WITH-FIXES folds incl. the c0-clear=false guard, public
+registerFrameTransientUbo, glGetError permanent-disarm + pre-drain, (texId,w,h) FBO cache,
+-PbloomMaskProbe). Implemented by a delegated agent (deviations conservative + documented), reviewed,
+suite ALL LEGS PASS. LIVE: STEP 0 = re-enable Bloom (sidecar BLOOM_ENABLED=-1!); ring gone + [C3-BLOOM]
+LIVE + masks climbing; A/B lever; magenta/blackout probes; pre-registered: in-window edge bloom dimming
+(correct occlusion), MB-ON reopens the ring (attributing INFO). Spec archive: branch c3bloom/adjudicated
+(7485646).
