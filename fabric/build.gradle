@@ -209,6 +209,13 @@ loom {
             // the shaders-OFF+Fabulous behind-plane particle bleed over the window —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSourceParticleCull=true
             if (project.findProperty('disableSourceParticleCull') == 'true') { vmArg('-Dseamlessportals.disableSourceParticleCull=true') }
+            // IS-BOB iris bob-sync A/B (2026-07-25): DEFAULT-ON; pass to force OFF and restore the
+            // shaders-ON relative bob (world bobs, window static) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisBobSync=true
+            if (project.findProperty('disableIrisBobSync') == 'true') { vmArg('-Dseamlessportals.disableIrisBobSync=true') }
+            // IS-BOB 1Hz [BOB-SYNC] probe (default OFF):
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PbobSyncProbe=true
+            if (project.findProperty('bobSyncProbe') == 'true') { vmArg('-Dseamlessportals.bobSyncProbe=true') }
             // IS5-W FIX 1 A/B (2026-07-23): the shadow-scope clip suppression (the yaw-keyed shadow-wash
             // killer) is DEFAULT-ON; pass this to force it OFF and reproduce the wash (attribution proof;
             // the ShadowAliasProbe [FIX-1] counters classify the leg) —
@@ -338,6 +345,12 @@ loom {
             // §2c source-particle cull A/B (2026-07-25): DEFAULT-ON; lever-row parity —
             //   .\gradlew.bat :fabric:runCrossingGametest -PdisableSourceParticleCull=true
             if (project.findProperty('disableSourceParticleCull') == 'true') { vmArg('-Dseamlessportals.disableSourceParticleCull=true') }
+            // IS-BOB iris bob-sync A/B (2026-07-25): DEFAULT-ON; iris-absent => inert; lever-row parity —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableIrisBobSync=true
+            if (project.findProperty('disableIrisBobSync') == 'true') { vmArg('-Dseamlessportals.disableIrisBobSync=true') }
+            // IS-BOB 1Hz [BOB-SYNC] probe (default OFF; lever-row parity):
+            //   .\gradlew.bat :fabric:runCrossingGametest -PbobSyncProbe=true
+            if (project.findProperty('bobSyncProbe') == 'true') { vmArg('-Dseamlessportals.bobSyncProbe=true') }
             // IS5-W FIX 1 + FIX 2/3 A/B (mirrors of the clientSodium levers; the suite runs iris-ABSENT,
             // so both fixes are inert there — isRenderingShadowMap() is constant false) —
             if (project.findProperty('disableShadowScopeClipFix') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeClipFix=true') }

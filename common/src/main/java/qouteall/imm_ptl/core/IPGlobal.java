@@ -335,6 +335,29 @@ public class IPGlobal {
      *  reads+resets it into the spc= field when the probe is armed). */
     public static int sourceParticleCullCount = 0;
 
+    // IS-BOB IRIS BOB-SYNC (2026-07-25) — the shaders-ON relative-bob fix (world bobs, window
+    // static). Iris relocates view-bob+spin projection->modelview on the MAIN render only; the
+    // compat route's nested dest render got neither. Fix = derive the main pose per frame
+    // (bobbedMV·V⁻¹, zero iris reach-in), relocation-discriminated (NOT isShaders-gated — the
+    // discriminator is causally locked to what iris DID this frame, absorbing every toggle
+    // window), pre-multiplied per portal onto the compat full-pipeline dest modelview + clip
+    // plane (the FrontClipping planeW term). DEFAULT TRUE; A/B OFF via
+    // -Dseamlessportals.disableIrisBobSync.
+    public static final boolean IRIS_BOB_SYNC_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisBobSync");
+    public static boolean irisBobSync = true;
+
+    /** True when the compat route applies the derived main-pass bob pose to dest draws. */
+    public static boolean isIrisBobSyncActive() {
+        return irisBobSync && !IRIS_BOB_SYNC_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: per-portal pose applies (render-thread int; the [BOB-SYNC] probe reads it). */
+    public static int irisBobSyncApplyCount = 0;
+
+    /** 1Hz [BOB-SYNC] probe (default OFF): -Dseamlessportals.bobSyncProbe. */
+    public static final boolean BOB_SYNC_PROBE = Boolean.getBoolean("seamlessportals.bobSyncProbe");
+
     /** IS5-G GHOST-WAVE DISCRIMINATOR (ghost panel wf_ac30cdc3-265): tint the IrisCompatPaste portal-area
      *  STAMP magenta (channel-killing {1,0,1} in the fragment multiply) so a live run settles whether the
      *  "phantom colored-blocks terrain" wave IS the stamp's own paint overreaching the aperture (ghost

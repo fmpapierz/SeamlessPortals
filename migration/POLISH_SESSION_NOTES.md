@@ -60,6 +60,17 @@ iris RELOCATES view-bob from PROJECTION → MODELVIEW under shaders, only on the
   destDrawProjection unbobbed under iris. Optional zero-reach-in confirm probe: 1Hz delta of the captured
   projection vs cameraRenderState.projectionMatrix while walking (shaders-ON ⇒ ≈0; OFF ⇒ >0).
 
+**★ LIVE ROUND 2 CLOSE-OUT (2026-07-25, user verdicts):** §2b entities LIVE-CONFIRMED + A/B BOTH
+DIRECTIONS (cow visible through shaders-ON window; `-PdisableCompatSameDimEntities=true` ⇒ entities gone
+= correct attribution) — **§2b CLOSED**. §2c: behavior correct both shader states, but the
+`-PdisableSourceParticleCull=true` A/B could NOT reproduce the bleed — EXPLAINED, not anomalous:
+options.txt shows `improvedTransparency:false` + `graphicsPreset:"custom"` = **iris's STICKY Fabulous
+force-disable** (MixinDisableFabulousGraphics writes the option off permanently on first shader enable).
+The bleed's precondition is gone from this rig; zero [sourceParticleCull] ACTIVE lines across the runs =
+the cull has never fired live. **§2c status: mechanism-verified, delta-verified SHIP, live-DORMANT** —
+protection for whenever Fabulous returns; to truly exercise it: re-enable Improved Transparency with
+shaders off + behind-window campfire (user declined — acceptable). User re-routed: bob design panel next.
+
 **§2c PARTICLES — MECHANISM CONFIRMED + FIX SHIPPED (round-2 recon wf_365e5ee2-30f, HIGH confidence):
 the bleed is FABULOUS-specific.** Ordered pipeline (all file:line-verified): particles target created only
 under Improved Transparency (LevelRenderer :186-192); its depth copied from main at :429-431 (BEFORE the
@@ -126,6 +137,28 @@ Bytecode-proven chain (agent recon, 2026-07-24):
 lockstep — IP-faithful) but **"does the in-window bob track the surrounding view 1:1, or is it exaggerated /
 out-of-phase / persisting when vanilla View Bobbing is OFF"**. If lockstep-1:1 → likely correct-as-designed →
 becomes a user DESIGN CALL (IP side-by-side optional confirmation), not a bug.
+
+**★★ IS-BOB FIX IMPLEMENTED (2026-07-25, panel wf_22f132bb-257: recon → 2 designers → adjudication
+(DERIVE-POSE core won) → 2×SOUND-WITH-FIXES → implemented with all folds; compile green).** Key panel
+facts: the APERTURE side was ALREADY correct (passingModelView/anchor copies are taken AFTER iris's
+in-place mulLocal ⇒ bobbed {POSE·V, P_base} = the true main clip transform) — ONLY the dest CONTENT lacked
+the pose; applying to the aperture would have double-bobbed. Implementation: NEW IrisBobSync (zero iris
+reach-in): per-frame V copy at extract-RETURN (post-R13k; the field is mulLocal-mutated in place later +
+object-replaced every frame — never cache the ref); relocation DISCRIMINATOR at the projection-upload wrap
+(uploaded bit-equals the pristine base ⟺ iris stripped the bob — causally locked, absorbs every toggle
+window; an isShaders() gate would double-bob the pack-enable frame); derive POSE=(bobStack·V)·V⁻¹ at the
+compat workhorse from the previously-IGNORED anchor arg; per-portal apply destDrawViewMatrix =
+new Matrix4f(destViewMatrix).mulLocal(POSE_s) (FRESH copy = LOAD-BEARING: iris setGbufferModelView ALIASES
+the arg) feeding the THREE draw consumers (destCameraState.viewRotationMatrix H1-dual-set, clip feed,
+render arg); CULL legs stay RAW (frustum + Step-9', vanilla bob-free-cull parity + the C2 async-tree
+rule); ×s translation scaling gated on viewBobbingReduce (verify FIX-1); planeW = c − dot(planeXYZ,
+col3(MV)) via a shared FrontClipping helper in BOTH writers (feedViewSpacePlane + toViewSpaceSnapshot —
+writer parity mandatory), lever+exact-zero-guarded (shaders-OFF bit-identical). Lever
+-Dseamlessportals.disableIrisBobSync (DEFAULT-ON) + irisBobSyncApplyCount + [iris-bob-sync] LIVE once-only
++ [BOB-SYNC] 1Hz probe (-PbobSyncProbe). LIVE PROTOCOL: stand 3-6 BLOCKS BACK (viewBobFactor ramps to 0
+within 1 block — closer looks falsely inert); defaults ⇒ window tracks the bobbing world; A/B lever ⇒
+relative bob returns; pre-registered scaled-leg regression signature = walk-synchronized sliver of
+missing/extra dest terrain hugging the portal plane (wrong W).
 
 **Probe points (if needed after film):** best single chokepoint = `RenderStates.getPortalDrawProjection`
 (1Hz dump: baseProjection, capturedMainPassBobbedProjection, extraScaling, returned matrix — bob delta
