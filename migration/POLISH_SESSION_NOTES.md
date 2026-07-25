@@ -11,6 +11,141 @@ re-captures the stale main value — see the §2a bob section), + the IS4 UX led
 
 Working scratch for the §2 queue. NOT a handoff; distills the recon agents' outputs.
 
+## ★ QUEUE ROUND 2 (user-reported 2026-07-25, post-close): §2f + §2g + §2h
+
+**§2h ULTRA LAVA-LIGHT PHANTOM — FAMILY CONFIRMED BY USER TOGGLE (2026-07-25):** Complementary ULTRA +
+same-dim portal to a deep lava-rich dest ⇒ dest lava blocks/light ghost-painted over the SOURCE world.
+**Performance Settings → "Advanced Color Tracing" (COLORED_LIGHTING; 0 at High-, 512=16-chunks on Ultra)
+→ OFF ⇒ phantom DEAD (user-confirmed).** ⇒ the Ultra voxel colored-light system carries it — the 4th
+nested-render-pollutes-shared-state instance (counter → TAA history → camera tracker → voxel volume).
+**SPLIT RESOLVED (user, second toggle): ACT on + WSR OFF ⇒ phantom PRESENT ⇒ the carrier is the ACT
+voxel COLORED-LIGHT volume itself (the main pass's lighting reads dest-voxelized lava); WSR exonerated.**
+**★ RECON MECHANISM (HIGH, frame-exact walk):** carrier = the pack's PERSISTENT (clear=false)
+`floodfill_img`/`floodfill_img_copy` image3D ping-pong (512×256×512 RGBA16F, 512MiB each at Ultra;
+camera-block-anchored SceneToVoxel — dest camera = portal-transform of source ⇒ SAME voxel indices).
+Writes: shadow.vsh `UpdateVoxelMap` imageStore (voxel_img, clear=true — safe) + the `shadowcomp` COMPUTE
+(flood-fill ping-pong, 93.5% retention/frame) dispatched INSIDE ShadowRenderer.renderShadows via
+ShadowCompositeRenderer.renderAll. The nested dest render re-enters beginLevelRendering + renderShadows on
+the SAME same-dim pipeline; the frame counter does NOT advance (iris$startFrame is on the outer
+GameRenderer.render) ⇒ SAME framemod2 ⇒ the nested dispatch FULLY OVERWRITES the same ping-pong target
+with DEST-seeded light ⇒ next main frame reads dest lava for the source world (1-frame-late, then
+persistent — re-injected every portal frame). WHY LAVA: seed pow2(3.25,0.9,0.2 ×3.9) ≈ red 160 (10× the
+pack's reference) + alpha 0.8 (highest in the pack) bypasses the vanilla-lightmap gate
+(`specialLighting *= 1+50α` ≈ 41×) — every other dest emitter is masked by the source surface's zero
+lightmap. Read channels: composite1 GetColoredLightFog 32-step raymarch (4th-root — the "painted over
+the world" channel) + mainLighting GetLightVolume (surfaces). SAVE/RESTORE COST-BLOCKED (1 GiB scratch at
+Ultra) ⇒ the fix shape is SUPPRESSION of the nested dispatch (both write stages sit inside renderShadows —
+the Fix-1 shadow-scope precedent; iris mixin surface exists in-tree, e.g. MixinIrisSodiumTransformPatcher).
+ACCEPTED-COST CANDIDATE to pre-register: in-window ACT colored light reads the SOURCE-seeded volume
+(wrong-but-mild vs the phantom). LEDGERED: bufferObject.0 (773MiB WSR face-data SSBO, never cleared) = a
+second potential channel (MEDIUM, user-exonerated for THIS symptom via the WSR-off toggle). CO-SYMPTOM
+PREDICTIONS (optional user checks): source torch colored light goes patchy near portals at Ultra (dest
+solid voxels kill it) — the fix should cure this too; the phantom fades over ~10-30 frames when looking
+away (flood retention signature); phantom directional toward the dest camera's facing. Recon (resumed after API 5xx) to deliver: write path (shadow-pass images / SSBO),
+anchoring, clear timing, guard-extension symbols. Fix family: extend the IS5 guard class (save/restore or
+dest-pass write-suppression — the Fix-1 shadow-scope precedent).
+
+**§2f PORTAL-EDGE GLOW (shaders-ON, dark environment) — USER-CHARACTERIZED + RECON RANKED 2026-07-25:**
+user: camera-dependent REFLECTION-like RING just INSIDE the aperture; absent shaders-OFF.
+**RECON ORDERING PROOF (javap):** the stamp lands AFTER iris finalizeLevelRendering (composites + final)
+— NO pack post-effect can react to the window same-frame; colortex0Clear=true blocks cross-frame. ⇒ all
+"pack blooms/reflects the stamp" candidates FORECLOSED. Also: the mod draws NOTHING at the portal in the
+main gbuffer pass under shaders (overlay early-returns; query is WRITE_NONE at the anchor). "Inside the
+aperture" + reflection-like ⇒ survivors: **C3** (the dest pass's OWN full-screen SSR/bloom energy cropped
+into the window edge), **C5** (IS5-G zeroes MORE than TAA history — colortex4 normalM+reflection-strength,
+colortex5 water-reflection+vlFactor, colortex7 temporal reflection ⇒ in-window wrong reflections near
+edges), **C4** (≤1px hard boundary overhang; mirrors get a real +0.01 overhang). C1 (light-15 invisible
+placeholder — block-generated portals only, OUTSIDE glow class) + C2 (pre-stamp halo on surroundings)
+demoted by the "inside" datum. NOTE: the user's pack sidecar has TAA_MODE=0 (TAA left OFF since the ghost
+saga) — FXAA at full 70% + halved sharpening; if C5 confirms, a fix candidate is narrowing IS5-G's clear
+set (TAA-only targets) or skipping when the pack's TAA is off. USER PROTOCOL (one session):
+(1) -PdebugTintStamp: is the RING magenta (stamp content ⇒ C3/C5) or full-color while the window is
+magenta (GEQUAL-fail boundary ring showing source ⇒ C4/coverage)? (2) Complementary Performance → Block
+Reflection Quality = Low: ring gone ⇒ dest-SSR family (C3/C5-reflection). (3) Camera → Bloom OFF: ring
+gone ⇒ C3-bloom. (4) optional -PdisableIrisDestTaaClear (judge ONLY the edge — the ghost returns): ring
+gone ⇒ C5. + Q: was the portal WAND-made or block-generated (C1 relevance)?
+LEDGER (recon, in passing): (i) NEW — the nested dest render RE-RENDERS THE TRANSLUCENT HAND (iris draws
+the hand inside endLevelRender ⇒ the dest frame contains a hand; the stamp can paint dest content over
+the main hand; no suppression exists). (ii) pack composite2 is a reserved-invalid-GLSL gap (trivia).
+(iii) composite's colortex0 mip staleness question (iris-internal, LOW).
+**★ §2f ROOT-CAUSED BY THE USER'S TOGGLE (2026-07-25): Bloom OFF ⇒ ring GONE ⇒ C3-BLOOM CONFIRMED** —
+the dest pass's own full-frame bloom bleeds across the crop boundary: bright dest content just OUTSIDE
+the window rectangle deposits bloom energy (bilinear low-res tiles, reach ±14..896px) onto pixels just
+INSIDE it; BLOOM_FOG amplifies ×3 night / ×14 cave; camera-dependent because the dest camera tracks the
+player. FIX-COST HONESTY: bloom is baked into the dest frame BEFORE the stamp copies it — un-baking needs
+a pre-bloom capture inside iris's composite chain (a NEW reach-in class, colortex0 pre-composite5) or
+per-pass bloom suppression (impossible without shader recompile). ROUTED TO THE USER: accept as a
+ledgered pack-interaction cost (workaround: Bloom OFF) vs commission the pre-bloom-capture fix.
+USER COMMISSIONED THE FIX (2026-07-25). **SEAM RECON VERDICT (HIGH, [C]-labeled):** THERE IS NO
+POST-TONEMAP PRE-BLOOM POINT — composite5 does bloom-add (:198→:142) then tonemap (:209) in ONE
+invocation; every pre-bloom buffer is pre-tonemap HDR (R11F_G11F_B10F colortex0, last written by
+composite3; SURVIVES byte-identical to the anchor — clear=true excludes it from FinalPass swaps, next
+clear is next beginLevelRendering). Flip state machine is CONSTRUCTION-TIME-ONLY (BufferFlipper mutated
+only in the CompositeRenderer ctor; renderAll walks prebaked passes) ⇒ per-pipeline parity walk over
+CompositeRenderer.passes (reflection; Pass.drawBuffers/stageReadsFromAlt pkg-private) finds the
+last-writer side — derived ALT for colortex0 (3 writers: deferred1/composite1/composite3; MOTION_BLUR
+flips it — NEVER hardcode; probe-confirm). No public iris API for any of this. Guard plumbing
+(IrisTemporalTargetGuard) already has pipeline-resolve/reflection/DSA-scratch/copy/teardown — new work =
+the parity walk (~40 lines) + the raw-GL→GpuTextureView bridge (THE real cost) + per-portal placement
+(the :233 save is pre-loop, too early). Bloom mechanics confirmed: thresholdless 7×7 binomial tiles
+lods 2-8 (reach ±896px), BLOOM_STRENGTH 0.12, BLOOM_FOG ×3 night/×14 cave multiplicative. Residual
+unfixable-by-capture: composite7 FXAA + final sharpening/aberration few-px edge effects.
+**THE FORK (panel wf launched):** Branch A = capture + ~70-line tonemap replica (DoCompTonemap +
+LinearToRGB + DoBSLColorSaturation + the nasty BLOOM_FOG divide; sidecar-driven options; Complementary-
+r5.8.1-pinned hard fork, ARR licensing note, zero portability) vs Branch B = MUTATION at the composite4
+seam (the one non-dominated use of the mid-chain hook): mask the DEST pass's colortex0 outside the
+aperture footprint before the bloom tiles build ⇒ bloom computed only from window-visible content, frame
+stays pack-tonemapped, NO color reconstruction — costs an iris mixin (D9 break; IPCompatMixinPlugin
+footgun: simple name must contain "Iris") + per-portal mask draw + mask-edge semantics. Panel decides.
+
+**§2g SAME-DIM HOSTILE DESPAWN — MECHANISM CONFIRMED BY USER TEST 2026-07-25:** the NAME-TAG discriminator
+fired exactly as the vanilla-despawn hypothesis predicts — name-tagged zombies (persistenceRequired)
+SURVIVE same-dim crossings while unnamed ones are PERMANENTLY gone (true server despawn; mirror-invisibility
+class ruled out). ⇒ vanilla's >128-block same-dimension hard despawn is portal-blind; same-dim links span
+hundreds of blocks; cross-dim protected (per-dimension player check + dest-chunk ticking); passives exempt.
+**RECON VERDICT (2026-07-25, CONFIRMED with mechanism correction):** the enabling condition is OUR portal
+chunk ticket — TICKET_TYPE flags LOADING|SIMULATION, radius 2 ⇒ level 33−2=31 = ENTITY_TICKING (≤17×17
+chunks per portal per player, same-dim included — ChunkVisibility builds dest tickets dim-blind) ⇒ dest
+mobs enter entityTickList ⇒ **26.2 runs Mob.checkDespawn UNGATED by inEntityTickingRange**
+(ServerLevel :425-431 — only tickNonPassenger is gated) ⇒ euclidean per-dimension getNearestPlayer(-1.0)
+distance >128 ⇒ discard() (save=false, PERMANENT). Passives exempt: Animal.removeWhenFarAway()==false;
+plain Zombie/AbstractSkeleton inherit true. Cross-dim protected: getNearestPlayer per-Level ⇒ null.
+Name-tag = persistenceRequired — the user's test = the exact vanilla discriminator. Teleport path NOT
+causal (same-dim = same-object setPosRaw; cross-dim NBT recreate preserves persistence). Mod touches ZERO
+despawn state (proven negative). **UPSTREAM IP HAS NOTHING (dual-tree proven negative incl. mixin
+registry) — upstream exhibits the same bug; the fix is a DEVIATION (user-requested).** This was
+pre-recorded as a REGRESSION-WATCH at port time (port-notes/S09-chunk-loading.md:153-163 — the
+FLAG_SIMULATION spawn/tick eligibility note; the block-era code deliberately used LOADING-only).
+Zero-code evidence lever: serverSideNormalChunkLoading=false ⇒ radius 1 ⇒ level 32 = BLOCK_TICKING ⇒ no
+entityTickList ⇒ prediction: despawn stops (evidence only — freezes AI too). Probe A designed (EntityMixin
+remove(DISCARDED) logger). SPAWN half ledgered (portal chunks are also natural-spawn-eligible — S09 note;
+out of §2g scope). DESIGN SPACE for the panel: (a) portal-aware despawn distance (min over euclidean +
+through-portal player distance) vs (b) despawn suppression in portal-ticketed chunks vs (c) ticket-level
+demotion (REJECTED-leaning: freezes window AI). Also recon incidentals ledgered: cross-dim non-player
+recreate reuses the network id WITHOUT teleportingEntities suppression (real remove+re-add packets);
+same-dim setPosAndLastTickPos overwrites xo/yo/zo with dest.
+**★★ FIX IMPLEMENTED (2026-07-25, panel wf_47efbfc2-239: TICKET-SUPPRESSION won over warped-distance;
+2×SOUND-WITH-FIXES, all folds in; compile green).** @WrapOperation on BOTH removeWhenFarAway call sites
+in Mob.checkDespawn → return false (the vanilla passive value) iff player > category despawnDistance AND
+the mob's chunk is PORTAL-FED (3×3-dilated) in ImmPtlChunkTickets bookkeeping. **THE BIG VERIFY CATCH
+(gameplay lens): raw membership would have matched EVERY player's own view square (playerDirectLoader
+feeds the same map) = "monsters never despawn" server-wide regression ⇒ portalFed tagging:**
+ChunkTicketInfo.portalFed; markForLoading(+portalFed) new-set/gen-reset/same-gen-OR; updateForPlayer
+portalFed = !loader.equals(playerDirectLoader); BOTH global-additional-loader call sites too (the
+panel's "single caller" claim was WRONG — :363/:592 found at implementation, both mod-held ⇒ true).
+Other folds: probe targets Entity.setRemoved NOT remove (unload bypasses remove); honest dilation
+comment (entityTickList-ring rationale REFUTED; real value = shrink continuity + safe-direction);
+hoisted manager lookup; portalDist skipped for UNLOADED lines; probe fields heldCenter/portalFedNear.
+Verifier-proven: ZERO-TICK ticket-drop window; spawn candidacy player-only ⇒ closed population; suite
+structurally inert. Pieces: MobDespawnSuppressMixin (both-flag weave), PortalTicketDespawnSuppressor
+(guard order arithmetic→lever→ServerLevel→config→membership; once-only [DESPAWN-SUPPRESS] LIVE),
+IPGlobal disableTicketDespawnSuppress + counter + DESPAWN_PROBE, EntityMixin setRemoved probe, gradle
+rows ×2. 26.2 gotcha: ChunkPos is a RECORD (x()/z()). LIVE PROTOCOL: NIGHT/roofed stage (daylight burns
+undead = KILLED not DISCARDED); plain zombie egg; fix-on+probe → persists + LIVE line + zero
+DISCARDED-portalFedNear=true; A/B lever → vanish returns; near-player parity; walk-away →
+UNLOADED_TO_CHUNK (may lag; property = no DISCARDED); vanilla control (no portal, 200 blocks →
+DISCARDED portalFedNear=false).
+
 ## ★ LIVE ROUND 1 (2026-07-24 ~12:53-13:00, film pass + probes; log READ IN FULL) — VERDICTS
 
 User observations (authoritative): (1) View Bobbing OFF stops the portal bob; (2) portal bob visible

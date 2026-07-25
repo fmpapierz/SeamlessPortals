@@ -172,9 +172,17 @@ public class ImmPtlChunkTracking {
         );
         
         chunkLoaders.addAll(playerInfo.additionalChunkLoaders);
-        
+
         MinecraftServer server = player.level().getServer();
-        
+
+        // §2g (verify-fold FIX-1): the player's own view-distance square must NOT count as
+        // portal-fed for the despawn suppressor — ChunkLoader is a record (structural equals),
+        // so identity vs the direct loader discriminates it. additionalChunkLoaders correctly
+        // count as portal-fed (mod-held chunks vanilla would not load). Degenerate miss: a
+        // same-dim portal dest loader structurally EQUAL to the direct loader marks non-fed —
+        // rare, fails toward vanilla despawn (safe direction).
+        ChunkLoader playerDirect = ChunkVisibility.playerDirectLoader(player);
+
         for (ChunkLoader chunkLoader : chunkLoaders) {
             ResourceKey<Level> dimension = chunkLoader.dimension();
             var chunkRecordMap = getDimChunkWatchRecords(dimension);
@@ -188,13 +196,16 @@ public class ImmPtlChunkTracking {
             playerInfo.visibleDimensions.add(dimension);
             
             ImmPtlChunkTickets ticketInfo = ImmPtlChunkTickets.get(world);
-            
+
+            // §2g: everything except the player's own direct view square is portal-fed.
+            boolean portalFed = !chunkLoader.equals(playerDirect);
+
             chunkLoader.foreachChunkPos((dim, x, z, distanceToSource) -> {
                 long chunkPos = ChunkPos.pack(x, z);
                 var records =
                     chunkRecordMap.computeIfAbsent(chunkPos, k -> new Object2ObjectOpenHashMap<>());
-                
-                ticketInfo.markForLoading(chunkPos, distanceToSource, generationCounter);
+
+                ticketInfo.markForLoading(chunkPos, distanceToSource, generationCounter, portalFed);
                 
                 records.compute(player, (k, record) -> {
                     boolean isBoundary = distanceToSource == chunkLoader.radius();
@@ -349,7 +360,8 @@ public class ImmPtlChunkTracking {
                 @Override
                 public void consume(ResourceKey<Level> dimension, int x, int z, int distanceToSource) {
                     long chunkPos = ChunkPos.pack(x, z);
-                    dimTicketManager.markForLoading(chunkPos, distanceToSource, generationCounter);
+                    // §2g: global additional loaders are mod-held (vanilla would not load) ⇒ portal-fed.
+                    dimTicketManager.markForLoading(chunkPos, distanceToSource, generationCounter, true);
                     set.add(chunkPos);
                 }
             });
@@ -578,7 +590,8 @@ public class ImmPtlChunkTracking {
         ImmPtlChunkTickets dimTicketManager = ImmPtlChunkTickets.get(world);
         
         chunkLoader.foreachChunkPos((dim, x, z, distanceToSource) -> {
-            dimTicketManager.markForLoading(ChunkPos.pack(x, z), distanceToSource, generationCounter);
+            // §2g: global additional loaders are mod-held (vanilla would not load) ⇒ portal-fed.
+            dimTicketManager.markForLoading(ChunkPos.pack(x, z), distanceToSource, generationCounter, true);
         });
     }
     

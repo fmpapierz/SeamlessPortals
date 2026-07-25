@@ -87,7 +87,13 @@ public class ImmPtlChunkTickets {
     public static class ChunkTicketInfo {
         public int lastUpdateGeneration;
         public int distanceToSource;
-        
+        /** §2g (verify-fold FIX-1, gameplay lens): TRUE iff any non-player-direct loader (portal
+         *  dest/indirect/additional) marked this chunk this generation. The despawn suppressor
+         *  keys on THIS, not raw membership — the player's own view-distance square is ALSO in
+         *  this map (foreachBaseChunkLoaders row 1 = playerDirectLoader), and suppressing there
+         *  would disable vanilla's >128 monster churn around every player. */
+        public boolean portalFed;
+
         public ChunkTicketInfo(int lastUpdateGeneration, int distanceToSource) {
             this.lastUpdateGeneration = lastUpdateGeneration;
             this.distanceToSource = distanceToSource;
@@ -113,19 +119,23 @@ public class ImmPtlChunkTickets {
         return BY_DIMENSION.computeIfAbsent(world, k -> new ImmPtlChunkTickets());
     }
     
-    public void markForLoading(long chunkPos, int distanceToSource, int generation) {
+    public void markForLoading(long chunkPos, int distanceToSource, int generation, boolean portalFed) {
         Validate.isTrue(distanceToSource >= 0);
-        
+
         ChunkTicketInfo info = chunkPosToTicketInfo.get(chunkPos);
-        
+
         if (info == null) {
             info = new ChunkTicketInfo(generation, distanceToSource);
+            info.portalFed = portalFed;
             chunkPosToTicketInfo.put(chunkPos, info);
             getQueueByDistance(distanceToSource).add(chunkPos);
         }
         else {
             if (generation != info.lastUpdateGeneration) {
                 info.lastUpdateGeneration = generation;
+                // §2g: first touch of a new generation = fresh truth (a portal removed mid-play
+                // stops feeding within one generation, bounded by the 13-tick purge cadence).
+                info.portalFed = portalFed;
                 int oldDistanceToSource = info.distanceToSource;
                 info.distanceToSource = distanceToSource;
                 if (getQueueByDistance(oldDistanceToSource).remove(chunkPos)) {
@@ -133,6 +143,9 @@ public class ImmPtlChunkTickets {
                 }
             }
             else {
+                // §2g: OR-merge within one generation (multi-loader/multi-player overlap — the
+                // player-direct square crossing a portal dest square keeps portalFed=true).
+                info.portalFed |= portalFed;
                 if (distanceToSource < info.distanceToSource) {
                     int oldDistanceToSource = info.distanceToSource;
                     info.distanceToSource = distanceToSource;
@@ -290,6 +303,78 @@ public class ImmPtlChunkTickets {
     
     public int getLoadedChunkNum() {
         return chunkPosToTicketInfo.size();
+    }
+
+    // §2g once-only latch for the invalid-query silent-skip WARN (belt-and-braces:
+    // onDimensionRemove removes the BY_DIMENSION entry BEFORE invalidating, so a query
+    // should never see isValid=false).
+    private static boolean invalidQueryWarned = false;
+
+    /**
+     * §2g O(1) PORTAL-FED chunk membership for the despawn suppressor + probe (verify-fold
+     * FIX-1: raw map membership would match every player's own view-distance square — the
+     * playerDirectLoader also feeds this map — and suppressing there would disable vanilla's
+     * >128 monster churn around every player; only portal/indirect/additional-loader-fed
+     * chunks qualify). Raw BY_DIMENSION.get — NEVER get(world), which computeIfAbsent-CREATES:
+     * the despawn path must not allocate ticket managers. Server-thread only (the same thread
+     * as every other user of these structures) — WeakHashMap expunge on get is safe. The map
+     * is a slight SUPERSET of actually-ticketed chunks (entries exist from markForLoading
+     * before the throttled addTicket, and persist ticketless when
+     * enableImmPtlChunkLoading=false — callers must gate on that config); staleness is bounded
+     * by one purge generation (13 ticks) and only ever WIDENS suppression.
+     */
+    public static boolean isChunkPortalFed(ServerLevel world, int cx, int cz) {
+        ImmPtlChunkTickets t = manager(world);
+        return t != null && isPortalFedIn(t, cx, cz);
+    }
+
+    /**
+     * §2g 3x3-dilated portal-fed membership. HONEST RATIONALE (verify-fold FIX-2 — the
+     * original "the +1 ring hosts entityTickList members" claim was REFUTED: level-32 ring
+     * chunks map to Visibility.TRACKED, not TICKING, and never run checkDespawn): the dilation
+     * buys (i) one-generation suppression CONTINUITY when a square partially shrinks (an edge
+     * chunk's entry purged while a neighbor stays held — the mob's own chunk may briefly leave
+     * the map while still entity-ticking from the neighbor's ticket propagation), and (ii) a
+     * 1-ring over-suppression when a THIRD-PARTY source holds a ring chunk entity-ticking —
+     * a deviation in the SAFE direction (retention, recoverable) that this comment owns.
+     * The probe's heldCenter/portalHeldNear pair is the empirical adjudicator. Center probed
+     * first (the common hit); the manager lookup is hoisted (verify-fold FIX-3 micro).
+     */
+    public static boolean isChunkPortalFedNear(ServerLevel world, int cx, int cz) {
+        ImmPtlChunkTickets t = manager(world);
+        if (t == null) return false;
+        if (isPortalFedIn(t, cx, cz)) return true;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if ((dx | dz) != 0 && isPortalFedIn(t, cx + dx, cz + dz)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** §2g raw (portal-fed-agnostic) membership — probe diagnostics only. */
+    public static boolean isChunkHeld(ServerLevel world, int cx, int cz) {
+        ImmPtlChunkTickets t = manager(world);
+        return t != null && t.chunkPosToTicketInfo.containsKey(ChunkPos.pack(cx, cz));
+    }
+
+    private static ImmPtlChunkTickets manager(ServerLevel world) {
+        ImmPtlChunkTickets t = BY_DIMENSION.get(world);
+        if (t == null) return null;
+        if (!t.isValid) {
+            if (!invalidQueryWarned) {
+                invalidQueryWarned = true;
+                LOGGER.warn("[portal-despawn] membership query on invalidated ticket manager {}",
+                    world.dimension().identifier());
+            }
+            return null;
+        }
+        return t;
+    }
+
+    private static boolean isPortalFedIn(ImmPtlChunkTickets t, int cx, int cz) {
+        ChunkTicketInfo info = t.chunkPosToTicketInfo.get(ChunkPos.pack(cx, cz));
+        return info != null && info.portalFed;
     }
     
     public static void onDimensionRemove(ServerLevel world) {
