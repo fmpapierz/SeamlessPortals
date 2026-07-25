@@ -1,4 +1,13 @@
-# POLISH SESSION WORKING NOTES (2026-07-24) — recon verdicts as they land
+# POLISH SESSION WORKING NOTES (2026-07-24/25) — recon verdicts as they land
+
+**★★★ QUEUE CLOSED 2026-07-25 (HEAD 448f828, pushed).** §2b entities CLOSED (live + A/B both ways);
+§2a bob CLOSED (user: "window bobs with the world now"; log: [iris-bob-sync] LIVE, GL census baseline,
+zero WARNs; the disable-lever leg not separately run — liveness + symptom death carry attribution);
+§2c particles verified-DORMANT (Fabulous sticky-off); §2d inventory pass done round 1; §2e dropped.
+NEXT ENGAGEMENTS = the PORTAL_VIEW_POLISH_HANDOFF §3 follow-up ledger: per-dest TAA history (the proper
+IS5-G upgrade), leg-C sun-ward caster shortfall, cross-dim shadow C:0/0 retest, scaled-portal
+gbufferProjection (mechanism now KNOWN: writeProjectionSlice bypasses sodium's getBuffer wrap → iris
+re-captures the stale main value — see the §2a bob section), + the IS4 UX ledger items.
 
 Working scratch for the §2 queue. NOT a handoff; distills the recon agents' outputs.
 
