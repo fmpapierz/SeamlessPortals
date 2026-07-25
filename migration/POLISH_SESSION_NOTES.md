@@ -2,6 +2,101 @@
 
 Working scratch for the §2 queue. NOT a handoff; distills the recon agents' outputs.
 
+## ★ LIVE ROUND 1 (2026-07-24 ~12:53-13:00, film pass + probes; log READ IN FULL) — VERDICTS
+
+User observations (authoritative): (1) View Bobbing OFF stops the portal bob; (2) portal bob visible
+shaders-ON ONLY (gone shaders-off); (3) entities NOT visible through portal shaders-ON but their SHADOWS
+are; (4) entities VISIBLE shaders-OFF; (5) particle bleed shaders-OFF ONLY; (6) NEW item (e): creative
+inventory mangled after shader toggling — some item icons invisible but usable.
+
+Log facts (fabric/runs/client-sodium/logs/latest.log, 794KB clean): GL census 14× known-class "Invalid
+format" — NOW STACK-TRACED for the first time (GlDebug forensics): ALL are iris's own
+RenderTargets.copyPreHandDepth(:239)/copyPreTranslucentDepth(:227) glCopyTexImage2D on pipeline-recreate
+frames (each shader toggle adds a few; count scales with toggles — same known-minor class, now precisely
+attributed). Zero dark-path WARNs (no storage-null, no dead-latch, no swallows). Fix stack ALL LIVE:
+[FIX-1] suppressed>0/armed=0 ✓, [IS5-G] ✓, [IS5-PH] ~100-119 heals/s during shaders-ON portal windows ✓
+(the single 0-window = a shaders-OFF stint, correct gating). Session states: ON→OFF(12:57:42)→ON(12:58:34)
+→OFF(12:59:12).
+
+**§2b ENTITY MECHANISM NAMED BY THE PROBE (same-dim, compat route):**
+- Shaders-ON window: `dp≈1-2/frame, routes[x=0,f=0,sd=0], lvl=-1, cons=0, extr=0, sub=0, pes=0` — the
+  nested full-pipeline render's submitEntities RUNS but receives ZERO entity states, and NO dest entity
+  extract of any route ever fires. Same-dim ⇒ sharedState=true ⇒ Step-5 is `!sharedState`-gated ⇒ skipped;
+  and renderDestWorldFullPipeline NEVER calls renderPortalEntitiesSameDim (that's a decomposed-route
+  step-10.8 feature). The shared LRS's entityRenderStates was already DRAINED+CLEARED by the main pass's
+  own submitEntities (:282 clear). **⇒ ROOT CAUSE: the compat full-pipeline route has NO same-dim entity
+  path at all.** (IP's nested renderLevel naturally re-rendered same-dim entities — this is a fidelity gap
+  vs IP, not a cull bug. The C2-era "sodium regression" framing is RETIRED for this symptom.)
+- Shaders-OFF window (stencil, same route rig): `routes[sd=dp], lvl=101@overworld, cons≈101/pass,
+  rej≈88%, hid≈62% (IP's isOnDestinationSide filter — expected), nv/nd5>0 (neutralizes live),
+  extr==sub==pes≈12-23/pass` — the same-dim scratch path is LOSSLESS extract→submit→per-entity-submit,
+  and the user confirms entities visible. Stencil route fully healthy, probe-proven.
+- "Shadows visible" datum: trivially consistent for same-dim — the cows are in the MAIN pass's shadow
+  map (same world, same map); the window samples it.
+- CROSS-DIM compat entities UNTESTED (routes f=0 all session — no cross-dim portal viewed). Step-5 DOES
+  run cross-dim (!sharedState) → likely functional; verify live later.
+
+**§2a BOB — MECHANISM CONFIRMED (round-2 recon wf_365e5ee2-30f, bytecode-decisive; hypothesis corrected):
+iris RELOCATES view-bob from PROJECTION → MODELVIEW under shaders, only on the main render call.**
+- iris `MixinModelViewBobbing` (all @WrapOperations on GameRenderer.renderLevel, gated `areShadersOn`):
+  leg 1 SKIPS the vanilla bob-multiply into the projection (saves the pose as `bobStack`); legs for spin
+  fold into bobStack too; leg 3 `modelView.mulLocal(bobStack)` right before the MAIN LevelRenderer.render.
+  ⇒ under a pack the projection is UNBOBBED everywhere — sodium's captured projection field, iris's
+  gbufferProjection (read via `sodium$getProjectionMatrix()` at `iris$setupPipeline`, the SOLE
+  setGbufferProjection caller), AND our `capturedMainPassBobbedProjection` (same getBuffer wrap — the
+  field name is a MISNOMER under iris; the whole projection-bob machinery is INERT there).
+- iris draws from `gbufferProjection·gbufferModelView` uniforms, IGNORING the ambient RenderSystem
+  projection (our Step-7 install is unread by iris geometry). The nested dest render re-enters
+  `iris$setupPipeline` only: gbufferModelView := our bob-free destViewMatrix; gbufferProjection := sodium's
+  STALE main value (our writeProjectionSlice path never triggers sodium's getBuffer wrap — also confirms
+  the ledgered scaled-portal stale-gbufferProjection item's mechanism).
+- ⇒ shaders-ON: WORLD bobs (modelview), WINDOW static → relative bob. Shaders-OFF: bob rides the shared
+  projection → lockstep. View Bobbing OFF: nothing bobs. ALL THREE live observations satisfied.
+- FIX DIRECTION (needs a design panel — matrix-chain family, S13-M wobble history): iris-gated
+  (isShaders), capture the bob+spin pose (our MixinGameRenderer already hooks renderLevel; @Local the
+  PoseStack or wrap the same mul site) and pre-multiply onto BOTH the dest modelview (destViewMatrix for
+  the nested render) AND the stamp/aperture transforms (stampPortalArea modelView + the aperture/cull
+  users of getCurrentProjectionMatrix) so window content AND aperture track the bobbed world; leave
+  destDrawProjection unbobbed under iris. Optional zero-reach-in confirm probe: 1Hz delta of the captured
+  projection vs cameraRenderState.projectionMatrix while walking (shaders-ON ⇒ ≈0; OFF ⇒ >0).
+
+**§2c PARTICLES — MECHANISM CONFIRMED + FIX SHIPPED (round-2 recon wf_365e5ee2-30f, HIGH confidence):
+the bleed is FABULOUS-specific.** Ordered pipeline (all file:line-verified): particles target created only
+under Improved Transparency (LevelRenderer :186-192); its depth copied from main at :429-431 (BEFORE the
+portal); AFTER_TRANSLUCENT_TERRAIN (fabric @WrapOperation on the TRANSLUCENT renderGroup, ordinal 1) fires
+next — OUR stencil portal draw, main target only; THEN executeTranslucentAfterTerrain draws translucent
+particles into the SEPARATE target against the STALE pre-portal depth; the transparency composite paints
+them over the window ("composite FULL-SCREEN over the main view" — the mod's own dest-side Fabulous guard
+comment documents the identical class at SWRC :2440-2444). Shaders-ON never bleeds because iris
+FORCE-DISABLES Fabulous (MixinDisableFabulousGraphics — bytecode). Sodium: no role. Non-Fabulous: particles
+draw into MAIN vs live plane depth ⇒ behind-plane correctly culled. ⇒ THE USER RUNS FABULOUS.
+**FIX SHIPPED (2026-07-25, this commit): the D3 gate in QuadParticleGroupMixin amended** — flag-ON now also
+runs the geometric cull (behind-plane-in-aperture only, never in-front), lever
+`-Dseamlessportals.disableSourceParticleCull` (DEFAULT-ON) + `-P` rows, counter
+IPGlobal.sourceParticleCullCount surfaced as `spc=` in [ENT-PROBE] (flag-ON-gated per verify finding 2),
+once-only ACTIVE line, plus an isDestExtracting belt (flag-ON dest passes can't reach the redirect anyway —
+S14.40 cancel + ip_extractIsolated bypass — belt defends the invariant).
+**★ FINAL-DIFF VERIFY CATCH (BOTH verifiers independently, 2×SHIP-WITH-FIXES): the first form was a flag-ON
+NO-OP** — PortalParticleClip consulted the block-era PortalManager tracker whose FIVE feeders are ALL
+D3-gated OFF flag-ON (flag-ON portals are IP Portal ENTITIES, never in that tracker) ⇒ empty roster, zero
+culls, a lever that discriminates nothing. **REPOINTED (implemented + compile green): flag-ON branch in
+PortalParticleClip = per-frame cached roster (keyed RenderStates.frameIndex — ticks flag-ON via the
+MinecraftFramePumpMixin:104 IP port — + level identity) via IPMcHelper.getNearbyPortals(level, camPos, 64)
+(includes globals) filtered Portal::isVisible, predicate = portal.rayTrace(camPos, particlePos) != null
+(shape-aware, 0.001 leniency). Block-era tracker path kept byte-identical flag-OFF.** RULE re-earned: a
+recon's geometry analysis is NOT roster-population proof — verify the data source's feeders in the target
+config. Zero-code cross-check available: Fabulous OFF ⇒ bleed gone even lever-off (mechanism is
+Fabulous-specific). **Delta-verify SHIP (no edits) — bonus: the raytrace is ONE-SIDED (camera-front only)
+= correct for per-side portal entities; back side of one-way portals never culls.** Ledgered residuals:
+L1 roster radius 64 — far-window bleed (>64-block portals) exempt; if a live round shows it, bump
+FLAG_ON_ROSTER_RANGE first, don't re-diagnose. L2 disconnect roster retention (bounded, self-healing).
+L3 GeometryPortalShape per-triangle cost (fine at scale). L4 camera exactly on-plane never culls (correct
+mid-crossing behavior). Plus: scaled-portal shape bounds (LOW); renderMode=none dev state still culls
+(dev-only).
+
+**§2e creative-inventory icons: DROPPED (2026-07-25)** — the user could not reproduce it; no atlas/resource
+errors in the log. Reopen only on a fresh sighting with repro steps.
+
 ## §2a BOBBING — recon VERDICT: single-application BY DESIGN (not a double-bob)
 
 Bytecode-proven chain (agent recon, 2026-07-24):
@@ -71,7 +166,23 @@ Sodium's dest-entity zeroing mechanism (javap-proven, agent recon 2026-07-24):
 - Downstream loss: submitted-but-not-drawn (wrong target under iris / stamp overwrite / clip) — the counters
   split this from extract-side loss.
 
-**PROBE BUILT (2026-07-24, compile green, uncommitted; suite running):** `EntityVisibilityProbe`
+**★ FIX IMPLEMENTED (2026-07-25): Step-9.5-SD compat same-dim entity fill** — adjudicated spec (workflow
+wf_365e5ee2-30f: 2 designers → adjudication → 2×SOUND-WITH-FIXES) implemented with both verifier fixes
+folded: FIX-1 lastEntityRenderStateCount save/restore (the F3 "E:" reader), FIX-2 per-list null-guarded
+finally restores (the sameDimCompatFillRan flag dropped entirely — a saved list is non-null iff ITS swap
+ran). Pieces: IPGlobal lever `-Dseamlessportals.disableCompatSameDimEntities` (DEFAULT-ON) + active
+predicate + compatSameDimEntityFillCount; SWRC swap-holder locals + the gated fill block after Step-9'
+(swap-out entity/BE/particle lists + fillSameDimStatesForNestedRender: ERD prepare → isDestExtracting
+extract → "fsd" probe record → BE extract post-Step-9' → isolated particle fill → liveness+counter; catch
+= clear + 3-strike dead-latch + once-only WARNs) + per-list finally restores + cleanUp resets + latch fsd;
+probe fsd route + spc field; build.gradle rows ×2. Honors debugSkipSameDimEntities (one lever kills both
+same-dim passes). EXPECTED VISUAL (verifier FIX-2 pre-registration): entities STRADDLING the plane show
+their behind-plane half in the window — compat entity draws are plane-UNCLIPPED (pre-existing accepted
+class, first user-visible now). Iris shadow pass is fill-INDEPENDENT (own LRS + own extract — why shadows
+showed pre-fix). Residual risk #1 (probe-discriminated): submitted-but-not-drawn downstream iris failure
+⇒ fsd/extr/sub/pes healthy + still invisible ⇒ round-2 draw-phase hunt.
+
+**PROBE BUILT (2026-07-24, committed 19f0184):** `EntityVisibilityProbe`
 (qouteall.imm_ptl.core.render), lever `-Dseamlessportals.entityProbe` / `-PentityProbe` (both gradle blocks),
 1Hz `[ENT-PROBE]` line driven from GameRendererMixin frame-end (beside TeleportFlashProbe). Schema:
 `pf` portal frames, `dp` dest submit passes, `routes[x/f/sd]` decomposed/full-pipeline/same-dim,
