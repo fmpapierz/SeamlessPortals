@@ -365,6 +365,35 @@ public class IPGlobal {
      *  DEFAULT-OFF, byte-identical (the white Vec3 is the identity multiply). Restart-bound sysprop. */
     public static final boolean debugTintStamp = Boolean.getBoolean("seamlessportals.debugTintStamp");
 
+    // §2g PORTAL-TICKET DESPAWN SUPPRESS (2026-07-25) — the portal mob-despawn fix
+    // (user-requested deviation-from-IP; upstream has the identical bug). Mod tickets hold
+    // dest chunks ENTITY_TICKING (per-chunk level 31); ServerLevel:425 runs checkDespawn for
+    // every entityTickList member UNGATED => portal-held mobs >128 from every player DISCARD
+    // permanently, both crossing directions. Fix = MobDespawnSuppressMixin @WrapOperation on
+    // BOTH removeWhenFarAway call sites in checkDespawn: return false (the vanilla passive
+    // value) iff player > despawnDistance AND the mob's chunk is PORTAL-FED in our ticket
+    // bookkeeping (ImmPtlChunkTickets.isChunkPortalFedNear — NOT raw membership: the player's
+    // own view square is also in the map, verify-fold FIX-1). Restores the no-portal-mod
+    // outcome (UNLOADED-not-DISCARDED); near-player behavior byte-vanilla. SERVER-thread.
+    // DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableTicketDespawnSuppress.
+    public static final boolean TICKET_DESPAWN_SUPPRESS_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableTicketDespawnSuppress");
+    public static boolean ticketDespawnSuppress = true;
+
+    /** True when portal-ticket-held far mobs are exempt from the two distance-despawn legs.
+     *  Default-on; the JVM lever forces OFF for A/B (lever-off = crossing-despawn returns). */
+    public static boolean isTicketDespawnSuppressActive() {
+        return ticketDespawnSuppress && !TICKET_DESPAWN_SUPPRESS_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: suppressed would-be despawn verdicts (SERVER-thread int, single
+     *  writer — checkDespawn runs only on the server thread; [DESPAWN-PROBE] snapshots it). */
+    public static int ticketDespawnSuppressCount = 0;
+
+    /** §2g Probe A (default OFF): -Dseamlessportals.despawnProbe — event-rate [DESPAWN-PROBE]
+     *  lines for server-side Mob DISCARDED / UNLOADED_TO_CHUNK removals (EntityMixin). */
+    public static final boolean DESPAWN_PROBE = Boolean.getBoolean("seamlessportals.despawnProbe");
+
     public static boolean doCheckGlError = true;
     
     public static boolean renderYourselfInPortal = true;

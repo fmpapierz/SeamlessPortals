@@ -69,6 +69,7 @@
     "FireworkRocketEntityAccessor",
     "LivingEntityHurtAccessor",
     "EntityMixin",
+    "MobDespawnSuppressMixin",
     "EntityLevelAccessorMixin",
     "ServerPlayerMixin",
     "ProjectileMixin",

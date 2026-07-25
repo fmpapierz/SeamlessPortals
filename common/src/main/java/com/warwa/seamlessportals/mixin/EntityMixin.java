@@ -189,4 +189,30 @@ public abstract class EntityMixin implements com.warwa.seamlessportals.entity.Se
             ci.cancel();
         }
     }
+
+    /**
+     * §2g PROBE A — despawn-fix confirm instrument (default OFF:
+     * -Dseamlessportals.despawnProbe). Targets setRemoved, NOT remove (verify-fold FIX-1:
+     * chunk unload removes entities via PersistentEntitySectionManager's DIRECT
+     * setRemoved(UNLOADED_TO_CHUNK) — it never passes through Entity.remove, which is only
+     * the gameplay funnel discard()->remove()->setRemoved(); injecting here catches BOTH
+     * families). `final` is irrelevant to @Inject. Logs DISCARDED (the permanent save=false
+     * family — includes non-despawn discards like mob conversion; the judge keys on
+     * persistReq/playerDist/portalFedNear, not line existence) AND UNLOADED_TO_CHUNK (the
+     * saved outcome the ticket-drop leg must land on). Event-rate only, never per-tick;
+     * server thread.
+     */
+    @Inject(
+        method = "setRemoved(Lnet/minecraft/world/entity/Entity$RemovalReason;)V",
+        at = @At("HEAD")
+    )
+    private void seamlessportals$despawnProbe(Entity.RemovalReason reason, CallbackInfo ci) {
+        if (!qouteall.imm_ptl.core.IPGlobal.DESPAWN_PROBE) return;
+        Entity self = (Entity) (Object) this;
+        if (self.level() == null || self.level().isClientSide()) return;
+        if (!(self instanceof net.minecraft.world.entity.Mob mob)) return;
+        if (reason != Entity.RemovalReason.DISCARDED
+            && reason != Entity.RemovalReason.UNLOADED_TO_CHUNK) return;
+        com.warwa.seamlessportals.entity.PortalTicketDespawnSuppressor.probeLogRemoval(mob, reason);
+    }
 }
