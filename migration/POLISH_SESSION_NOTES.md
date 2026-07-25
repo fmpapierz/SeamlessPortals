@@ -437,3 +437,23 @@ suite ALL LEGS PASS. LIVE: STEP 0 = re-enable Bloom (sidecar BLOOM_ENABLED=-1!);
 LIVE + masks climbing; A/B lever; magenta/blackout probes; pre-registered: in-window edge bloom dimming
 (correct occlusion), MB-ON reopens the ring (attributing INFO). Spec archive: branch c3bloom/adjudicated
 (7485646).
+
+**★★★ ROUND 2 FULLY CLOSED (2026-07-25).** §2f C3-BLOOM **LIVE-CONFIRMED**: user re-enabled Bloom,
+ring GONE, window bloom correct ("seems all good"). Log proof: `[C3-BLOOM] LIVE: pass=composite4 idx=3
+reads=ALT tex=715 1718x1360 fmt=0x8c3a` + probe `masks=18264 misses=0`, zero real WARNs, GL census
+all 20 Invalid-format lines = the known copyPre* class. That closes all three round-2 items:
+§2f bloom ring (d7cb09d), §2g despawn (c3b4be3, live-confirmed "tested it, works good"), §2h lava
+phantom (8130102, live-confirmed via the ACT toggle attribution + fix run). Accepted cost the user
+verified + accepted for now: dest-side colored-torch light shows source-translated ACT bounce through
+the window — the per-dest-volume commission is the real fix.
+
+**PENDING (both USER-GATED — start only on the user's explicit word):**
+1. **Per-dest iris state commission** (ACT volume + TAA history TOGETHER) — memory
+   `per-dest-state-commission`. User: "i will say when to start that. dont start it automatically."
+2. **Motion-Blur bloom-ring polish** — MB_EFFECT=1 makes composite4 the last c0 writer ⇒ the mask
+   lands after the bloom gather ⇒ ring returns with a VALID plan (amendment-3 INFO attributes it in
+   the log). User: "save the motion blur issue for a later polish fix." Needs its own mini-recon +
+   panel (mask at L requires proving composite4's own c0 write is mask-compatible).
+
+**NEXT-SESSION ENTRY POINT**: `migration/POLISH_ROUNDS_CLOSED_HANDOFF.md` (+ paste prompt
+`migration/POLISH_NEXT_SESSION_PROMPT.md`).
