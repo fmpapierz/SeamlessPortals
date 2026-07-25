@@ -220,6 +220,12 @@ loom {
             // reproduce the same-dim portal mob-vanish (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PdisableTicketDespawnSuppress=true
             if (project.findProperty('disableTicketDespawnSuppress') == 'true') { vmArg('-Dseamlessportals.disableTicketDespawnSuppress=true') }
+            // IS5-FF A/B (§2h): disable the nested shadowcomp suppression (Ultra colored-light phantom returns) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableNestedShadowComposite=true
+            if (project.findProperty('disableNestedShadowComposite') == 'true') { vmArg('-Dseamlessportals.disableNestedShadowComposite=true') }
+            // IS5-FF 1Hz probe (default OFF):
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PnestedShadowCompositeProbe=true
+            if (project.findProperty('nestedShadowCompositeProbe') == 'true') { vmArg('-Dseamlessportals.nestedShadowCompositeProbe=true') }
             // §2g Probe A despawn-removal logger (default OFF; server-side [DESPAWN-PROBE] lines) —
             //   .\gradlew.bat :fabric:runClientSodium -PdespawnProbe=true
             if (project.findProperty('despawnProbe') == 'true') { vmArg('-Dseamlessportals.despawnProbe=true') }
@@ -363,6 +369,9 @@ loom {
             // structurally inert there; rows kept for lever-row parity —
             if (project.findProperty('disableTicketDespawnSuppress') == 'true') { vmArg('-Dseamlessportals.disableTicketDespawnSuppress=true') }
             if (project.findProperty('despawnProbe') == 'true') { vmArg('-Dseamlessportals.despawnProbe=true') }
+            // IS5-FF A/B + probe (§2h): iris-absent => the suppressor class never loads; lever-row parity —
+            if (project.findProperty('disableNestedShadowComposite') == 'true') { vmArg('-Dseamlessportals.disableNestedShadowComposite=true') }
+            if (project.findProperty('nestedShadowCompositeProbe') == 'true') { vmArg('-Dseamlessportals.nestedShadowCompositeProbe=true') }
             // IS5-W FIX 1 + FIX 2/3 A/B (mirrors of the clientSodium levers; the suite runs iris-ABSENT,
             // so both fixes are inert there — isRenderingShadowMap() is constant false) —
             if (project.findProperty('disableShadowScopeClipFix') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeClipFix=true') }
