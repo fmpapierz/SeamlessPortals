@@ -240,9 +240,22 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
         isInsideOwnRenderPortals = true;
         try {
+            // IS5-FF (§2h lava-light phantom): swap the MAIN pipeline's ShadowRenderer
+            // .compositeRenderer to a no-op for the whole portal phase — the k nested per-portal
+            // renderShadows calls must NOT re-run the pack's shadowcomp flood-fill with dest-seeded
+            // voxel/camera state (same pipeline, same framemod2 => full overwrite of the persistent
+            // ping-pong = the phantom). The main dispatch already ran (this anchor is post-main-
+            // finalize); cross-dim dest pipelines are structurally untouched. FIRST statement of
+            // the try + FIRST of the finally (verify-fold F1: nothing may throw while the noop is
+            // installed, or the NEXT main frame's shadowcomp silently freezes).
+            IrisShadowCompositeSuppressor.install();
             renderPortals(passingModelView);
         } finally {
             isInsideOwnRenderPortals = false;
+            // IS5-FF: put the real shadowcomp composite back before anything else in the finally
+            // can throw (the NEXT main frame's own renderShadows must dispatch normally) —
+            // verify-fold F1 placement: ahead of the glDisable/blit-back/guard-restore/heal.
+            IrisShadowCompositeSuppressor.uninstall();
             // anchor-state neutralize (the CrossPortalViewRendering:170 precedent — §6 row 8-2)
             GL11.glDisable(GL_STENCIL_TEST);
 

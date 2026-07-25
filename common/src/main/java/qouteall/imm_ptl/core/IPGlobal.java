@@ -203,6 +203,40 @@ public class IPGlobal {
     /** Confirm-counter: incremented once per healed frame. Render-thread int. */
     public static int prevUniformHealCount = 0;
 
+    // IS5-FF — NESTED SHADOWCOMP SUPPRESSION (2026-07-25; §2h recon HIGH + two user live toggles:
+    // ACT OFF kills the phantom, ACT ON + WSR OFF keeps it). Complementary Ultra's COLORED_LIGHTING
+    // flood-fill (shadowcomp COMPUTE, persistent clear=false floodfill_img ping-pong) is re-dispatched
+    // by the compat route's nested same-dim dest renderShadows on the SAME pipeline with an unchanged
+    // framemod2 => the nested run FULLY OVERWRITES the frame's write side with DEST-seeded light
+    // (lava seed ~160/alpha 0.8 bypasses the vanilla-lightmap gate ~41x) => dest lava light painted
+    // over the SOURCE world. Fix = frame-scoped reflective swap of the MAIN pipeline's
+    // ShadowRenderer.compositeRenderer (javap: sole consumer = renderShadows, unconditional
+    // getfield@1402) to a stateless no-op subclass at the compat anchor; restored in the finally.
+    // Save/restore was cost-blocked (1 GiB @ Ultra). Cross-dim = separate pipeline, untouched.
+    // DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableNestedShadowComposite.
+    public static final boolean NESTED_SHADOW_COMPOSITE_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableNestedShadowComposite");
+    public static boolean nestedShadowCompositeSuppress = true;
+
+    /** True when the compat anchor should no-op the nested dest passes' shadowcomp dispatch
+     *  (the Ultra colored-light phantom fix). Default-on; the JVM lever forces OFF for A/B. */
+    public static boolean isNestedShadowCompositeSuppressActive() {
+        return nestedShadowCompositeSuppress && !NESTED_SHADOW_COMPOSITE_DISABLED_LEVER;
+    }
+
+    /** Confirm-counters: suppressCount = swap-installed anchor frames (fires even on compat
+     *  frames with zero portals in view — the anchor brackets unconditionally, same as the
+     *  temporal guard); noopHits = nested renderShadows that landed on the no-op (k per frame
+     *  with k same-dim portals IN VIEW). installs>0 with noopHits==0 is NORMAL on portal-less
+     *  frames; during a portal-on-screen scene it means nested passes are not reaching
+     *  renderShadows (diagnostic). Render-thread ints. */
+    public static int nestedShadowCompositeSuppressCount = 0;
+    public static int nestedShadowCompositeNoopHits = 0;
+
+    /** IS5-FF 1Hz [IS5-FF] probe (default OFF): -Dseamlessportals.nestedShadowCompositeProbe. */
+    public static final boolean NESTED_SHADOW_COMPOSITE_PROBE =
+        Boolean.getBoolean("seamlessportals.nestedShadowCompositeProbe");
+
     // IS5-L IN-PORTAL FULLBRIGHT FIX (2026-07-22) — the shaders-ON dest terrain (seen through a same-dim portal)
     // is lit with the MAIN camera's PER_FRAME lighting uniforms, giving a main-camera direction-dependent
     // fullbright that toggles on pan. Bytecode-confirmed root: iris re-uploads per-frame lighting uniforms only

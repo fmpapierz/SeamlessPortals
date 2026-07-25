@@ -41,7 +41,31 @@ ACCEPTED-COST CANDIDATE to pre-register: in-window ACT colored light reads the S
 second potential channel (MEDIUM, user-exonerated for THIS symptom via the WSR-off toggle). CO-SYMPTOM
 PREDICTIONS (optional user checks): source torch colored light goes patchy near portals at Ultra (dest
 solid voxels kill it) — the fix should cure this too; the phantom fades over ~10-30 frames when looking
-away (flood retention signature); phantom directional toward the dest camera's facing. Recon (resumed after API 5xx) to deliver: write path (shadow-pass images / SSBO),
+away (flood retention signature); phantom directional toward the dest camera's facing.
+**★★ IS5-FF FIX IMPLEMENTED (2026-07-25, panel wf_22935df8-dec: 2 designers → MOD-SIDE FACADE won
+(structural cross-dim self-correction, loud-disarm on iris changes, zero new mixins — the
+IrisTemporalTargetGuard sibling model; the iris-mixin design's require=0 silent-unweave rejected) →
+2×SOUND-WITH-FIXES all folded; compile green incl. the 13-arg null ShadowCompositeRenderer ctor).**
+Shape: per-FRAME reflective swap of the MAIN pipeline's ShadowRenderer.compositeRenderer (private final;
+sole consumer = renderShadows getfield@1402, straight-line) to a stateless NoopShadowCompositeRenderer
+subclass at the compat anchor; restored in the finally. VERIFY FOLDS: F1 bracket airtightness —
+install() = FIRST statement inside the try, uninstall() = ahead of everything throwing in the finally
+(a stranded noop would silently freeze the main flood-fill); F2 once-only WARN on the real==null/
+already-noop skips; F3/FIX-1 doc — the HAND reads voxel_img post-anchor (pre-existing byte-identical)
+and the fix HEALS the hand's floodfill read (bonus observable: hand colored-light near portals
+improves); FIX-3 risk wording (graphical-shadowcomp packs get raw dest shadowcolor in-window, not mere
+absence); FIX-4 bounce refills ~1-2s after crossing (no poison tail = the property). Verifier bonuses:
+ShadowRenderer.destroy() is EMPTY (destroy-safety stronger than spec'd); noop GL-state parity PROVEN
+(nothing after renderAll reads its state; barrier only under ranCompute); reflection legal on Temurin 25
+(instance finals settable; unnamed module). Counters nestedShadowCompositeSuppressCount (per anchor
+frame) + noopHits (per nested pass); lever disableNestedShadowComposite; probe
+-PnestedShadowCompositeProbe. LEDGERED NEW: prepareRenderer.renderAll() also runs nested+unsuppressed
+(no persistent-writing prepare pass in Complementary — sibling channel if a future pack has one).
+LIVE PROTOCOL: Ultra+ACT ON, lava-dest portal → phantom DEAD + [IS5-FF LIVE] + noopHits≈portals×fps;
+A/B lever → phantom returns; TORCH CONTROL (anti-false-PASS): place/break a torch away from portals
+after the legs — its ACT light must appear/update (proves the real composite was restored); cross-dim
+leg: noopHits stays 0 while installs advance (the structural exemption visible in counters); in-window
+ACT cost pre-registered (source-translated bounce; through-crossing refill ~1-2s). Recon (resumed after API 5xx) to deliver: write path (shadow-pass images / SSBO),
 anchoring, clear timing, guard-extension symbols. Fix family: extend the IS5 guard class (save/restore or
 dest-pass write-suppression — the Fix-1 shadow-scope precedent).
 
