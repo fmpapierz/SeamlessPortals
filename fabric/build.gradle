@@ -254,6 +254,17 @@ loom {
             // pass this to force it OFF and reproduce the camera-tracked source-over-terrain ghost —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisablePrevUniformHeal=true
             if (project.findProperty('disablePrevUniformHeal') == 'true') { vmArg('-Dseamlessportals.disablePrevUniformHeal=true') }
+            // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
+            // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
+            // (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisBloomApertureMask=true
+            if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugTintBloomMask=true
+            if (project.findProperty('debugTintBloomMask') == 'true') { vmArg('-Dseamlessportals.debugTintBloomMask=true') }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugBloomMaskBlackout=true
+            if (project.findProperty('debugBloomMaskBlackout') == 'true') { vmArg('-Dseamlessportals.debugBloomMaskBlackout=true') }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PbloomMaskProbe=true
+            if (project.findProperty('bloomMaskProbe') == 'true') { vmArg('-Dseamlessportals.bloomMaskProbe=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -378,6 +389,12 @@ loom {
             if (project.findProperty('disableShadowScopeIsolation') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeIsolation=true') }
             if (project.findProperty('disableIrisDestTaaClear') == 'true') { vmArg('-Dseamlessportals.disableIrisDestTaaClear=true') }
             if (project.findProperty('disablePrevUniformHeal') == 'true') { vmArg('-Dseamlessportals.disablePrevUniformHeal=true') }
+            // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
+            // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
+            if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }
+            if (project.findProperty('debugTintBloomMask') == 'true') { vmArg('-Dseamlessportals.debugTintBloomMask=true') }
+            if (project.findProperty('debugBloomMaskBlackout') == 'true') { vmArg('-Dseamlessportals.debugBloomMaskBlackout=true') }
+            if (project.findProperty('bloomMaskProbe') == 'true') { vmArg('-Dseamlessportals.bloomMaskProbe=true') }
         }
     }
 }
