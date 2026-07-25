@@ -1416,6 +1416,23 @@ public class SecondaryWorldRenderCore {
             ((CameraInvokerMixin) newCamera).seamlessportals$setCapturedFrustum(destFrustum);
         }
 
+        // ===== Step 3b — IS-BOB iris bob-sync: draw-only bobbed dest view ========================
+        // Per-PORTAL apply of the per-FRAME pose (panel wf_22f132bb-257). destViewMatrix (RAW)
+        // keeps feeding the CULL legs (the destFrustum above + the Step-9' cull drive) = vanilla
+        // bob-free-cull parity + the C2 async-tree rule; destDrawViewMatrix feeds the three DRAW
+        // consumers (camera-state set, clip feed, render arg). A null pose (not relocated /
+        // shaders-off / lever-off / stale frame) => alias => byte-identical to pre-fix. The fresh
+        // copy in getScaledPoseForDestPass is LOAD-BEARING: iris's setGbufferModelView ALIASES
+        // the render arg (verify fold FIX-2) — never fold into a shared scratch.
+        Matrix4f destDrawViewMatrix = destViewMatrix;
+        Matrix4f irisBobPose = qouteall.imm_ptl.core.compat.iris_compatibility.IrisBobSync
+            .getScaledPoseForDestPass(PortalRendering.getExtraModelViewScaling());
+        if (irisBobPose != null) {
+            // POSE_s · V_dest — PRE-multiply (eye space, mirroring iris's own mulLocal(bobStack);
+            // post-multiply would bob in dest-world axes = the classic S13-M order error).
+            destDrawViewMatrix = new Matrix4f(destViewMatrix).mulLocal(irisBobPose);
+        }
+
         // ===== Step 4 — camera render state (scratch object for shared state) ====================
         SectionRenderDispatcher dispatcher = destRenderer.sectionRenderDispatcher();
         Vec3 savedDispatcherCamPos = null;
@@ -1435,7 +1452,10 @@ public class SecondaryWorldRenderCore {
         }
 
         newCamera.extractRenderState(destCameraState, partialTick);
-        destCameraState.viewRotationMatrix.set(destViewMatrix);
+        // IS-BOB C5b (H1 dual-set): the nested render feeds prepareChunkRenders from THIS FIELD
+        // while sodium terrain rides the render ARG — setting BOTH to the same bobbed matrix is
+        // correct under either plumbing resolution.
+        destCameraState.viewRotationMatrix.set(destDrawViewMatrix);
         destCameraState.projectionMatrix.set(destProjection);
         if (destCameraState.entityRenderState != null) {
             destCameraState.entityRenderState.bob = 0.0f;
@@ -1740,7 +1760,9 @@ public class SecondaryWorldRenderCore {
             GL11.glDisable(GL11.GL_STENCIL_TEST);
             FrontClipping.setupInnerClipping(
                 PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
-                destViewMatrix, -FrontClipping.ADJUSTMENT
+                // IS-BOB C6: the clip plane must follow the DRAW transform (the bobbed matrix
+                // carries a translation column; FrontClipping's planeW term compensates it).
+                destDrawViewMatrix, -FrontClipping.ADJUSTMENT
             );
             // IS3 V6 FOLD — FREEZE the just-armed view-space plane into the pass-scoped full-pipeline
             // override. render() runs submitFeatures (its entity submit) BEFORE the framegraph terrain
@@ -1838,7 +1860,9 @@ public class SecondaryWorldRenderCore {
                 deltaTracker,
                 destRenderOutline,
                 destCameraState,
-                destViewMatrix,
+                // IS-BOB C5: the draw modelview (iris captures gbufferModelView from this arg —
+                // BY REFERENCE, which is why destDrawViewMatrix is a fresh per-portal object).
+                destDrawViewMatrix,
                 destFogBuffer,
                 destFogData.color,
                 WorldRenderInfo.getTopRenderInfo().doRenderSky

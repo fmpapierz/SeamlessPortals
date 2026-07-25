@@ -232,6 +232,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // preserving the main view's TAA. Lever-gated (default-on), same-dim-scoped, throw-safe (never throws).
         boolean guardSaved = IrisTemporalTargetGuard.save();
 
+        // IS-BOB: derive the per-frame bob+spin pose from the anchor's post-mulLocal copy — the
+        // previously-IGNORED onBeforeHandRendering arg becomes load-bearing here (panel recon row
+        // 3b). Per-FRAME derive; per-PORTAL apply = SecondaryWorldRenderCore Step-3b. The stencil
+        // family's onBeforeHandRendering is the empty base body — shaders-OFF runs zero of this.
+        IrisBobSync.deriveFramePose(modelView);
+
         isInsideOwnRenderPortals = true;
         try {
             renderPortals(passingModelView);

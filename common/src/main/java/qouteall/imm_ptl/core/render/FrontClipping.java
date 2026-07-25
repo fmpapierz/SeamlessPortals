@@ -158,7 +158,9 @@ public class FrontClipping {
      * n·p_rel + c > 0) and writes it into the single com.warwa view-space plane store that
      * GlCommandEncoderClipMixin uploads to gl_ClipDistance[0]: planeXYZ = the clip normal carried to eye
      * space by {@link #rotateClipNormalToViewSpace} (R·n for the unscaled common case, the covector
-     * inverse-transpose M⁻ᵀ·n under a scaling model-view — S13-L), planeW = c. Kept half-space is preserved
+     * inverse-transpose M⁻ᵀ·n under a scaling model-view — S13-L), planeW = c — except under a
+     * translation-carrying MV (the IS-BOB bobbed dest matrix), where {@link #viewSpacePlaneW} adds the
+     * lever-gated exact W-term. Kept half-space is preserved
      * exactly (see class SIGN NOTE). Gated by
      * {@code IPGlobal.enableClippingMechanism}, mirroring IP's enableClipping() guard; isClippingEnabled
      * is set in lockstep with the com.warwa gl_ClipDistance enable that restore(...,true) performs.
@@ -170,17 +172,41 @@ public class FrontClipping {
         Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, modelView);
         com.warwa.seamlessportals.render.FrontClipping.restore(
             new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
-                nView.x, nView.y, nView.z, (float) beforeModelView[3], true
+                nView.x, nView.y, nView.z,
+                viewSpacePlaneW(beforeModelView, modelView, nView), true
             )
         );
         isClippingEnabled = true;
     }
 
     /**
+     * IS-BOB H2 (panel wf_22f132bb-257): with a TRANSLATION-carrying model-view (MV = POSE·V, the
+     * iris bob-sync's bobbed dest matrix; t = col3(POSE) since col3(V)=0) the eye-space clip
+     * evaluation {@code dot((MV·p).xyz, planeXYZ) + planeW} gains a spurious
+     * {@code dot(planeXYZ, t)}; the exact form is {@code planeW = c − dot(planeXYZ, col3(MV))} —
+     * using the PASSED matrix's m30/31/32 makes the form exact under ANY factorization. Lever-gated
+     * + exact-zero-guarded: every translation-free caller (all shaders-OFF/stencil feeds — camera
+     * rotation matrices) and every lever-OFF session computes bit-identical planeW with zero new
+     * float ops. Lever-ON also CORRECTS the pre-existing bounded main-pass error when iris's
+     * bobbed field reaches per-entity clip captures (adjudication A2/R4).
+     */
+    private static float viewSpacePlaneW(
+        double[] beforeModelView, Matrix4f modelView, Vector3f nView
+    ) {
+        float w = (float) beforeModelView[3];
+        if (IPGlobal.isIrisBobSyncActive()
+            && (modelView.m30() != 0f || modelView.m31() != 0f || modelView.m32() != 0f)) {
+            w -= nView.x * modelView.m30() + nView.y * modelView.m31() + nView.z * modelView.m32();
+        }
+        return w;
+    }
+
+    /**
      * The single place IP's world-space clip NORMAL {@code n = beforeModelView[0..2]} is turned into the
      * mod's EYE-space plane store (planeXYZ). {@code planeW = c = beforeModelView[3]} is written unchanged
-     * by the callers (the S11-B/D4.4 SIGN NOTE convention). See the class SIGN NOTE (S13-L) for the full
-     * derivation; in brief:
+     * by the callers for every translation-free MV (the S11-B/D4.4 SIGN NOTE convention) — under a
+     * translation-carrying MV the callers route through {@link #viewSpacePlaneW} (IS-BOB H2).
+     * See the class SIGN NOTE (S13-L) for the full derivation; in brief:
      *
      * <ul>
      *   <li>The 26.2 clip shader evaluates in EYE space:
@@ -360,18 +386,22 @@ public class FrontClipping {
      * store. {@code planeXYZ} is the clip normal carried to eye space by {@link #rotateClipNormalToViewSpace}
      * — the forward column-form rotate {@code R·n} for the unscaled common case (bit-identical; do NOT "fix"
      * to {@code mulTranspose} — S11-A anti-fix guard), the covector inverse-transpose {@code M⁻ᵀ·n} under a
-     * scaling model-view (S13-L). {@code planeW = c}, {@code enabled = true}. {@code viewRotation} is the
-     * world→view model-view the 26.2 draw applies to the camera-relative submit poses; its translation
-     * column is dropped (only the 3x3 linear block is used).
+     * scaling model-view (S13-L). {@code planeW} via the shared {@link #viewSpacePlaneW} helper (= c for
+     * every translation-free MV; the IS-BOB W-term otherwise), {@code enabled = true}. {@code viewRotation}
+     * is the world→view model-view the 26.2 draw applies to the camera-relative submit poses; the normal
+     * transform uses only its 3x3 linear block, the W-term reads its translation column.
      */
     private static com.warwa.seamlessportals.render.FrontClipping.Snapshot toViewSpaceSnapshot(
         double[] beforeModelView, Matrix4f viewRotation
     ) {
         // Same eye-space covector transform as feedViewSpacePlane (S13-L): rotation-only for the unscaled
-        // common case (bit-identical), inverse-transpose under a scaling model-view. planeW = c unchanged.
+        // common case (bit-identical), inverse-transpose under a scaling model-view. planeW via the
+        // SHARED helper (IS-BOB H2 — writer parity with feedViewSpacePlane is MANDATORY: dest-pass
+        // PerEntityClipBracket captures consume the bobbed destCameraState.viewRotationMatrix).
         Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, viewRotation);
         return new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
-            nView.x, nView.y, nView.z, (float) beforeModelView[3], true
+            nView.x, nView.y, nView.z,
+            viewSpacePlaneW(beforeModelView, viewRotation, nView), true
         );
     }
 
