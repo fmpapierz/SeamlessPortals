@@ -37,7 +37,8 @@ import qouteall.imm_ptl.core.render.context_management.RenderStates;
  * </pre>
  *
  * <p>Routes tag: x = cross-dim decomposed (stencil family), f = cross-dim full-pipeline (iris
- * compat), sd = same-dim isolated pass — so one line also says WHICH route ran.
+ * compat), sd = same-dim isolated pass, fsd = same-dim full-pipeline (the §2b compat Step-9.5-SD
+ * fill) — so one line also says WHICH route ran.
  *
  * <p><b>Discipline</b> (ShadowAliasProbe conventions): lever {@code -Dseamlessportals.entityProbe}
  * (default-OFF, {@code -PentityProbe} passthroughs in both fabric/build.gradle blocks); LOG-ONLY;
@@ -68,10 +69,12 @@ public final class EntityVisibilityProbe {
     public static int portalFrames = 0;
     /** submitEntities HEAD entries with PortalRendering.isRendering() — dest submit passes. */
     public static int destPasses = 0;
-    /** Route markers: cross-dim decomposed / cross-dim full-pipeline / same-dim passes. */
+    /** Route markers: cross-dim decomposed / cross-dim full-pipeline / same-dim passes
+     *  (+ fsd = same-dim full-pipeline, the §2b compat Step-9.5-SD fill). */
     public static int routeDecomposed = 0;
     public static int routeFullPipeline = 0;
     public static int routeSameDim = 0;
+    public static int routeCompatSameDim = 0;
     /** Latest dest-level entity census (getEntityCount at a dest extract) + its dim path. */
     public static int levelCensus = -1;
     public static String censusDim = "-";
@@ -99,7 +102,8 @@ public final class EntityVisibilityProbe {
     public static int gatePortalsRenderedThisFrame = -1;
 
     /** Called from SecondaryWorldRenderCore right after each dest entity extract. Route:
-     *  "x" decomposed cross-dim, "f" full-pipeline cross-dim, "sd" same-dim. */
+     *  "x" decomposed cross-dim, "f" full-pipeline cross-dim, "fsd" full-pipeline same-dim
+     *  (the §2b compat Step-9.5-SD fill), "sd" decomposed same-dim. */
     public static void recordDestExtract(
         String route, net.minecraft.client.multiplayer.ClientLevel level, int extractedCount
     ) {
@@ -109,6 +113,7 @@ public final class EntityVisibilityProbe {
         switch (route) {
             case "x" -> routeDecomposed++;
             case "f" -> routeFullPipeline++;
+            case "fsd" -> routeCompatSameDim++;
             default -> routeSameDim++;
         }
         if (level != null) {
@@ -140,8 +145,9 @@ public final class EntityVisibilityProbe {
         if (!activeLogged) {
             activeLogged = true;
             LOGGER.info(P + "ACTIVE (1Hz; lever -Dseamlessportals.entityProbe; schema: lvl census "
-                + "-> cons/rej gate -> extr -> sub -> pes; routes x/f/sd; nv/nd5 = neutralize fires;"
-                + " hid = cross-portal hide)");
+                + "-> cons/rej gate -> extr -> sub -> pes; routes x/f/sd/fsd (fsd = same-dim "
+                + "full-pipeline, the §2b compat Step-9.5-SD fill); nv/nd5 = neutralize fires;"
+                + " hid = cross-portal hide; spc = §2c source particles culled, shown when >0)");
         }
         if (RenderStates.portalsRenderedThisFrame != 0) {
             portalFrames++;
@@ -151,8 +157,11 @@ public final class EntityVisibilityProbe {
             return;
         }
         lastEmitNanos = now;
+        // §2c: the source-particle-cull confirm counter (accumulated in IPGlobal by the
+        // QuadParticleGroupMixin cull; read+reset per window here).
+        int spc = qouteall.imm_ptl.core.IPGlobal.sourceParticleCullCount;
         if (portalFrames == 0 && destPasses == 0 && routeDecomposed + routeFullPipeline
-            + routeSameDim == 0) {
+            + routeSameDim + routeCompatSameDim == 0) {
             // Nothing portal-related this window — stay silent (log4j discipline).
             resetWindow();
             return;
@@ -161,7 +170,7 @@ public final class EntityVisibilityProbe {
             + "pf=" + portalFrames
             + " dp=" + destPasses
             + " routes[x=" + routeDecomposed + ",f=" + routeFullPipeline
-            + ",sd=" + routeSameDim + "]"
+            + ",sd=" + routeSameDim + ",fsd=" + routeCompatSameDim + "]"
             + " lvl=" + levelCensus + "@" + censusDim
             + " cons=" + considered
             + " rej=" + rejected
@@ -172,6 +181,7 @@ public final class EntityVisibilityProbe {
             + " sub=" + submittedList
             + " pes=" + perEntitySubmits + "(h=" + perEntityHandled + ")"
             + (storageNullSkips > 0 ? " STORAGE-NULL=" + storageNullSkips : "")
+            + (spc > 0 ? " spc=" + spc : "")
             + " gates[sod=" + (gateSampled ? (gateSodiumPresent ? "T" : "F") : "?")
             + " pf@x=" + gatePortalsRenderedThisFrame + "]"
             + " latch[" + SecondaryWorldRenderCore.entityProbeLatchSummary() + "]");
@@ -179,11 +189,13 @@ public final class EntityVisibilityProbe {
     }
 
     private static void resetWindow() {
+        qouteall.imm_ptl.core.IPGlobal.sourceParticleCullCount = 0;
         portalFrames = 0;
         destPasses = 0;
         routeDecomposed = 0;
         routeFullPipeline = 0;
         routeSameDim = 0;
+        routeCompatSameDim = 0;
         levelCensus = -1;
         censusDim = "-";
         considered = 0;

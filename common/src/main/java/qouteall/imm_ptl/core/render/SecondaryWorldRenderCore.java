@@ -410,6 +410,9 @@ public class SecondaryWorldRenderCore {
         // (a prior session's throw must not keep the pass dead or mute its log).
         sameDimEntitiesSwallowLogged = false;
         sameDimEntityThrowCount = 0;
+        // §2b: same for the compat same-dim fill's fence (adjudication F — the house pattern).
+        compatSameDimSwallowLogged = false;
+        compatSameDimEntityThrowCount = 0;
         closeFrameTransientUbos(); // S14.30: disposal path
         // S18.3: dispose the per-dest-dim cloud isolation (AutoCloseable GPU ring buffers) + drop
         // the mirrored texture (a new session's resource state re-mirrors at the first render TAIL).
@@ -1472,6 +1475,21 @@ public class SecondaryWorldRenderCore {
         // restore it (nested full-pipeline passes stack correctly). Armed at the belt arm below.
         com.warwa.seamlessportals.render.FullPipelineClipState.State savedFullPipelineClip =
             com.warwa.seamlessportals.render.FullPipelineClipState.save();
+        // §2b COMPAT SAME-DIM ENTITIES (2026-07-24): swap holders for the Step-9.5-SD pre-render()
+        // fill of the SHARED main LRS (entities/BEs/particle groups). Assigned only when the fill
+        // runs; the outermost finally strand-clears + restores PER-LIST (null-guarded — the
+        // verify-fold FIX-2 shape: no flag window between the first swap and a throw). Particle
+        // refs are MANDATORY-restore (S14.41: next frame's reset() must clear() the SHARED group
+        // accumulators through these refs). savedMainEntityStateCount = the verify-fold FIX-1:
+        // lastEntityRenderStateCount is READ by LevelExtractor.entityStatistics() (the F3 "E:"
+        // line, rendered after the portal pass) — preserve it through the swap.
+        List<net.minecraft.client.renderer.entity.state.EntityRenderState>
+            savedMainEntityStates = null;
+        List<net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState>
+            savedMainBlockEntityStates = null;
+        List<net.minecraft.client.renderer.state.level.ParticleGroupRenderState>
+            savedMainParticleGroups = null;
+        int savedMainEntityStateCount = 0;
         try {
             // ===== Step 6 — dest FOG, HOISTED BEFORE the Step-5 extract (IS2 FIX-F; port-note ====
             // IS-iris-shaders-on §3.2) — the verbatim decomposed body (FIX-6 rain bracket +
@@ -1636,6 +1654,62 @@ public class SecondaryWorldRenderCore {
                 logSameDimSupplyProbe(destDim);
             }
 
+            // ===== Step 9.5-SD — same-dim dest ENTITIES (+BEs +particles) for the nested render ==
+            // (§2b fix, probe-proven gap: [ENT-PROBE] dp>0 sub=0 — the nested render()'s own
+            // submitFeatures (26.2 LevelRenderer.java:174 -> submitEntities :281 -> the :282 clear)
+            // drains whatever sits in destLRS at invoke time, and for SHARED-STATE passes the main
+            // pass already consumed+cleared those lists; the compat route never calls the decomposed
+            // renderPortalEntitiesSameDim.) Fill the shared LRS with a PORTAL-camera isolated
+            // extract — the renderPortalEntitiesSameDim discipline (ERD prepare + isDestExtracting
+            // bracket: the IP isOnDestinationSide hide, C2-1e/D5 neutralizes, the fade-gate bypass)
+            // — so the nested render submits them through ITS OWN iris pipeline (gbuffers entity
+            // phase: pack-shaded/fogged; a post-render() renderAllFeatures would draw OUTSIDE
+            // iris's deferred pipeline and composite wrong under deferred packs). Placement is
+            // AFTER Step-9': the sodium BE walk (0.9.1 LevelExtractorMixin cancel ->
+            // SWR.extractBlockEntities -> RSM.getRenderLists, javap) must see the D1-swapped
+            // portal context's renderLists, which ip_driveDestTerrainSetup just refreshed.
+            // Main-LRS contents are swapped OUT first — this also forecloses the nested
+            // re-submit of the MAIN pass's still-resident particle groups at the dest camera
+            // (submitFeatures never clears particlesRenderState, :286) — and the outermost
+            // finally strand-clears + restores per-list. Cross-dim (!sharedState) is
+            // byte-untouched (Step-5 is its extract). debugSkipSameDimEntities = the decomposed
+            // pass's attribution lever, honored here for A/B parity. NOTE (verify fold FIX-3):
+            // the iris SHADOW pass is fill-INDEPENDENT — iris owns a private LevelRenderState and
+            // runs its own entity extract (ShadowRenderer bytecode), which is why entity shadows
+            // showed even pre-fix.
+            if (sharedState && IPGlobal.isCompatSameDimEntitiesActive()
+                && !IPGlobal.debugSkipSameDimEntities
+                && compatSameDimEntityThrowCount < 3
+            ) {
+                if ((!destLRS.entityRenderStates.isEmpty()
+                        || !destLRS.blockEntityRenderStates.isEmpty())
+                    && !compatSameDimNonEmptyWarned
+                ) {
+                    // §2b once-only WARN (dark-path discipline): the post-main-anchor invariant
+                    // (entity/BE lists drained by the main pass) failed — the swap keeps us
+                    // safe; the WARN names the surprise.
+                    compatSameDimNonEmptyWarned = true;
+                    qouteall.q_misc_util.Helper.err(
+                        "[compatSameDimEntities] main LRS entity/BE lists NON-EMPTY at the "
+                            + "post-main anchor (ent=" + destLRS.entityRenderStates.size()
+                            + " be=" + destLRS.blockEntityRenderStates.size()
+                            + ") — swapped out + restored (once-only)");
+                }
+                savedMainEntityStateCount = destLRS.lastEntityRenderStateCount;
+                savedMainEntityStates = new ArrayList<>(destLRS.entityRenderStates);
+                destLRS.entityRenderStates.clear();
+                savedMainBlockEntityStates = new ArrayList<>(destLRS.blockEntityRenderStates);
+                destLRS.blockEntityRenderStates.clear();
+                // S14.41 shape: empty the LIST, never clear() the shared group accumulators.
+                savedMainParticleGroups =
+                    new ArrayList<>(destLRS.particlesRenderState.particles);
+                destLRS.particlesRenderState.particles.clear();
+                fillSameDimStatesForNestedRender(
+                    destRenderer, destLRS, newCamera, destFrustum,
+                    deltaTracker, partialTick, destLevel
+                );
+            }
+
             // Dest diffuse lighting (mc.level == dest under the shell swap): the nested render()'s
             // feature draws read the lighting state; restored to SOURCE in the finally.
             MyGameRenderer.resetDiffuseLighting();
@@ -1798,6 +1872,29 @@ public class SecondaryWorldRenderCore {
                 // throw happened before the swap.
                 if (savedSectionUpdateStates != null) {
                     destLRS.sectionUpdateRenderStates.addAll(savedSectionUpdateStates);
+                }
+                // §2b strand-clear + restore (paired with Step-9.5-SD), PER-LIST null-guarded
+                // (verify-fold FIX-2: a saved list is non-null iff ITS swap ran — no flag window).
+                // Normal path: the nested submitFeatures' :282/:284 clears already emptied the
+                // entity/BE lists (clearing empty lists is free); on a render() throw this drops
+                // the portal-camera strands that would otherwise ride the SHARED main LRS into
+                // the next portal pass / next frame. Particles: OUR fresh isolated states are
+                // dropped and the MAIN pass's group refs restored, so next frame's
+                // LevelRenderState.reset() clears the shared accumulators exactly as vanilla
+                // expects (the S14.41 flow, byte-identical). FIX-1: the F3 "E:" statistic int
+                // rides the entity-list guard.
+                if (savedMainEntityStates != null) {
+                    destLRS.entityRenderStates.clear();
+                    destLRS.entityRenderStates.addAll(savedMainEntityStates);
+                    destLRS.lastEntityRenderStateCount = savedMainEntityStateCount;
+                }
+                if (savedMainBlockEntityStates != null) {
+                    destLRS.blockEntityRenderStates.clear();
+                    destLRS.blockEntityRenderStates.addAll(savedMainBlockEntityStates);
+                }
+                if (savedMainParticleGroups != null) {
+                    destLRS.particlesRenderState.particles.clear();
+                    destLRS.particlesRenderState.particles.addAll(savedMainParticleGroups);
                 }
                 destLRS.cameraRenderState = savedSharedCameraState;
                 destLRS.cloudColor = savedSharedCloudColor;
@@ -2209,11 +2306,13 @@ public class SecondaryWorldRenderCore {
 
     /** §2b probe: latch-state summary for the [ENT-PROBE] line (x = cross-dim swallow seen,
      *  sn = storage-null seen, sd = same-dim swallowed-throw count toward the 3-strike
-     *  dead-latch — 3/3 means the same-dim entity pass is session-disabled). */
+     *  dead-latch — 3/3 means the same-dim entity pass is session-disabled; fsd = the same
+     *  fence for the compat full-pipeline Step-9.5-SD fill). */
     public static String entityProbeLatchSummary() {
         return "x=" + (portalEntitiesSwallowLogged ? 1 : 0)
             + " sn=" + (portalEntitiesStorageNullLogged ? 1 : 0)
-            + " sd=" + sameDimEntityThrowCount + "/3";
+            + " sd=" + sameDimEntityThrowCount + "/3"
+            + " fsd=" + compatSameDimEntityThrowCount + "/3";
     }
 
     /**
@@ -2497,6 +2596,118 @@ public class SecondaryWorldRenderCore {
                 sameDimEntitiesSwallowLogged = true;
                 qouteall.q_misc_util.Helper.err(
                     "[renderPortalEntitiesSameDim] swallowed (first per session): " + t);
+                t.printStackTrace();
+            }
+        }
+    }
+
+    // ===== §2b — compat same-dim fill: the renderPortalEntitiesSameDim EXTRACT discipline ========
+    // re-aimed at the SHARED main LRS so the nested full-pipeline render()'s own submitFeatures
+    // (and therefore iris's gbuffers entity phase) draws the states. NO submit/renderAllFeatures
+    // here — the woven form's point is that the nested render owns the draw (the scratch trio's
+    // submit half is deliberately not ported; the main FRD's PreparedFrame is CLOSED at the
+    // post-main anchor, so the nested prepareFrame cycle is legal — it already runs today with an
+    // empty list). Throw fence: entities are non-critical — a throw clears the partial fill (the
+    // nested render draws terrain entity-less, exactly the pre-fix behavior), counts toward a
+    // 3-strike session dead-latch (reset in cleanUp()), and never escapes into the terrain pass.
+    private static int compatSameDimEntityThrowCount = 0;
+    private static boolean compatSameDimSwallowLogged = false;
+    private static boolean compatSameDimNonEmptyWarned = false;
+    private static boolean compatSameDimLivenessLogged = false;
+
+    private static void fillSameDimStatesForNestedRender(
+        LevelRenderer destRenderer, LevelRenderState destLRS,
+        net.minecraft.client.Camera newCamera,
+        net.minecraft.client.renderer.culling.Frustum destFrustum,
+        net.minecraft.client.DeltaTracker deltaTracker,
+        float partialTick, ClientLevel destLevel
+    ) {
+        try {
+            net.minecraft.client.renderer.entity.EntityRenderDispatcher erd =
+                destRenderer.entityRenderDispatcher();
+            // LevelExtractor.extract:121's prepare, for the PORTAL camera (shouldRender/extract
+            // read dispatcher.camera). No local restore: the full-pipeline SHELL's finally
+            // re-prepares the OUTER camera (MyGameRenderer switchAndRenderTheWorldFullPipeline
+            // RESTORE row — stronger than the decomposed pass's parity gesture).
+            erd.prepare(newCamera, client.crosshairPickEntity);
+            // isDestExtracting keys: MixinEntityRenderDispatcher -> shouldRenderEntityNow (the
+            // IP isOnDestinationSide hide; PortalRendering.isRendering() is TRUE — we are inside
+            // doRenderPortal's pushed layer), LevelRendererEntityVisibilityMixin C2-1e
+            // (fade bypass + sodium force-true), MixinSodiumRenderSectionManager D5, and the
+            // S14.40 MixinParticleEngine mid-frame-extract cancel.
+            isDestExtracting = true;
+            try {
+                ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                    .seamlessportals$invokeExtractVisibleEntities(
+                        newCamera, destFrustum, deltaTracker, destLRS);
+            }
+            finally {
+                isDestExtracting = false;
+            }
+            // §2b probe: compat-same-dim census + extract output (route "fsd").
+            if (EntityVisibilityProbe.ENABLED) {
+                EntityVisibilityProbe.recordDestExtract(
+                    "fsd", destLevel, destLRS.entityRenderStates.size());
+            }
+
+            // Same-dim BLOCK ENTITIES (the S18.4 family, compat form): the compat route always
+            // has sodium (iris 1.11.2 fmj hard-depends sodium 0.9.x), so the invoker routes to
+            // SWR.extractBlockEntities -> RSM.getRenderLists — the D1-swapped portal context's
+            // renderLists, fresh from Step-9' (the call-site placement contract). Prep the
+            // shared BE dispatcher with the portal camera (tryExtractRenderState keys on the
+            // prepared pos; NOT restored — the ERD-parity class, every extract re-prepares).
+            // Dev-row note (verify-fold ledger): under LEVER-forced compat WITHOUT sodium the
+            // vanilla BE walk iterates the shell's fresh empty visibleSections — 0 BEs; benign
+            // (that config has no portal terrain either).
+            destRenderer.blockEntityRenderDispatcher().prepare(newCamera.position());
+            ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                .seamlessportals$invokeExtractVisibleBlockEntities(
+                    newCamera, partialTick, destLRS);
+
+            // Same-dim PARTICLES — the isolated world-filtered extract (fresh caller-owned
+            // states; the shared per-group accumulators untouched — S14.41 fully honored).
+            // The nested submitFeatures submits particlesRenderState like any pass (:286).
+            // Fabulous is structurally off under a pack (iris forbids it) but the gate is
+            // kept for uniformity with the cross-dim Step-5 fill.
+            if (!IPGlobal.debugAllowDestParticleExtract
+                && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
+                    .ip_extractIsolated(
+                        destLRS.particlesRenderState,
+                        new Frustum(destFrustum).offset(-3.0F),
+                        newCamera, partialTick, destLevel);
+            }
+
+            // Once-only liveness INFO + the confirm counter (self-run-round readable).
+            IPGlobal.compatSameDimEntityFillCount++;
+            if (!compatSameDimLivenessLogged) {
+                compatSameDimLivenessLogged = true;
+                qouteall.q_misc_util.Helper.log(
+                    "[compatSameDimEntities] ACTIVE — first same-dim compat fill: ent="
+                        + destLRS.entityRenderStates.size()
+                        + " be=" + destLRS.blockEntityRenderStates.size()
+                        + " particleGroups=" + destLRS.particlesRenderState.particles.size()
+                        + " (A/B lever -Dseamlessportals.disableCompatSameDimEntities)");
+            }
+        } catch (Throwable t) {
+            // Entities are non-critical; the nested render must still draw terrain. Drop the
+            // partial fill NOW (the caller's finally also strand-clears, but clearing here keeps
+            // THIS pass's nested submit honest too).
+            destLRS.entityRenderStates.clear();
+            destLRS.blockEntityRenderStates.clear();
+            destLRS.particlesRenderState.particles.clear();
+            compatSameDimEntityThrowCount++;
+            if (compatSameDimEntityThrowCount == 3) {
+                // §2b once-only WARN: the third swallowed throw trips the session dead-latch at
+                // the call-site gate — compat same-dim entities OFF from here.
+                qouteall.q_misc_util.Helper.err(
+                    "[compatSameDimEntities] DEAD-LATCH TRIPPED (3 swallowed throws) — "
+                        + "compat same-dim entity fill DISABLED for the rest of the session");
+            }
+            if (!compatSameDimSwallowLogged) {
+                compatSameDimSwallowLogged = true;
+                qouteall.q_misc_util.Helper.err(
+                    "[compatSameDimEntities] swallowed (first per session): " + t);
                 t.printStackTrace();
             }
         }

@@ -285,6 +285,56 @@ public class IPGlobal {
         return shadowScopeIsolation && !SHADOW_SCOPE_ISOLATION_DISABLED_LEVER;
     }
 
+    // §2b COMPAT SAME-DIM ENTITY FILL (2026-07-24) — the shaders-ON same-dim dest-entity fix. The
+    // compat full-pipeline route's nested render() drains the SHARED main LRS whose
+    // entityRenderStates the main pass already submitted+cleared (26.2 LevelRenderer.java:282),
+    // and the route never calls the decomposed renderPortalEntitiesSameDim — so same-dim
+    // shaderpack windows drew NO entities ([ENT-PROBE] dp>0 sub=0, live 2026-07-24). Fix =
+    // Step-9.5-SD in SecondaryWorldRenderCore.renderDestWorldFullPipeline: a portal-camera
+    // isolated extract (the proven same-dim discipline) INTO the shared LRS right before the
+    // nested render, so its own submitFeatures draws them through iris's gbuffers entity phase
+    // (pack-shaded). Also forecloses the nested re-submit of the MAIN pass's still-resident
+    // particle groups at the dest camera (submitFeatures never clears particlesRenderState).
+    // DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableCompatSameDimEntities.
+    public static final boolean COMPAT_SAMEDIM_ENTITIES_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableCompatSameDimEntities");
+    public static boolean compatSameDimEntities = true;
+
+    /** True when the compat full-pipeline route should pre-fill the shared LRS with a
+     *  portal-camera entity/BE/particle extract for same-dim passes. Default-on; the JVM lever
+     *  forces OFF for A/B comparison. */
+    public static boolean isCompatSameDimEntitiesActive() {
+        return compatSameDimEntities && !COMPAT_SAMEDIM_ENTITIES_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: incremented per successful Step-9.5-SD fill (per same-dim portal pass per
+     *  frame). Render-thread int; readable by self-run rounds beside the [ENT-PROBE] fsd route. */
+    public static int compatSameDimEntityFillCount = 0;
+
+    // §2c SOURCE-PARTICLE CULL (2026-07-25) — the shaders-OFF stencil-route particle-bleed fix.
+    // Mechanism (recon-proven): under Fabulous/Improved Transparency, translucent particles draw
+    // into the SEPARATE framegraph particles target whose depth was copied BEFORE the portal
+    // window drew — behind-plane SOURCE particles pass the stale depth test and the transparency
+    // composite paints them over the window (iris force-disables Fabulous, hence shaders-ON never
+    // showed it). Fix = run the geometric cull for the flag-ON MAIN extract (QuadParticleGroupMixin
+    // D3-gate amendment) with the roster REPOINTED to the IP Portal ENTITIES (+ globals) via
+    // IPMcHelper.getNearbyPortals + Portal.rayTrace (the block-era PortalManager tracker is EMPTY
+    // flag-ON — final-diff verify catch). DEFAULT TRUE; A/B OFF via
+    // -Dseamlessportals.disableSourceParticleCull.
+    public static final boolean SOURCE_PARTICLE_CULL_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableSourceParticleCull");
+    public static boolean sourceParticleCull = true;
+
+    /** True when flag-ON main extracts geometrically cull behind-portal source particles.
+     *  Default-on; the JVM lever forces OFF for A/B (lever-off = the old bleed returns). */
+    public static boolean isSourceParticleCullActive() {
+        return sourceParticleCull && !SOURCE_PARTICLE_CULL_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: behind-portal source particles culled (render-thread int; [ENT-PROBE]
+     *  reads+resets it into the spc= field when the probe is armed). */
+    public static int sourceParticleCullCount = 0;
+
     /** IS5-G GHOST-WAVE DISCRIMINATOR (ghost panel wf_ac30cdc3-265): tint the IrisCompatPaste portal-area
      *  STAMP magenta (channel-killing {1,0,1} in the fragment multiply) so a live run settles whether the
      *  "phantom colored-blocks terrain" wave IS the stamp's own paint overreaching the aperture (ghost
@@ -395,6 +445,8 @@ public class IPGlobal {
     // deliberately un-levered fade-gate keying extension in
     // LevelRendererEntityVisibilityMixin (isDestExtracting) — attribute cross-dim
     // entity-pop deltas to that mixin change, not to this lever.
+    // §2b: ALSO honored by the compat full-pipeline same-dim fill (Step-9.5-SD) — one lever
+    // kills BOTH same-dim entity passes (runtime: /imm_ptl_client_debug debug_skip_same_dim_entities).
     public static boolean debugSkipSameDimEntities = false;
     // S14.35: per-draw kill switches for the four never-individually-levered portal draws.
     // NOTE (S14.37): debugSkipApertureIncr zeroes the occlusion query => kills the WHOLE portal

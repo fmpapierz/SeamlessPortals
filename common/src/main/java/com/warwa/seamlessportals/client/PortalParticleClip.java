@@ -32,6 +32,12 @@ import net.minecraft.world.phys.Vec3;
  *
  * <p>Skipped when no portals are present in the player's current dim
  * (returns false fast).
+ *
+ * <p>§2c (2026-07-25): the portal ROSTER is config-split — flag-ON reads the IP Portal
+ * ENTITIES (+ globals) via {@code IPMcHelper.getNearbyPortals} with {@code Portal.rayTrace}
+ * as the segment test (the block-era {@code PortalManager} tracker is EMPTY flag-ON — all
+ * its feeders are D3-gated; final-diff verify catch); flag-OFF keeps the block-era tracker
+ * path byte-identical.
  */
 public final class PortalParticleClip {
 
@@ -52,12 +58,30 @@ public final class PortalParticleClip {
         ClientLevel level = mc.level;
         if (level == null) return false;
 
+        Vec3 camPos = camera.position();
+        Vec3 partPos = new Vec3(x, y, z);
+
+        // §2c REPOINT (2026-07-25, final-diff verify catch): flag-ON portals are IP Portal
+        // ENTITIES — they NEVER enter the block-era PortalManager tracker below (all five of its
+        // feeders are D3-gated OFF flag-ON), so consulting the tracker flag-ON culls NOTHING.
+        // The flag-ON roster = the IP portal entities (+ global portals) of the CAMERA's level,
+        // collected once per frame (IPMcHelper.getNearbyPortals entity-radius traversal), tested
+        // with the shape-aware segment raytrace (Portal.rayTrace = lenientRayTrace 0.001 —
+        // segment crosses the portal shape ⇒ the particle projects inside the aperture from the
+        // camera = cull). Invisible portals excluded (no dest view drawn over them). Ledgered:
+        // renderMode=none (the dev master-off) still culls — acceptable, dev-only state.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+            for (qouteall.imm_ptl.core.portal.Portal portal : flagOnRoster(level, camPos)) {
+                if (portal.rayTrace(camPos, partPos) != null) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         PortalManager manager = PortalManager.getClientInstance();
         ResourceKey<Level> dim = level.dimension();
         Iterable<PortalInfo> portals = manager.getTracker(dim).getAllPortals();
-
-        Vec3 camPos = camera.position();
-        Vec3 partPos = new Vec3(x, y, z);
 
         for (PortalInfo portal : portals) {
             // intersectsMovement(from, to) returns true iff the segment
@@ -71,5 +95,31 @@ public final class PortalParticleClip {
             }
         }
         return false;
+    }
+
+    /** Camera→particle segments only matter when the portal sits between them, and vanilla
+     *  particles live within ~a chunk-load's throw of the player — 64 covers every practical
+     *  camera→particle span while keeping the per-frame entity traversal cheap. */
+    private static final double FLAG_ON_ROSTER_RANGE = 64.0;
+
+    // Per-frame roster cache (render thread only): the redirect runs PER PARTICLE per group —
+    // the entity-radius traversal must not. Keyed on RenderStates.frameIndex + level identity.
+    private static java.util.List<qouteall.imm_ptl.core.portal.Portal> cachedRoster =
+        java.util.List.of();
+    private static ClientLevel cachedRosterLevel = null;
+    private static int cachedRosterFrame = -1;
+
+    private static java.util.List<qouteall.imm_ptl.core.portal.Portal> flagOnRoster(
+            ClientLevel level, Vec3 camPos) {
+        int frame = qouteall.imm_ptl.core.render.context_management.RenderStates.frameIndex;
+        if (frame != cachedRosterFrame || cachedRosterLevel != level) {
+            cachedRosterFrame = frame;
+            cachedRosterLevel = level;
+            cachedRoster = qouteall.imm_ptl.core.IPMcHelper
+                .getNearbyPortals(level, camPos, FLAG_ON_ROSTER_RANGE)
+                .filter(qouteall.imm_ptl.core.portal.Portal::isVisible)
+                .toList();
+        }
+        return cachedRoster;
     }
 }
