@@ -19,6 +19,7 @@ import qouteall.imm_ptl.core.render.MyGameRenderer;
 import qouteall.imm_ptl.core.render.SecondaryFrameBuffer;
 import qouteall.imm_ptl.core.render.ViewAreaRenderer;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
+import qouteall.imm_ptl.core.render.context_management.RenderStates;
 import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
 import qouteall.imm_ptl.core.render.renderer.PortalRenderer;
 
@@ -302,6 +303,22 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             return;
         }
 
+        if (!isDebugMode && IPGlobal.isIrisBloomApertureMaskActive()) {
+            // C3-BLOOM (§2f): arm the aperture mask for this portal's nested dest composite
+            // chain — consumed inside iris's CompositeRenderer.renderAll (the mixin seam), which
+            // masks colortex0 to the aperture footprint after its last writer and before the
+            // bloom-tile gather. Same matrix/camera row the stamp uses (IrisCompatPaste
+            // stampPortalArea args): the passing modelView + the layer-0 draw projection (we are
+            // PRE-push here, so getCurrentProjectionMatrix() is the same unscaled value the
+            // stamp reads post-pop — scaled portals included by construction) + the current
+            // camera pos + partialTick. isDebugMode excluded: the debug instance's full-screen
+            // raw view must stay unmasked.
+            IrisBloomApertureMask.arm(
+                portal, new Matrix4f(modelView), new Matrix4f(getCurrentProjectionMatrix()),
+                CHelper.getCurrentCameraPos(), RenderStates.getPartialTick()
+            );
+        }
+
         PortalRendering.pushPortalLayer(portal);
 
         // Fable-fold BLOCKER fix (port-note §2.5; the S14.29/RendererUsingStencil:332-346
@@ -319,6 +336,11 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             renderPortalContent(portal);
         } finally {
             PortalRendering.popPortalLayer();
+            // C3-BLOOM: once-only WARN + miss-counter if armed-but-never-consumed (mixin
+            // dormant after an iris update, ineligible pack shape, plan disarm). Unconditional
+            // + throw-safe: the arm must never outlive its portal window. The stamp below runs
+            // after this and needs nothing from the armed state.
+            IrisBloomApertureMask.disarmAndReport();
         }
 
         // IS5-G ghost-wave discriminator run 2: the dedicated stamp-clamp lever skips ONLY this
@@ -457,6 +479,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // IS5-P phantom fix: free the static scratch textures (idempotent — shared by both instances).
         try {
             IrisTemporalTargetGuard.teardown();
+        } catch (Throwable t) {
+            // disposal is best-effort
+        }
+        // C3-BLOOM: free the mask GL program + scratch texture + cached mask GlFramebuffers
+        // (idempotent — shared statics, double-called via onSwitchedAway; re-created lazily).
+        try {
+            IrisBloomApertureMask.teardown();
         } catch (Throwable t) {
             // disposal is best-effort
         }

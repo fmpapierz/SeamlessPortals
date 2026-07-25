@@ -190,7 +190,10 @@ public class SecondaryWorldRenderCore {
     // distinct-buffer-per-call + DEFERRED close.
     private static final java.util.List<GpuBuffer> frameTransientUbos = new java.util.ArrayList<>();
 
-    static GpuBufferSlice registerFrameTransientUbo(GpuBuffer buffer) {
+    // public (C3-BLOOM verifier FIX1): same-package consumers (IrisCompatPaste) always compiled,
+    // but IrisBloomApertureMask (qouteall.imm_ptl.core.compat.iris_compatibility) rides the same
+    // frame-transient ledger for its mask-mesh vertex buffer — package-private did not compile.
+    public static GpuBufferSlice registerFrameTransientUbo(GpuBuffer buffer) {
         frameTransientUbos.add(buffer);
         return buffer.slice();
     }

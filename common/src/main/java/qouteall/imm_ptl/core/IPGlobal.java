@@ -428,6 +428,38 @@ public class IPGlobal {
      *  lines for server-side Mob DISCARDED / UNLOADED_TO_CHUNK removals (EntityMixin). */
     public static final boolean DESPAWN_PROBE = Boolean.getBoolean("seamlessportals.despawnProbe");
 
+    // C3-BLOOM APERTURE MASK (2026-07-25) — the §2f dark-environment bloom RING fix (user toggle-proven:
+    // Bloom OFF => ring GONE). The dest pass's own thresholdless bloom tiles (reach ±896px, BLOOM_FOG
+    // ×3 night/×14 cave) deposit energy from bright dest content just OUTSIDE the window rectangle onto
+    // pixels just INSIDE it. Fix = IrisBloomApertureMask: during the nested dest composite chain only,
+    // mask colortex0 to the aperture footprint AFTER its last writer and BEFORE the bloom-tile gather,
+    // so bloom is computed from window-visible content only; the frame stays pack-tonemapped; the stamp
+    // is untouched. DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableIrisBloomApertureMask.
+    public static final boolean IRIS_BLOOM_MASK_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisBloomApertureMask");
+    public static boolean irisBloomApertureMask = true;
+
+    /** True when the per-portal dest composite chain should aperture-mask colortex0 before the bloom
+     *  gather (the §2f ring fix). Default-on; the JVM lever forces it OFF for A/B comparison. */
+    public static boolean isIrisBloomApertureMaskActive() {
+        return irisBloomApertureMask && !IRIS_BLOOM_MASK_DISABLED_LEVER;
+    }
+
+    /** Confirm-counter: incremented once per successful mask (per portal per frame). Render-thread int. */
+    public static int irisBloomMaskCount = 0;
+    /** Miss-counter: armed-but-never-consumed portal windows (dormant mixin / ineligible pack / disarm). */
+    public static int irisBloomMaskMissCount = 0;
+
+    /** §2f probes: magenta-tint the aperture repaint (flip-side runtime confirm — a tinted WINDOW proves
+     *  the masked texture is the one the chain consumes) / skip the repaint (footprint + crop proof). */
+    public static final boolean debugTintBloomMask = Boolean.getBoolean("seamlessportals.debugTintBloomMask");
+    public static final boolean debugBloomMaskBlackout = Boolean.getBoolean("seamlessportals.debugBloomMaskBlackout");
+
+    /** C3-BLOOM 1Hz [C3-BLOOM] counter probe (default OFF): -Dseamlessportals.bloomMaskProbe —
+     *  "masks=<count> misses=<missCount>" from the mask path (verifier FIX3: without it the
+     *  live protocol's counter-climbing leg is unjudgeable from the log). */
+    public static final boolean BLOOM_MASK_PROBE = Boolean.getBoolean("seamlessportals.bloomMaskProbe");
+
     public static boolean doCheckGlError = true;
     
     public static boolean renderYourselfInPortal = true;
