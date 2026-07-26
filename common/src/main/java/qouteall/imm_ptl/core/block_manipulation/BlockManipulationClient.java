@@ -78,7 +78,23 @@ public class BlockManipulationClient {
             Portal portal = pair.getFirst();
             Vec3 hitPos = pair.getSecond().hitPos();
             double distanceToPortalPointing = hitPos.distanceTo(cameraPos);
-            if (distanceToPortalPointing < getCurrentTargetDistance() + 0.2) {
+            // RS PASSTHROUGH (a) step 3 — INSTRUMENTATION ONLY, no behaviour change.
+            // This comparison is the targeting bet: the design panel's two adversarial verifiers
+            // reached OPPOSITE conclusions about what it does once real blocks sit in an aperture,
+            // and neither observed it. Until (a), the aperture only ever held PortalPlaceholderBlock,
+            // for which getCurrentTargetDistance() returns the 23333 sentinel (:104-109) so the
+            // portal always won. With real blocks there the local hit has a real distance and the
+            // outcome becomes a genuine race. Armed via -Dseamlessportals.seamAimProbe=true.
+            double localTargetDistance = getCurrentTargetDistance();
+            com.warwa.seamlessportals.passthrough.SeamAimProbe.aimDecision(
+                client.level,
+                client.hitResult instanceof net.minecraft.world.phys.BlockHitResult bhr
+                    ? bhr.getBlockPos() : null,
+                distanceToPortalPointing,
+                localTargetDistance,
+                distanceToPortalPointing < localTargetDistance + 0.2
+            );
+            if (distanceToPortalPointing < localTargetDistance + 0.2) {
                 client.hitResult = createMissedHitResult(cameraPos, hitPos);
                 
                 updateTargetedBlockThroughPortal(

@@ -909,6 +909,31 @@ public class CrossingSmoke implements FabricClientGameTest {
             // SeamMap says which cells pair up; SeamRegistry indexes them by position. If the two
             // disagree, every later stage reads a lie. Checked against the SAME portals just
             // verified above, so a registry that indexed nothing cannot pass by being empty.
+            //
+            // LEVER-AWARE. Everything above this point is pure SeamMap arithmetic and is
+            // lever-independent, so it always runs. The registry, by contrast, is only SEEDED when
+            // the feature is on — AperturePassthroughInit returns early under the master lever — so
+            // under -PdisableAperturePassthrough=true the correct assertion INVERTS: the registry
+            // must be EMPTY. Demanding a populated registry there was asserting feature behaviour in
+            // the configuration where the feature is off, and it failed the A/B attribution run.
+            if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLED) {
+                for (qouteall.imm_ptl.core.portal.Portal p : portals) {
+                    if (com.warwa.seamlessportals.passthrough.SeamRegistry
+                            .boundCellCount(p.level()) != 0) {
+                        failure.set("passthrough is DISABLED but the registry holds "
+                            + com.warwa.seamlessportals.passthrough.SeamRegistry
+                                .boundCellCount(p.level())
+                            + " bound cell(s) in " + p.level().dimension().identifier()
+                            + " — the master lever is not fully disabling the feature");
+                        return;
+                    }
+                }
+                report.set("examined " + examined + " mirrorable portal(s), "
+                    + involutions.get() + " involution check(s); registry cross-checks SKIPPED and"
+                    + " emptiness asserted instead (passthrough DISABLED)" + sb);
+                return;
+            }
+
             int registryChecks = 0;
             for (qouteall.imm_ptl.core.portal.Portal p : portals) {
                 if (!com.warwa.seamlessportals.passthrough.SeamMap.isMirrorable(p)) continue;
@@ -960,6 +985,8 @@ public class CrossingSmoke implements FabricClientGameTest {
         // "break one half breaks the other" and "refuse on conflict" decidable. A run in which no
         // bi-way pair was examined proves nothing about it, so passing silently would be a lie. This
         // is the same failure mode as the teardown probe that only ever logged intact=true.
+        // Deliberately NOT lever-gated: the arithmetic is lever-independent and must hold in both
+        // configurations, so this coverage requirement applies to the disabled run too.
         if (involutions.get() == 0) {
             throw new AssertionError(LOG + "RS-A step-1 SEAM MAP GATE FAILED: zero involution checks"
                 + " ran — no bi-way portal pair was in range, so the gate's central assertion was"
@@ -1014,10 +1041,16 @@ public class CrossingSmoke implements FabricClientGameTest {
         final int fx = -4000, fz = -4000;
         Vec3 destSeen = null;
         try {
+            // The leg's MEANING INVERTS at step 3. Before IP-core edit 3 the expected verdict was
+            // TEARDOWN CONFIRMED (a block in the opening kills the portal); from step 3 the
+            // integrity predicate is frame-only and the expected verdict is NO TEARDOWN. Which one
+            // is correct depends purely on the master lever, so it is reported alongside.
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "[RS-TEARDOWN-TEST] building + igniting an isolated frame at ({},{})"
-                    + " — suppressor is {} for this leg",
-                fx, fz, AperturePassthroughLever.SUPPRESS_TEARDOWN ? "ON (test is INVALID)" : "OFF");
+                    + " — aperture passthrough is {}; EXPECTED VERDICT = {}",
+                fx, fz,
+                AperturePassthroughLever.DISABLED ? "DISABLED" : "ENABLED",
+                AperturePassthroughLever.DISABLED ? "TEARDOWN CONFIRMED" : "NO TEARDOWN");
 
             runCommands(context, List.of(
                 "forceload add " + (fx - 16) + " " + (fz - 16) + " " + (fx + 16) + " " + (fz + 16),
@@ -1104,10 +1137,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                 LOG + "[RS-TEARDOWN-TEST] VERDICT after 265 ticks: portalsBefore={} portalsAfter={}"
                     + " openingCell={} => {}",
                 before, after, cellFinal,
-                after < before
-                    ? "TEARDOWN CONFIRMED — the block DID break the portal (recon reading correct)"
-                    : "NO TEARDOWN — the portal SURVIVED a block in its opening (recon reading WRONG"
-                        + " or the block never landed; compare openingCell above)");
+                verdictText(after < before, AperturePassthroughLever.DISABLED));
         } catch (Throwable t) {
             SeamlessPortalsConstants.LOGGER.warn(
                 LOG + "[RS-TEARDOWN-TEST] FAILED (non-fatal, evidence only)", t);
@@ -1140,6 +1170,31 @@ public class CrossingSmoke implements FabricClientGameTest {
                         + " false-fail a later ignition leg", t);
             }
         }
+    }
+
+    /**
+     * The RS-TEARDOWN-TEST verdict, read against what the lever says SHOULD happen.
+     *
+     * <p>This leg's expected result inverts at step 3. With aperture passthrough DISABLED, stock IP
+     * applies and a block in the opening must destroy the portal; with it ENABLED the integrity
+     * predicate is frame-only and the portal must survive. So "no teardown" is a PASS in one
+     * configuration and a REGRESSION in the other, and a fixed verdict string would be actively
+     * misleading in whichever config it was not written for.
+     */
+    private static String verdictText(boolean toreDown, boolean passthroughDisabled) {
+        if (passthroughDisabled) {
+            return toreDown
+                ? "TEARDOWN CONFIRMED — stock IP behaviour, as expected with passthrough DISABLED"
+                : "*** REGRESSION *** passthrough is DISABLED so stock IP should have destroyed the"
+                    + " portal, but it survived — the disable lever is not restoring stock behaviour";
+        }
+        return toreDown
+            ? "*** REGRESSION *** passthrough is ENABLED so the portal should have SURVIVED a block"
+                + " in its opening, but it was destroyed — IP-core edit 3 (frame-only integrity) is"
+                + " not taking effect"
+            : "NO TEARDOWN — the portal SURVIVED a block in its opening. This is the (a) feature"
+                + " working: verify openingCell above really holds the placed block, else the"
+                + " setblock was rejected and the leg proves nothing";
     }
 
     /**

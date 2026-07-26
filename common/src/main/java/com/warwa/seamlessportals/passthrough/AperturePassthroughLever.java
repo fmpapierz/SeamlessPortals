@@ -14,13 +14,9 @@ package com.warwa.seamlessportals.passthrough;
  *       per portal entity: dumps the aperture cell coordinates and their current block states, so
  *       a live round can read real {@code /setblock} targets out of {@code latest.log} instead of
  *       guessing them from the F3 screen.</li>
- *   <li>{@link #SUPPRESS_TEARDOWN} — {@code -Dseamlessportals.apertureSuppressTeardown=true}.
- *       Relaxes {@code NetherPortalEntity.isPortalIntactOnThisSide} so a non-placeholder block in
- *       an opening cell no longer fails the integrity predicate. WITHOUT this the decisive
- *       experiment is impossible: a {@code /setblock} into the aperture kills the portal (and its
- *       cross-dimension twin) within at most 233 ticks, long before the seam can be inspected.
- *       The obsidian FRAME requirement is deliberately left intact — this suppresses only the
- *       opening-contents half of the predicate, so a genuine frame break still tears down.</li>
+ *   <li>{@link #TEARDOWN_TEST} — {@code -Dseamlessportals.apertureTeardownTest=true}. Arms the
+ *       end-to-end regression leg. Its meaning INVERTS across step 3: before IP-core edit 3 it
+ *       reported "TEARDOWN CONFIRMED", and after it must report "NO TEARDOWN".</li>
  * </ul>
  *
  * <p>Deliberately a plain holder class, NOT hosted on a mixin and NOT hosted on the probe itself:
@@ -36,12 +32,11 @@ public final class AperturePassthroughLever {
     public static final boolean CENSUS_ENABLED =
         Boolean.getBoolean("seamlessportals.apertureCensusProbe");
 
-    /**
-     * Suppresses the opening-contents half of the portal integrity predicate. DIAGNOSTIC ONLY —
-     * the shipped (a) fix will replace the predicate itself, not gate it behind a probe.
-     */
-    public static final boolean SUPPRESS_TEARDOWN =
-        Boolean.getBoolean("seamlessportals.apertureSuppressTeardown");
+    // RETIRED AT STEP 3: apertureSuppressTeardown. It existed only to make the seam observable
+    // before the real fix existed — it relaxed the opening-contents half of the integrity predicate
+    // so a /setblock into the aperture would not kill the portal within 233 ticks. IP-core edit 3
+    // now makes that predicate frame-only outright, so the diagnostic is subsumed by the shipped
+    // behaviour and keeping it would be a second, redundant path to the same state.
 
     /**
      * Arms the RS-TEARDOWN-TEST gametest leg ({@code -Dseamlessportals.apertureTeardownTest=true}).
@@ -64,14 +59,13 @@ public final class AperturePassthroughLever {
     // fabric/build.gradle blocks.
     //
     // SPEC DEVIATION, DELIBERATE: REDSTONE_A_SPEC.md §7 step 0 says to retire SUPPRESS_TEARDOWN and
-    // TEARDOWN_TEST here. That is premature — SUPPRESS_TEARDOWN is still READ by
-    // NetherPortalEntity.isPortalIntactOnThisSide until IP-core edit #3 lands at step 3, so retiring
-    // it now breaks the build (the spec says as much in its own edit #3 row, which makes step 0 and
-    // step 3 mutually inconsistent as written). Both are retained until step 3.
-    // TEARDOWN_TEST is retained PERMANENTLY, and its purpose inverts: today its leg reports
-    // "TEARDOWN CONFIRMED", and once (a) lands the SAME leg must report "NO TEARDOWN". That makes it
-    // the regression test proving the feature works, so deleting it would throw away the only
-    // end-to-end assertion we have.
+    // TEARDOWN_TEST at step 0. SUPPRESS_TEARDOWN could not go then — it was still READ by
+    // NetherPortalEntity until IP-core edit #3 — so it was deferred, and is now retired here at
+    // step 3 where the frame-only predicate subsumes it.
+    // TEARDOWN_TEST is retained PERMANENTLY, and its purpose inverts across this step: before edit 3
+    // its leg reported "TEARDOWN CONFIRMED", and from here it must report "NO TEARDOWN". That makes
+    // it the end-to-end regression proof that (a) works, so deleting it would throw away the only
+    // whole-feature assertion we have.
     // =============================================================================================
 
     /**
