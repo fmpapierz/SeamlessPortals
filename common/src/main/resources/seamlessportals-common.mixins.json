@@ -62,6 +62,7 @@
     "client.compat.SodiumFogOverrideMixin"
   ],
   "mixins": [
+    "passthrough.SeamIndexHolderMixin",
     "ChunkMapResendSuppressMixin",
     "EntityFlagsAccessor",
     "FireworkRocketEntityAccessor",

@@ -123,6 +123,12 @@ public class SeamlessPortalsModFabric implements ModInitializer {
             qouteall.q_misc_util.MiscNetworking.init();
             qouteall.q_misc_util.dimension.DimensionIntId.init();
             qouteall.imm_ptl.core.IPModMain.init();
+            // RS PASSTHROUGH (a) step 2: subscribe the seam registry to IP's portal lifecycle
+            // signals. MUST run after IPModMain.init, which is where the Portal entity type and its
+            // signal Events are created. Self-gates on the master lever, so with
+            // -Dseamlessportals.disableAperturePassthrough=true it registers listeners that
+            // immediately return rather than changing the init sequence.
+            com.warwa.seamlessportals.passthrough.AperturePassthroughInit.init();
             // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
             // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
             // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally
