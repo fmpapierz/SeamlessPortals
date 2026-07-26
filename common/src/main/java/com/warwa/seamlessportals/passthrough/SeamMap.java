@@ -205,15 +205,27 @@ public final class SeamMap {
                 return false;
             }
         }
-        // THE TRANSLATION TERM — everything above tests only the LINEAR part.
-        // transformPoint is AFFINE: p -> R*p + (destPos - R*originPos) (Portal.java:508-512). The
-        // checks above constrain R alone and never touch getOriginPos()/getDestPos(), so a portal
-        // pair with a half-block offset between their planes passes them all while mapping a source
-        // cell onto a span STRADDLING TWO destination cells — a geometry with no well-defined mirror
-        // target at all. An earlier comment here claimed a null rotation was "trivially
-        // lattice-preserving"; that was false, because identity rotation with a non-integral
-        // translation still shifts the lattice off itself.
-        return latticeAligned(portal, BlockPos.containing(portal.getOriginPos()));
+        // ★ MIXED SUB-BLOCK PHASE IS SUPPORTED, NOT REFUSED — and that is a USER DECISION.
+        //
+        // A pair whose planes differ in phase (one mid-block, one on a boundary) has a NON-INTEGRAL
+        // translation, so a source cell's image straddles TWO destination cells. The (b) design
+        // panel's §0.6 concluded that makes the geometry "unmappable" and should be refused, and
+        // that refusal was briefly implemented here. It was WRONG — not in its arithmetic, which is
+        // sound, but in its conclusion, which contradicted a rule the user had already pinned:
+        //
+        //   §0.7 — "Phase-offset target = GREATEST OVERLAP ... this deliberately reproduces the
+        //   half-block jog the user predicted, rather than concealing it."
+        //
+        // The user's own words, from before the panel existed: "if you keep building through the
+        // portal and the portal on the dest side is perfectly on a block border, the blocks that get
+        // built through are offset by .5 blocks". And on finding the refusal live: "half should
+        // mirror into the dest side and create a .5 offset with everything else there."
+        //
+        // Greatest-overlap makes a straddling image perfectly WELL-DEFINED — it is simply not EXACT,
+        // which is the entire point of the jog. Refusing it silently disabled mirroring on precisely
+        // the geometry the feature was asked to support. latticeAligned is retained below as a
+        // DIAGNOSTIC (it tells you the mapping is inexact) but must never gate mirroring.
+        return true;
     }
 
     /**
