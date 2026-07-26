@@ -280,6 +280,12 @@ loom {
             if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
             if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
+            // IS5-MB ATTRIBUTION A/B (2026-07-26, DIAGNOSTIC): drop the portal stamp's DEPTH WRITE, to
+            // test whether the stamped DEST depth is what makes composite4 compute a huge PER-PIXEL
+            // velocity inside the window. If the blur vanishes with this set, that is the mechanism.
+            // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
+            if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
             // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
             // (attribution both directions) —
@@ -453,6 +459,12 @@ loom {
             if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
             if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
+            // IS5-MB ATTRIBUTION A/B (2026-07-26, DIAGNOSTIC): drop the portal stamp's DEPTH WRITE, to
+            // test whether the stamped DEST depth is what makes composite4 compute a huge PER-PIXEL
+            // velocity inside the window. If the blur vanishes with this set, that is the mechanism.
+            // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
+            if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
             // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
             if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }

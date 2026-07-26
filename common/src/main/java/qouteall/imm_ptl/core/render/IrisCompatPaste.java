@@ -97,6 +97,8 @@ import java.util.OptionalDouble;
 public class IrisCompatPaste {
 
     private static RenderPipeline PORTAL_AREA_SAMPLE;
+    /** IS5-MB attribution sibling: identical but depth WRITE off. Selected only by the lever. */
+    private static RenderPipeline PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE;
     private static RenderPipeline PORTAL_STRAIGHT_COPY;
 
     static {
@@ -128,6 +130,33 @@ public class IrisCompatPaste {
                 .withCull(false)
                 .build();
             PORTAL_AREA_SAMPLE = (RenderPipeline) registerMethod.invoke(null, portalAreaSample);
+
+            // IS5-MB DIAGNOSTIC SIBLING — identical except depth WRITE is off. Purpose: attribute the
+            // Motion-Blur portal-window blur. MEASURED so far: every uniform input to composite4's
+            // velocity is exactly zero (|cam-prev|=0.000, matrix maxAbsDiff=0.00000), so the pass is a
+            // mathematical passthrough at the PASS level — yet the blur scales with
+            // MOTION_BLURRING_STRENGTH, which means velocity is nonzero PER PIXEL. Velocity is computed
+            // from `z = texture2D(depthtex1, texCoord)`, and the stamp writes DEST depth into the
+            // window region of the MAIN depth buffer (the #13 two-portal depth fix restored that
+            // write). Main-chain composite4 then unprojects dest depth with MAIN matrices => garbage
+            // viewPos => large velocity for WINDOW PIXELS ONLY, while main-view pixels stay sharp.
+            // Uniform-level probing cannot see a per-pixel defect, which is why every probe read zero.
+            // Turning this write off should make the blur vanish (at the cost of re-opening the #13
+            // two-portal depth artifact) — that is the attribution, not a fix.
+            RenderPipeline portalAreaSampleNoDepthWrite = RenderPipeline.builder()
+                .withLocation(Identifier.fromNamespaceAndPath(
+                    "seamlessportals", "pipeline/portal_area_sample_nodepthwrite"))
+                .withVertexShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
+                .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, false))
+                .withCull(false)
+                .build();
+            PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE =
+                (RenderPipeline) registerMethod.invoke(null, portalAreaSampleNoDepthWrite);
 
             // The straight copy — a clone of the PROVEN portalCompositeBlit shape (screenquad
             // full-screen triangle + blit_screen sample; GLOBALS + IN_SAMPLER;
@@ -290,7 +319,13 @@ public class IrisCompatPaste {
                     OptionalDouble.empty(),
                     new RenderPass.RenderArea(0, 0, deferred.width, deferred.height) // fix (1)
                 )) {
-                    pass.setPipeline(PORTAL_AREA_SAMPLE);
+                    // IS5-MB attribution lever: swap to the no-depth-write sibling to test whether the
+                    // stamped DEST depth is what makes composite4 compute a huge per-pixel velocity
+                    // in the window region. DEFAULT keeps today's depth-writing pipeline.
+                    pass.setPipeline(
+                        qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER
+                            && PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null
+                            ? PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE : PORTAL_AREA_SAMPLE);
                     pass.setUniform("Projection", combinedSlice);
                     pass.bindTexture(
                         "InSampler", sampleSource.getColorTextureView(),
