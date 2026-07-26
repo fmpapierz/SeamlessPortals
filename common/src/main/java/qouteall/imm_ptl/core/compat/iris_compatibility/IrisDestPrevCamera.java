@@ -101,7 +101,11 @@ public final class IrisDestPrevCamera {
 
     /** The per-dest record. Zero iris/GL imports; matrices are COPIED (iris hands them by reference). */
     private static final class DestPrevState {
+        /** This frame's dest camera — also the MATCH KEY that identifies this portal's composite. */
         final double[] camUnshifted = new double[3];
+        /** Last frame's dest camera — what previousCameraPosition SHOULD be for that chain. */
+        final double[] prevCam = new double[3];
+        boolean prevValid = false;
         final float[] modelView = new float[16];
         final float[] projection = new float[16];
         int programId = 0;
@@ -247,8 +251,13 @@ public final class IrisDestPrevCamera {
             // gated with delta=0. Since the main chain's composite4 runs over the WHOLE frame AFTER
             // the portal window is stamped, it is a live candidate for the smear and must be measured
             // rather than argued about. Probe-gated, so this is zero-cost at the shipped default.
-            if (!broken && IPGlobal.DEST_PREV_CAMERA_PROBE) {
-                sampleUnarmed(renderer, i);
+            if (!broken) {
+                // THE CORRECTION — must run regardless of the probe lever; the smearing pass fires
+                // outside every portal-phase bracket and is identified by its camera VALUE.
+                correctIfDestChain(renderer, i);
+                if (IPGlobal.DEST_PREV_CAMERA_PROBE) {
+                    sampleUnarmed(renderer, i);
+                }
             }
             return; // THE byte-inert gate: one static read on every non-portal composite pass
         }
@@ -302,6 +311,32 @@ public final class IrisDestPrevCamera {
                     + " populated at the guarded pass — no current trio to store.", null);
                 return;
             }
+
+            // RECORD THE DEST CAMERA FIRST — before any regime check can return early. This is both
+            // the history the correction writes AND the match key that identifies this portal's dest
+            // composite later in the frame. Previously the regime check returned above this point,
+            // which is why `tracked=0` on every run: the map never got an entry, so the value-keyed
+            // correction had nothing to match against.
+            DestPrevState recNow = MAP.get(armed);
+            if (recNow == null) {
+                recNow = new DestPrevState();
+                MAP.put(armed, recNow);
+            }
+            if (recNow.valid && recNow.frameStamp != RenderStates.frameIndex) {
+                recNow.prevCam[0] = recNow.camUnshifted[0];
+                recNow.prevCam[1] = recNow.camUnshifted[1];
+                recNow.prevCam[2] = recNow.camUnshifted[2];
+                recNow.prevValid = true;
+            }
+            recNow.camUnshifted[0] = destUnshifted.x;
+            recNow.camUnshifted[1] = destUnshifted.y;
+            recNow.camUnshifted[2] = destUnshifted.z;
+            mvNow.get(recNow.modelView);
+            projNow.get(recNow.projection);
+            recNow.programId = pid;
+            recNow.frameStamp = RenderStates.frameIndex;
+            recNow.valid = true;
+            consumedThisWindow = true;
 
             // --- regime detect + shift derive ----------------------------------------------------
             // The tracker stores SHIFTED positions (getShift fires on |pos|>30000 or |pos-prev|>1000).
@@ -537,6 +572,107 @@ public final class IrisDestPrevCamera {
     }
 
     /**
+     * THE ACTUAL CORRECTION, keyed on the camera VALUE rather than on render phase.
+     *
+     * <p>Runs at every guarded-pass bind. If the pass's {@code cameraPosition} matches a dest camera we
+     * recorded for a portal this frame (within 1 block), then this bind belongs to that portal's dest
+     * composite chain — whatever phase of the frame it happens to run in — and its
+     * {@code previousCameraPosition} is corrected to that portal's dest camera from the PREVIOUS frame.
+     * If it matches nothing, it is a main-view pass and is left strictly alone, which is what keeps the
+     * neutrality contract.
+     *
+     * <p>Degenerate cases neutralize ({@code previous := current} ⇒ velocity 0 ⇒ one blur-free frame),
+     * never guess.
+     */
+    private static void correctIfDestChain(Object renderer, int i) {
+        try {
+            if (broken || !IPGlobal.isIrisDestPrevCameraActive() || MAP.isEmpty()) {
+                return;
+            }
+            Object passesObj = fPasses.get(renderer);
+            if (!(passesObj instanceof List<?> passes) || i < 0 || i >= passes.size()) {
+                return;
+            }
+            Object pass = passes.get(i);
+            if (!TARGET_PASSES.contains(String.valueOf(fPassName.get(pass)))) {
+                return;
+            }
+            Object prog = fPassProgram.get(pass);
+            if (prog == null) {
+                return;
+            }
+            int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+            if (!resolveLocations(pid)) {
+                return;
+            }
+            GL20.glGetUniformfv(pid, locCam, TMP3);
+
+            // Which portal's dest chain is this? Nearest recorded dest camera within 1 block.
+            Portal hit = null;
+            DestPrevState rec = null;
+            for (Map.Entry<Portal, DestPrevState> e : MAP.entrySet()) {
+                DestPrevState r = e.getValue();
+                if (!r.valid) {
+                    continue;
+                }
+                if (Math.abs(TMP3[0] - r.camUnshifted[0]) < 1.0
+                    && Math.abs(TMP3[1] - r.camUnshifted[1]) < 1.0
+                    && Math.abs(TMP3[2] - r.camUnshifted[2]) < 1.0) {
+                    hit = e.getKey();
+                    rec = r;
+                    break;
+                }
+            }
+            if (hit == null) {
+                return; // a main-view pass — never touched
+            }
+
+            Pending q = new Pending();
+            q.locPrevCam = locPrevCam;
+            q.locPrevMv = locPrevMv;
+            q.locPrevProj = locPrevProj;
+            q.wroteMatrices = false; // matrices measured bit-identical (mvdiff 0.00000); position only
+            GL20.glGetUniformfv(pid, locPrevCam, q.savePrevCam);
+            q.probeOnly = !restoreSeamProven;
+
+            boolean haveHistory = rec.prevValid && rec.programId == pid
+                && (RenderStates.frameIndex - rec.frameStamp) >= 1
+                && (RenderStates.frameIndex - rec.frameStamp) <= 4;
+            if (!q.probeOnly) {
+                if (haveHistory) {
+                    GL20.glUniform3f(locPrevCam, (float) rec.prevCam[0], (float) rec.prevCam[1],
+                        (float) rec.prevCam[2]);
+                    IPGlobal.irisDestPrevWriteCount++;
+                }
+                else {
+                    GL20.glUniform3f(locPrevCam, TMP3[0], TMP3[1], TMP3[2]); // neutralize
+                    IPGlobal.irisDestPrevNeutralizeCount++;
+                }
+            }
+            pending = q;
+
+            if (!liveLogged && !q.probeOnly) {
+                liveLogged = true;
+                LOGGER.info(P + "per-dest previous-camera ACTIVE (once-only liveness line): matched a"
+                        + " DEST composite by camera value — prog={} cam=({},{},{}) wrote prev=({},{},{})"
+                        + " history={} (was |cam-prev|={} before the write)",
+                    pid, fmt(TMP3[0]), fmt(TMP3[1]), fmt(TMP3[2]),
+                    fmt(haveHistory ? rec.prevCam[0] : TMP3[0]),
+                    fmt(haveHistory ? rec.prevCam[1] : TMP3[1]),
+                    fmt(haveHistory ? rec.prevCam[2] : TMP3[2]),
+                    haveHistory ? "yes" : "no(neutralized)",
+                    fmt(Math.sqrt(
+                        Math.pow(TMP3[0] - q.savePrevCam[0], 2)
+                            + Math.pow(TMP3[1] - q.savePrevCam[1], 2)
+                            + Math.pow(TMP3[2] - q.savePrevCam[2], 2))));
+            }
+        }
+        catch (Throwable t) {
+            disarm(t);
+        }
+    }
+
+    /**
      * MAIN-chain control sample: the same draw-time state, for the guarded pass when NO portal window
      * is armed. Log-only and probe-gated; it never writes, never allocates a Pending, and never touches
      * the per-dest map. Reading DEST and MAIN rows side by side is what separates "the window is
@@ -545,11 +681,11 @@ public final class IrisDestPrevCamera {
      */
     private static void sampleUnarmed(Object renderer, int i) {
         try {
-            long nowNs = System.nanoTime();
-            if (nowNs - lastMainSampleNanos < 1_000_000_000L) {
+            if (!ensureReflection()) {
                 return;
             }
-            if (!ensureReflection()) {
+            long nowNs = System.nanoTime();
+            if (nowNs - lastMainSampleNanos < 1_000_000_000L) {
                 return;
             }
             Object passesObj = fPasses.get(renderer);
