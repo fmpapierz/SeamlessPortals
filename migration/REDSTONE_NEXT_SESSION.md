@@ -213,10 +213,23 @@ Arms 1 (same-dim one-way, dest 100 blocks) and 2 (cross-dim) both read `6 REMESH
 remote region has it — a fluid flowing, a piston, a second player building. The mirror is only how
 it was noticed. A fix inside `SeamMirror` would paper over one caller of a general defect.
 
-**The asymmetry to close:** this port's `ImmPtlViewArea` is UNBOUNDED (the C3 rebuild; that is what
-lets a >71-chunk same-dim dest render at all — leg 7), while the vanilla `SectionUpdateTracker`
-window it is paired with is still render-distance bounded. An unbounded view area with a bounded
-dirty tracker is the defect stated in one line.
+**The asymmetry to close, and it is a HALF-FINISHED EXISTING MIGRATION, not a new problem.**
+`ImmPtlViewArea` (`qouteall/imm_ptl/core/render/ImmPtlViewArea.java`) already exists precisely
+because vanilla's bounded `RotatingSectionStorage` could not hold far same-dim sections — its own
+javadoc says it "owns an UNBOUNDED coord-pinned store (`columnMap` + `presets`) instead of vanilla's
+fixed `RotatingSectionStorage`", and it overrides `getRenderSectionAt` / `getRenderSection` to read
+it. That work retired the >71-chunk collision bug (leg 7).
+
+But that same javadoc records the other half of 26.2's split and it was never followed through:
+*"dirty tracking externalised to `SectionUpdateTracker`"*. **`SectionUpdateTracker` still wraps a
+plain bounded `RotatingSectionStorage`.** So the render sections exist out there and can be drawn —
+they simply can never be told they are stale.
+
+⇒ **The fix is the mirror of a change this codebase has already made once.** Either give the tracker
+an unbounded store the way `ImmPtlViewArea` gave the view area one, or bypass it for sections the
+window does not cover. Prefer whichever keeps ONE writer: `ClientWorldLoader` hands trackers between
+per-dim extractors on promote/demote (`:996-1030`), and a second dirty path would have to survive
+that handoff.
 
 **Shape of the fix** — the block-era precedent is `RemoteBlockUpdater.java:86-124`: do not go through
 the tracker, take the `RenderSection` straight out of the (unbounded) `ViewArea` and schedule its
