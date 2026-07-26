@@ -86,14 +86,6 @@ public class BlockManipulationClient {
             // portal always won. With real blocks there the local hit has a real distance and the
             // outcome becomes a genuine race. Armed via -Dseamlessportals.seamAimProbe=true.
             double localTargetDistance = getCurrentTargetDistance();
-            com.warwa.seamlessportals.passthrough.SeamAimProbe.aimDecision(
-                client.level,
-                client.hitResult instanceof net.minecraft.world.phys.BlockHitResult bhr
-                    ? bhr.getBlockPos() : null,
-                distanceToPortalPointing,
-                localTargetDistance,
-                distanceToPortalPointing < localTargetDistance + 0.2
-            );
             // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
             // -Dseamlessportals.disableSeamTargeting=true. THE TARGETING FIX.
             //
@@ -119,7 +111,24 @@ public class BlockManipulationClient {
                     && com.warwa.seamlessportals.passthrough.SeamRegistry.isSeamCell(
                         client.level, localHit.getBlockPos());
 
-            if (!seamBlockWinsTargeting && distanceToPortalPointing < localTargetDistance + 0.2) {
+            boolean reroute = !seamBlockWinsTargeting
+                && distanceToPortalPointing < localTargetDistance + 0.2;
+
+            // Probe AFTER the decision is final. It previously ran BEFORE seamBlockWinsTargeting was
+            // computed and reported the OLD expression's result, so it logged "SEAM CELL LOST" for
+            // hits the fix was already keeping local — an instrument describing a code path that no
+            // longer runs. It now reports what actually happened, and whether the seam override is
+            // what caused it.
+            com.warwa.seamlessportals.passthrough.SeamAimProbe.aimDecision(
+                client.level,
+                client.hitResult instanceof BlockHitResult bhr ? bhr.getBlockPos() : null,
+                distanceToPortalPointing,
+                localTargetDistance,
+                reroute,
+                seamBlockWinsTargeting
+            );
+
+            if (reroute) {
                 client.hitResult = createMissedHitResult(cameraPos, hitPos);
                 
                 updateTargetedBlockThroughPortal(

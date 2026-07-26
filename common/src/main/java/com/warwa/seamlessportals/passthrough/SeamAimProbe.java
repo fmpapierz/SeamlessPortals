@@ -56,7 +56,7 @@ public final class SeamAimProbe {
      */
     public static void aimDecision(
         @Nullable Level level, @Nullable BlockPos localHit,
-        double portalDist, double localDist, boolean reroute
+        double portalDist, double localDist, boolean reroute, boolean seamOverrideFired
     ) {
         if (!AperturePassthroughLever.SEAM_AIM_PROBE || disarmed) {
             return;
@@ -71,18 +71,26 @@ public final class SeamAimProbe {
             boolean localIsSeam = level != null && localHit != null
                 && SeamRegistry.isSeamCell(level, localHit);
 
+            // A reroute is only a DEFECT when a real block was there to lose. With an empty aperture
+            // cell (the 23333 sentinel) rerouting is correct behaviour — it is what lets a player
+            // reach through an open portal — so it must not be labelled a loss.
+            boolean realBlockLost = localIsSeam && reroute && localDist < 20000;
+
             LOGGER.info(
                 "[RS-SEAM-AIM] localHit={} localIsSeam={} localDist={} portalDist={} margin={}"
-                    + " decision={}{}",
+                    + " decision={} seamOverride={}{}",
                 localHit == null ? "(none)" : localHit,
                 localIsSeam,
                 localDist > 20000 ? "NONE(23333)" : String.format("%.3f", localDist),
                 String.format("%.3f", portalDist),
                 localDist > 20000 ? "n/a" : String.format("%.3f", localDist + 0.2 - portalDist),
                 reroute ? "THROUGH-PORTAL" : "LOCAL",
-                localIsSeam && reroute
-                    ? "   <-- SEAM CELL LOST TO THE FAR DIMENSION (verifier A's D9 confirmed here)"
-                    : "");
+                seamOverrideFired ? "FIRED (kept local)" : "no",
+                realBlockLost
+                    ? "   <-- DEFECT: a REAL block in a seam cell was lost to the far dimension"
+                    : (localIsSeam && reroute
+                        ? "   (empty aperture cell — rerouting is CORRECT, reach-through preserved)"
+                        : ""));
         }
         catch (Throwable t) {
             disarm(t);
