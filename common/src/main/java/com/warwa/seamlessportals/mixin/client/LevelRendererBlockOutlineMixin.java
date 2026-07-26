@@ -1,7 +1,5 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.warwa.seamlessportals.EntityPortalsFlag;
-import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -62,10 +60,11 @@ public abstract class LevelRendererBlockOutlineMixin {
         index = 6
     )
     private boolean seamlessportals$outlineAfterPortalRender(boolean afterTerrain) {
+        // S20: the exclusive ternary collapsed to its FLAG-ON arm — the live S18.5 outline-bucket
+        // fix. The block-era arm (StencilPortalRenderer.anyPortalNearCamera()) died with the block
+        // era. The MIXIN ITSELF is a survivor: audit §G.2 refuted deleting it as render/ collateral.
         return afterTerrain
-            || (EntityPortalsFlag.isOn()
-                ? !qouteall.imm_ptl.core.render.context_management.RenderStates
-                    .lastPortalRenderInfos.isEmpty()
-                : StencilPortalRenderer.anyPortalNearCamera());
+            || !qouteall.imm_ptl.core.render.context_management.RenderStates
+                .lastPortalRenderInfos.isEmpty();
     }
 }

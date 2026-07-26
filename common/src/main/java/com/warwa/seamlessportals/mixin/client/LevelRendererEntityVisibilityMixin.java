@@ -1,6 +1,5 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.warwa.seamlessportals.render.PortalContextSwitch;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.core.BlockPos;
 import org.spongepowered.asm.mixin.Mixin;
@@ -56,8 +55,12 @@ public class LevelRendererEntityVisibilityMixin {
         // against the fog fill where terrain has not compiled, which IP culls). The block-era
         // path is unaffected: its on-demand-compiled sections pass the compiled gate and only
         // ever lost entities to the fade term.
-        if (PortalContextSwitch.isRenderingPortal
-            || qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
+        // S20: the block-era disjunct (PortalContextSwitch.isRenderingPortal) died with the block
+        // era; what survives is the FLAG-ON dest-extract bracket, which is precisely what the C2-1e
+        // sodium dest-entity-visibility fix below exists for. This mixin is UNGATED and
+        // LOAD-BEARING (audit §G.2): without it LevelExtractor.isEntityVisible culls EVERY dest
+        // entity in the portal view, so it must not be swept as a block-era symbol match.
+        if (qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
             // C2-1e (dest entities invisible under ACTIVE sodium — live-round finding
             // 2026-07-19; mechanism javap-proven): under Sodium the renderer's viewArea field
             // is sodium's IgnoringViewArea (installed by LevelRendererMixin.sodium$replace),

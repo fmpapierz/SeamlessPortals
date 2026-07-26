@@ -1,23 +1,16 @@
 package com.warwa.seamlessportals.mixin;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
-import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
-import com.warwa.seamlessportals.portal.PortalInfo;
-import com.warwa.seamlessportals.portal.PortalLink;
-import com.warwa.seamlessportals.portal.PortalManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-
-import java.util.List;
 
 /**
  * Let fire spread / age / burn out in a dimension that is currently being
@@ -39,14 +32,36 @@ import java.util.List;
  * fluid <i>flow</i> has no such gate, which is why water/lava spreading already
  * worked while fire did not.)
  *
- * <p><b>Fix:</b> treat a cross-dim watcher as "close enough". If any player in
- * another dimension has a portal linking into THIS dimension with its
- * destination centre within {@code portalRenderDistance} of {@code pos}, allow
- * fire to spread. We only ever ADD a {@code true} result via an early return —
- * when no watcher is near we defer to vanilla, so normal single-dimension play
- * is unaffected. The proximity test mirrors {@link LevelChunkSetBlockStateMixin}
- * (the block-change mirror), so "fire that is visible through the portal" and
- * "fire that is allowed to spread" cover exactly the same region.
+ * <p><b>Fix:</b> treat a cross-dim portal watcher as "close enough". We only ever
+ * ADD a {@code true} result via an early return — when no watcher is near we
+ * defer to vanilla, so normal single-dimension play is unaffected.
+ *
+ * <p><b>S20 PORT-FORWARD RE-KEY (2026-07-26).</b> This mixin is a
+ * {@code current-mod-core} PORT-FORWARD survivor and {@code EXECUTION_PLAN} §S20(a)
+ * prescribes exactly this substitution: *"{@code ServerLevelFireSpreadMixin}
+ * re-keyed to {@code ImmPtlChunkTracking.isPlayerWatchingChunkWithinRadius}"*.
+ * The old body walked the block-era {@code PortalManager} link registry
+ * ({@code getLinksInRange} &rarr; {@code PortalLink.getDestination()} &rarr;
+ * destination-centre distance) and was gated {@code if (isEntityPortals()) return;},
+ * i.e. FLAG-OFF-ONLY — so on the shipping flag-ON default this fix has never
+ * actually run, and cross-dim watched fire has been frozen there. The re-key
+ * restores the intended behaviour on the IP path and drops the flag gate with the
+ * flag.
+ *
+ * <p><b>Why the IP query is the right equivalent, not merely a compiling one:</b>
+ * {@code ImmPtlChunkTracking} is IP's authority on which players are loading which
+ * chunks in which dimension THROUGH portals — the very relation the block-era link
+ * walk was reconstructing by hand. Asking it directly is strictly more faithful:
+ * it accounts for the real portal-view loading set (including indirect/nested
+ * loaders) instead of a flat radius around one link's destination centre. The
+ * radius argument keeps the "close enough" narrowing: {@code isPlayerWatchingChunkWithinRadius}
+ * filters on {@code r.distanceToSource * 16 <= radiusBlocks}
+ * ({@code ImmPtlChunkTracking.java:436-446}), so we pass the server's view distance
+ * in blocks — the natural 26.2 analogue of the retired
+ * {@code portalRenderDistance * 16} and the same order of magnitude.
+ *
+ * <p>The same-dimension case is still skipped: vanilla's own player-proximity
+ * check already covers it, and re-answering it here would widen the gamerule.
  */
 @Mixin(ServerLevel.class)
 public abstract class ServerLevelFireSpreadMixin {
@@ -57,46 +72,28 @@ public abstract class ServerLevelFireSpreadMixin {
     @Inject(method = "canSpreadFireAround", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$allowFireForPortalWatchers(
             BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
-        // S17 sweep (wf_5183007f-fee CONFIRMED LEAK): self-gate — the block-era PortalManager
-        // registry keeps this transitively inert flag-ON on Fabric, but the NeoForge driver was
-        // ungated and the inert-by-dormancy shape has failed 4x; structural inertness on all
-        // platforms (D3), flag-OFF unchanged.
-        if (SeamlessPortalsConfig.isEntityPortals()) {
-            return;
-        }
         ServerLevel self = (ServerLevel) (Object) this;
         MinecraftServer server = self.getServer();
         if (server == null) return;
 
         ResourceKey<Level> thisDim = self.dimension();
-        PortalManager manager = PortalManager.getServerInstance();
-        double rangeBlocks = SeamlessPortalsConfig.get().getPortalRenderDistance() * 16.0;
-        double rangeSq = rangeBlocks * rangeBlocks;
+        int chunkX = pos.getX() >> 4;
+        int chunkZ = pos.getZ() >> 4;
+        // The IP analogue of the retired portalRenderDistance * 16 (see the javadoc).
+        int radiusBlocks = server.getPlayerList().getViewDistance() * 16;
 
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ResourceKey<Level> playerDim = player.level().dimension();
             // Same dim → vanilla's own player-proximity check already covers it.
-            if (playerDim.equals(thisDim)) continue;
+            if (player.level().dimension().equals(thisDim)) continue;
 
-            List<PortalLink> links = manager.getLinksInRange(
-                playerDim, player.blockPosition(), rangeBlocks);
-            if (links.isEmpty()) continue;
-
-            for (PortalLink link : links) {
-                PortalInfo destPortal = link.getDestination();
-                if (!destPortal.getDimension().equals(thisDim)) continue;
-
-                Vec3 destCenter = destPortal.getCenter();
-                double dx = pos.getX() + 0.5 - destCenter.x;
-                double dz = pos.getZ() + 0.5 - destCenter.z;
-                if (dx * dx + dz * dz > rangeSq) continue;
-
+            if (qouteall.imm_ptl.core.chunk_loading.ImmPtlChunkTracking
+                    .isPlayerWatchingChunkWithinRadius(player, thisDim, chunkX, chunkZ, radiusBlocks)) {
                 if (seamlessportals$fireAllowLog < 5) {
                     seamlessportals$fireAllowLog++;
                     SeamlessPortalsConstants.LOGGER.info(
                         "[SEAMLESS FIRE] allow cross-dim fire spread at {} in {} (watcher {} in {})",
                         pos.toShortString(), thisDim.identifier(),
-                        player.getName().getString(), playerDim.identifier());
+                        player.getName().getString(), player.level().dimension().identifier());
                 }
                 cir.setReturnValue(true);
                 return;

@@ -87,26 +87,11 @@ public final class CrossingTracer {
 
             double best = Double.NaN;
             Object bestP = null;
-            com.warwa.seamlessportals.portal.PortalManager pm =
-                com.warwa.seamlessportals.portal.PortalManager.getClientInstance();
-            com.warwa.seamlessportals.portal.PortalTracker tr = pm.getTracker(mc.level.dimension());
-            if (tr != null) {
-                for (com.warwa.seamlessportals.portal.PortalInfo p
-                        : tr.getPortalsInRange(mc.player.blockPosition(), 48.0)) {
-                    if (pm.getLinkForPortal(p.getPortalId()).isEmpty()) continue;
-                    Vec3 c = p.getCenter();
-                    double d = (p.getAxis() == Direction.Axis.X) ? (cp.z - c.z) : (cp.x - c.x);
-                    if (bestP == null || Math.abs(d) < Math.abs(best)) {
-                        best = d;
-                        bestP = p.getOrigin();
-                    }
-                }
-            }
             planeDist[i] = best;
             portalRef[i] = bestP;
             portalsRendered[i] = portalsThisFrame;
             portalsThisFrame = 0;
-            flags[i] = (byte) (PortalContextSwitch.isPromoteBridgeActive() ? 1 : 0);
+            flags[i] = 0; // S20: promote-bridge bit retired with PortalContextSwitch
             detStates[i] = frameDetState;
             frameDetState = 0;
             bobAmp[i] = mc.player.avatarState().getInterpolatedBob(1.0f);
