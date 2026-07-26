@@ -459,10 +459,24 @@ public final class ActDispatchProbe {
             }
             int[] unit = new int[1];
             GL20.glGetUniformiv(pid, loc, unit);
-            if (!GL.getCapabilities().OpenGL42) {
-                warnOnce("dnocaps", P + "image-binding leg n/a on this driver (GL 4.2 required for"
-                    + " GL_IMAGE_BINDING_NAME) — R-4 reads n/a; R-1/R-2/R-3 unaffected.", null);
-                return name + " unit=" + unit[0] + " tex=n/a(no GL42)";
+            // RUN-3 DEFECT FIX (my own, and the SECOND time this exact mistake cost a leg): gating on
+            // the CORE-VERSION flag is wrong on MC 26.2/Sodium, which create a 3.3 CORE context —
+            // measured: OpenGL45=false OpenGL43=false, yet ARB_get_texture_sub_image=true. Run 3 lost
+            // the entire R-4 (write-side) leg to this: `tex=n/a(no GL42)` 800/800 times.
+            // GL_IMAGE_BINDING_NAME is 0x8F3A in core 4.2, ARB_shader_image_load_store AND
+            // EXT_shader_image_load_store alike, and the query function glGetIntegeri_v is GL 3.0
+            // CORE — so it carries no version requirement at all. Mirror iris's OWN gate, which is
+            // authoritative because it is what binds these images and demonstrably succeeds here
+            // (IrisRenderSystem.bindImageTexture: OpenGL42 || ARB_shader_image_load_store -> GL42C,
+            // else EXTShaderImageLoadStore). The LWJGL GL42.GL_IMAGE_BINDING_* names are compile-time
+            // int constants, so referencing them on a 3.3 context is safe.
+            org.lwjgl.opengl.GLCapabilities caps = GL.getCapabilities();
+            if (!(caps.OpenGL42 || caps.GL_ARB_shader_image_load_store
+                || caps.GL_EXT_shader_image_load_store)) {
+                warnOnce("dnocaps", P + "image-binding leg n/a: neither core GL 4.2 nor"
+                    + " ARB/EXT_shader_image_load_store is present — R-4 reads n/a;"
+                    + " R-1/R-2/R-3 unaffected.", null);
+                return name + " unit=" + unit[0] + " tex=n/a(no image_load_store)";
             }
             int tex = GL30.glGetIntegeri(GL42.GL_IMAGE_BINDING_NAME, unit[0]);
             int fmt = GL30.glGetIntegeri(GL42.GL_IMAGE_BINDING_FORMAT, unit[0]);
