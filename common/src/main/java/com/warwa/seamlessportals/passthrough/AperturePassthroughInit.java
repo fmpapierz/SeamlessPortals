@@ -75,6 +75,10 @@ public final class AperturePassthroughInit {
             for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
                 SeamJournal.drain(level);
             }
+            // Retire and PRINT any delivery trace that has been open long enough for the client to
+            // have answered. Retiring on a timer is what makes a stage that never ran report
+            // NOT-REACHED rather than staying silent — see SeamDeliveryProbe's coverage note.
+            SeamDeliveryProbe.onServerTickEnd();
         });
 
         LOGGER.info("[RS-SEAM-REGISTRY] aperture passthrough initialised (disabled={})",

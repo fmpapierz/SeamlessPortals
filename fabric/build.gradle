@@ -127,6 +127,7 @@ loom {
             //   .\gradlew.bat :fabric:runClient -PapertureCensusProbe=true
             if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
             if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
+            if (project.findProperty('seamDeliveryTest') == 'true') { vmArg('-Dseamlessportals.seamDeliveryTest=true') }
             // RS (a) FIX LEVERS — all DEFAULT-ON; each disables. -PdisableAperturePassthrough is the
             // master A/B switch for the entire feature (REDSTONE_A_SPEC.md §5).
             if (project.findProperty('disableAperturePassthrough') == 'true') { vmArg('-Dseamlessportals.disableAperturePassthrough=true') }
@@ -143,6 +144,10 @@ loom {
             if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }
             if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
             if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
+            // seamDeliveryProbe: traces each mirrored write down the whole client-delivery chain and
+            // names the stage it stops at. Exists because the same-dim bug survived three fixes that
+            // each theorised a mechanism and measured nothing.
+            if (project.findProperty('seamDeliveryProbe') == 'true') { vmArg('-Dseamlessportals.seamDeliveryProbe=true') }
         }
         server {
             server()
@@ -284,6 +289,7 @@ loom {
             // survived. Settles a recon claim that was read from source but never observed —
             //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true -PapertureTeardownTest=true
             if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
+            if (project.findProperty('seamDeliveryTest') == 'true') { vmArg('-Dseamlessportals.seamDeliveryTest=true') }
             // RS (a) FIX + PROBE LEVERS (mirror of the client run above — the suite must be able to
             // run the 8 legs under -PdisableAperturePassthrough=true for both-directions attribution).
             if (project.findProperty('disableAperturePassthrough') == 'true') { vmArg('-Dseamlessportals.disableAperturePassthrough=true') }
@@ -298,6 +304,7 @@ loom {
             if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }
             if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
             if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
+            if (project.findProperty('seamDeliveryProbe') == 'true') { vmArg('-Dseamlessportals.seamDeliveryProbe=true') }
         }
     }
 }

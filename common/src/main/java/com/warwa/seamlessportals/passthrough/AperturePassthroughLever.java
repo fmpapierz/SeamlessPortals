@@ -176,5 +176,36 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_LEDGER_PROBE =
         Boolean.getBoolean("seamlessportals.seamLedgerProbe");
 
+    /**
+     * THE DELIVERY PROBE ({@code -Dseamlessportals.seamDeliveryProbe=true}). Traces every mirrored
+     * write down the whole client-delivery chain and prints, per write, which stage it stopped at.
+     *
+     * <p>It exists because the same-dimension man-made-portal bug survived THREE fixes written from
+     * three different theories, none of which measured anything. See {@link SeamDeliveryProbe} for
+     * the four independent drop points it distinguishes. Retiring traces on a timer is what makes a
+     * stage that NEVER RAN report {@code NOT-REACHED} instead of reading as a stage that ran and
+     * answered — the exact class of false reading that misled this engagement five times.
+     */
+    public static final boolean SEAM_DELIVERY_PROBE =
+        Boolean.getBoolean("seamlessportals.seamDeliveryProbe");
+
+    /**
+     * Arms the RS-DELIVERY-TEST leg ({@code -Dseamlessportals.seamDeliveryTest=true}).
+     *
+     * <p>The headless reproduction of the same-dimension bug. Every previous round on it went
+     * through the user playing live, which is slow and — worse — gives one observation per build,
+     * which is how three fixes shipped on three unfalsified theories. The leg writes into the
+     * aperture of the harness's SAME-dimension test portal and its CROSS-dimension one, and reports
+     * for each whether the mirror reached the CLIENT. Two portals, one differing in exactly the
+     * property the user's three observations turn on, measured in the same run.
+     *
+     * <p>It reports rather than asserts, and states its own coverage: if the client does not hold
+     * the destination chunk the leg says {@code INCONCLUSIVE} instead of reading an absent chunk's
+     * {@code void_air} as a stale block. That specific false reading has already cost this
+     * engagement one wrong conclusion.
+     */
+    public static final boolean SEAM_DELIVERY_TEST =
+        Boolean.getBoolean("seamlessportals.seamDeliveryTest");
+
     private AperturePassthroughLever() {}
 }
