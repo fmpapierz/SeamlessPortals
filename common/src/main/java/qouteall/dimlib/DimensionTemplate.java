@@ -10,7 +10,16 @@
 //   calls DimensionTemplate.registerDimensionTemplate(String, DimensionTemplate),
 //   and DimensionTemplate.VOID_TEMPLATE.createLevelStem(server) / <TEMPLATE>.createLevelStem(server).
 // Wired flag-ON at S19-D (AlternateDimensions.init registers skyland/bright_skyland/chaos/bright_void;
-// createLevelStem runs inside the DimLib load window). Deleted with the migration scaffolding at S20.
+// createLevelStem runs inside the DimLib load window).
+//
+// S20 CORRECTION (2026-07-25) — THIS CLASS IS NOT DELETED. The line that stood here said "Deleted
+// with the migration scaffolding at S20"; the S20 B11 reachability audit refuted it at the code
+// (port-note S20-block-era-deletion.md §E.1 row 7). The class is FLAG-ON LIVE: AlternateDimensions
+// constructs four templates (:69/:79/:89/:100), registers them (:122/:125/:128/:131) and calls
+// VOID_TEMPLATE.createLevelStem(server) (:171), all reached via AlternateDimensions.init() <-
+// PeripheralModMain:107 <- SeamlessPortalsModFabric:133 inside the flag-ON branch. Deleting it
+// destroys skyland/bright_skyland/chaos/bright_void worldgen — a 12-point regression item. Only the
+// MEMBER init() below is dead. The stale line is corrected rather than left as a booby trap.
 package qouteall.dimlib;
 
 import net.minecraft.core.Holder;

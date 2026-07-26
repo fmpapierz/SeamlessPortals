@@ -31,7 +31,12 @@ sourceSets {
     // and turn the shipping :fabric build red. At S13 (ip_scc_closed=true) the fabric loader
     // recompiles the held tree against REAL fabric-api, which provides every net.fabricmc type
     // (and the addTask/completeTask interface injections a compileOnly stub cannot reproduce).
-    // compileOnly only, never shipped. Removed at S20.
+    // compileOnly only, never shipped.
+    //
+    // S20 CORRECTION (2026-07-25): "Removed at S20" stood here and is REFUTED — this set is
+    // compile-load-bearing for :common AND :neoforge. Full reasoning at the
+    // `compileOnly sourceSets.fabricStubs.output` line in the dependencies block below, and in
+    // port-note S20-block-era-deletion.md §E.1 row 4 / §E.3.
     fabricStubs
 }
 
@@ -145,15 +150,36 @@ dependencies {
     // never in the shipped jar — jar packages sourceSets.main.output only). Referenced by
     // the held compat files, which are excluded in the shipping build and compiled only at
     // the -Pip_scc_closed=true probe. See the ipStubs source set above and S00-U0-decisions
-    // F21. Removed at S20.
+    // F21.
+    //
+    // S20 CORRECTION (2026-07-25): this line used to end "Removed at S20." It is NOT removed —
+    // see the fabricStubs note below and port-note S20-block-era-deletion.md §E.1/§E.3. What
+    // remains in ipStubs after S19-E retired the sodium/iris shells is gravity_changer only, and
+    // GravityChangerInterface.java:3-4 still imports it for OnGravityChangerPresent (:89-168), so
+    // deleting it would force an edit to ported IP source. Runtime-dead (zero
+    // `GravityChangerInterface.invoker =` assignments repo-wide) is NOT the same as compile-dead.
     compileOnly sourceSets.ipStubs.output
 
     // S10-A: net.fabricmc.* shells on :common:compileJava's compile classpath ONLY. NOT
     // exposed to the loader classpath (no ipStubsClasspath entry) — the loaders provide the
     // real fabric-api. This resolves the held tree's loader-facade/@Environment/config-phase
     // references at the -Pip_scc_closed=true probe without shadowing real fabric-api on the
-    // fabric build. compileOnly only, never shipped. Removed at S20. See fabricStubs above and
+    // fabric build. compileOnly only, never shipped. See fabricStubs above and
     // port-note S10A-loader-seam.md.
+    //
+    // S20 CORRECTION (2026-07-25) — THIS IS NOT REMOVED AT S20. The line used to say it was, and
+    // the sourceSets{} comment above said the same; both were aspirational and are now refuted at
+    // the build file (port-note S20-block-era-deletion.md §E.1 row 4 / §E.3). :common has NO
+    // fabric-api or fabric-loader dependency at all — every apparent hit in this file is a comment
+    // or an EXCLUSION (:130-131) — while the ported qouteall tree imports 31 DISTINCT net.fabricmc
+    // types across ~40 files, resolved solely by this line. :neoforge consumes the same shells via
+    // fabricStubsClasspath (see the note at :194-198 below) because it has no fabric-api either.
+    // Deleting this set turns :common:compileJava AND :neoforge:compileJava red. Removing it is not
+    // a cleanup but a multiloader build re-architecture (give :common a real fabric-api dep, or
+    // relocate ~40 ported files), which EXECUTION_PLAN §S20(a)'s "deletion ONLY here per
+    // constraint 5" puts out of scope for S20. Contrast S19-E, where the sodium/iris/autoconfig
+    // shells COULD retire because real 26.2 deps existed to replace them; no such substitute
+    // exists for these.
     compileOnly sourceSets.fabricStubs.output
 
     // S0 JUnit test infrastructure for the entity-portal migration
