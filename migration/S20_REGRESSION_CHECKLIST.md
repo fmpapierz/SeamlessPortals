@@ -129,6 +129,23 @@ User-observed (their observation outranks any log/screenshot reading of mine):
 | **B.6** dest entities in the view | **PASS**, one carve-out | same-dim FAR portals: hostiles >128 blocks from the player are despawned by VANILLA. Fixed on `iris-on/is5-shadow` (its `PortalTicketDespawnSuppressor` + `MobDespawnSuppressMixin`, §E.6) → merge-forward item, not S20 |
 | **B.1** cross-dim fire spread | **PASS** cross-dim / **FAIL** same-dim far | see §R.1 |
 | **B.3** cross-dim fluid flow | **PASS** cross-dim / **FAIL** same-dim far | see §R.1 |
+| **B.2** unbounded client store growth | **PASS** | no growth signature observed. NOTE the honest limit of this verdict: §E.4 item 1 says proving a *bound* needs sustained observation, so this reads as "no climb seen in this session", not "bounded" |
+| **B.5** hand-light fade across a crossing | **PASS** | "nice and smooth" — vindicates the §E.1 row 8 refusal to let a package sweep take `GameRendererHandLightMixin` + `HandLightSmoother` (they were absent from the stage-1 inventory entirely) |
+| **B.7** block-outline sliver at the aperture | **PASS** | the collapsed S18.5 ternary arm is correct |
+| **B.9** pre-migration (block-era) world loads | **PASS** | the D3 datafix carve-out doing its job |
+| **B.4** alternate-dimension worldgen | **PARTIAL PASS** — skyland observed live | User deferred the row, but the session log settles part of it anyway: `ClientWorld immersive_portals:skyland` appears with terrain and live falling-block entities, so **skyland generated, loaded and ticked**. That is the §E.1 row 7 check passing for one of four templates — `dimlib/DimensionTemplate` is proven needed, and its old "Deleted with the migration scaffolding at S20" header proven a lie. bright_skyland / chaos / bright_void remain untested (they share the same `createLevelStem` path, so the risk is now low) |
+
+### §R.2 Two ported-IP diagnostics seen in the session — NOT S20 regressions
+
+Both fired in the live client and neither is ours:
+
+| Line | Verdict |
+|---|---|
+| `[ImmPtlChunkTickets] Chunk loading failure ServerWorld minecraft:overworld New World [-2, 1]` (×1, at world start) | `ImmPtlChunkTickets:211` — **S20 never touched this file** (`git log 20e1670..HEAD` on it is empty) |
+| `[ImmPtl] cross portal collision result too large FallingBlockEntity[…skyland…]` (×2) | `MixinEntity:137` — likewise untouched by all of S20. It is IP's own rate-limited guard (`IMM_PTL_LOG_COUNTER`) with a defined fallback: a >20-block collision result is clamped to `Vec3.ZERO`. Falling gravel in a floating-island dimension is a plausible trigger |
+
+Recorded as inherited-IP observations for a later parity pass, not as S20 blockers. Neither
+`SEAMLESS STUCK` nor `SEAMLESS FREEZE` appeared (the canonical-11 stall signature): **0 occurrences**.
 
 ### §R.1 ★ THE SAME-DIM DISTANT-PORTAL UPDATE GAP — a real defect, and NOT an S20 regression
 
