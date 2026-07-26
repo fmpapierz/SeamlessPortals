@@ -33,6 +33,7 @@
     "client.ChunkPacketGuardMixin",
     "client.ClientBlockUpdateDeliveryProbeMixin",
     "client.SectionUpdateTrackerDeliveryProbeMixin",
+    "client.SectionDirtyConsumedProbeMixin",
     "client.SectionDirtyStateAccessor",
     "client.SectionOcclusionGraphAccessorMixin",
     "client.SectionOcclusionGraphPartialUpdateSkipMixin",

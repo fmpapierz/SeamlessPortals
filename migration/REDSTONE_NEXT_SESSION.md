@@ -160,7 +160,47 @@ reasoning about mirrored-state behaviour may be reasoning about the broken versi
 things that were guessed.** The fix is not yet written; the diagnosis below is exact and the
 reproduction is in the suite.
 
-### The measured answer
+### ★ THERE ARE **TWO** DEFECTS, AND THE PRIMARY ONE IS VISIBILITY, NOT DISTANCE
+
+**Corrected 2026-07-26 by a live round, after the first diagnosis below got the subsystem right and
+the gate wrong.** Both defects are confirmed live and fixing either alone leaves the other.
+
+| # | defect | who it bites | stage that fails |
+|---|---|---|---|
+| **A** | **the dirty mark is never CONSUMED** — `LevelExtractor.java:152` only walks `levelRenderer.visibleSections()`, so a section visible ONLY through a same-dim portal is flagged and then ignored forever | **the reported bug**; any distance, including a portal whose ends are 60 blocks apart | **7** (marked, never rebuilt) |
+| **B** | **the dirty mark is DISCARDED** — `SectionUpdateTracker.setDirty` drops a section outside its render-distance window | only past render distance (±16 chunks at rd 16) | **6** (never marked) |
+
+**The evidence that separates them is a same-position A/B from live play** — the strongest single
+piece of evidence in this engagement, and it arrived by accident rather than by design:
+
+```
+trace #1  (11,108,100)  6 ACCEPTED   7 SCHEDULED     -> DELIVERED AND REBUILT
+trace #3  (11,108,100)  6 ACCEPTED   7 NOT-REACHED   -> MARKED DIRTY BUT NEVER REBUILT
+```
+**Same section, 12 seconds apart, opposite outcomes.** Distance, window, dimension, phase and mirror
+logic are all identical and therefore all excluded. The only difference is where the player stood
+and looked. That is `visibleSections()` and nothing else.
+
+Defect B is real too and was measured separately (`(10,108,999)`, ~900 blocks, `6 DROPPED`), but it is
+NOT what the user has been reporting. **The first write-up below claimed B was the bug. It was not.**
+
+⚠ **Do not read a `7 SCHEDULED` on an out-of-window cell as "B is harmless".** `RotatingSectionStorage`
+creates its entries already dirty, so a section ENTERING the window is rebuilt for being new; that
+rebuild is incidental and says nothing about the write. Traces #4/#6 versus #8 — same far cell, two
+`SCHEDULED` and one `NOT-REACHED` — are that coin-flip, not a working path.
+
+✅ Stage 7's section granularity is sound, not the stage-4 mistake repeated: a rebuild necessarily
+recompiles the whole section, so if it was scheduled the cell's new state IS in the resulting mesh,
+whatever triggered it.
+
+**Where the fix for A goes.** The same-dim portal view never runs a dirty-consuming extract pass with
+its own camera; the cross-dim case escapes only because the destination dimension owns a separate
+`LevelExtractor` whose `visibleSections()` comes from the portal-view camera. Start at
+`LevelExtractor.java:136-169` and at how this port drives secondary-dimension extraction.
+
+---
+
+### The measured answer for defect B (the first diagnosis — subsystem right, gate wrong)
 
 **The block reaches the client perfectly. The client just never redraws it.**
 
@@ -242,8 +282,17 @@ Drive it from the CLIENT's block-update application (where stage 5 lands), not f
 
 ### The instruments, and one warning about them
 
-- `SeamDeliveryProbe` + 5 mixins, `-PseamDeliveryProbe=true` (default OFF). Six stages, retired on a
-  timer and printed in full so a stage that never ran says `NOT-REACHED`.
+- `SeamDeliveryProbe` + 6 mixins, `-PseamDeliveryProbe=true` (default OFF). **Seven** stages, retired
+  on a timer and printed in full so a stage that never ran says `NOT-REACHED`. Stage 7 hooks
+  `SectionDirtyState.setNotDirty`, whose ONLY call site repo-wide is the scheduling branch at
+  `LevelExtractor.java:167` — so it fires if and only if a rebuild was scheduled, which makes
+  silence there evidence rather than absence of evidence. **Stage 6 alone is not enough and reading
+  it as "delivered" is how the first write-up went wrong.**
+- ⚠ **Live runs never print the probe's own coverage line.** `SeamDeliveryProbe.counters()` has one
+  call site repo-wide (`CrossingSmoke.java`, gametest only), so `droppedOverCap` and the
+  `ZERO WRITES TRACED` guard are invisible under `runClient`. Live tracing is capped at 64 concurrent
+  traces retiring over 40 ticks (~32 writes/s) and drops SILENTLY above that. Hand placement is far
+  below it, but wire `counters()` into `SERVER_STOPPING` before trusting a heavy live run.
 - `RS-DELIVERY-TEST` leg, `-PseamDeliveryTest=true` (default OFF). Three arms in one run; arm 3
   builds the wand's real four-entity cluster (`createFlippedPortal`/`createReversePortal`, same
   calls in the same order as `PortalWandInteraction.java:271-283`) with the player moved to stand in
@@ -311,9 +360,17 @@ to mechanism. One probe run, on a fixture that put the destination beyond render
   aim probe measuring the path the fix replaced) and it will recur wherever a probe brackets a call
   that does its interesting work internally.
 - **A FIXTURE THAT IS TOO CONVENIENT HIDES THE BUG.** The same-dim delivery reproduction passed with
-  a 60-block destination and failed with a 600-block one, because the defect is a render-distance
-  window. "The test passes" was true and meaningless. When a fixture is built to reproduce a
-  reported failure and does not, suspect the fixture before concluding the report was wrong.
+  a 60-block destination and failed with a 600-block one. "The test passes" was true and meaningless.
+  When a fixture is built to reproduce a reported failure and does not, suspect the fixture before
+  concluding the report was wrong.
+- **★ AND THE CONVERSE, WHICH COST MORE: A FIXTURE THAT FAILS FOR THE WRONG REASON.** Moving that
+  destination to 600 blocks DID reproduce a failure — a real one, defect B — and it was written up as
+  the answer. It was not the user's bug at all: theirs (defect A) fires at 60 blocks, and the 600-block
+  fixture had been silently exercising a second, rarer defect that happens to present identically.
+  **A reproduction that fails is not thereby a reproduction of the reported failure.** The thing that
+  caught it was the user playing normally and the probe recording the SAME CELL succeeding and then
+  failing — an A/B no designed fixture had produced. Prefer a discriminator that holds everything
+  constant but one variable; a fixture that changes distance AND visibility together cannot separate them.
 - **Instruments must assert their own COVERAGE, not just their result. FIVE false readings this
   engagement, every one of which looked like evidence:**
   1. the teardown probe that only ever logged `intact=true`, so the failure path was never exercised;
