@@ -42,9 +42,9 @@ import java.util.List;
  *   <li>Create a creative singleplayer world.</li>
  *   <li>Set bright clear-day weather, freeze the day/weather cycle, disable
  *       mob spawns — a clean stage.</li>
- *   <li>Spawn a 3×3 portal entity a few blocks north of the player, pointing at a
- *       distant overworld destination, and frame it with an obsidian border so the
- *       aperture reads as a portal in the shot.</li>
+ *   <li>Spawn a 3×3 portal entity a few blocks north of the player, pointing into the
+ *       NETHER, and frame it with an obsidian border so the aperture reads as a portal
+ *       in the shot.</li>
  *   <li>Wait for the destination to stream into the portal-view secondary level
  *       (the mod's async fill).</li>
  *   <li>Frame the camera a few blocks back from the portal plane, at EYE height,
@@ -144,13 +144,20 @@ public class TitleCardCapture implements FabricClientGameTest {
 
             // ---- Spawn the portal ENTITY (the CrossingSmoke.spawnTestPortal template) ----
             // Identity transform: axisW=+X, axisH=+Y → normal +Z, facing the player standing
-            // south of the plane. Destination is a far-away overworld position, so the window
-            // shows terrain the camera cannot also see directly.
+            // south of the plane.
+            //
+            // DESTINATION = THE NETHER, deliberately. The first re-shoot pointed it at a far
+            // same-dim position and produced a technically-correct but useless picture: source and
+            // dest were both flat grassland, and the window read as "empty" because the far dest
+            // had not streamed in within the wait. A cross-dim destination is what the artefact is
+            // for (the pre-S20 card was overworld↔nether), it is unmistakable at a glance, and it
+            // makes the capture evidence of cross-dim view rendering rather than of nothing.
             final double planeZ = zf + 0.5;
             final Vec3 origin = new Vec3(px + 0.5, py + 1.5, planeZ);
-            final Vec3 dest = new Vec3(px + 400.5, py + 1.5, planeZ);
+            final Vec3 dest = new Vec3(px + 0.5, 64.5, planeZ);
             runCommands(context, List.of(
-                "forceload add " + (px + 384) + " " + (zf - 16) + " " + (px + 416) + " " + (zf + 16)));
+                "execute in minecraft:the_nether run forceload add " + (px - 16) + " " + (zf - 16)
+                    + " " + (px + 16) + " " + (zf + 16)));
             context.runOnClient(mc -> {
                 MinecraftServer server = mc.getSingleplayerServer();
                 if (server == null) {
@@ -166,13 +173,13 @@ public class TitleCardCapture implements FabricClientGameTest {
                         return;
                     }
                     portal.setOriginPos(origin);
-                    portal.setDestinationDimension(Level.OVERWORLD);
+                    portal.setDestinationDimension(Level.NETHER);
                     portal.setDestination(dest);
                     portal.setOrientationAndSize(
                         new Vec3(1, 0, 0), new Vec3(0, 1, 0), PORTAL_SIZE, PORTAL_SIZE);
                     McHelper.spawnServerEntity(portal);
                     SeamlessPortalsConstants.LOGGER.info(
-                        "[TITLE CARD] portal spawned: {} -> overworld {}", origin, dest);
+                        "[TITLE CARD] portal spawned: {} -> nether {}", origin, dest);
                 });
             });
 
