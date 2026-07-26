@@ -120,14 +120,12 @@ loom {
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
-            // RS PASSTHROUGH (a) diagnose-first probes (migration/REDSTONE_RECON.md §5). Both
-            // DEFAULT-OFF. The census dumps the live aperture cells + real /setblock targets; the
-            // teardown suppressor relaxes ONLY the opening-contents half of the integrity predicate
-            // (the obsidian frame half still tears down), without which a /setblock into the opening
-            // kills the portal AND its twin within 233 ticks and the seam can never be inspected —
-            //   .\gradlew.bat :fabric:runClient -PapertureCensusProbe=true -PapertureSuppressTeardown=true
+            // RS PASSTHROUGH (a) diagnose-first probes (migration/REDSTONE_RECON.md §5). DEFAULT-OFF.
+            // The census dumps the live aperture cells and real /setblock targets. (The former
+            // apertureSuppressTeardown lever was retired at step 3 — IP-core edit 3 makes the
+            // integrity predicate frame-only outright, which subsumes it.) —
+            //   .\gradlew.bat :fabric:runClient -PapertureCensusProbe=true
             if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
-            if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
             if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
             // RS (a) FIX LEVERS — all DEFAULT-ON; each disables. -PdisableAperturePassthrough is the
             // master A/B switch for the entire feature (REDSTONE_A_SPEC.md §5).
@@ -278,7 +276,6 @@ loom {
             // every generated aperture —
             //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true
             if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
-            if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
             // RS-TEARDOWN-TEST: builds + ignites its OWN isolated portal, drops a rail into a
             // mid-height opening cell with the suppressor OFF, and reports whether the portal
             // survived. Settles a recon claim that was read from source but never observed —
