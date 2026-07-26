@@ -1534,7 +1534,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                 return;
             }
 
-            // (2) a REPAIR mirrors back — the half that needs the dormant link
+            // (2) repair the near side — this must NOT mirror yet
             ow.setBlockAndUpdate(brokenFrame, net.minecraft.world.level.block.Blocks.OBSIDIAN.defaultBlockState());
         });
         if (failure.get() != null) {
@@ -1542,15 +1542,38 @@ public class CrossingSmoke implements FabricClientGameTest {
         }
         context.waitTicks(20);
 
+        // (2a) REPAIRS ARE STAGED, NOT INSTANT (user decision 2026-07-26). A half-rebuilt frame is a
+        // construction site; reaching into another dimension to place blocks the player has not asked
+        // for yet is surprising. The far side must still be broken at this point.
+        runOnServer(context, server -> {
+            ServerLevel far = server.getLevel(partnerDim.get());
+            far.getChunk(partnerRef.get().getX() >> 4, partnerRef.get().getZ() >> 4);
+            if (!far.getBlockState(partnerRef.get()).isAir()) {
+                failure.set("REPAIR MIRRORED TOO EARLY — the near frame was repaired but not lit, yet"
+                    + " the partner " + partnerRef.get() + " is already restored. Repairs must be"
+                    + " staged until ignition.");
+            }
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(LOG + "RS-A FRAME MIRROR GATE FAILED: " + failure.get());
+        }
+
+        // (2b) IGNITION restores the far frame, and must do so BEFORE the destination match search —
+        // otherwise generation fabricates a new portal elsewhere instead of relinking.
+        runOnServer(context, server ->
+            qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                    new BlockPos(fx, py + 1, fz), null));
+        context.waitTicks(80);
+
         runOnServer(context, server -> {
             ServerLevel far = server.getLevel(partnerDim.get());
             far.getChunk(partnerRef.get().getX() >> 4, partnerRef.get().getZ() >> 4);
             net.minecraft.world.level.block.state.BlockState s = far.getBlockState(partnerRef.get());
-            if (!s.is(net.minecraft.world.level.block.Blocks.OBSIDIAN)) {
-                failure.set("FRAME REPAIR DID NOT MIRROR — obsidian was replaced at " + brokenFrame
-                    + " but the partner " + partnerRef.get() + " holds " + s.getBlock()
-                    + ", expected obsidian. With both portals dead this is the dormant-link path,"
-                    + " which is the only path that matters for repair.");
+            if (s.isAir()) {
+                failure.set("IGNITION DID NOT RESTORE THE FAR FRAME — the partner "
+                    + partnerRef.get() + " is still air after the near side was repaired AND lit."
+                    + " The dormant link is the only path that can do this with both portals dead.");
             }
         });
 
@@ -1559,8 +1582,9 @@ public class CrossingSmoke implements FabricClientGameTest {
             throw new AssertionError(LOG + "RS-A FRAME MIRROR GATE FAILED: " + f);
         }
         SeamlessPortalsConstants.LOGGER.info(
-            LOG + "RS-A FRAME MIRROR GATE PASS — break and repair both mirrored with NO portal alive"
-                + " (dormant link working). {} | counters: {}",
+            LOG + "RS-A FRAME MIRROR GATE PASS — break mirrored instantly; repair STAGED until"
+                + " ignition, then restored the far frame via the dormant link with no portal alive."
+                + " {} | counters: {}",
             detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
     }
 

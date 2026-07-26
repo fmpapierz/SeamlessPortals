@@ -63,6 +63,18 @@ public abstract class NetherPortalLikeForm extends PortalGenForm {
             return false;
         }
 
+        // RECORDED IP DEVIATION — RS PASSTHROUGH; revert with
+        // -Dseamlessportals.disableFrameMirror=true. FAR-FRAME REPAIR AT IGNITION (user decision
+        // 2026-07-26): frame BREAKS mirror immediately, frame REPAIRS are staged until the portal is
+        // lit — lighting is the moment the player declares the frame finished.
+        //
+        // MUST run BEFORE the destination frame-match search below. If the far frame is still broken
+        // when that search looks at it, no match is found and generation fabricates a NEW portal
+        // elsewhere — precisely the symptom that started this: "a new dest portal gets created
+        // because the old portal is still in that position in the dest side".
+        com.warwa.seamlessportals.passthrough.SeamMirror
+            .repairFarFrameOnIgnition(fromWorld, fromShape);
+
         if (!testThisSideShape(fromWorld, fromShape)) {
             return false;
         }

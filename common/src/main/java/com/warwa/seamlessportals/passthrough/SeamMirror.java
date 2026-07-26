@@ -374,20 +374,87 @@ public final class SeamMirror {
 
             // Only act when the two sides actually differ, so a mirrored write cannot ping-pong and
             // an unrelated edit that already matches costs nothing.
+            // BREAKS mirror IMMEDIATELY. REPAIRS DO NOT — they are staged until the portal is re-lit
+            // (user decision 2026-07-26). Rationale: a half-rebuilt frame is a construction site, and
+            // silently reaching into another dimension to place blocks the player has not asked for
+            // yet is surprising. Ignition is the moment the player declares the frame finished, so
+            // that is when the far side is brought up to match — see repairFarFrameOnIgnition.
             if (nowAir && !farState.isAir()) {
                 far.setBlockAndUpdate(link.to(), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
                 frameMirrored++;
                 probe("frame break mirrored to", link.to(), far, pos, level);
             }
-            else if (!nowAir && farState.isAir()) {
-                far.setBlockAndUpdate(link.to(), newState);
-                frameMirrored++;
-                probe("frame repair mirrored to", link.to(), far, pos, level);
-            }
         }
         catch (Throwable t) {
             LOGGER.warn("[RS-SEAM-MIRROR] frame mirror failed at {} -> {} in {}",
                 pos, link.to(), link.toDim().identifier(), t);
+        }
+        finally {
+            applying = false;
+        }
+    }
+
+    /**
+     * Bring the FAR frame up to match this one, at IGNITION time.
+     *
+     * <p>The other half of the user's frame rule, and deliberately deferred to here rather than
+     * firing on each block placed: repairing a frame is a construction site, and reaching into
+     * another dimension to place blocks mid-build is surprising. Lighting the portal is the moment
+     * the player declares the frame finished, so that is when the far side is restored.
+     *
+     * <p><b>Ordering is load-bearing.</b> This must run BEFORE the destination frame-match search, or
+     * the far frame is still broken when the search looks at it, no match is found, and generation
+     * fabricates a NEW portal somewhere else — which is exactly the symptom the user reported
+     * ("a new dest portal gets created because the old portal is still in that position").
+     *
+     * <p>Each near frame cell's own block is copied to its partner, so the far frame comes back as
+     * whatever the near one is actually built from rather than an assumed obsidian.
+     */
+    public static void repairFarFrameOnIgnition(
+        ServerLevel level, qouteall.imm_ptl.core.portal.nether_portal.BlockPortalShape shape
+    ) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_FRAME_MIRROR) {
+            return;
+        }
+        if (!SeamFrameLink.hasAny(level)) {
+            return;
+        }
+        MinecraftServer server = level.getServer();
+        if (server == null || applying) {
+            return;
+        }
+        applying = true;
+        int repaired = 0;
+        try {
+            for (BlockPos nearFrame : shape.frameAreaWithoutCorner) {
+                SeamFrameLink.Link link = SeamFrameLink.lookup(level, nearFrame);
+                if (link == null) {
+                    continue;
+                }
+                ServerLevel far = server.getLevel(link.toDim());
+                if (far == null) {
+                    continue;
+                }
+                far.getChunk(link.to().getX() >> 4, link.to().getZ() >> 4);
+                if (!far.getBlockState(link.to()).isAir()) {
+                    continue;   // already intact
+                }
+                BlockState nearState = level.getBlockState(nearFrame);
+                if (nearState.isAir()) {
+                    continue;   // this side is not repaired either — nothing to copy
+                }
+                far.setBlockAndUpdate(link.to(), nearState);
+                frameMirrored++;
+                repaired++;
+            }
+            if (repaired > 0 && AperturePassthroughLever.SEAM_MIRROR_PROBE) {
+                LOGGER.info("[RS-SEAM-MIRROR] ignition in {} restored {} far frame block(s) from the"
+                        + " dormant link — the far frame is now matchable again",
+                    level.dimension().identifier(), repaired);
+            }
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-SEAM-MIRROR] far-frame repair at ignition failed", t);
         }
         finally {
             applying = false;
