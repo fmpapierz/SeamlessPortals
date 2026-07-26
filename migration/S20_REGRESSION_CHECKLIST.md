@@ -106,6 +106,69 @@ that lives on another branch.
 
 ---
 
+## §R ROUND RESULTS — live round 2026-07-26 (increment 4 @ `bd551bd`), IN PROGRESS
+
+Automated, discharged without the user:
+
+| Row | Verdict | Evidence |
+|---|---|---|
+| compile ×3 / 8-leg suite / mixin diagnostics | **PASS** | BUILD SUCCESSFUL; ALL LEGS PASS (1,2,3,4,5,6a,6b,7) exit 0; 0 apply/injection failures; 0 mod errors |
+| new `FABRIC_ONLY_IP_DRIVERS` inert on Fabric | **PASS** | 0 `Skipping IP-driver mixin` lines in the suite run — required, or the set would be skipping live Fabric mixins |
+| **B.12** stale C4 enum in a user config | **PASS** | armed the real trap (`"crossPortalEntityClipMechanism": "ISOLATED_STORAGE_BRACKET"` in `runs/client/config`), launched: no crash, `iPortal Config Applied`, key dropped on re-save |
+| **B.13** title card re-shot | **PASS** | `:fabric:runClientGametest` green, both screenshots land; window shows a live NETHER view from an overworld meadow with no teleport (2nd take — see the B.13 commit for why the 1st was useless) |
+| **B.11** (static half) | **PASS** | built jar's `fabric.mod.json` names `IPModMenuConfigEntry`; zero occurrences of the 4 deleted classes in the jar |
+
+User-observed (their observation outranks any log/screenshot reading of mine):
+
+| Row | Verdict | Note |
+|---|---|---|
+| **8** portal-view lighting before first crossing | **PASS** | the direct check on the two excised `GameRendererMixin` calls (§G.5) — the no-op reasoning holds |
+| **9** chunk holes / remesh | **PASS** | |
+| **11** GPU-buffer leak / render-thread stalls | **PASS** | the direct check on `endFramePooled()` surviving the `GameRendererMixin` edits (§G.2) |
+| **B.11** config screen | **PASS** | config visible |
+| **B.6** dest entities in the view | **PASS**, one carve-out | same-dim FAR portals: hostiles >128 blocks from the player are despawned by VANILLA. Fixed on `iris-on/is5-shadow` (its `PortalTicketDespawnSuppressor` + `MobDespawnSuppressMixin`, §E.6) → merge-forward item, not S20 |
+| **B.1** cross-dim fire spread | **PASS** cross-dim / **FAIL** same-dim far | see §R.1 |
+| **B.3** cross-dim fluid flow | **PASS** cross-dim / **FAIL** same-dim far | see §R.1 |
+
+### §R.1 ★ THE SAME-DIM DISTANT-PORTAL UPDATE GAP — a real defect, and NOT an S20 regression
+
+**Symptom (three faces of one signature).** Through a portal whose destination is a DISTANT
+SAME-DIMENSION region: fire does not spread/age, fluids do not flow, particles do not render. The
+identical scenarios all work when the destination is ANOTHER dimension.
+
+**Not caused by S20 — verified, not assumed.** At `81e6f57^` the block-era mirror that used to carry
+these updates (`LevelChunkSetBlockStateMixin` → `RemoteBlockUpdater`, the 2026-04-26 feature) opened
+with `if (SeamlessPortalsConfig.isEntityPortals()) return;` — **flag-OFF ONLY**. The flag has
+defaulted ON since the S17 cutover (2026-07-18), so it has not run on the shipping default since
+months before S20. S20 deleted code that was already dormant in the shipped configuration; it did
+not remove a working feature. What S20 does is make the gap PERMANENT (the same shape as B.2's
+eviction gap, §E.4 item 1).
+
+**It is §E.4 item 2, resolved by observation.** That row recorded the mixin's own claim — *"Flag ON →
+IP tracking's native block sync replaces it"* — as asserted architecturally and never proven. The
+live round proves it **half false**: the redirect carries cross-dim updates and does not deliver
+same-dim distant ones.
+
+**Triage the round already narrows (do not re-derive):**
+- **Entity sync WORKS in the same-dim far view** (B.6: mobs visible and moving; only vanilla-despawn
+  hostiles missing). Entity sync rides `PacketRedirection` exactly as block sync does.
+- `MixinChunkHolder.redirectGetPlayers` routes block-update recipients through
+  `ImmPtlChunkTracking.getPlayersViewingChunk(dimension, x, z, boundaryOnly)`, which is
+  **dimension-agnostic** — it returns every watcher with `isLoadedToPlayer`, same-dim included.
+- `PacketRedirection.createRedirectedMessage` wraps unconditionally; it does not special-case the
+  player's current dimension.
+
+⇒ "The redirect is broken" is REFUTED. The fault is specific to the block-update path for same-dim
+distant regions. **Next move is a discriminating probe** (standing rule 1: instrument before
+theorizing) — the open question is where the chain breaks: server-side watch record
+(`isLoadedToPlayer` for the far same-dim chunk), the broadcast reaching `ChunkHolder.broadcastChanges`
+at all, or the client-side apply into the main `ClientLevel`. Particles are likely a SEPARATE
+mechanism in the same family (vanilla distance-filtered `ClientboundLevelParticlesPacket`), so probe
+them separately rather than assuming one cause.
+
+**Ownership: a named post-S20 work item, not an S20 blocker.** Recorded here rather than fixed
+inside a deletion stage, per `EXECUTION_PLAN` §S20(a)'s deletion-only scope.
+
 ## §E HOW TO REPORT
 
 For each row: **PASS**, **FAIL + what you saw**, or **NOT TESTED**. "Not tested" is a valid and
