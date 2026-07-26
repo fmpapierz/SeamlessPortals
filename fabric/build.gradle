@@ -128,6 +128,7 @@ loom {
             //   .\gradlew.bat :fabric:runClient -PapertureCensusProbe=true -PapertureSuppressTeardown=true
             if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
             if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
+            if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
         }
         server {
             server()
@@ -265,6 +266,11 @@ loom {
             //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true
             if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
             if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
+            // RS-TEARDOWN-TEST: builds + ignites its OWN isolated portal, drops a rail into a
+            // mid-height opening cell with the suppressor OFF, and reports whether the portal
+            // survived. Settles a recon claim that was read from source but never observed —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true -PapertureTeardownTest=true
+            if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
         }
     }
 }

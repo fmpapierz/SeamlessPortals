@@ -43,5 +43,19 @@ public final class AperturePassthroughLever {
     public static final boolean SUPPRESS_TEARDOWN =
         Boolean.getBoolean("seamlessportals.apertureSuppressTeardown");
 
+    /**
+     * Arms the RS-TEARDOWN-TEST gametest leg ({@code -Dseamlessportals.apertureTeardownTest=true}).
+     *
+     * <p>Settles a claim that was asserted from source reading but NEVER OBSERVED: that putting a
+     * block into a lit portal's opening actually breaks the portal. Every probe run so far reported
+     * {@code intact=true} only, because the suite never places anything in a real aperture — the
+     * failure path has never once fired. The user reports not seeing a portal break, which is
+     * evidence against the reading. The leg builds its OWN ignited nether portal, drops a rail into
+     * a mid-height opening cell with the teardown suppressor OFF, waits past the 233-tick sweep, and
+     * reports whether the portal entity survived.
+     */
+    public static final boolean TEARDOWN_TEST =
+        Boolean.getBoolean("seamlessportals.apertureTeardownTest");
+
     private AperturePassthroughLever() {}
 }
