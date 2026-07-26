@@ -7,6 +7,82 @@
 
 ---
 
+# ★ EXECUTIVE SUMMARY — read this first
+
+## Status
+
+**The block-era portal system is DELETED and the tree is GREEN.** `com.warwa.seamlessportals` went
+from **150 → 75** java files. The `entityPortals` flag itself is the ONE remaining code stage
+(increment 4), then the 12-point close-out round.
+
+| Gate | Result at `81e6f57` |
+|---|---|
+| `:common` + `:fabric` + `:neoforge` `compileJava` | **BUILD SUCCESSFUL** |
+| `:fabric:runCrossingGametest` (the 8-leg gate) | **ALL LEGS PASS** — 1, 2, 3, 4, 5, 6a, 6b, 7 |
+| Mixin apply / InvalidInjection / critical-injection | **0** |
+| Mod-logic errors in the full run | **0** (cleaner than the pre-deletion baseline) |
+| Constraint-5 interlock | **DISCHARGED** (§G.9, user-observed live round) |
+
+## Commit line
+
+| Commit | Increment | What |
+|---|---|---|
+| `20e1670` | 0 | §0 must-do-firsts discharged; B11 reachability audit; 2 booby-trap comments fixed |
+| `ff7401c` | 1 | Loader gate hoisted out of the dying flag in BOTH weave plugins; adversarial audit record |
+| `663ef37` | 2a | First 5 deletions (the self-contained dead group) |
+| `cec517c` | — | Constraint-5 gate resolved as far as code can |
+| `75d5e64` | — | **★ The constraint-5 RECORD** — both (verify) sub-items discharged |
+| `c1a8737` | — | The compiler-verified deletion map (dry run, deliberately reverted) |
+| `81e6f57` | 2+3 | **The core + render deletion, merged green** (70 files) |
+
+`s20/wip-core-deletion` holds the RED intermediate states; it exists so a broken `:fabric` never sat
+on the main line, and merged only once green.
+
+## The one-line lesson
+
+**Every single time a written label and the code disagreed, the code was right.** That produced
+**38 refuted deletions**, three booby-trap comments in code, one in a doc, and a `build.gradle` that
+asserted "Removed at S20" about a source set whose removal reds two modules. The B11 rule
+(*positively verify reachability; a dormant label is not evidence*) earned its keep on every round.
+
+## The findings that mattered most
+
+1. **Four stencil substrate mixins sat on a bulk delete list and are the only source of a stencil
+   buffer on 26.2** (§G.2). Deleting them destroys the flag-ON renderer **while leaving a green build
+   and a green suite** — no gate would have caught it.
+2. **`SodiumCompat` must survive** though §1 pairs it with `SodiumBridge` (§E.1 row 1). Five live
+   survivor call sites. `EXCLUSIVITY_LEDGER:154` already said KEEP; the slash-pairing concealed it.
+3. **`ExperimentalCompatGate`'s gate VALUE now drives the IS4 default-ON shaderpack portal views**
+   (§E.1 row 2) — it must be collapsed to always-true, never removed with its install block.
+4. **The NeoForge landmine** (§E.2): the weave gate's SKIP is the *flag-OFF* arm, so collapsing it
+   would weave the entire IP mixin set on NeoForge — whose worst symptom is a world that sends **zero
+   chunks with no exception and no log**. A green NeoForge boot proves nothing. Pre-armed at
+   increment 1 in **both** weave plugins (the second, `IPCompatMixinPlugin`, appears in no prior doc).
+5. **NeoForge has no portals after S20** (§G.1) because the flag was never true there — the block era
+   *was* its implementation. **USER-DECIDED: accept + ledger loudly**, with a mandatory loud init
+   notice (implemented) since the state is otherwise silent.
+6. **`fabricStubs`/`ipStubs` cannot die at S20** (§E.1 rows 4-6, §E.3) — compile-load-bearing for
+   `:common` AND `:neoforge`; removal is a build re-architecture that `EXECUTION_PLAN` §S20(a)'s own
+   "deletion ONLY here" scopes out.
+7. **The C4 "Mechanism B" cleanup is mostly mislabelled Mechanism-A code** (§G.3), plus a
+   gson config-migration hazard proven from bytecode.
+8. **The 8-leg gate itself depends on the dying flag** (§G.11) — and via a *log argument*, not an
+   `if`, so a mechanical collapse pass misses it. The gate would break itself.
+
+## Where the remaining risk lives
+
+The compile gate and the 8-leg suite together cover most of S20 — the suite launches a real client,
+which is what empirically cleared the 29-entry mixin deregistration's boot-crash class. What they do
+**NOT** cover, and what the 12-point close-out must therefore test, is listed in §G.7/§G.11 and
+summarised here: anything reachable only through a GUI, a command, a save/relog cycle, a
+sodium/iris install, or NeoForge; the re-keyed cross-dim fire spread (never ran on the shipping
+default before S20); cross-dim fluid flow (§E.4); alternate-dimension worldgen (§E.1 row 7); and the
+hand-light fade (§E.1 row 8).
+
+---
+
+---
+
 ## §0 MUST-DO-FIRSTS — both RESOLVED before any deletion
 
 ### §0.1 The block-era FBO precedent — DECISION: **ACCEPT GIT-HISTORY MINING** (write-up already exists)
