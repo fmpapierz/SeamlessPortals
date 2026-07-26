@@ -265,6 +265,21 @@ loom {
             // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
             if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
+            // IS5-MB per-dest previous-frame camera state (2026-07-26) — the same-dim portal-window
+            // motion-blur smear fix, DEFAULT-ON. Pass this to force it OFF and reproduce the
+            // saturated stationary smear (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
+            if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
+            // A/B: force camera-position-only, dropping the previous-MATRIX half — expected loss of
+            // rotational blur, and wrong on a rotated portal. Proves the matrices are load-bearing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraNoMatrices=true
+            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
+            // names every pass actually seen, so this is never guesswork —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraPass=composite4
+            if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
+            if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
             // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
             // (attribution both directions) —
@@ -423,6 +438,21 @@ loom {
             // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
             if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
+            // IS5-MB per-dest previous-frame camera state (2026-07-26) — the same-dim portal-window
+            // motion-blur smear fix, DEFAULT-ON. Pass this to force it OFF and reproduce the
+            // saturated stationary smear (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
+            if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
+            // A/B: force camera-position-only, dropping the previous-MATRIX half — expected loss of
+            // rotational blur, and wrong on a rotated portal. Proves the matrices are load-bearing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraNoMatrices=true
+            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
+            // names every pass actually seen, so this is never guesswork —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraPass=composite4
+            if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
+            if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
             // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
             if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }
