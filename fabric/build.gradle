@@ -254,6 +254,11 @@ loom {
             // pass this to force it OFF and reproduce the camera-tracked source-over-terrain ghost —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisablePrevUniformHeal=true
             if (project.findProperty('disablePrevUniformHeal') == 'true') { vmArg('-Dseamlessportals.disablePrevUniformHeal=true') }
+            // IS5-ACT heal RETARGET (2026-07-26) — DEFAULT-ON fix: the heal ticks the PRE-LOOP main
+            // pipeline instead of iris's manager slot, which after a cross-dim nested render holds
+            // the DEST pipeline. Pass this to restore the old, poisoning resolution for A/B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHealRetarget=true
+            if (project.findProperty('disableHealRetarget') == 'true') { vmArg('-Dseamlessportals.disableHealRetarget=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
             // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
             // (attribution both directions) —
@@ -401,6 +406,11 @@ loom {
             if (project.findProperty('disableShadowScopeIsolation') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeIsolation=true') }
             if (project.findProperty('disableIrisDestTaaClear') == 'true') { vmArg('-Dseamlessportals.disableIrisDestTaaClear=true') }
             if (project.findProperty('disablePrevUniformHeal') == 'true') { vmArg('-Dseamlessportals.disablePrevUniformHeal=true') }
+            // IS5-ACT heal RETARGET (2026-07-26) — DEFAULT-ON fix: the heal ticks the PRE-LOOP main
+            // pipeline instead of iris's manager slot, which after a cross-dim nested render holds
+            // the DEST pipeline. Pass this to restore the old, poisoning resolution for A/B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHealRetarget=true
+            if (project.findProperty('disableHealRetarget') == 'true') { vmArg('-Dseamlessportals.disableHealRetarget=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
             // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
             if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }

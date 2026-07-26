@@ -245,6 +245,14 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // Log-only, default OFF (-Dseamlessportals.actProbe); never throws.
         com.warwa.seamlessportals.render.ActSeedProbe.beginFrame();
 
+        // IS5-ACT heal retarget (LIVE-MEASURED): capture the pipeline the MAIN frame is using BEFORE
+        // the portal loop. A cross-dim nested render calls preparePipeline() for the DEST dimension
+        // and NOTHING restores iris's manager slot afterwards, so by the anchor-finally the slot holds
+        // the DEST pipeline — ticking that one fed the DEST CameraPositionTracker the MAIN camera and
+        // poisoned previousCameraPosition by ~132 blocks, killing the dest ACT flood-fill. Same-dim is
+        // unaffected (the capture IS the object the old code resolved). Null when iris is absent.
+        Object preLoopPipelineForHeal = IrisInterface.invoker.capturePipelineForHeal();
+
         isInsideOwnRenderPortals = true;
         try {
             // IS5-FF (§2h lava-light phantom): swap the MAIN pipeline's ShadowRenderer
@@ -291,7 +299,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // byte-identical). Once per FRAME, not per portal. Throw-safe (facade never propagates).
             if (anyFullPipelineDestRendered) {
                 anyFullPipelineDestRendered = false;
-                IrisInterface.invoker.healPreviousFrameUniforms();
+                IrisInterface.invoker.healPreviousFrameUniforms(preLoopPipelineForHeal);
             }
 
             // IS5-ACT gate probe — FRAME bracket close + the 1Hz single-call emit. Last statement
