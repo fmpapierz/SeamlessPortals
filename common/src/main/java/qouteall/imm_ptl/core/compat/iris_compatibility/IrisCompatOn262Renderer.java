@@ -348,6 +348,24 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // already correct — arm() excludes it mod-side, with zero iris symbols.
         IrisDestPrevCamera.arm(portal);
 
+        // IS5-RC: the run self-identification block, at the first portal dest render — the moment that
+        // proves portals (and, shaders-ON, the iris compat path) are actually live. Always on,
+        // once-only. Three live rounds of this arc were voided because a lever silently never reached
+        // the JVM and the log had no way to say so.
+        com.warwa.seamlessportals.render.RunConfigReport.noteArmedFrame();
+
+        // IS5-CEN: label census rows with the portal window they fall in. Deliberately the SAME WIDE
+        // bracket (pre-push .. post-pop) that IS5-MB uses, and NOT the pushed portal layer: the
+        // smearing composite4 was MEASURED firing outside the pushed layer (|cam-prev|=204.175 on the
+        // main-chain control row while the in-layer pass read 0.000), so a layer-only label would file
+        // it as MAIN. Both labels are printed on every row; whichever bracket the guilty bind falls
+        // in, the census says which. Byte-inert without -Dseamlessportals.compositeCensus.
+        // The same-dim test is computed INSIDE armWindow, not here: an expression at this call site
+        // would be evaluated on every portal dest render regardless of the census lever (so the
+        // byte-inert claim above would be false), and it sits between two arm() calls and the
+        // try/finally below — a throw here would strand both arms with no disarm.
+        com.warwa.seamlessportals.render.IrisCompositeCensus.armWindow(portal);
+
         PortalRendering.pushPortalLayer(portal);
 
         // Fable-fold BLOCKER fix (port-note §2.5; the S14.29/RendererUsingStencil:332-346
@@ -372,6 +390,10 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             IrisBloomApertureMask.disarmAndReport();
             // IS5-MB: same bracket, same discipline — the arm must never outlive its portal window.
             IrisDestPrevCamera.disarmAndReport();
+            // IS5-CEN: same bracket, same discipline — an arm that outlived its window would label
+            // every subsequent MAIN-chain bind as DEST, i.e. it would fabricate the exact finding the
+            // census exists to test for.
+            com.warwa.seamlessportals.render.IrisCompositeCensus.disarmWindow();
         }
 
         // IS5-G ghost-wave discriminator run 2: the dedicated stamp-clamp lever skips ONLY this
@@ -527,6 +549,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // IS5-MB: drop the per-portal previous-camera records + the location cache (idempotent).
         try {
             IrisDestPrevCamera.teardown();
+        } catch (Throwable t) {
+            // disposal is best-effort
+        }
+        // IS5-CEN: drop the program-id roster. A pack reload mints NEW program ids, so a retained
+        // roster could alias a stale id onto an unrelated pass and mislabel every census row.
+        try {
+            com.warwa.seamlessportals.render.IrisCompositeCensus.teardown();
         } catch (Throwable t) {
             // disposal is best-effort
         }

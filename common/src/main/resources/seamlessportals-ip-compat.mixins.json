@@ -26,7 +26,9 @@
     "iris.MixinIrisCompositeRenderer_DestPrevWrite",
     "iris.MixinIrisCompositeRenderer_DestPrevRestore",
     "iris.MixinIrisComputeProgram_ActDispatch",
-    "iris.MixinIrisShadowCompositeRenderer_ActRenderAll"
+    "iris.MixinIrisShadowCompositeRenderer_ActRenderAll",
+    "iris.MixinIrisCompositeRenderer_Census",
+    "iris.MixinIrisProgram_Census"
   ],
   "injectors": {
     "defaultRequire": 1

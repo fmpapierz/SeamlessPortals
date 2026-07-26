@@ -49,13 +49,44 @@ is uniformly blurred, **constantly, whether moving or standing still**. The main
 | fact | value | how |
 |---|---|---|
 | blur scales with `MOTION_BLURRING_STRENGTH` | 0.15 visibly reduces it | user A/B |
-| every PASS-level velocity input at the sampled `composite4` | `\|cam-prev\| = 0.000`, matrix `maxAbsDiff = 0.00000` | `IrisDestPrevCamera` 1 Hz series, 31 samples |
+| camera pair at the sampled `composite4` | `\|cam-prev\| = 0.000` | `IrisDestPrevCamera` 1 Hz series, 31 samples |
+| ~~matrix `maxAbsDiff = 0.00000`~~ | **RETRACTED 2026-07-26 — NEVER MEASURED** | see §2a-bis |
 | the original poisoned pair (pre-fix) | `cam=DEST, prev=MAIN, \|d\|=204–264` | `MbGateProbe` + the control row |
 | our correction fires | `writes=1243 neutralize=0 miss=0 tracked=1 seamProven=true` | probe counters |
 | after correction | that pass's `\|cam-prev\|` → `0.000` | 28 samples |
 | aperture mask OFF | no change | user A/B |
 | pack Bloom OFF | no change | user A/B |
 | stamp depth write OFF | no change — **BUT UNCONFIRMED** (§2c) | user A/B |
+
+### 2a-bis. THE RETRACTION — the matrix half was never measured (2026-07-26)
+
+The row above claimed `matrix maxAbsDiff = 0.00000`. **It does not say that.** The actual log line, from
+this worktree, reads:
+
+```
+fabric/runs/client-sodium/logs/latest.log:867  (13:37:49, 2026-07-26)
+  maxAbsDiff(gbufferModelView, gbufferPreviousModelView)=n/a(loc -1/4)
+  maxAbsDiff(gbufferProjection,  gbufferPreviousProjection)=n/a(loc -1/5)
+```
+
+`n/a(loc -1/...)` is `matDiff`'s **failure** return, not a zero. `gbufferModelView` and
+`gbufferProjection` are **INACTIVE** in `composite4`: the pack declares them
+(`lib/uniforms.glsl:66,125`) but that program never references them, so the GLSL linker strips them and
+`glGetUniformLocation` returns `-1`. On 31 samples the matrix half returned `n/a` every time and was
+read as `0.00000`.
+
+**What this costs the argument in §2b.** The telescoping proof needs the previous matrices to equal the
+current ones. `composite4` holds **no copy of the current matrices at all** — it has only
+`gbufferProjectionInverse`, `gbufferModelViewInverse`, `gbufferPreviousModelView`,
+`gbufferPreviousProjection`. So nothing in that program constrains `gbufferPreviousModelView` to be the
+inverse of `gbufferModelViewInverse`, and **the premise that velocity telescopes to exactly zero has
+never been tested.** The correct condition to test — computable from the four uniforms that ARE active —
+is `MVprev · MVinv == I` and `Pprev · Pinv == I`. IS5-CEN measures exactly that, and additionally
+replays the whole chain numerically.
+
+This also killed a run before it happened: the first draft of IS5-CEN required all eight locations to be
+valid and would have aborted every `composite4` measurement, printing a clean "no blur" acquittal from an
+instrument that measured nothing. Caught by the adversarial final-diff panel, not by review of the spec.
 
 ### 2b. THE CENTRAL CONTRADICTION (this is the whole problem)
 
@@ -68,8 +99,26 @@ With `cameraOffset == 0` **and** previous matrices bit-identical to current, thi
 `previousPosition == currentPosition` **exactly, for any depth z** ⇒ velocity ≡ 0 ⇒ the pass is a
 mathematical passthrough. Yet the blur is real and scales with strength.
 
-⇒ **There must be a `composite4` invocation that has never been sampled.** Every probe so far samples at
-most one bind per second per role; none has ever counted binds per frame.
+**⚠ READ §2a-bis FIRST — the second premise ("previous matrices bit-identical to current") was NEVER
+MEASURED.** The full chain is FOUR matrices, not two:
+
+```
+NDC --gbufferProjectionInverse--> view --gbufferModelViewInverse--> world
+    --+cameraOffset--> --gbufferPreviousModelView--> --gbufferPreviousProjection--> NDC'
+```
+
+It cancels iff `MVprev·MVinv == I` and `Pprev·Pinv == I`. If the *inverse* uniforms belong to a
+different camera than the *previous* uniforms, the chain does **not** cancel, and the residual is a
+per-PIXEL, depth-dependent velocity — constant, needing no player motion, scaling with strength — while
+`|cam-prev|` still reads exactly 0.000. **That fits every observed fact and is invisible to every probe
+built before IS5-CEN.**
+
+So there are now two live explanations, not one:
+1. an unsampled `composite4` invocation (the original reading), **or**
+2. a sampled invocation whose *inverse/previous* matrix pair never cancelled.
+
+IS5-CEN discriminates them in one run: it counts binds per frame (settling 1) and reports
+`idMV`/`idP` plus a CPU replay of the shader's own arithmetic (settling 2).
 
 ### 2c. THE THREE INSTRUMENTATION FAILURES THAT COST THIS SESSION
 
@@ -99,6 +148,39 @@ plan moving `reads=ALT` → `reads=MAIN`).
 **Before any of that: add a `RUN CONFIG:` self-ID line naming EVERY active lever**, and re-run the
 stamp-depth A/B, because its result is currently unusable.
 
+### 2d-bis. ALL THREE BUILT AND SUITE-GREEN (2026-07-26) — the run is now the only thing missing
+
+| deliverable | where | lever |
+|---|---|---|
+| (a) run self-identification | `RunConfigReport` | always on, once per session |
+| (a2) stamp-pipeline self-report | `IrisCompatPaste.stampPortalArea` | always on, once per session |
+| (c) per-frame bind census | `IrisCompositeCensus` + 2 iris mixins | `-PcompositeCensus=true` |
+
+**Why the stamp-depth leg was void for a SECOND reason.** `IrisCompatPaste:325` selects
+`LEVER && PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null`. If that sibling pipeline failed to register, the
+lever **silently falls back to the depth-WRITING pipeline** — so even a lever that reached the JVM could
+no-op with no trace. There is now a once-only line naming the pipeline actually bound.
+
+**THE TWO RUNS.** Same build; pack Motion Blur ON; stand still at a **same-dim** window ~30 s, then a
+**cross-dim** window ~15 s as the control.
+
+```
+.\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true
+.\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PdisableStampDepthWrite=true
+```
+
+**How to read it** — the headline column is `maxSpanPx`, the blur span in pixels this bind would produce
+at `MOTION_BLURRING_STRENGTH = 1`, computed by replaying `composite4.glsl:99-139` on the CPU over a
+3×3×3 screen/depth grid (off-centre included: a rotational mismatch is exactly zero at the screen
+centre).
+
+| observation | verdict |
+|---|---|
+| one bind has large `maxSpanPx` | **that is the smearing pass** — `win=`/`layer=` say which phase, `idMV`/`idP`/`\|cam-prev\|` say which input |
+| `idMV` or `idP` nonzero | the inverse/previous pair does not cancel — §2a-bis explanation 2 |
+| every bind ~0 in every frame, no COVERAGE AUDIT warn | motion blur is **exonerated**; go to the `DRAWBUFFERS:3`→`:30` parity flip, evidence already in the `drawBuf=`/`readsAlt=` columns |
+| a `COVERAGE AUDIT !!` warn appears | a velocity-capable program is being bound from a chain the census does not harvest — widen with `-PcompositeCensusPasses` |
+
 ### 2e. HYPOTHESES ALREADY REFUTED (do not re-open without new evidence)
 
 R-1 dispatch never runs · R-2 degenerate work groups · R-3 reprojection (as a *camera-position* defect —
@@ -110,13 +192,15 @@ re-create a retired bug).
 
 ---
 
-## §3 THE OUTSTANDING DECISION
+## §3 THE OUTSTANDING DECISION — **RULED 2026-07-26: DEFAULT OFF**
 
-**`IrisDestPrevCamera` is DEFAULT-ON and fixes nothing observable.** It corrects a real, measured
-264-block `previousCameraPosition` defect (`writes=1243/run`), but the smear is unchanged. Shipping a
-default-on render-path change with no visible benefit is poor hygiene. **Recommend defaulting it OFF**
-(`irisDestPrevCamera = false` in `IPGlobal`), keeping the code and lever so the state is available if
-the parity work needs it. **The user has not yet ruled.**
+**`IrisDestPrevCamera` now defaults OFF** (`irisDestPrevCamera = false`), code + both mixins + all levers
+kept. A new **enable** lever was required because the old one could only disable:
+`-Dseamlessportals.enableIrisDestPrevCamera` / `-PenableIrisDestPrevCamera`; the disable lever still wins
+if both are set. Inertness traced on the off-path: `arm()` returns before setting `armed`,
+`correctIfDestChain()` returns on its first line, `onPassDrawn()` returns on the null pending — two
+branches per composite bind and no GL calls. Flipping it also removes a confound from the IS5-CEN run,
+since it wrote into the very uniform storage the census reads.
 
 Also standing: `-PdisableStampDepthWrite` is a **diagnostic-only** lever — while set it re-opens the
 `#13` two-portal depth artifact. Never ship it on.
@@ -131,7 +215,8 @@ Also standing: `-PdisableStampDepthWrite` is a **diagnostic-only** lever — whi
 | `-PactDispatchProbe` | ACT compute dispatch witness (2 log-only iris mixins) |
 | `-PmbGateProbe` | composite4 uniform gate at the pass boundary |
 | `-PdestPrevCameraProbe` | IS5-MB 1 Hz counters + DRAW-TIME STATE + MAIN-CHAIN CONTROL |
-| `-PdisableIrisDestPrevCamera` | A/B off the per-dest fix (**currently DEFAULT-ON**) |
+| `-PcompositeCensus` / `-PcompositeCensusPasses` | **IS5-CEN** per-frame bind census (§2d-bis) |
+| `-PenableIrisDestPrevCamera` / `-PdisableIrisDestPrevCamera` | A/B the per-dest fix (**now DEFAULT-OFF** — §3) |
 | `-PirisDestPrevCameraNoMatrices` | A/B the matrix half |
 | `-PirisDestPrevCameraPass` | guarded-pass name override (default `composite4`) |
 | `-PdisableStampDepthWrite` | **diagnostic only**; re-opens the `#13` artifact |

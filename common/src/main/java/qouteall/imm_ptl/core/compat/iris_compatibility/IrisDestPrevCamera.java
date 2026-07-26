@@ -22,8 +22,20 @@ import java.util.Set;
 import java.util.WeakHashMap;
 
 /**
- * IS5-MB — PER-DEST PREVIOUS-FRAME CAMERA STATE. The same-dim portal-window motion-blur smear fix.
- * DEFAULT-ON; A/B off via {@code -Dseamlessportals.disableIrisDestPrevCamera}.
+ * IS5-MB — PER-DEST PREVIOUS-FRAME CAMERA STATE.
+ *
+ * <p><b>DEFAULT OFF as of 2026-07-26 (user ruling).</b> Arm it for an A/B leg with
+ * {@code -Dseamlessportals.enableIrisDestPrevCamera}; {@code -Dseamlessportals.disableIrisDestPrevCamera}
+ * still wins if both are set. It was built as a fix and it does correct a real, measured 204-264 block
+ * {@code previousCameraPosition} error ({@code writes=1243/run}), but the portal-window smear it was
+ * built for is <b>unchanged</b> with it on or off, so it does not ship enabled. The code and both
+ * mixins are kept because the corrected state is one flag away if the parity work needs it.
+ *
+ * <p><b>Do not run this together with the IS5-CEN census without knowing what you are doing.</b> The
+ * census reads uniforms at {@code Program.use()} TAIL; this class writes them at the caller's
+ * {@code INVOKE Program.use()} + {@code shift = AFTER}, i.e. strictly later. With both armed the census
+ * reports iris's values and the draw uses this class's — which is fine as long as it is understood, and
+ * badly misleading if it is not.
  *
  * <h2>The defect (MEASURED, not theorised)</h2>
  * With the pack's Motion Blur on, a SAME-DIMENSION portal window smears at full saturation <b>even with
