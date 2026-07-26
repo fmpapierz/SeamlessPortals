@@ -167,6 +167,13 @@ public class CrossingSmoke implements FabricClientGameTest {
             assertGoneFrom(context, "leg 2 (cross-dim item)", Level.OVERWORLD, itemB);
             SeamlessPortalsConstants.LOGGER.info(LOG + "leg 2 PASS — cross-dim item recreated in nether at {}", destB);
 
+            // ---- RS-DELIVERY-TEST: the headless reproduction of the same-dim mirror bug ----
+            // Placed HERE and nowhere else: portals A (same-dim) and B (cross-dim) both exist and
+            // have been ticking long enough to bind, and the player is still standing at the staging
+            // area in the overworld. Leg 4 moves the player to the nether, which would change what
+            // the client holds and make the two arms incomparable.
+            rsDeliveryTest(context, px, py, pz, planeZ);
+
             // ---- Leg 3: F3 hurt-state carry (cow, cross-dim) ----
             AtomicReference<UUID> cowId = new AtomicReference<>();
             runOnServer(context, server -> {
@@ -1399,6 +1406,337 @@ public class CrossingSmoke implements FabricClientGameTest {
     }
 
     /**
+     * RS-DELIVERY-TEST — does a mirrored write reach the CLIENT, and does it depend on whether the
+     * destination is the same dimension?
+     *
+     * <p><b>Why this leg exists.</b> The open bug is: same-dimension man-made portals do not show
+     * mirrored writes live, while obsidian and man-made CROSS-dimension portals do. Server state is
+     * always correct. Three fixes were written from three theories of the cause; all three were
+     * wrong. Every round of evidence so far came from the user playing, which yields one observation
+     * per build — the conditions under which a theory gets shipped without being falsified.
+     *
+     * <p>The harness already stages the exact controlled pair: portal <b>A</b> is a same-dimension
+     * man-made portal and portal <b>B</b> a cross-dimension one, spawned identically, four blocks
+     * apart, in one run. The two arms differ in precisely the property the user's observations turn
+     * on and in nothing else.
+     *
+     * <p><b>It reports; it does not assert a delivery verdict.</b> Deliberate. What the correct
+     * answer is here is the thing under investigation, and a leg that asserted one would be encoding
+     * the theory it is supposed to test. It DOES hard-fail two things that are not in question: a
+     * mirror that never wrote server-side, and finding no bound seam cell at all — a run that
+     * measured nothing must not read as a run that measured success.
+     *
+     * <p><b>Coverage is stated, not assumed.</b> The client is read at the destination cell BEFORE
+     * the write as well as after. If the client does not hold that chunk, the "after" read returns
+     * {@code void_air}, which is indistinguishable from a genuinely empty cell — the false reading
+     * that already made one RS-TEARDOWN-TEST run report a nonsense state for a far cell. When the
+     * before-read shows the chunk is absent the arm reports {@code INCONCLUSIVE} and says so.
+     */
+    private static void rsDeliveryTest(
+        ClientGameTestContext context, int px, int py, int pz, double planeZ
+    ) {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_TEST) {
+            return;
+        }
+        // ---- The WAND-SHAPED same-dimension portal, arm 3 ----
+        //
+        // The harness's portal A is a ONE-WAY, single-entity portal. What the user calls a "man-made
+        // portal" is what the portal wand builds, and PortalWandInteraction.java:271-283 builds FOUR
+        // entities: the portal, its flipped twin, its REVERSE, and the reverse's flipped twin. That
+        // is a materially different object, and the difference is exactly the kind that could decide
+        // this bug — a reverse portal in the SAME level means the mirror runs in both directions
+        // between two cells of one dimension, which is the one configuration a single static
+        // `applying` guard cannot distinguish from an ordinary write.
+        //
+        // Built well away from every other leg's coordinates, and removed in the finally.
+        //
+        // The player is MOVED to stand in front of it, because the client only holds the far chunks
+        // if it is actually rendering the portal — which is the entire question. Their position is
+        // captured here and restored in the finally: legs 3 and 4 run after this one and assume the
+        // player is still at the staging area, and an evidence leg that relocates the player would
+        // break them exactly the way a leftover staged block already broke the ender-pearl leg once.
+        Vec3 playerHome = context.computeOnClient(mc -> mc.player.position());
+        final int wx = 2600, wy = 90, wz = 2600;      // source side
+        final int wdx = 2660;                          // dest side, same dimension, 60 blocks east
+        runCommands(context, List.of(
+            "forceload add " + (wx - 16) + " " + (wz - 16) + " " + (wdx + 16) + " " + (wz + 16),
+            "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
+                + (wdx + 3) + " " + (wy - 1) + " " + (wz + 3) + " minecraft:stone",
+            "fill " + wx + " " + wy + " " + (wz - 3) + " "
+                + (wdx) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air"
+        ));
+        context.waitTicks(20);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) throw new AssertionError(LOG + "[RS-DELIVERY-TEST] no overworld");
+            qouteall.imm_ptl.core.portal.Portal p =
+                qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(ow, EntitySpawnReason.COMMAND);
+            if (p == null) throw new AssertionError(LOG + "[RS-DELIVERY-TEST] portal create returned null");
+            p.setOriginPos(new Vec3(wx + 0.5, wy + 1.5, wz + 0.5));
+            p.setDestinationDimension(Level.OVERWORLD);
+            p.setDestination(new Vec3(wdx + 0.5, wy + 1.5, wz + 0.5));
+            p.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 3, 3);
+            // The wand's own four-entity cluster, same calls in the same order
+            // (PortalWandInteraction.java:271-283).
+            qouteall.imm_ptl.core.portal.Portal flipped =
+                qouteall.imm_ptl.core.portal.PortalManipulation.createFlippedPortal(
+                    p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+            qouteall.imm_ptl.core.portal.Portal reverse =
+                qouteall.imm_ptl.core.portal.PortalManipulation.createReversePortal(
+                    p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+            qouteall.imm_ptl.core.portal.Portal parallel =
+                qouteall.imm_ptl.core.portal.PortalManipulation.createFlippedPortal(
+                    reverse, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+            McHelper.spawnServerEntity(p);
+            McHelper.spawnServerEntity(flipped);
+            McHelper.spawnServerEntity(reverse);
+            McHelper.spawnServerEntity(parallel);
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-DELIVERY-TEST] wand-shaped SAME-DIM cluster spawned: 4 entities,"
+                    + " origin ({},{},{}) -> dest ({},{},{})", wx, wy, wz, wdx, wy, wz);
+        });
+        context.waitTicks(40);   // let the four entities tick and bind before the registry is read
+
+        // [0] = source cell, [1] = destination cell
+        AtomicReference<BlockPos[]> sameDim = new AtomicReference<>(null);
+        AtomicReference<BlockPos[]> crossDim = new AtomicReference<>(null);
+        AtomicReference<BlockPos[]> wandDim = new AtomicReference<>(null);
+        AtomicReference<String> scanned = new AtomicReference<>("");
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) return;
+            for (int y = wy; y <= wy + 3 && wandDim.get() == null; y++) {
+                for (int x = wx - 2; x <= wx + 2 && wandDim.get() == null; x++) {
+                    for (int z = wz - 1; z <= wz + 1 && wandDim.get() == null; z++) {
+                        BlockPos cell = new BlockPos(x, y, z);
+                        var sc = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+                        if (sc == null) continue;
+                        for (var b : sc.bindings()) {
+                            if (b.isMirrorable() && Level.OVERWORLD.equals(b.destDim())
+                                && b.destPos().getX() > wx + 10) {
+                                wandDim.set(new BlockPos[]{cell, b.destPos()});
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) throw new AssertionError(LOG + "[RS-DELIVERY-TEST] no overworld");
+            StringBuilder sb = new StringBuilder();
+            int zc = (int) Math.floor(planeZ);
+            int examined = 0;
+            for (int z = zc - 1; z <= zc + 1; z++) {
+                for (int x = px - 2; x <= px + 7; x++) {
+                    for (int y = py; y <= py + 3; y++) {
+                        BlockPos cell = new BlockPos(x, y, z);
+                        var sc = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+                        if (sc == null) continue;
+                        examined++;
+                        for (var b : sc.bindings()) {
+                            if (!b.isMirrorable()) continue;
+                            if (Level.OVERWORLD.equals(b.destDim()) && sameDim.get() == null) {
+                                sameDim.set(new BlockPos[]{cell, b.destPos()});
+                            }
+                            else if (Level.NETHER.equals(b.destDim()) && crossDim.get() == null) {
+                                crossDim.set(new BlockPos[]{cell, b.destPos()});
+                            }
+                        }
+                    }
+                }
+            }
+            sb.append("bound cells examined=").append(examined);
+            scanned.set(sb.toString());
+        });
+
+        // A run that found nothing must fail loudly. "Zero checks ran" caught two false instruments
+        // already in this engagement; silence here would look exactly like success.
+        if (sameDim.get() == null && crossDim.get() == null && wandDim.get() == null) {
+            throw new AssertionError(LOG + "[RS-DELIVERY-TEST] NO BOUND SEAM CELL FOUND around ("
+                + px + "," + py + "," + planeZ + ") or the wand cluster at (" + wx + "," + wy + ","
+                + wz + ") — the registry indexed no test portal, so this leg measured nothing. "
+                + scanned.get());
+        }
+        // The wand-shaped arm is the one that models what the user actually builds. Its absence is
+        // not a detail to be discovered by reading a missing log line later.
+        if (wandDim.get() == null) {
+            throw new AssertionError(LOG + "[RS-DELIVERY-TEST] the WAND-SHAPED cluster at ("
+                + wx + "," + wy + "," + wz + ") bound no mirrorable cell pointing east of "
+                + (wx + 10) + " — arm 3, the only arm that models a real man-made portal, would"
+                + " silently not run.");
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "[RS-DELIVERY-TEST] {} | sameDim arm={} | crossDim arm={} | wandSameDim arm={}",
+            scanned.get(),
+            sameDim.get() == null ? "ABSENT" : sameDim.get()[0] + "->" + sameDim.get()[1],
+            crossDim.get() == null ? "ABSENT" : crossDim.get()[0] + "->" + crossDim.get()[1],
+            wandDim.get()[0] + "->" + wandDim.get()[1]);
+
+        try {
+            if (sameDim.get() != null) {
+                deliveryArm(context, "SAME-DIM one-way (portal A)", Level.OVERWORLD,
+                    sameDim.get()[0], Level.OVERWORLD, sameDim.get()[1]);
+            }
+            if (crossDim.get() != null) {
+                deliveryArm(context, "CROSS-DIM one-way (portal B)", Level.OVERWORLD,
+                    crossDim.get()[0], Level.NETHER, crossDim.get()[1]);
+            }
+            // Arm 3 LAST, and only now is the player moved. Arms 1 and 2 must be measured while the
+            // player is still at the staging area — the client holds portal A's and B's destination
+            // chunks only because it is rendering those portals, and measuring them from 2600 blocks
+            // away would report "not delivered" about a client that was never watching.
+            seamStand(context, wx + 0.5, wy, wz + 4.5);
+            context.waitTicks(80);
+            deliveryArm(context, "SAME-DIM WAND-SHAPED (4 entities, bi-way + bi-faced)",
+                Level.OVERWORLD, wandDim.get()[0], Level.OVERWORLD, wandDim.get()[1]);
+        } finally {
+            // Cleanup in a finally, per the hazard that an evidence leg must never perturb a
+            // functional one: legs 3 and 4 both use the nether around (0,129,0), which is exactly
+            // where portal B's mirror writes.
+            List<String> clean = new java.util.ArrayList<>();
+            for (AtomicReference<BlockPos[]> arm : List.of(sameDim, crossDim, wandDim)) {
+                BlockPos[] a = arm.get();
+                if (a == null) continue;
+                clean.add("setblock " + a[0].getX() + " " + a[0].getY() + " " + a[0].getZ() + " minecraft:air");
+            }
+            for (AtomicReference<BlockPos[]> arm : List.of(sameDim, wandDim)) {
+                BlockPos[] a = arm.get();
+                if (a == null) continue;
+                clean.add("setblock " + a[1].getX() + " " + a[1].getY() + " " + a[1].getZ() + " minecraft:air");
+            }
+            if (crossDim.get() != null) {
+                BlockPos d = crossDim.get()[1];
+                clean.add(inDim("minecraft:the_nether",
+                    "setblock " + d.getX() + " " + d.getY() + " " + d.getZ() + " minecraft:air"));
+            }
+            runCommands(context, clean);
+            // The wand cluster's four entities and its terrain pad go too: a live portal left at
+            // (2600,90,2600) would keep force-loading chunks and could be found by a later leg's
+            // frame-match or view-culling logic. Same rule as RS-TEARDOWN-TEST's frame deletion.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow == null) return;
+                int removed = 0;
+                for (qouteall.imm_ptl.core.portal.Portal p : ow.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(
+                        wx - 40, wy - 20, wz - 40, wdx + 40, wy + 30, wz + 40),
+                    p -> true)) {
+                    p.discard();
+                    removed++;
+                }
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "[RS-DELIVERY-TEST] wand cluster cleanup: {} portal entities discarded",
+                    removed);
+            });
+            runCommands(context, List.of(
+                "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
+                    + (wdx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
+                "forceload remove " + (wx - 16) + " " + (wz - 16) + " "
+                    + (wdx + 16) + " " + (wz + 16)));
+            seamStand(context, playerHome.x, playerHome.y, playerHome.z);
+            context.waitTicks(20);
+        }
+    }
+
+    /**
+     * One arm of RS-DELIVERY-TEST: write into {@code sourceCell}, then ask the server AND the client
+     * what sits at {@code destCell}.
+     *
+     * <p>Glass, not rail: a rail needs support and vanilla would pop it, which has already produced
+     * one confident-but-wrong gate verdict ("the player's block was deleted") in this engagement.
+     * Glass survives anywhere, has no block entity, occupies one cell, and is visibly distinct from
+     * both air and the portal placeholder.
+     */
+    private static void deliveryArm(
+        ClientGameTestContext context, String armName,
+        net.minecraft.resources.ResourceKey<Level> sourceDim, BlockPos sourceCell,
+        net.minecraft.resources.ResourceKey<Level> destDim, BlockPos destCell
+    ) {
+        String clientBefore = clientBlockAt(context, destDim, destCell);
+        String serverBefore = serverBlockAt(context, destDim, destCell);
+
+        runCommands(context, List.of("setblock " + sourceCell.getX() + " " + sourceCell.getY()
+            + " " + sourceCell.getZ() + " minecraft:glass"));
+        context.waitTicks(30);
+
+        String serverAfter = serverBlockAt(context, destDim, destCell);
+        String clientAfter = clientBlockAt(context, destDim, destCell);
+        String sourceAfter = serverBlockAt(context, sourceDim, sourceCell);
+
+        // Not in question, and fatal: if the mirror did not write, there is nothing to deliver and
+        // every reading below is about a different problem.
+        if (!serverAfter.contains("glass")) {
+            throw new AssertionError(LOG + "[RS-DELIVERY-TEST] " + armName + " MIRROR DID NOT WRITE:"
+                + " source " + sourceCell + " = " + sourceAfter + " but destination " + destCell
+                + " in " + destDim.identifier() + " = " + serverAfter + " (was " + serverBefore
+                + "). This leg cannot say anything about DELIVERY until the write itself lands.");
+        }
+
+        String verdict;
+        if (clientBefore.startsWith("(")) {
+            verdict = "INCONCLUSIVE — the client did not hold that chunk before the write ("
+                + clientBefore + "), so the after-read cannot distinguish a stale block from an"
+                + " absent one";
+        }
+        else if (clientAfter.contains("glass")) {
+            verdict = "DELIVERED — the client sees the mirrored block";
+        }
+        else {
+            verdict = "★ NOT DELIVERED — server has the block, the client holds the chunk, and the"
+                + " client still shows " + clientAfter;
+        }
+
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "[RS-DELIVERY-TEST] {} => {}\n"
+                + "    source  {} in {} = {}\n"
+                + "    dest    {} in {}\n"
+                + "    server  before={} after={}\n"
+                + "    client  before={} after={}\n"
+                + "    mirror counters: {}\n"
+                + "    delivery probe : {}",
+            armName, verdict,
+            sourceCell, sourceDim.identifier(), sourceAfter,
+            destCell, destDim.identifier(),
+            serverBefore, serverAfter,
+            clientBefore, clientAfter,
+            com.warwa.seamlessportals.passthrough.SeamMirror.counters(),
+            com.warwa.seamlessportals.passthrough.SeamDeliveryProbe.counters());
+    }
+
+    /**
+     * Read a block state on the CLIENT, in a named dimension, WITHOUT pretending an absent chunk is
+     * an empty one.
+     *
+     * <p>Returns a parenthesised reason rather than a block name when the read cannot be trusted, so
+     * a caller cannot accidentally compare {@code void_air} against a real block. This is the exact
+     * failure the {@link #serverBlockAt} javadoc records: a client read outside render distance
+     * reports {@code void_air}, which reads as "the cell is empty" and is really "I have no idea".
+     */
+    private static String clientBlockAt(
+        ClientGameTestContext context, net.minecraft.resources.ResourceKey<Level> dim, BlockPos pos
+    ) {
+        return context.computeOnClient(mc -> {
+            try {
+                net.minecraft.client.multiplayer.ClientLevel cl =
+                    mc.level != null && dim.equals(mc.level.dimension())
+                        ? mc.level
+                        : qouteall.imm_ptl.core.ClientWorldLoader.getWorld(dim);
+                if (cl == null) return "(no client level for " + dim.identifier() + ")";
+                if (!cl.hasChunkAt(pos)) return "(client holds no chunk at " + pos + ")";
+                return cl.getBlockState(pos).getBlock().toString();
+            }
+            catch (Throwable t) {
+                return "(client read failed: " + t + ")";
+            }
+        });
+    }
+
+    /**
      * RS-A STEPS 5+6 GATE — proves the mirror actually mirrors.
      *
      * <p>Three assertions, in causal order, on a cell that already holds a rail:
@@ -1828,10 +2166,22 @@ public class CrossingSmoke implements FabricClientGameTest {
      * the first RS-TEARDOWN-TEST run report {@code void_air} for a cell 600 blocks from the player.
      */
     private static String serverBlockAt(ClientGameTestContext context, BlockPos pos) {
+        return serverBlockAt(context, Level.OVERWORLD, pos);
+    }
+
+    /** As above, in a named dimension — RS-DELIVERY-TEST's cross-dim arm reads the nether. */
+    private static String serverBlockAt(
+        ClientGameTestContext context, net.minecraft.resources.ResourceKey<Level> dim, BlockPos pos
+    ) {
         AtomicReference<String> out = new AtomicReference<>("(unread)");
         runOnServer(context, server -> {
-            ServerLevel ow = server.getLevel(Level.OVERWORLD);
-            out.set(ow == null ? "(no overworld)" : ow.getBlockState(pos).getBlock().toString());
+            ServerLevel level = server.getLevel(dim);
+            if (level == null) {
+                out.set("(no level " + dim.identifier() + ")");
+                return;
+            }
+            level.getChunk(pos.getX() >> 4, pos.getZ() >> 4);
+            out.set(level.getBlockState(pos).getBlock().toString());
         });
         return out.get();
     }

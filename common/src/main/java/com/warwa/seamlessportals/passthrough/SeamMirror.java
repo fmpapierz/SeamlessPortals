@@ -299,7 +299,10 @@ public final class SeamMirror {
             // was broken on", with no duplication.
             BlockState existing = dest.getBlockState(destPos);
             if (!existing.isAir()) {
-                dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+                traceBegin(dest, destPos, air, sourceLevel, sourcePos, "aperture-clear");
+                boolean cleared = dest.setBlockAndUpdate(destPos, air);
+                traceEnd(dest, destPos, cleared, air, sourceLevel, sourcePos, "aperture-clear");
                 forceClientSync(sourceLevel, dest, destPos);
                 clearedMirrors++;
                 probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
@@ -325,9 +328,11 @@ public final class SeamMirror {
         // UPDATE_NEIGHBORS is deliberately KEPT: the destination's neighbours must still be notified,
         // so a track on the far side reacts. Only the mirrored block's own self-resolution is
         // suppressed.
-        dest.setBlock(destPos, rotated,
+        traceBegin(dest, destPos, rotated, sourceLevel, sourcePos, "aperture-mirror");
+        boolean written = dest.setBlock(destPos, rotated,
             net.minecraft.world.level.block.Block.UPDATE_ALL
                 | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+        traceEnd(dest, destPos, written, rotated, sourceLevel, sourcePos, "aperture-mirror");
         forceClientSync(sourceLevel, dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
@@ -380,6 +385,61 @@ public final class SeamMirror {
             LOGGER.warn("[RS-SEAM-MIRROR] client sync push failed for {} in {} — the block IS written,"
                 + " it may just not render until the region is remeshed",
                 pos, dest.dimension().identifier(), t);
+        }
+    }
+
+    /**
+     * Open a {@link SeamDeliveryProbe} trace for a write we just issued.
+     *
+     * <p>Everything the probe needs to tell a FAILED WRITE from a BLOCKED NOTIFY is captured here, at
+     * the write, rather than reconstructed later: whether {@code setBlock} returned true, the state
+     * actually read back afterwards, and the destination chunk's {@code FullChunkStatus} — the three
+     * values {@code Level.markAndNotifyBlock} (REF {@code Level.java:238-248}) tests before it will
+     * call {@code sendBlockUpdated}. Also records whether source and destination are the SAME level,
+     * which is the exact discriminator the user's three live observations turn on.
+     */
+    private static void traceBegin(
+        ServerLevel dest, BlockPos destPos, BlockState wanted,
+        Level sourceLevel, BlockPos sourcePos, String origin
+    ) {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_PROBE) {
+            return;
+        }
+        try {
+            SeamDeliveryProbe.beginWrite(dest, destPos, String.valueOf(wanted),
+                fullStatusOf(dest, destPos), sourceLevel == dest,
+                origin + " from " + sourcePos + " in " + sourceLevel.dimension().identifier());
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-DELIVERY] trace open failed at {} (the write is unaffected)", destPos, t);
+        }
+    }
+
+    private static void traceEnd(
+        ServerLevel dest, BlockPos destPos, boolean setBlockReturned, BlockState wanted,
+        Level sourceLevel, BlockPos sourcePos, String origin
+    ) {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_PROBE) {
+            return;
+        }
+        try {
+            SeamDeliveryProbe.endWrite(
+                dest, destPos, setBlockReturned,
+                String.valueOf(wanted), String.valueOf(dest.getBlockState(destPos)),
+                fullStatusOf(dest, destPos), sourceLevel == dest,
+                origin + " from " + sourcePos + " in " + sourceLevel.dimension().identifier());
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-DELIVERY] trace close failed at {} (the write is unaffected)", destPos, t);
+        }
+    }
+
+    private static String fullStatusOf(ServerLevel dest, BlockPos pos) {
+        try {
+            return String.valueOf(dest.getChunk(pos.getX() >> 4, pos.getZ() >> 4).getFullStatus());
+        }
+        catch (Throwable t) {
+            return "(unavailable: " + t + ")";
         }
     }
 
@@ -461,9 +521,12 @@ public final class SeamMirror {
                     if (!free) {
                         continue;   // the far side's own block — never clobber it
                     }
-                    dest.setBlock(destPos, srcState.rotate(binding.stateRotation()),
+                    BlockState carried = srcState.rotate(binding.stateRotation());
+                    traceBegin(dest, destPos, carried, serverLevel, src, "bind-reconcile");
+                    boolean written = dest.setBlock(destPos, carried,
                         net.minecraft.world.level.block.Block.UPDATE_ALL
                             | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+                    traceEnd(dest, destPos, written, carried, serverLevel, src, "bind-reconcile");
                     forceClientSync(serverLevel, dest, destPos);
                     ((SeamIndexHolder) dest).seamlessportals$mirrorCreatedCells().add(destPos.asLong());
                     reconciled++;
