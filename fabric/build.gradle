@@ -120,6 +120,14 @@ loom {
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // RS PASSTHROUGH (a) diagnose-first probes (migration/REDSTONE_RECON.md §5). Both
+            // DEFAULT-OFF. The census dumps the live aperture cells + real /setblock targets; the
+            // teardown suppressor relaxes ONLY the opening-contents half of the integrity predicate
+            // (the obsidian frame half still tears down), without which a /setblock into the opening
+            // kills the portal AND its twin within 233 ticks and the seam can never be inspected —
+            //   .\gradlew.bat :fabric:runClient -PapertureCensusProbe=true -PapertureSuppressTeardown=true
+            if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
+            if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
         }
         server {
             server()
@@ -250,6 +258,13 @@ loom {
             // (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
             if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
+            // RS PASSTHROUGH (a) diagnose-first probes (mirror of the client run above; both
+            // DEFAULT-OFF, so the 8-leg gate is byte-identical without the properties). Armed only
+            // for attribution rounds — the suite creates portals, so an armed census run tabulates
+            // every generated aperture —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true
+            if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
+            if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
         }
     }
 }
