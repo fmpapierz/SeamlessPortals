@@ -193,10 +193,52 @@ rebuild is incidental and says nothing about the write. Traces #4/#6 versus #8 �
 recompiles the whole section, so if it was scheduled the cell's new state IS in the resulting mesh,
 whatever triggered it.
 
-**Where the fix for A goes.** The same-dim portal view never runs a dirty-consuming extract pass with
-its own camera; the cross-dim case escapes only because the destination dimension owns a separate
-`LevelExtractor` whose `visibleSections()` comes from the portal-view camera. Start at
-`LevelExtractor.java:136-169` and at how this port drives secondary-dimension extraction.
+### ✅ DEFECT A IS FIXED — `com.warwa.seamlessportals.render.SameDimRemesh`
+
+**Landed, gated in both directions, four gate configurations green.** Lever
+`-Dseamlessportals.disableSameDimRemesh=true` (`-PdisableSameDimRemesh`), default ON.
+
+*The mechanism.* A section still flagged dirty at the END OF A TICK is precisely one no extract
+consumed — extract runs at least once per tick and clears everything it takes. So "still dirty now"
+IS the operational test for defect A, needing no bookkeeping. A per-tick sweep, bounded to sections
+behind same-dimension portals, schedules those directly: a `SectionUpdateRenderState` appended to the
+main `LevelRenderState`, drained by the main frame's own `compileSections` — exactly how vanilla
+hands sections to itself. **No IP-core render file is edited**, nothing repositions a camera, touches
+a `ViewArea` or re-flips a delta window (the three things `SecondaryWorldRenderCore` skipped the
+same-dim extract to avoid, and which are all still avoided).
+
+*Proof, not hope.* `RS-DELIVERY-TEST` arm 3 asserts **the specific section holding the written cell**
+was scheduled, and inverts under the lever:
+```
+fix ON : SAME-DIM REMESH PASS — the section holding BlockPos{2659,40,2600} was scheduled
+fix OFF: SAME-DIM REMESH INVERSION PASS — no rebuild scheduled ... the defect reproduced on demand
+```
+
+⚠ **Two things this cost, recorded because both are recurring traps.**
+1. The FIRST implementation queued every `setDirty` near a portal and drained it. Chunk loading
+   dirties whole regions, so the queue saturated (`droppedOverCap=13784`) and **dropped the very
+   write under test** — while the gate PASSED, because it only asserted "some rebuilds happened".
+   The count assertion was replaced with `didScheduleSectionAt(the written cell)`, which is what
+   caught it. *A count is not evidence about a particular cell.*
+2. The FIRST fixture put the destination 600 blocks away and asserted there. That is defect B, not A,
+   and it is unfixable by this route — see below. The fixture is now NEAR (60 blocks, in window and
+   in the ViewArea grid) and **OCCLUDED** (a sealed chamber 50 blocks underground), so the main
+   camera's occlusion BFS cannot reach it. Both properties are load-bearing.
+
+### ❌ DEFECT B IS NOT FIXED, and not by this route
+
+At 600 blocks the sweep and the refusal queue both find nothing to schedule:
+`ViewArea.getRenderSection` returns **null**, because a same-dimension pass never calls
+`repositionCamera` on the ViewArea (`SecondaryWorldRenderCore:663`, `if (!sharedState && viewArea != null)`)
+and so no columns are ever created out there. Measured: `scheduled == sweptDirty` with
+`refusedSeen=2842` — every refused entry dequeued and scheduled nothing.
+
+There is no mesh to refresh because there is no render section, which also means **far same-dim
+portal windows likely draw no vanilla terrain at all** — consistent with the render core's own note
+that a same-dim plain-row window shows none. Fixing B therefore means giving same-dim passes ViewArea
+columns at the destination, i.e. the reposition the core deliberately avoids. **That is a separate
+design problem, not a follow-up patch.** Its symptom is distinct from A's and only appears past
+render distance.
 
 ---
 

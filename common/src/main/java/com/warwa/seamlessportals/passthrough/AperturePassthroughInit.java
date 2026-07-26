@@ -63,6 +63,22 @@ public final class AperturePassthroughInit {
         Portal.CLIENT_PORTAL_TICK_SIGNAL.register(AperturePassthroughInit::onPortalTick);
         Portal.PORTAL_DISPOSE_SIGNAL.register(AperturePassthroughInit::onPortalDispose);
 
+        // SAME-DIMENSION PORTAL TERRAIN FRESHNESS (com.warwa.seamlessportals.render.SameDimRemesh).
+        //
+        // A SEPARATE registration on the client tick signal, deliberately NOT folded into
+        // onPortalTick above: that handler returns early on an unchanged geometry fingerprint, which
+        // for a stable portal is every tick after the first. SameDimRemesh needs the portal EVERY
+        // tick — its destination-region list is rebuilt per tick so a removed portal stops
+        // qualifying immediately.
+        Portal.CLIENT_PORTAL_TICK_SIGNAL.register(
+            com.warwa.seamlessportals.render.SameDimRemesh::onClientPortalTick);
+        // POST_CLIENT_TICK fires on the main thread after the world tick, never mid-extract or
+        // mid-render — the same ordering guarantee SecondaryWorldRenderCore's own per-tick pump
+        // relies on, and the reason the drain can append to the main LevelRenderState safely.
+        qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
+            () -> com.warwa.seamlessportals.render.SameDimRemesh.onEndClientTick(
+                net.minecraft.client.Minecraft.getInstance()));
+
         // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
         // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was
         // not possible at the time.
