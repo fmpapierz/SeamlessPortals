@@ -147,11 +147,60 @@ Both fired in the live client and neither is ours:
 Recorded as inherited-IP observations for a later parity pass, not as S20 blockers. Neither
 `SEAMLESS STUCK` nor `SEAMLESS FREEZE` appeared (the canonical-11 stall signature): **0 occurrences**.
 
-### §R.1 ★ THE SAME-DIM DISTANT-PORTAL UPDATE GAP — a real defect, and NOT an S20 regression
+### §R.0 THE CANONICAL 12 — run twice, once per portal kind (2026-07-26)
 
-**Symptom (three faces of one signature).** Through a portal whose destination is a DISTANT
-SAME-DIMENSION region: fire does not spread/age, fluids do not flow, particles do not render. The
-identical scenarios all work when the destination is ANOTHER dimension.
+The user ran §A against ORDINARY portals and again against LONG-DISTANCE SAME-DIM portals. Running
+it twice was not asked for and is the most valuable thing this round produced: it converts §R.1 from
+"fluids and fire don't update" into a six-symptom family with a single discriminator.
+
+| # | Ordinary portal | Long-distance SAME-DIM portal |
+|---|---|---|
+| 1 crossing smoothness / exit side | **PASS** | **PASS**, but *"sometimes flashes"* → §R.1(f) |
+| 2 FOV / sprint / hand | **PASS** | **PASS** |
+| 3 items + shoved mob land reachable, visible immediately | **PASS** | hostile despawn (known, is5); *"sometimes friendly mobs disappear but don't despawn"* → §R.1(d) |
+| 4 arrows continuous, full speed | **mostly PASS** — see §R.3 (seam hit when the portal is boxed in by blocks) | **PASS** |
+| 5 shot animals keep panicking | **PASS** | **PASS** "when not invisible" → §R.1(d) |
+| 6 no phantom elytra boost | **PASS** | **PASS** |
+| 7 straddling entity renders whole | **PASS** | **FAIL** — *"cut off"* → §R.1(e) |
+| 10 large/tall + negative coords | **PASS** | **PASS** |
+| 12 relog / kick / rejoin | **PASS** | not reported |
+| 9 chunk holes / remesh | **PASS** (ordinary) | not reported |
+
+★ The pattern: **ordinary portals are clean across the board.** Every failure in this round sits in
+the same-dim distant column. That is a far sharper discriminator than the original two rows gave.
+
+### §R.3 Arrow stops at the seam when the portal is boxed in by blocks (ordinary portals)
+
+User: *"sometimes if the area around portal is cramped with blocks, the arrow will hit the portal
+seam like a solid and fall down at the seam, but good everywhere else."* Reproduces on ORDINARY
+portals, so it is NOT part of the §R.1 family. Note the live session also logged
+`[ImmPtl] cross portal collision result too large` at `MixinEntity:137`, which CLAMPS an oversized
+crossing result to `Vec3.ZERO` — a candidate mechanism for "hits it like a solid and drops".
+Ownership under investigation; `MixinEntity` is untouched by all of S20 (§R.2), which points at
+inherited IP behaviour rather than a deletion artefact.
+
+### §R.1 ★ THE SAME-DIM DISTANT-PORTAL DEFECT FAMILY — six symptoms, one discriminator
+
+**Symptom (SIX faces of one signature).** Through a portal whose destination is a DISTANT
+SAME-DIMENSION region:
+
+| | Symptom | First seen |
+|---|---|---|
+| (a) | fire does not spread / age | B.1 |
+| (b) | fluids do not flow | B.3 |
+| (c) | particles do not render | B.1 round |
+| (d) | entities intermittently INVISIBLE — *"friendly mobs disappear but don't despawn"* | §R.0 rows 3, 5 |
+| (e) | an entity straddling the aperture renders **cut off** | §R.0 row 7 |
+| (f) | the crossing *"sometimes flashes"* | §R.0 row 1 |
+
+The identical scenarios all work when the destination is ANOTHER dimension, and ordinary portals
+pass every row. **(d) and (e) matter more than (a)-(c) for ownership**, because they bear on a file
+S20 itself reshaped: increment 3 stripped the `PortalContextSwitch.isRenderingPortal ||` disjunct
+from `LevelRendererEntityVisibilityMixin`, leaving only `SecondaryWorldRenderCore.isDestExtracting`.
+If that bracket does not enclose the SAME-DIM pipeline, S20 removed the only true condition there —
+which would make (d)/(e) a genuine S20 REGRESSION rather than a pre-existing gap. **Under
+investigation; do not classify (d)/(e) from the (a)-(c) reasoning below** — the note that S20 is not
+to blame was established for the block-update family only.
 
 **Not caused by S20 — verified, not assumed.** At `81e6f57^` the block-era mirror that used to carry
 these updates (`LevelChunkSetBlockStateMixin` → `RemoteBlockUpdater`, the 2026-04-26 feature) opened
