@@ -129,6 +129,19 @@ loom {
             if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
             if (project.findProperty('apertureSuppressTeardown') == 'true') { vmArg('-Dseamlessportals.apertureSuppressTeardown=true') }
             if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
+            // RS (a) FIX LEVERS — all DEFAULT-ON; each disables. -PdisableAperturePassthrough is the
+            // master A/B switch for the entire feature (REDSTONE_A_SPEC.md §5).
+            if (project.findProperty('disableAperturePassthrough') == 'true') { vmArg('-Dseamlessportals.disableAperturePassthrough=true') }
+            if (project.findProperty('disableSeamMirror') == 'true') { vmArg('-Dseamlessportals.disableSeamMirror=true') }
+            if (project.findProperty('disableIgnitionWhitelist') == 'true') { vmArg('-Dseamlessportals.disableIgnitionWhitelist=true') }
+            if (project.findProperty('disableSurvivorSkip') == 'true') { vmArg('-Dseamlessportals.disableSurvivorSkip=true') }
+            // RS (a) PROBE LEVERS — all DEFAULT-OFF. seamAimProbe is the step-3 gate: it settles the
+            // one thing the design panel's two verifiers disagreed about and neither observed.
+            if (project.findProperty('seamMapProbe') == 'true') { vmArg('-Dseamlessportals.seamMapProbe=true') }
+            if (project.findProperty('seamReconcileProbe') == 'true') { vmArg('-Dseamlessportals.seamReconcileProbe=true') }
+            if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }
+            if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
+            if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
         }
         server {
             server()
@@ -271,6 +284,17 @@ loom {
             // survived. Settles a recon claim that was read from source but never observed —
             //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true -PapertureTeardownTest=true
             if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
+            // RS (a) FIX + PROBE LEVERS (mirror of the client run above — the suite must be able to
+            // run the 8 legs under -PdisableAperturePassthrough=true for both-directions attribution).
+            if (project.findProperty('disableAperturePassthrough') == 'true') { vmArg('-Dseamlessportals.disableAperturePassthrough=true') }
+            if (project.findProperty('disableSeamMirror') == 'true') { vmArg('-Dseamlessportals.disableSeamMirror=true') }
+            if (project.findProperty('disableIgnitionWhitelist') == 'true') { vmArg('-Dseamlessportals.disableIgnitionWhitelist=true') }
+            if (project.findProperty('disableSurvivorSkip') == 'true') { vmArg('-Dseamlessportals.disableSurvivorSkip=true') }
+            if (project.findProperty('seamMapProbe') == 'true') { vmArg('-Dseamlessportals.seamMapProbe=true') }
+            if (project.findProperty('seamReconcileProbe') == 'true') { vmArg('-Dseamlessportals.seamReconcileProbe=true') }
+            if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }
+            if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
+            if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
         }
     }
 }
