@@ -460,6 +460,89 @@ removal is a deliberate feature removal — atomic with the enum constant, the f
   incomplete — `initializeIfNeeded()` (`:165-166`) is a **third** writer. Conclusion stands; the
   reason on record must be the correct one.
 
+### G.0 INCREMENT LOG (what has actually landed)
+
+| Increment | Commit | Contents | Gates |
+|---|---|---|---|
+| 0 | `20e1670` | §0 discharged, §A-§E audit record, 2 booby-trap comments fixed | compile ×3, suite ALL LEGS PASS |
+| 1 | `ff7401c` | Loader gate hoisted in BOTH weave plugins; §G audit record; NeoForge decision | compile ×3, suite ALL LEGS PASS, 0 mixin-apply failures |
+| 2a | (this) | **FIRST DELETIONS** — the self-contained dead group, 5 files | compile ×3, suite |
+
+**Increment 2a — deleted (verified self-contained before deletion, not assumed):**
+`mixin/client/GameRendererObliqueClipMixin`, `mixin/client/LevelRendererDiagMixin`,
+`mixin/client/MinecraftRenderTargetMixin`, `mixin/client/stencil/GlTextureViewMixin`,
+`render/PortalSlicing`.
+
+Pre-deletion checks that made this safe: all four mixins are registered in **0** of the 8 mixin
+configs (so there is no json line to strip and no `required:true` boot-crash risk);
+`render/PortalSlicing`'s only referencer was `GameRendererObliqueClipMixin`, deleted with it; and
+the three apparent survivor references — `qouteall/…/MixinGameRenderer.java:223`,
+`SeamlessClientTeleport.java:852`, `GameRendererPortalPrepareMixin.java:50` — were each confirmed
+**comment/javadoc only**, not code. This is the G.4 item-5 trap handled correctly: `GameRendererObliqueClipMixin`
+never weaves, but its `:4` import of `PortalSlicing` meant deleting `PortalSlicing` alone would have
+been a javac error.
+
+### G.7 THE EXECUTABLE REMAINDER (per-file, audit-derived — a continuation can run this)
+
+Ordering rule from the audit: **every class deletion removes its `.mixins.json` line in the SAME
+commit** (`seamlessportals-common.mixins.json` is `"required": true` with
+`injectors.defaultRequire: 1` — a dangling entry is a BOOT CRASH, not dead config), and every
+survivor edit lands in the same commit as the class it references.
+
+**2b — dormant legacy, must go as one group (they reference each other):**
+`client/PortalDimensionManager`, `chunk/RemoteChunkManager`, `chunk/RemoteChunkData`,
+`chunk/RemoteClientLevel`, `entity/SeamlessTeleportState`, `mixin/EntityFlagsAccessor`,
+`mixin/ServerPlayerMixin` (+ deregister the last two). Blocked by: `RemoteChunkManager` is
+referenced from 10 files, all block-era or flag-OFF branches — so this lands with 2c.
+
+**2c — core deletions + their ATOMIC survivor edits:**
+- Delete `portal/`, `chunk/`, `entity/` (minus the §D hold), `client/{PortalWorldManager,
+  SeamlessClientChunkMap, PortalDimensionManager}`, `network/ModPayloads`, `api/`,
+  `HandleRespawnMixin`, the flag-OFF-only common mixins.
+- ATOMIC: strip `render/FrontClipping` (warwa) — `:3` import, `:54` `activeLink`, `:61`
+  `getActiveLink`, `:64` `setActiveLink`, `:116-155` `setupOuterClipping` (+ `:114`
+  `setupOuterLogCount`), `:163-199` `setupInnerClipping`, `:211-215`
+  `setupInnerClippingForEntities`; also caller-less after the sweep: `:97 suspend()`,
+  `:237 setupKillSwitchClipping()`, `:40 INNER_CLIP_ENABLED`.
+- ATOMIC: delete `mixin/ChunkMapResendSuppressMixin` + its json line (G.4-1).
+- ATOMIC: delete `mixin/client/ClientLevelMixin` + `mixin/client/MinecraftMixin` + both json lines
+  (G.4-4/-9 — every body dies).
+- ATOMIC: NeoForge sites `SeamlessPortalsModNeoForge:70-74` (the ungated
+  `BlockUpdateMirrorBuffer.flush` + the `chunkTracker` field) and
+  `NeoForgePlatformHelper:240-246` + its registrar entry (G.4-2).
+- ATOMIC: `ModPayloads` registration — `SeamlessPortalsModFabric:46/:48`,
+  `FabricPlatformHelper:98-410`, `NeoForgePlatformHelper:167-169` + the block-era registrar section,
+  and `PlatformHelper:23` (drop from the interface or leave a no-op default — **the interface itself
+  MUST SURVIVE**, 4 ported `qouteall` importers) (G.4-3).
+- Comment-only: correct `ImmPtlClientChunkMap:71-74/:417-419/:432-435` (§G.6) and the third
+  booby-trap `MixinMappedRegistry:7` (§G.5).
+
+**3 — render deletions + ATOMIC survivor reshapes** (the four stencil substrate mixins and
+`StencilState` are SURVIVORS — §G.2):
+- `GameRendererMixin`: delete `:3` import + `:18-26` HEAD inject; drop `:47`, `:48`, `:49`; collapse
+  `:57` to unconditional KEEPING `:58`; KEEP `:64/:66/:69/:70`.
+- `LevelRendererEntityVisibilityMixin`: strip only `PortalContextSwitch.isRenderingPortal ||` at
+  `:59` + the import.
+- `LevelRendererBlockOutlineMixin`: strip the `StencilPortalRenderer` ternary arm + `:4` import,
+  KEEP the flag-ON S18.5 arm.
+- `QuadParticleGroupMixin`: strip only the flag-OFF tail (`:104`, `:109`).
+- `CrossingTracer`: strip `:88-106` and `:109`; re-home `recordFrame()`/`notePortalRendered()`.
+- `RenderSpikeMonitor`: re-home `onFrame()` and `recordFbo(ms)` (F16 — retain, don't delete).
+- Co-delete + DEREGISTER: `DebugRendererPortalSkipMixin` (json:60), `GameRendererLightmapMixin`
+  (:18), `ParticleEnginePortalSkipMixin` (:59), `SectionOcclusionGraphPartialUpdateSkipMixin` (:30),
+  `LevelExtractorFlashBridgeMixin` (:32), `LevelRendererCullTerrainMixin` (:31),
+  `LivingEntityRendererDiagMixin` (:34), `ClientPacketListenerAddEntityAdoptMixin` (:38),
+  `SectionCompilerMixin` (:8), `HandleRespawnMixin` (:26).
+- ORDERING: strip `SeamlessClientTeleport:601-604` BEFORE deleting `render/DimensionRenderHelper`
+  (warwa); delete `LevelExtractorFlashBridgeMixin` in the SAME increment as
+  `render/VisibleSectionDiscovery` (warwa).
+
+**4 — flag + machinery.** Per §F, plus: collapse each of the 46 sites **individually** (never as a
+rule — `SeamlessPortalsModNeoForge:69` is direction-INVERTED, §G.1); keep `SeamlessMixinConfigPlugin`
+and `IPCompatMixinPlugin`'s new loader term; C4 removal atomic per §G.3 including the gson hazard
+(`IPConfig:179-182` dies WITH `:41-52`); add the **loud NeoForge init-time notice** the user's
+decision requires; re-shape TITLE-CARD per §C.
+
 ### G.6 A stale label that S20 itself creates
 
 `ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's
