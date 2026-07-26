@@ -93,6 +93,44 @@ lifecycle-persistence) → fold. Top claims re-verified by hand afterwards. Path
      spec's blocker is that reverting an end-of-tick piston move corrupts the piston state machine, so
      this needs a synchronous mirror (which (c) may build anyway).
 
+10. **LIVE ROUND #1 FINDINGS (user, 2026-07-25, step-3 build with `seamAimProbe` armed).**
+    Confirmed working: a rail can now be right-clicked into a portal opening; it renders half-clipped
+    at the plane; a solid block in the opening no longer destroys the portal. Confirmed absent (and
+    expected — steps 5/6): no mirroring, so the user must place a second rail from the other side and
+    the two half-clipped rails merely *look* like one.
+
+    - **THE TARGETING BET IS SETTLED — verifier A was right, and the fix is REQUIRED.** Probe evidence
+      shows **two distinct** failure modes, and they need different treatment:
+      * *Real block in a seam cell:* `localDist=2.331 portalDist=2.419 margin=0.112 → THROUGH-PORTAL`.
+        The local hit was genuinely CLOSER than the portal and still lost, purely to the hardcoded
+        `+ 0.2` in `BlockManipulationClient:81`. **This is the defect** — the player's block goes to
+        the wrong dimension. Verifier B was right about the mechanism (a ~0.2 band), verifier A right
+        about the consequence.
+      * *Empty aperture cell:* `localDist=NONE(23333) → THROUGH-PORTAL`, the placeholder sentinel at
+        `:104-109`. **This is CORRECT and must be preserved** — it is what lets a player reach through
+        an open portal to interact with the far world (a real shipped feature).
+      ⇒ The fix must be narrow: local wins **only when the seam cell holds a real (non-placeholder)
+      block**. A blanket "seam cells win local" would break cross-portal interaction.
+
+11. **FRAME MIRRORING (user decision, 2026-07-25) — NEW SCOPE beyond the (a) spec.**
+    Observed: breaking source obsidian tears down both portal entities but leaves the dest frame
+    standing; re-lighting then FABRICATES A NEW dest portal (`Generated Portal On Ground`) instead of
+    re-linking. Contributing cause: the surviving rail in the dest opening fails the `isAir` frame-match
+    predicate, which step 4's widening addresses — but the user's requirement is stronger than that.
+
+    **Required behaviour:** the frame is a mirrored object. Breaking obsidian on one side breaks the
+    corresponding obsidian on the other. Repairing and lighting one side **also repairs and lights the
+    other**, and the two link back to each other.
+
+    ⚠ **THE HARD PART, and it is not the mirroring.** Seam bindings are DERIVED from live portals
+    (`SeamRegistry` is rebuilt from `Portal` entities each tick). Once both portals tear down there is
+    no portal left to define the mapping, so nothing knows that source frame ↔ dest frame and a repair
+    has nothing to mirror through. This requires a **DORMANT LINK** that survives teardown — a
+    persisted frame-pair record — which the spec has no concept of and which nothing in (a) currently
+    provides. It also extends the mirror beyond the aperture to the frame ring, which every binding
+    rule in §0.7 was written assuming would never happen. **Needs its own design pass before
+    implementation.**
+
 **Geometric fact underpinning 5 and 6** (hand-verified, §2): the portal plane sits at the **middle**
 of the aperture blocks, not on a boundary. For an obsidian pair, both planes are mid-block, so the
 source and destination aperture cells map onto the **same** span across the seam — they are coincident,
