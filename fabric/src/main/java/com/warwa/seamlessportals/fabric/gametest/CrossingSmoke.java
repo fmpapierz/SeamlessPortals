@@ -1138,6 +1138,21 @@ public class CrossingSmoke implements FabricClientGameTest {
                     + " openingCell={} => {}",
                 before, after, cellFinal,
                 verdictText(after < before, AperturePassthroughLever.DISABLED));
+
+            // ---- STEPS 5+6 GATE: THE MIRROR ITSELF ----
+            // Runs on this same isolated portal, whose opening now holds the rail placed above.
+            // Asserts the three things the mirror must do, in order, and FAILS on each — a mirror
+            // that silently does nothing is the whole feature silently not existing.
+            if (!AperturePassthroughLever.DISABLED && after == before) {
+                rsMirrorGate(context, cell);
+            }
+        } catch (AssertionError gateFailure) {
+            // A GATE assertion must never be swallowed by this leg's fail-soft handler. Observed:
+            // the steps 5+6 mirror gate threw, was caught as "evidence only", and the suite still
+            // printed ALL LEGS PASS — a gate that cannot fail the suite is not a gate. Evidence
+            // failures stay soft (the catch below); gate failures propagate. Cleanup still runs,
+            // because it is in the finally.
+            throw gateFailure;
         } catch (Throwable t) {
             SeamlessPortalsConstants.LOGGER.warn(
                 LOG + "[RS-TEARDOWN-TEST] FAILED (non-fatal, evidence only)", t);
@@ -1170,6 +1185,90 @@ public class CrossingSmoke implements FabricClientGameTest {
                         + " false-fail a later ignition leg", t);
             }
         }
+    }
+
+    /**
+     * RS-A STEPS 5+6 GATE — proves the mirror actually mirrors.
+     *
+     * <p>Three assertions, in causal order, on a cell that already holds a rail:
+     * <ol>
+     *   <li><b>Mirror wrote.</b> The destination's coincident cell must now hold the same block. If
+     *       it does not, the seam does not exist and every later sub-feature is built on nothing.</li>
+     *   <li><b>Provenance cleared.</b> Breaking the source half must clear the mirrored counterpart —
+     *       and only because provenance recorded that WE created it. Without provenance the same code
+     *       would delete a block the player built from the far side, which inverts the user's rule.</li>
+     *   <li><b>Refuse-on-conflict.</b> With the destination cell occupied by something we did not
+     *       create, {@code SeamMirror.mayPlace} must refuse — no source-only half.</li>
+     * </ol>
+     * Asserts rather than reports: unlike the evidence legs, this is a gate.
+     */
+    private static void rsMirrorGate(ClientGameTestContext context, BlockPos sourceCell) {
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+
+            var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, sourceCell);
+            if (cell == null) {
+                failure.set("no seam binding at " + sourceCell + " — the registry did not index the"
+                    + " cell the rail was placed in, so the mirror had nothing to act on");
+                return;
+            }
+            var binding = cell.bindings().stream()
+                .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                .findFirst().orElse(null);
+            if (binding == null) {
+                failure.set("seam at " + sourceCell + " has no MIRRORABLE binding");
+                return;
+            }
+            ServerLevel dest = server.getLevel(binding.destDim());
+            if (dest == null) { failure.set("destination level missing"); return; }
+            BlockPos destPos = binding.destPos();
+            dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+
+            // (1) the mirror wrote
+            net.minecraft.world.level.block.state.BlockState mirrored = dest.getBlockState(destPos);
+            detail.set("source=" + sourceCell + " dest=" + destPos + " in "
+                + dest.dimension().identifier() + " mirroredState=" + mirrored.getBlock());
+            if (!mirrored.is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                failure.set("MIRROR DID NOT WRITE — destination " + destPos + " in "
+                    + dest.dimension().identifier() + " holds " + mirrored.getBlock()
+                    + ", expected minecraft:rail. The seam does not exist.");
+                return;
+            }
+
+            // (2) breaking the source clears the mirrored counterpart (provenance)
+            ow.setBlockAndUpdate(sourceCell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            net.minecraft.world.level.block.state.BlockState afterBreak = dest.getBlockState(destPos);
+            if (!afterBreak.isAir()) {
+                failure.set("PROVENANCE CLEAR FAILED — source half was broken but destination "
+                    + destPos + " still holds " + afterBreak.getBlock());
+                return;
+            }
+
+            // (3) refuse-on-conflict: occupy the destination with something we did NOT create
+            dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+            boolean allowed = com.warwa.seamlessportals.passthrough.SeamMirror.mayPlace(
+                ow, sourceCell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
+            if (allowed) {
+                failure.set("REFUSE-ON-CONFLICT FAILED — destination " + destPos
+                    + " is occupied by stone we did not create, yet mayPlace allowed the placement;"
+                    + " that produces exactly the source-only half the user's rule forbids");
+                return;
+            }
+            dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS-A steps 5+6 MIRROR GATE FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS-A steps 5+6 MIRROR GATE PASS — wrote, provenance-cleared, and refused on"
+                + " conflict. {} | counters: {}",
+            detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
     }
 
     /**

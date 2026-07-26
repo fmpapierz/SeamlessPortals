@@ -63,6 +63,7 @@
   ],
   "mixins": [
     "passthrough.SeamIndexHolderMixin",
+    "passthrough.MixinBlockItemCanPlace",
     "ChunkMapResendSuppressMixin",
     "EntityFlagsAccessor",
     "FireworkRocketEntityAccessor",

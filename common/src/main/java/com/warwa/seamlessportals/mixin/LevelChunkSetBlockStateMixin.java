@@ -1,6 +1,9 @@
 package com.warwa.seamlessportals.mixin;
 
 import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughLever;
+import com.warwa.seamlessportals.passthrough.SeamMirror;
+import com.warwa.seamlessportals.passthrough.SeamRegistry;
 import com.warwa.seamlessportals.network.ModPayloads;
 import com.warwa.seamlessportals.network.PlatformHelper;
 import com.warwa.seamlessportals.portal.PortalInfo;
@@ -75,6 +78,38 @@ public abstract class LevelChunkSetBlockStateMixin {
 
     @Shadow @Final
     Level level;
+
+    /**
+     * RS PASSTHROUGH (a) step 6 — THE MIRROR DRIVER.
+     *
+     * <p>Shares this site with the block-era hook below, and for the same reason already documented
+     * at {@code :36-72}: {@code LevelChunk.setBlockState} sits UPSTREAM of every filter in
+     * {@code Level.markAndNotifyBlock}, so it observes changes that never reach
+     * {@code sendBlockUpdated} — which is exactly how cross-dimension fluid flow was fixed. A seam
+     * must mirror every write, including the ~95% vanilla filters out.
+     *
+     * <p>Unlike the hook below this one is FLAG-ON: the seam registry only exists under entity portals.
+     */
+    @Inject(
+        method = "setBlockState(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Lnet/minecraft/world/level/block/state/BlockState;",
+        at = @At("RETURN"),
+        require = 0
+    )
+    private void seamlessportals$driveSeamMirror(
+            BlockPos pos, BlockState newState, int flags,
+            CallbackInfoReturnable<BlockState> cir) {
+        if (!SeamlessPortalsConfig.isEntityPortals()) return;
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_MIRROR) return;
+        if (!(this.level instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
+        // Fast path first: one field read plus a contains() on a usually-empty set. This runs for
+        // EVERY block change in the game, so anything heavier here is a global tax.
+        if (!SeamRegistry.sectionHasSeam(serverLevel, pos)) return;
+        BlockState oldState = cir.getReturnValue();
+        if (oldState == null || oldState == newState) return;
+        net.minecraft.server.MinecraftServer server = serverLevel.getServer();
+        if (server == null || !server.isSameThread()) return;
+        SeamMirror.onSeamCellChanged(serverLevel, pos, newState);
+    }
 
     @Inject(
         method = "setBlockState(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Lnet/minecraft/world/level/block/state/BlockState;",
