@@ -97,6 +97,13 @@ public final class AperturePassthroughInit {
             }
             SeamRegistry.bind(portal);
             fingerprints.put(portal.getUUID(), fingerprint);
+            // Carry across anything ALREADY sitting in the aperture. Mirroring is change-driven, so a
+            // block that predates the portal is never written and therefore never mirrored — the
+            // user's "relight with a rail on the portal floor and half the rail gets cut off". Must
+            // run AFTER bind, since it consults the registry it just populated.
+            if (!portal.level().isClientSide()) {
+                SeamMirror.reconcileApertureOnBind(portal);
+            }
         }
         catch (Throwable t) {
             // A registry failure must never take down the portal tick — the portal itself is still
