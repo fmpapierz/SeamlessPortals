@@ -189,11 +189,66 @@ public final class SeamRegistry {
             bound++;
         }
 
+        // FRAME LINKS — recorded here because this is the one moment the pairing is knowable: both
+        // portals are alive and their geometry is certain. They are persisted and OUTLIVE the portal,
+        // which is what lets a frame broken and repaired later still find its partner. See
+        // SeamFrameLink for why frame links and aperture bindings are deliberately separate.
+        if (mirrorable && reverse != null
+            && portal instanceof qouteall.imm_ptl.core.portal.nether_portal.BreakablePortalEntity bp
+            && bp.blockPortalShape != null
+            && reverse instanceof qouteall.imm_ptl.core.portal.nether_portal.BreakablePortalEntity rbp
+            && rbp.blockPortalShape != null
+            && level instanceof net.minecraft.server.level.ServerLevel srcServerLevel) {
+            recordFrameLinks(srcServerLevel, portal, bp, rbp);
+        }
+
         if (AperturePassthroughLever.SEAM_RECONCILE_PROBE) {
             LOGGER.info("[RS-SEAM-REGISTRY] bound portal id={} uuid={} dim={} cells={} mirrorable={}"
                     + " facing={} rot={}",
                 portal.getId(), portal.getUUID(), level.dimension().identifier(), bound, mirrorable,
                 facing, rotation);
+        }
+    }
+
+    /**
+     * Pair up the two frames' obsidian cells and persist the mapping, both directions.
+     *
+     * <p><b>Pairing is by transform, not by index.</b> The two frames are the same shape but may be
+     * rotated relative to each other, so matching "the Nth cell of one" to "the Nth cell of the other"
+     * would silently pair the wrong blocks on any rotated pair. Instead each source frame cell's
+     * centre is transformed through the portal and matched to the nearest destination frame cell —
+     * the same authority-of-the-far-portal principle that fixed the aperture off-by-one.
+     */
+    private static void recordFrameLinks(
+        net.minecraft.server.level.ServerLevel srcLevel,
+        Portal portal,
+        qouteall.imm_ptl.core.portal.nether_portal.BreakablePortalEntity src,
+        qouteall.imm_ptl.core.portal.nether_portal.BreakablePortalEntity dst
+    ) {
+        net.minecraft.server.level.ServerLevel dstLevel =
+            srcLevel.getServer().getLevel(portal.getDestDim());
+        if (dstLevel == null) {
+            return;
+        }
+        for (BlockPos srcFrame : src.blockPortalShape.frameAreaWithoutCorner) {
+            Vec3 transformed = portal.transformPoint(Vec3.atCenterOf(srcFrame));
+            BlockPos best = null;
+            double bestDist = Double.MAX_VALUE;
+            for (BlockPos cand : dst.blockPortalShape.frameAreaWithoutCorner) {
+                double d = Vec3.atCenterOf(cand).distanceToSqr(transformed);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = cand;
+                }
+            }
+            // Reject a poor match rather than pairing arbitrary blocks: a frame cell whose transform
+            // lands more than half a block from any destination frame cell is not a real counterpart,
+            // and inventing one would mirror a break onto an unrelated block.
+            if (best == null || bestDist > 0.75) {
+                continue;
+            }
+            SeamFrameLink.record(srcLevel, srcFrame, dstLevel.dimension(), best);
+            SeamFrameLink.record(dstLevel, best, srcLevel.dimension(), srcFrame);
         }
     }
 

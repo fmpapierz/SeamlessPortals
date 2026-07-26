@@ -103,12 +103,24 @@ public abstract class LevelChunkSetBlockStateMixin {
         if (!(this.level instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
         // Fast path first: one field read plus a contains() on a usually-empty set. This runs for
         // EVERY block change in the game, so anything heavier here is a global tax.
-        if (!SeamRegistry.sectionHasSeam(serverLevel, pos)) return;
         BlockState oldState = cir.getReturnValue();
         if (oldState == null || oldState == newState) return;
         net.minecraft.server.MinecraftServer server = serverLevel.getServer();
         if (server == null || !server.isSameThread()) return;
-        SeamMirror.onSeamCellChanged(serverLevel, pos, newState);
+
+        // APERTURE mirroring — gated on the section index, which is the hot-path fold.
+        if (SeamRegistry.sectionHasSeam(serverLevel, pos)) {
+            SeamMirror.onSeamCellChanged(serverLevel, pos, newState);
+        }
+
+        // FRAME mirroring — deliberately NOT behind sectionHasSeam. That index is derived from LIVE
+        // portals, and the case frame mirroring exists for is exactly the one where no portal is
+        // alive: both were torn down when the frame broke and the player is now repairing it. Gated
+        // instead on the persisted frame-link store, which is empty in any world that has never had
+        // a portal and is checked with one map read.
+        if (com.warwa.seamlessportals.passthrough.SeamFrameLink.hasAny(serverLevel)) {
+            SeamMirror.onFrameCellChanged(serverLevel, pos, newState);
+        }
     }
 
     @Inject(

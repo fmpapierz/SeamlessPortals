@@ -88,6 +88,15 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamMirror");
 
     /**
+     * Disables FRAME mirroring only — {@code -Dseamlessportals.disableFrameMirror=true}. Frame
+     * mirroring (breaking obsidian on one side breaks the other; repairing one repairs the other) is
+     * separable from aperture mirroring and reaches outside the opening, so it gets its own lever:
+     * a player who wants blocks to cross the seam but wants frames to stay independent can have that.
+     */
+    public static final boolean DISABLE_FRAME_MIRROR =
+        Boolean.getBoolean("seamlessportals.disableFrameMirror");
+
+    /**
      * Reverts the ignition aperture rule to stock "every cell must be air" —
      * {@code -Dseamlessportals.disableIgnitionWhitelist=true}. Attribution lever for the confirmed
      * §4.1 rule (rails/redstone always admitted; a support cube admitted only when the cell above it
