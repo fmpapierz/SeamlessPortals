@@ -492,6 +492,14 @@ public class CrossingSmoke implements FabricClientGameTest {
                 Level.NETHER, new Vec3(-39.5, 130, -40), Level.OVERWORLD,
                 -480, -160, -480, -160, 1200);
 
+            // RS (a) STEP-1 GATE (REDSTONE_A_SPEC.md §7 step 1). Asserts; runs unconditionally.
+            // DELIBERATELY PLACED HERE, after legs 6a/6b, because those are the only legs that
+            // create BI-WAY generated portal pairs — and the involution check, which is the whole
+            // point of the gate, needs a reverse portal to check against. Run earlier it examined
+            // only the one-way spawned test portals, skipped the involution entirely, and still
+            // reported PASS. The gate now also FAILS when its coverage is zero.
+            rsSeamMapGate(context);
+
             // ---- Leg 5 setup (S16 commit 3): write a DEV-ONLY datapack into THIS
             // throwaway world's save dir (never shipped resources). FIRST-RUN LESSON
             // (log-proven): dynamic-registry entries load at WORLD OPEN only — /reload
@@ -764,6 +772,164 @@ public class CrossingSmoke implements FabricClientGameTest {
                     LOG + "[RS-SEAM] CLEANUP FAILED — later legs may see a blocked window", t);
             }
         }
+    }
+
+    /**
+     * RS-A-STEP1 — THE SEAM MAP GATE ({@code migration/REDSTONE_A_SPEC.md} §7 step 1).
+     *
+     * <p>{@code SeamMap} is the primitive that (b) rail connection, (c) redstone bridging and (d)
+     * minecart traversal all consume, so an error in it is an error in all four sub-features at once.
+     * The spec names its two most likely failures, and this leg is the falsifier for both — it runs
+     * BEFORE anything is built on top.
+     *
+     * <p><b>It asserts against each portal's own geometry, never against hardcoded coordinates</b>,
+     * so it cannot pass by coincidence and does not need rewriting when the staging moves:
+     *
+     * <ol>
+     *   <li><b>Column count</b> — a grid-aligned w×h portal must bind exactly {@code w*h} columns.
+     *       Too few means the overlap threshold is rejecting real cells; too many means slivers are
+     *       being bound (the F7 defect the overlap rule exists to prevent).</li>
+     *   <li><b>Distinctness</b> — no two columns may map to the same source cell.</li>
+     *   <li><b>Containment</b> — every {@code seamCell} must lie in the block layer the plane passes
+     *       through, i.e. the cell the plane bisects. This is what makes "the aperture cell"
+     *       well-defined at all.</li>
+     *   <li><b>THE INVOLUTION</b> (the real prize) — for a bi-way generated pair, stepping across via
+     *       {@code mirrorCell} and back must return the original cell. This is the property that makes
+     *       "break one half breaks the other" and "refuse on conflict" decidable, and it is the one
+     *       both adversarial verifiers re-derived by hand without observing. Round-tripping through
+     *       real portal transforms tests rotation, translation and phase simultaneously.</li>
+     *   <li><b>Rotation</b> — {@code blockRotationOf} must be non-null for any mirrorable portal,
+     *       since a null there means block states cannot be carried and mirroring must refuse. The
+     *       spec calls this its single most likely arithmetic error.</li>
+     * </ol>
+     */
+    private static void rsSeamMapGate(ClientGameTestContext context) {
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> report = new AtomicReference<>("(no portals examined)");
+        AtomicReference<Integer> involutions = new AtomicReference<>(0);
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+
+            // Wide box: the spawned test portals sit near spawn, the leg-6a/6b generated pairs at
+            // (-200,-200) and ~(-320,-320). A box that covers only spawn silently drops every bi-way
+            // pair and with it the involution check.
+            List<qouteall.imm_ptl.core.portal.Portal> portals = new java.util.ArrayList<>(
+                ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(-1000, -128, -1000, 1000, 320, 1000), p -> true));
+            if (portals.isEmpty()) { failure.set("no Portal entities to examine"); return; }
+
+            StringBuilder sb = new StringBuilder();
+            int examined = 0;
+            for (qouteall.imm_ptl.core.portal.Portal p : portals) {
+                if (!com.warwa.seamlessportals.passthrough.SeamMap.isMirrorable(p)) {
+                    sb.append("\n  portal ").append(p.getId()).append(" NOT mirrorable (skipped)");
+                    continue;
+                }
+                examined++;
+                List<Vec3> cols = com.warwa.seamlessportals.passthrough.SeamMap.enumerateColumns(p);
+
+                int expected = (int) Math.round(p.getWidth() * p.getHeight());
+                if (cols.size() != expected) {
+                    failure.set("portal " + p.getId() + " bound " + cols.size()
+                        + " columns, expected " + expected + " for a "
+                        + p.getWidth() + "x" + p.getHeight() + " grid-aligned portal");
+                    return;
+                }
+
+                java.util.Set<BlockPos> seen = new java.util.HashSet<>();
+                for (Vec3 col : cols) {
+                    BlockPos src = com.warwa.seamlessportals.passthrough.SeamMap.seamCell(p, col);
+                    if (!seen.add(src)) {
+                        failure.set("portal " + p.getId() + " mapped two columns to the same cell " + src);
+                        return;
+                    }
+                }
+
+                // Containment: the plane must bisect every source cell it binds. Checked on the axis
+                // the normal runs along, derived from the portal rather than assumed to be Z.
+                Vec3 n = p.getNormal();
+                for (BlockPos src : seen) {
+                    double planeCoord = component(p.getOriginPos(), n);
+                    double cellLo = component(Vec3.atLowerCornerOf(src), n);
+                    double d = planeCoord - cellLo;
+                    if (d < -1.0e-6 || d > 1.0 + 1.0e-6) {
+                        failure.set("portal " + p.getId() + " seamCell " + src
+                            + " is not bisected by its own plane (plane=" + planeCoord
+                            + ", cell spans " + cellLo + ".." + (cellLo + 1) + ")");
+                        return;
+                    }
+                }
+
+                if (com.warwa.seamlessportals.passthrough.SeamMap.blockRotationOf(p) == null) {
+                    failure.set("portal " + p.getId() + " is mirrorable but blockRotationOf returned"
+                        + " null — block states could not be carried across it");
+                    return;
+                }
+
+                sb.append("\n  portal ").append(p.getId())
+                    .append(" ").append(p.getWidth()).append("x").append(p.getHeight())
+                    .append(" cols=").append(cols.size())
+                    .append(" rot=").append(com.warwa.seamlessportals.passthrough.SeamMap.blockRotationOf(p))
+                    .append(" firstSeamCell=")
+                    .append(com.warwa.seamlessportals.passthrough.SeamMap.seamCell(p, cols.get(0)))
+                    .append(" firstMirrorCell=")
+                    .append(com.warwa.seamlessportals.passthrough.SeamMap.mirrorCell(p, cols.get(0)));
+
+                // THE INVOLUTION, on bi-way generated pairs only (spawned test portals are one-way).
+                if (p instanceof qouteall.imm_ptl.core.portal.nether_portal.BreakablePortalEntity bp) {
+                    var revs = qouteall.imm_ptl.core.portal.nether_portal.BreakablePortalEntity
+                        .findReversePortals(bp);
+                    if (revs.size() == 1) {
+                        var q = revs.get(0);
+                        for (Vec3 col : cols) {
+                            BlockPos viaMirror =
+                                com.warwa.seamlessportals.passthrough.SeamMap.mirrorCell(p, col);
+                            Vec3 acrossOnPlane = com.warwa.seamlessportals.passthrough.SeamMap
+                                .onPlane(q, p.transformPoint(col));
+                            BlockPos viaSeamOfQ = com.warwa.seamlessportals.passthrough.SeamMap
+                                .seamCell(q, acrossOnPlane);
+                            if (!viaMirror.equals(viaSeamOfQ)) {
+                                failure.set("INVOLUTION BROKEN on portal " + p.getId() + "/" + q.getId()
+                                    + ": mirrorCell_P=" + viaMirror + " but seamCell_Q(T_P(x))="
+                                    + viaSeamOfQ + " — 'break one half breaks the other' and"
+                                    + " 'refuse on conflict' are undecidable if these disagree");
+                                return;
+                            }
+                        }
+                        involutions.set(involutions.get() + 1);
+                        sb.append(" [involution OK vs reverse ").append(q.getId()).append("]");
+                    }
+                }
+            }
+            if (examined == 0) { failure.set("no mirrorable portals examined"); return; }
+            report.set("examined " + examined + " mirrorable portal(s), "
+                + involutions.get() + " involution check(s)" + sb);
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS-A step-1 SEAM MAP GATE FAILED: " + f);
+        }
+        // COVERAGE ASSERTION. The involution is the gate's whole reason to exist — it is what makes
+        // "break one half breaks the other" and "refuse on conflict" decidable. A run in which no
+        // bi-way pair was examined proves nothing about it, so passing silently would be a lie. This
+        // is the same failure mode as the teardown probe that only ever logged intact=true.
+        if (involutions.get() == 0) {
+            throw new AssertionError(LOG + "RS-A step-1 SEAM MAP GATE FAILED: zero involution checks"
+                + " ran — no bi-way portal pair was in range, so the gate's central assertion was"
+                + " never exercised. A gate that can pass without testing its main property is not a"
+                + " gate. Check leg 6a/6b ran before this and that the search box covers them.");
+        }
+        SeamlessPortalsConstants.LOGGER.info(LOG + "RS-A step-1 SEAM MAP GATE PASS — {}", report.get());
+    }
+
+    /** Component of a vector along a signed unit axis. */
+    private static double component(Vec3 v, Vec3 signedUnitAxis) {
+        return v.x * Math.abs(signedUnitAxis.x)
+            + v.y * Math.abs(signedUnitAxis.y)
+            + v.z * Math.abs(signedUnitAxis.z);
     }
 
     /**
