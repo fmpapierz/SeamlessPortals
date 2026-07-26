@@ -309,11 +309,36 @@ public final class IrisDestPrevCamera {
             else {
                 // The bound program's cameraPosition is neither the dest camera nor a shifted form of
                 // it — we cannot say what frame it is in, so we WRITE NOTHING rather than guess.
-                infoOnce("regime", P + "regime AMBIGUOUS (once-only): the guarded pass's"
-                    + " cameraPosition=(" + fmt(TMP3[0]) + "," + fmt(TMP3[1]) + "," + fmt(TMP3[2])
-                    + ") is not the dest camera (" + fmt(destUnshifted.x) + "," + fmt(destUnshifted.y)
-                    + "," + fmt(destUnshifted.z) + ") nor a 30000-shifted form of it. Writing NOTHING;"
-                    + " the window keeps iris's values.");
+                //
+                // DRAW-TIME PAIR (the number that decides what happens next): MbGateProbe reads at the
+                // pass BOUNDARY (offset 213, BEFORE use()); this hook reads AFTER use() (offset 422,
+                // post-uniforms.update()), so these are the values the shader ACTUALLY draws with.
+                // If cam and prev are both main-valued the pair is SELF-CONSISTENT, velocity is ~0,
+                // and this pass cannot be the smear source — which would mean the smear comes from
+                // somewhere we have not looked yet, and the boundary-time dest reading was a
+                // pre-update leftover rather than the drawn value.
+                float[] prevAtDraw = new float[4];
+                String prevStr = "n/a";
+                String pairStr = "n/a";
+                try {
+                    GL20.glGetUniformfv(pid, locPrevCam, prevAtDraw);
+                    prevStr = "(" + fmt(prevAtDraw[0]) + "," + fmt(prevAtDraw[1]) + ","
+                        + fmt(prevAtDraw[2]) + ")";
+                    double px = TMP3[0] - prevAtDraw[0];
+                    double py = TMP3[1] - prevAtDraw[1];
+                    double pz = TMP3[2] - prevAtDraw[2];
+                    pairStr = fmt(Math.sqrt(px * px + py * py + pz * pz));
+                }
+                catch (Throwable ignored) {
+                    // reported as n/a
+                }
+                infoOnce("regime", P + "regime AMBIGUOUS (once-only): at the guarded pass, AFTER"
+                    + " uniforms.update(), cameraPosition=(" + fmt(TMP3[0]) + "," + fmt(TMP3[1]) + ","
+                    + fmt(TMP3[2]) + ") prevCameraPosition=" + prevStr + " |cam-prev|=" + pairStr
+                    + " ; the mod-side dest camera is (" + fmt(destUnshifted.x) + ","
+                    + fmt(destUnshifted.y) + "," + fmt(destUnshifted.z) + "). Writing NOTHING; the"
+                    + " window keeps iris's values. READ |cam-prev|: ~0 => the DRAWN pair is"
+                    + " self-consistent and this pass is NOT the smear source; large => it is.");
                 return;
             }
 
