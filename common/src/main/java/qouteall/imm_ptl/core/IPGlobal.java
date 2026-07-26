@@ -251,6 +251,18 @@ public class IPGlobal {
     public static final boolean DEST_PREV_CAMERA_PROBE =
         Boolean.getBoolean("seamlessportals.destPrevCameraProbe");
 
+    // IS5-MB ATTRIBUTION LEVER (2026-07-26, DIAGNOSTIC — default keeps today's behaviour).
+    // The Motion-Blur portal-window blur has every PASS-level velocity input measured at exactly zero
+    // (|cam-prev|=0.000, matrix maxAbsDiff=0.00000), yet it scales with MOTION_BLURRING_STRENGTH — so
+    // velocity is nonzero PER PIXEL. composite4 derives it from `z = texture2D(depthtex1, texCoord)`,
+    // and the portal stamp writes DEST depth into the window region of the MAIN depth buffer (the #13
+    // two-portal fix restored that write). Main-chain composite4 then unprojects dest depth with MAIN
+    // matrices => garbage viewPos => large velocity for WINDOW PIXELS ONLY. Setting this swaps the
+    // stamp to a no-depth-write pipeline: if the blur vanishes, that is the mechanism confirmed.
+    // COST while set: re-opens the #13 "second portal paints over the first" artifact. Diagnostic only.
+    public static final boolean STAMP_DEPTH_WRITE_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableStampDepthWrite");
+
     public static int irisDestPrevWriteCount = 0;
     public static int irisDestPrevNeutralizeCount = 0;
     public static int irisDestPrevMissCount = 0;
