@@ -16,6 +16,11 @@ lifecycle-persistence) → fold. Top claims re-verified by hand afterwards. Path
 2. **The aperture is ordinary building space** — any block, any cell, at any height. This
    **supersedes** the prompt's "bottom opening row only" pin: a rail must be able to pass through at
    mid-height, not just along the floor.
+   **"Any height" means the SEAM MECHANICS work at any height — clipping, mirroring, and redstone
+   signal — NOT that blocks become weightless.** Vanilla support rules are untouched: to run a track
+   through at mid-height the player builds a line of solid blocks through the opening and lays rail on
+   top, exactly as anywhere else. Those supporting blocks are themselves ordinary aperture blocks and
+   receive the same clip + mirror treatment. (User clarification 2026-07-25.)
 3. **The integrity check survives for IGNITION ONLY.** After a portal is lit, opening contents never
    tear it down. At ignition the aperture predicate must still refuse arbitrary blocks (you cannot
    light a portal through a stone wall) — *but* it must tolerate passthrough blocks (rails, redstone),
@@ -164,19 +169,21 @@ Three consequences to design around:
   `PortalManipulation.java:132-156`), cluster-bound at `:107`. Any per-portal feature state must be
   cluster-aware or it desyncs between the two faces.
 
-**Support is fine ONLY on the bottom row — and that is now a REQUIREMENT GAP.** `BaseRailBlock.canSurvive`
-= `canSupportRigidBlock(level, pos.below())` (`REF/…/BaseRailBlock.java:58-61`), `RedStoneWireBlock.canSurvive`
-(`:259-266`). For the bottom opening row the block below is the obsidian sill, which is face-sturdy — fine.
-**At any greater height the block below is another opening cell holding `PortalPlaceholderBlock`, which is
-`noCollision` and therefore NOT rigid support.** OBSERVED 2026-07-25 (RS-TEARDOWN-TEST): a rail
-`/setblock`-ed into a mid-height opening cell **popped instantly** — final cell state `minecraft:air`, not
-`minecraft:rail` — while still tripping the teardown on its way out. Under user decision 2 ("ordinary
-building space at ANY height") sub-feature (a) must therefore solve **support**, not merely placement.
-Rails and dust are `noCollision`, as is the placeholder, so nothing about collision changes.
+**Support stays VANILLA — (a) does NOT make rails float.** `BaseRailBlock.canSurvive` =
+`canSupportRigidBlock(level, pos.below())` (`REF/…/BaseRailBlock.java:58-61`),
+`RedStoneWireBlock.canSurvive` (`:259-266`). On the bottom opening row the obsidian sill supplies rigid
+support. At any greater height the player must supply it, exactly as anywhere else in the world: build a
+line of solid blocks through the opening, then lay rail on top. Those supporting blocks are themselves
+ordinary aperture blocks and get the same clip + mirror treatment.
 
-> ⚠ **This invalidates a line in the brief given to the (a) design panel**, which stated support was
-> already fine, citing the sill. That is true only for the bottom row. Any design that lets a rail float
-> at mid-height must say what holds it up.
+> **User clarification 2026-07-25** (correcting an over-read of the RS-TEARDOWN-TEST result): a rail
+> `/setblock`-ed into a mid-height cell with nothing beneath it popped instantly — final state
+> `minecraft:air`. That is **correct vanilla behaviour**, not a defect, and NOT a requirement gap.
+> "Any height" governs the **seam behaviour** — clipping, mirroring and redstone signal must work at any
+> height in the opening — not gravity. Do not design a support exemption; the earlier "(a) must solve
+> support" note was wrong and is retracted.
+
+Rails and dust are `noCollision`, as is the placeholder, so nothing about collision changes.
 
 ---
 
