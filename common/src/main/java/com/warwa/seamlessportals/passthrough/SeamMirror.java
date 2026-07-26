@@ -308,7 +308,25 @@ public final class SeamMirror {
         }
 
         BlockState rotated = newState.rotate(binding.stateRotation());
-        dest.setBlockAndUpdate(destPos, rotated);
+        // WRITE WITH UPDATE_SKIP_ON_PLACE. The mirror is AUTHORITATIVE for the destination cell: its
+        // state is defined as the source's state, rotated. Writing with plain setBlockAndUpdate
+        // (flags 3) runs onPlace on the destination (REF LevelChunk.java:326-327), and for a rail
+        // that immediately RE-RESOLVES the mirrored copy against the DESTINATION dimension's own
+        // neighbours — which are different — so the two halves diverge.
+        //
+        // User-observed symptom, and it names the bug exactly: on an obsidian portal the two seam
+        // cells are COINCIDENT, so the player sees their own half plus the far half through the
+        // window. Divergent shapes therefore render as "a straight rail AND a curved rail texture at
+        // the same time on the same rail". It also explains why breaking and re-placing fixed it (a
+        // fresh mirror) and why it was intermittent (dest-side resolution sometimes happens to pick
+        // the same shape).
+        //
+        // UPDATE_NEIGHBORS is deliberately KEPT: the destination's neighbours must still be notified,
+        // so a track on the far side reacts. Only the mirrored block's own self-resolution is
+        // suppressed.
+        dest.setBlock(destPos, rotated,
+            net.minecraft.world.level.block.Block.UPDATE_ALL
+                | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
         holder.seamlessportals$mirrorCreatedCells().add(destKey);
