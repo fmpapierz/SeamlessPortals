@@ -79,7 +79,15 @@ public class IrisInterface {
         /** IS5-PH prev-uniform heal (the ghost-terrain fix): re-tick iris's frame-update notifier on the
          *  MAIN pipeline after the per-portal dest renders, so the next main frame's natural tick yields a
          *  clean, MAIN-valued previousCameraPosition. No-op when iris is absent (byte-identical). */
-        public void healPreviousFrameUniforms() {}
+        public void healPreviousFrameUniforms(@Nullable Object mainPipelineCapturedPreLoop) {}
+
+        /** IS5-ACT: capture the ACTIVE pipeline BEFORE the portal loop, so the heal can tick the
+         *  pipeline the MAIN frame actually used rather than whichever one the last nested dest
+         *  render left in the manager slot. Returns null when iris is absent (byte-identical). */
+        @Nullable
+        public Object capturePipelineForHeal() {
+            return null;
+        }
 
         @Nullable
         public String getShaderpackName() {
@@ -195,7 +203,18 @@ public class IrisInterface {
          * portal frames — bounded, the nested ticks already do this k times today. Never propagates.
          */
         @Override
-        public void healPreviousFrameUniforms() {
+        @Nullable
+        public Object capturePipelineForHeal() {
+            try {
+                return Iris.getPipelineManager().getPipelineNullable();
+            }
+            catch (Throwable t) {
+                return null;
+            }
+        }
+
+        @Override
+        public void healPreviousFrameUniforms(@Nullable Object mainPipelineCapturedPreLoop) {
             if (!qouteall.imm_ptl.core.IPGlobal.isPrevUniformHealActive()) {
                 return;
             }
@@ -205,7 +224,31 @@ public class IrisInterface {
                 // null/restore bracket's window), while the manager slot resolves the main/same-dim
                 // pipeline correctly at this exact anchor every frame (IrisTemporalTargetGuard.save
                 // uses it successfully right before the portal loop).
-                Object pl = Iris.getPipelineManager().getPipelineNullable();
+                //
+                // IS5-ACT RETARGET (2026-07-26, MEASURED — the Step-0 A/B). The javadoc above assumed
+                // "the nested dest render reaches beginLevelRendering on the SAME per-dim pipeline".
+                // That is TRUE same-dim and FALSE cross-dim: iris keeps one pipeline per dimension,
+                // the nested render's iris$setupPipeline is the LAST writer of the manager slot, and
+                // the slot has NO restorer — so at this anchor the slot holds the DEST pipeline on a
+                // cross-dim frame (probe-measured pipelineIdentity=DIFFERENT on 42/42 captures).
+                // Ticking it fed the DEST pipeline's CameraPositionTracker the MAIN camera, so the
+                // dest ACT flood-fill read previousCameraPosition ~132 blocks away and every history
+                // sample landed outside the volume. LIVE A/B: heal ACTIVE => dest |posOffset|inf=132
+                // and floodfill plateaus at nz=90; heal DISABLED => |posOffset|inf<=2 on 89/89 dest
+                // samples and the floodfill accumulates to nz=15283. Retargeting to the PRE-LOOP
+                // capture is byte-identical same-dim (same object) and fixes cross-dim, where the
+                // main pipeline's notifier is never ticked by the nested render at all.
+                Object pl = mainPipelineCapturedPreLoop;
+                if (pl == null || !qouteall.imm_ptl.core.IPGlobal.isHealRetargetActive()) {
+                    pl = Iris.getPipelineManager().getPipelineNullable();
+                    if (mainPipelineCapturedPreLoop == null && !prevHealNoCaptureLogged) {
+                        prevHealNoCaptureLogged = true;
+                        LOGGER.warn("[Seamless Portals] IS5-ACT heal retarget: no pre-loop pipeline"
+                            + " capture was supplied — falling back to the manager slot (the"
+                            + " pre-retarget behaviour, which poisons the DEST tracker on cross-dim"
+                            + " frames). Further occurrences suppressed.");
+                    }
+                }
                 if (pl instanceof net.irisshaders.iris.pipeline.IrisRenderingPipeline irisPipeline) {
                     irisPipeline.getFrameUpdateNotifier().onNewFrame();
                     qouteall.imm_ptl.core.IPGlobal.prevUniformHealCount++;
@@ -238,6 +281,7 @@ public class IrisInterface {
         private static boolean prevHealLiveLogged = false;
         private static boolean prevHealSkipLogged = false;
         private static boolean prevHealFailLogged = false;
+        private static boolean prevHealNoCaptureLogged = false;
 
         @Override
         public Object getPipeline(LevelRenderer worldRenderer) {

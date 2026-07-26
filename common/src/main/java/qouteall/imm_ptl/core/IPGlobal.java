@@ -200,6 +200,23 @@ public class IPGlobal {
         return prevUniformHeal && !PREV_UNIFORM_HEAL_DISABLED_LEVER;
     }
 
+    // IS5-ACT (2026-07-26): the heal must tick the pipeline the MAIN frame used, captured BEFORE the
+    // portal loop — NOT whatever the last nested dest render left in iris's manager slot. Cross-dim
+    // dest renders select their own per-dimension pipeline and never restore the slot, so the
+    // pre-retarget heal fed the DEST pipeline's CameraPositionTracker the MAIN camera, poisoning
+    // previousCameraPosition by ~132 blocks and killing the dest ACT flood-fill. LIVE-MEASURED A/B:
+    // heal ACTIVE => dest |posOffset|inf=132, floodfill plateau nz=90; heal DISABLED => <=2 on 89/89
+    // and floodfill accumulates to nz=15283. DEFAULT TRUE; A/B OFF via
+    // -Dseamlessportals.disableHealRetarget (which restores the old, poisoning target resolution).
+    public static final boolean HEAL_RETARGET_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableHealRetarget");
+
+    /** True when the prev-uniform heal should tick the PRE-LOOP captured main pipeline (the fix).
+     *  Default-on; the JVM lever forces the old manager-slot resolution back for A/B comparison. */
+    public static boolean isHealRetargetActive() {
+        return !HEAL_RETARGET_DISABLED_LEVER;
+    }
+
     /** Confirm-counter: incremented once per healed frame. Render-thread int. */
     public static int prevUniformHealCount = 0;
 
