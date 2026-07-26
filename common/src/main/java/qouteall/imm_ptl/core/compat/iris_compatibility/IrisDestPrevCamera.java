@@ -332,13 +332,26 @@ public final class IrisDestPrevCamera {
                 catch (Throwable ignored) {
                     // reported as n/a
                 }
-                infoOnce("regime", P + "regime AMBIGUOUS (once-only): at the guarded pass, AFTER"
+                // THE MATRIX HALF — never measured until now, and the only remaining velocity input.
+                // composite4 computes previousPosition = P_prev * MV_prev * (viewPos + cameraOffset).
+                // With cameraOffset == 0 (measured), velocity is driven ENTIRELY by whether the
+                // PREVIOUS matrices equal the CURRENT ones. MatrixUniforms$Previous.get() is a
+                // self-advancing register that advances once per updateStage(perFrame), so on a portal
+                // frame with two composite chains it ALTERNATES — which would leave the dest pass
+                // reprojecting through a matrix pair from the wrong chain.
+                String mvDiff = matDiff(pid, "gbufferModelView", "gbufferPreviousModelView");
+                String projDiff = matDiff(pid, "gbufferProjection", "gbufferPreviousProjection");
+                infoOnce("regime", P + "DRAW-TIME STATE (once-only): at the guarded pass, AFTER"
                     + " uniforms.update(), cameraPosition=(" + fmt(TMP3[0]) + "," + fmt(TMP3[1]) + ","
                     + fmt(TMP3[2]) + ") prevCameraPosition=" + prevStr + " |cam-prev|=" + pairStr
-                    + " ; the mod-side dest camera is (" + fmt(destUnshifted.x) + ","
-                    + fmt(destUnshifted.y) + "," + fmt(destUnshifted.z) + "). Writing NOTHING; the"
-                    + " window keeps iris's values. READ |cam-prev|: ~0 => the DRAWN pair is"
-                    + " self-consistent and this pass is NOT the smear source; large => it is.");
+                    + " ; mod-side dest camera=(" + fmt(destUnshifted.x) + ","
+                    + fmt(destUnshifted.y) + "," + fmt(destUnshifted.z) + ")"
+                    + " ; maxAbsDiff(gbufferModelView, gbufferPreviousModelView)=" + mvDiff
+                    + " ; maxAbsDiff(gbufferProjection, gbufferPreviousProjection)=" + projDiff
+                    + ". Writing NOTHING. READING: cameraOffset is ZERO, so velocity is driven ONLY by"
+                    + " the matrix diffs — both ~0 => composite4 draws zero velocity and is NOT the"
+                    + " smear source; either one LARGE => the previous MATRICES are the defect, not the"
+                    + " previous camera position.");
                 return;
             }
 
@@ -494,6 +507,37 @@ public final class IrisDestPrevCamera {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Max elementwise |current - previous| for a matrix uniform pair, read from the bound program's
+     * own storage. "0.000" means the pass reprojects through an identical matrix pair (velocity
+     * contribution zero); a large value means the previous matrix belongs to a different camera.
+     * Returns a reason string rather than throwing — this is diagnostic only.
+     */
+    private static String matDiff(int pid, String curName, String prevName) {
+        try {
+            int lc = GL20.glGetUniformLocation(pid, curName);
+            int lp = GL20.glGetUniformLocation(pid, prevName);
+            if (lc < 0 || lp < 0) {
+                return "n/a(loc " + lc + "/" + lp + ")";
+            }
+            float[] cur = new float[16];
+            float[] prev = new float[16];
+            GL20.glGetUniformfv(pid, lc, cur);
+            GL20.glGetUniformfv(pid, lp, prev);
+            float max = 0f;
+            for (int k = 0; k < 16; k++) {
+                float d = Math.abs(cur[k] - prev[k]);
+                if (d > max) {
+                    max = d;
+                }
+            }
+            return String.format("%.5f", max);
+        }
+        catch (Throwable t) {
+            return "read-failed";
+        }
     }
 
     private static boolean isNearMultiple(double v, double m) {
