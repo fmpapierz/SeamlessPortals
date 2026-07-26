@@ -88,6 +88,19 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamMirror");
 
     /**
+     * Disables the seam TARGETING fix — {@code -Dseamlessportals.disableSeamTargeting=true}.
+     *
+     * <p>With the fix on, a crosshair resting on a seam cell that holds a REAL block targets that
+     * block locally instead of being rerouted through the portal. With it off, stock IP applies and
+     * blocks aimed at the far half of an aperture cell's top face land in the destination dimension.
+     * Separate from the master lever so the targeting change can be A/B-attributed on its own —
+     * it is the only part of (a) that alters how the crosshair behaves, and it sits next to
+     * cross-portal block interaction, which must keep working.
+     */
+    public static final boolean DISABLE_SEAM_TARGETING =
+        Boolean.getBoolean("seamlessportals.disableSeamTargeting");
+
+    /**
      * Disables FRAME mirroring only — {@code -Dseamlessportals.disableFrameMirror=true}. Frame
      * mirroring (breaking obsidian on one side breaks the other; repairing one repairs the other) is
      * separable from aperture mirroring and reaches outside the opening, so it gets its own lever:

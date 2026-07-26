@@ -94,7 +94,32 @@ public class BlockManipulationClient {
                 localTargetDistance,
                 distanceToPortalPointing < localTargetDistance + 0.2
             );
-            if (distanceToPortalPointing < localTargetDistance + 0.2) {
+            // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
+            // -Dseamlessportals.disableSeamTargeting=true. THE TARGETING FIX.
+            //
+            // Measured, not reasoned: with seamAimProbe armed, aiming at a real block sitting in an
+            // aperture produced localDist=2.331 portalDist=2.419 margin=0.112 -> THROUGH-PORTAL. The
+            // local hit was genuinely CLOSER than the portal and still lost, purely to the hardcoded
+            // +0.2 above. The player's block then lands in the OTHER DIMENSION, silently, on the most
+            // common gesture the whole feature exists to support. (User-confirmed live: "aiming at
+            // the far half of a cell's top face still sends the block to the other dimension".)
+            //
+            // The fix must be NARROW. The same comparison has a second, CORRECT mode: for an EMPTY
+            // aperture cell getCurrentTargetDistance() returns the 23333 placeholder sentinel
+            // (:120-125) so the portal always wins — and that is exactly what lets a player reach
+            // THROUGH an open portal to interact with the far world, a real shipped feature. A blanket
+            // "seam cells win" would fix the rail and break cross-portal interaction in one stroke.
+            //
+            // So: the local hit wins ONLY when it is a seam cell holding a REAL, non-placeholder
+            // block. Aim at an empty aperture and you still reach through, unchanged.
+            boolean seamBlockWinsTargeting =
+                !com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLE_SEAM_TARGETING
+                    && localTargetDistance < 20000.0   // a real local hit, not the sentinel
+                    && client.hitResult instanceof BlockHitResult localHit
+                    && com.warwa.seamlessportals.passthrough.SeamRegistry.isSeamCell(
+                        client.level, localHit.getBlockPos());
+
+            if (!seamBlockWinsTargeting && distanceToPortalPointing < localTargetDistance + 0.2) {
                 client.hitResult = createMissedHitResult(cameraPos, hitPos);
                 
                 updateTargetedBlockThroughPortal(
