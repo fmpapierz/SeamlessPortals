@@ -338,6 +338,16 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             );
         }
 
+        // IS5-MB: arm the per-dest previous-camera state on the SAME (wider) bracket C3-BLOOM uses —
+        // pre-push through post-pop. MEASURED why: the narrower invokeWorldRendering bracket saw only a
+        // CLEAN composite4 (|cam-prev|=0.000 on 22/22 samples), while the MAIN-chain control row caught
+        // the smearing invocation OUTSIDE it — cameraPosition=DEST vs previousCameraPosition=MAIN,
+        // |cam-prev|=204.175 on 21/21 samples with the player stationary. The dest composite chain runs
+        // past the end of renderWorldFullPipeline, so it must be enclosed here.
+        // SAME-DIM ONLY: cross-dim runs its own per-dimension pipeline with its own tracker and is
+        // already correct — arm() excludes it mod-side, with zero iris symbols.
+        IrisDestPrevCamera.arm(portal);
+
         PortalRendering.pushPortalLayer(portal);
 
         // Fable-fold BLOCKER fix (port-note §2.5; the S14.29/RendererUsingStencil:332-346
@@ -360,6 +370,8 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // + throw-safe: the arm must never outlive its portal window. The stamp below runs
             // after this and needs nothing from the armed state.
             IrisBloomApertureMask.disarmAndReport();
+            // IS5-MB: same bracket, same discipline — the arm must never outlive its portal window.
+            IrisDestPrevCamera.disarmAndReport();
         }
 
         // IS5-G ghost-wave discriminator run 2: the dedicated stamp-clamp lever skips ONLY this
@@ -433,20 +445,10 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // targets (restored later) while the dest reads its own per-dim pipeline — wasted-but-
         // harmless; counts include cross-dim portals. No-op unless the guard saved this frame.
         IrisTemporalTargetGuard.clearForDestPass();
-        // IS5-MB: arm the per-dest previous-frame camera state for THIS portal's nested dest composite
-        // chain. SAME-DIM ONLY — cross-dim already runs its own per-dimension pipeline whose
-        // addCameraUniforms built a FRESH CameraPositionTracker, so its prev=dest(N-1)/cur=dest(N) is
-        // already correct and writing there would INTRODUCE a defect. The exclusion is decided mod-side
-        // inside arm(), with zero iris symbols, so the cross-dim path stays byte-identical.
-        IrisDestPrevCamera.arm(
-            PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null);
         try {
             MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
         }
         finally {
-            // FIRST in the finally: the arm can never outlive the window even if the bump throws —
-            // the IrisShadowCompositeSuppressor.uninstall() discipline.
-            IrisDestPrevCamera.disarmAndReport();
             IrisInterface.invoker.bumpPerFrameUniformCounter();
         }
     }

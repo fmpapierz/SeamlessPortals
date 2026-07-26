@@ -183,14 +183,16 @@ public final class IrisDestPrevCamera {
             if (portal == null || broken || !IPGlobal.isIrisDestPrevCameraActive()) {
                 return;
             }
-            if (PortalRendering.getPortalLayer() != 1) {
-                // Under recursion the correct key is the ORDERED PATH of portals (A seen directly and
-                // A-through-B are different cameras). Rather than pretend, decline and say so — this
-                // makes the one-layer assumption self-reporting if maxPortalLayer is ever raised here.
-                warnOnce("recursion", P + "declined (once-only): portal layer "
-                    + PortalRendering.getPortalLayer() + " != 1. Per-dest previous-camera keying is"
-                    + " one-layer-only; under recursion the key would have to be the ordered portal"
-                    + " path. The window keeps iris's values (today's behaviour).", null);
+            // NOTE the bracket is PRE-PUSH (it matches C3-BLOOM's), so the layer here is 0 and
+            // isRendering() is false on the normal path — an earlier `getPortalLayer() != 1` guard
+            // would have declined every single time. The recursion case is instead "already rendering
+            // a portal when we arm", which doRenderPortal itself early-returns on; keeping the check
+            // makes the one-layer assumption self-reporting if that ever changes.
+            if (PortalRendering.isRendering()) {
+                warnOnce("recursion", P + "declined (once-only): already inside a portal layer at arm"
+                    + " time. Per-dest previous-camera keying is one-layer-only; under recursion the"
+                    + " key would have to be the ordered portal path. The window keeps iris's values"
+                    + " (today's behaviour).", null);
                 return;
             }
             Minecraft mc = Minecraft.getInstance();
@@ -267,9 +269,11 @@ public final class IrisDestPrevCamera {
             if (!TARGET_PASSES.contains(name)) {
                 return;
             }
-            if (!PortalRendering.isRendering()) {
-                return; // belt
-            }
+            // NO isRendering() BELT HERE — deliberately removed. The smearing composite4 was MEASURED
+            // firing OUTSIDE the pushed portal layer (the MAIN-chain control row caught it at
+            // |cam-prev|=204.175 while the in-layer pass read 0.000), so that belt would block the very
+            // pass this feature exists to correct. `armed` is now the authoritative window: it is set
+            // pre-push and cleared in the post-pop finally, so it already bounds us correctly.
             Object prog = fPassProgram.get(pass);
             if (prog == null) {
                 warnOnce("noprog", P + "skip (once-only): the guarded pass \"" + name + "\" has a null"
