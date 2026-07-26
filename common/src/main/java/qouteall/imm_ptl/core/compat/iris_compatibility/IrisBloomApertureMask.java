@@ -374,6 +374,15 @@ public final class IrisBloomApertureMask {
             programReady = false;
         }
         planCache.clear();
+        // The plan is rebuilt on every pipeline teardown, but these two latches were CLASS-lifetime —
+        // so after an in-game shaderpack option change the new plan was computed and then reported
+        // NOTHING. That cost a full false-refutation cycle: toggling the pack's Motion Blur mid-session
+        // left the log showing the stale MB-OFF plan (`pass=composite4 idx=3 reads=ALT`) while the
+        // live plan was actually `pass=composite5 idx=4 reads=MAIN`, and the stale line was read as
+        // evidence that the MB analysis was wrong. Reset them with the cache they describe, so a
+        // rebuilt plan always re-announces itself. Log-only; no render-path effect.
+        liveLogged = false;
+        mbShapeInfoLogged = false;
     }
 
     // =============================================================================================
