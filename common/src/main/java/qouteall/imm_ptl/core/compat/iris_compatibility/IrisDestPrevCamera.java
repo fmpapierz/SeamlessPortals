@@ -159,6 +159,7 @@ public final class IrisDestPrevCamera {
     }
 
     private static long lastProbeNanos = 0L;
+    private static long lastRegimeLogNanos = 0L;
     private static final float[] TMP3 = new float[4];
     private static final float[] TMP16 = new float[16];
     private static final float[] WRITE16 = new float[16];
@@ -339,9 +340,18 @@ public final class IrisDestPrevCamera {
                 // self-advancing register that advances once per updateStage(perFrame), so on a portal
                 // frame with two composite chains it ALTERNATES — which would leave the dest pass
                 // reprojecting through a matrix pair from the wrong chain.
+                // 1 Hz, NOT once-only. Two once-only runs disagreed completely — |cam-prev|=0.000 in
+                // one and 564.239 in the other, because the first occurrence lands on an arbitrary
+                // frame (here one where previousCameraPosition was still an uninitialised (0,0,0)).
+                // A single snapshot of a per-frame-varying value is not evidence; the STEADY STATE is.
+                long nowNs = System.nanoTime();
+                if (nowNs - lastRegimeLogNanos < 1_000_000_000L) {
+                    return;
+                }
+                lastRegimeLogNanos = nowNs;
                 String mvDiff = matDiff(pid, "gbufferModelView", "gbufferPreviousModelView");
                 String projDiff = matDiff(pid, "gbufferProjection", "gbufferPreviousProjection");
-                infoOnce("regime", P + "DRAW-TIME STATE (once-only): at the guarded pass, AFTER"
+                LOGGER.info(P + "DRAW-TIME STATE (1Hz): at the guarded pass, AFTER"
                     + " uniforms.update(), cameraPosition=(" + fmt(TMP3[0]) + "," + fmt(TMP3[1]) + ","
                     + fmt(TMP3[2]) + ") prevCameraPosition=" + prevStr + " |cam-prev|=" + pairStr
                     + " ; mod-side dest camera=(" + fmt(destUnshifted.x) + ","
