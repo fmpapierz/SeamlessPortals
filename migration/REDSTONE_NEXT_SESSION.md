@@ -33,8 +33,8 @@ place a second block from the far side; the two half-clipped blocks merely *look
 2. **Step 6 — mirror driver.** Second `@Inject` on `LevelChunkSetBlockStateMixin` (site rationale
    already written at `:36-72`), deferred end-of-tick flush via `ServerTaskList`, `withApplying`
    recursion guard, cluster dedupe. **Writes provenance** (see below).
-3. **Step 7 — `SeamJournal`** (pending clears surviving an unloaded destination) + IP-core edit 10
-   (re-ignition guard, now defence-in-depth — see the staging flaw below). **Consumes provenance.**
+3. **Step 7 — MOSTLY UNNECESSARY, see below.** Keep only IP-core edit 10 (re-ignition guard,
+   defence-in-depth). The `SeamJournal` looks like machinery for an unreachable state.
 4. **Targeting fix** — evidence-specified, see below.
 5. **Frame mirroring** — new user scope, needs its own design pass.
 
@@ -59,6 +59,29 @@ lighting one side ALSO repairs and lights the other, and they re-link.
 both portals tear down, nothing knows source frame ↔ dest frame, so a repair has nothing to mirror
 through. Needs a persisted **DORMANT LINK** surviving teardown — a concept the spec lacks — and extends
 the mirror beyond the aperture to the frame ring, which every §0.7 binding rule assumed would not happen.
+
+## THE STEP-7 JOURNAL LOOKS UNREACHABLE — do not build it on faith
+
+The spec's `SeamJournal` exists to make a mirror write durable when the FAR side is cold. Two live
+rounds plus the user's own observation suggest that state cannot be reached:
+
+- **Writing INTO a cold destination is already handled.** Both `SeamMirror.mayPlace` and
+  `applyToDestination` force-load the destination chunk. (Their earlier DISAGREEMENT about this was a
+  real bug — the veto loaded and approved, the driver saw "not loaded" and dropped the write,
+  manufacturing the source-only half refuse-on-conflict forbids.)
+- **A change ORIGINATING on a cold side cannot happen.** A player must be within reach to break a
+  block, which puts them at that portal, which means its chunk ticks and the portal is bound. And if a
+  chunk is not ticking, nothing else changes there either — no pistons, no fluid flow, no gravity.
+  The user tried to construct the case and correctly concluded it was impossible: *"i can only break
+  blocks that are within arms reach."*
+
+**Status is "no reachable path found", NOT "proven safe."** The counterexample to watch for is half a
+rail surviving alone with no counterpart. If that is ever seen, the journal comes back.
+
+Still worth taking from step 7: **IP-core edit 10**, the re-ignition guard
+(`SeamRegistry.isSeamCell` in `NetherPortalGeneration.checkPortalGeneration`). It is small and guards
+the bug family that already bit once — two portal pairs binding the same aperture cell with different
+destinations.
 
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
 
