@@ -629,6 +629,70 @@ existing bob-drop detector (`:214`, `prevBob - bobAmp[i] > 0.015f`) and its `bob
 increment-3 task; it was deliberately NOT done before this round, to keep the live check on a tree
 whose gates were green.
 
+### G.10 ★ THE COMPILER-VERIFIED DELETION MAP (dry run performed, then reverted deliberately)
+
+The core deletion was **executed as a dry run** on top of `75d5e64` and driven to a precise error
+map, then reverted rather than committed half-finished. This section converts §G.7's plan into an
+exact, compiler-proven worklist. **This is the highest-value artifact for the next session**: the
+deletion set below is *known* to be correct-and-complete, and the survivor edit list is *known* to be
+exhaustive, because javac said so rather than because a table predicted it.
+
+**Deletion set — 64 files, verified to leave exactly 16 files broken (65 errors):**
+- `portal/` (7), `chunk/` (10), `entity/` (5), `client/` (5), `api/` (2) — whole packages.
+- `network/ModPayloads` only (**`network/PlatformHelper` SURVIVES** — 4 ported `qouteall` importers).
+- `compat/SodiumBridge` only (**`compat/SodiumCompat` SURVIVES** — §E.1 row 1).
+- `render/`: `PortalContextSwitch`, `StencilPortalRenderer`, `PortalShapeRenderer`,
+  `PortalFrameSuppressor`, `PortalInnerCull`, `CameraTransitionHandler`, `PortalRenderBuffersPool`,
+  `VisibleSectionDiscovery`(warwa), `DimensionRenderHelper`(warwa).
+- `mixin/`: `NetherPortalBlockMixin`, `ServerLevelBlockUpdateMixin`, `LevelChunkSetBlockStateMixin`,
+  `EntityMixin`, `ThrownEnderpearlMixin`, `ProjectileMixin`, `PortalShapeFormMixin`,
+  `PortalForcerMixin`, `ChunkMapResendSuppressMixin`.
+- `mixin/client/`: `HandleRespawnMixin`, `LocalPlayerMixin`, `ClientLevelMixin`, `MinecraftMixin`,
+  `ClientPacketListenerAddEntityAdoptMixin`, `LivingEntityRendererDiagMixin`, `SectionCompilerMixin`,
+  `LevelRendererCullTerrainMixin`, `LevelExtractorFlashBridgeMixin`,
+  `ClientPacketListenerLocalPlayerFallbackMixin`, `GameRendererPortalPrepareMixin`,
+  `SectionOcclusionGraphPartialUpdateSkipMixin`, `ParticleEnginePortalSkipMixin`,
+  `DebugRendererPortalSkipMixin`, `GameRendererLightmapMixin`.
+- Already landed at 2a: the 4 unregistered mixins + `render/PortalSlicing`.
+
+**NEWLY DISCOVERED — two more block-era-keyed mixins that must join the deletion set.** Both were
+called "surviving callers of `CrossingTracer`" by the audit, but that premise dissolves once
+`SeamlessClientTeleport` dies: each one's *entire* body is keyed on
+`SeamlessClientTeleport.isInPostSwapWindow()`, a block-era window.
+- `mixin/client/ClientPacketListenerForgetGuardMixin` (`:38`) — body is only the post-swap absorb.
+- `mixin/client/ClientPacketListenerTeleportToleranceMixin` (`:57`) — same guard.
+- `mixin/client/LivingEntitySprintCancelDiagMixin` (`:30`) — same guard; a pure diagnostic.
+
+**Consequence for F16, stated honestly:** with those three gone, `render/CrossingTracer` becomes
+**retained-but-callerless**. F16's "diagnostics retained" is satisfied by retention; the audit's
+prescribed re-home of `recordFrame()`/`armDump()`/`notePortalRendered()` to flag-ON sites is a
+FOLLOW-UP, not a compile requirement. Same shape as the `rlog` gate. Do not read the callerless state
+as licence to delete it — F16 is a registered forced deviation.
+
+**The survivor edit list — exhaustive, with exact lines (this is what remains to do):**
+
+| File | Lines | Edit |
+|---|---|---|
+| `render/FrontClipping` | `:3`, `:54`, `:61`, `:64`, `:116`, `:163`, `:211` (+ `:97`, `:114`, `:237`, `:40` caller-less) | Strip the 6 `portal/`-typed members per §G.7. |
+| `mixin/ServerLevelFireSpreadMixin` | `:72` (8 errors) | **The only non-trivial one — a genuine PORT-FORWARD re-key, not a strip.** Replace the `PortalManager.getServerInstance()` + `SeamlessPortalsConfig.getPortalRenderDistance()` range test with `ImmPtlChunkTracking.isPlayerWatchingChunkWithinRadius` (EXECUTION_PLAN §S20(a) names this exact substitution). Budget real time for it. |
+| `mixin/client/GameRendererMixin` | `:3`, `:25`, `:47`, `:48`, `:49`, `:57` | Delete the import + the whole HEAD inject; drop the 3 ungated block-era calls; collapse `:57` to unconditional keeping `:58`. KEEP `:64/:66/:69/:70`. |
+| `render/CrossingTracer` | `:88-106`, `:109` | Strip the block-era portal-distance block + the promote-bridge bit. |
+| `mixin/client/MinecraftFramePumpMixin` | `:4`, `:116`, `:123` | Drop `SeamlessClientTeleport.checkCameraCrossingPerFrame()` and the `StencilPortalRenderer.frameUpkeep()` block. **KEEP the flag-ON IP pre-render chain** (`:66`-`:104`) — this file is its sole host. |
+| `mixin/client/QuadParticleGroupMixin` | `:104`, `:110` | Drop the `PortalContextSwitch.isRenderingPortal` early-return and the `PortalParticleClip` cull. Keep the vanilla frustum redirect. |
+| `mixin/client/LevelRendererBlockOutlineMixin` | `:4`, `:69` | Collapse the ternary to its flag-ON arm (`!RenderStates.lastPortalRenderInfos.isEmpty()`); drop the import. |
+| `mixin/client/LevelRendererEntityVisibilityMixin` | `:3`, `:59` | Strip only the `PortalContextSwitch.isRenderingPortal \|\|` disjunct, leaving `isDestExtracting`. |
+| `config/SeamlessPortalsConfig` | 12 errors | Dies in increment 4 with the flag — it still holds `isEntityPortals()`, read by ~35 files. |
+
+**Then, before any commit:** strip every deleted class's line from the `.mixins.json` configs.
+`seamlessportals-common.mixins.json` is `"required": true` with `injectors.defaultRequire: 1`, so a
+dangling entry is a **BOOT CRASH** the compile gate will not catch — only a launch will.
+
+**Why this was reverted rather than committed:** `ServerLevelFireSpreadMixin`'s re-key is real
+porting work, and committing 64 deletions with a red tree — or with that mixin crudely stubbed —
+would violate the suite-green-per-increment rule and leave the branch in a state no gate had blessed.
+The tree is therefore back at `75d5e64` (compile green ×3, suite ALL LEGS PASS). Reproducing the dry
+run costs one `git rm` batch from the list above.
+
 ### G.6 A stale label that S20 itself creates
 
 `ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's
