@@ -265,6 +265,12 @@ loom {
             if (project.findProperty('debugBloomMaskBlackout') == 'true') { vmArg('-Dseamlessportals.debugBloomMaskBlackout=true') }
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PbloomMaskProbe=true
             if (project.findProperty('bloomMaskProbe') == 'true') { vmArg('-Dseamlessportals.bloomMaskProbe=true') }
+            // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
+            // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
+            // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PactProbe=true -PactVolumeProbe=true
+            if (project.findProperty('actProbe') == 'true') { vmArg('-Dseamlessportals.actProbe=true') }
+            if (project.findProperty('actVolumeProbe') == 'true') { vmArg('-Dseamlessportals.actVolumeProbe=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -395,6 +401,11 @@ loom {
             if (project.findProperty('debugTintBloomMask') == 'true') { vmArg('-Dseamlessportals.debugTintBloomMask=true') }
             if (project.findProperty('debugBloomMaskBlackout') == 'true') { vmArg('-Dseamlessportals.debugBloomMaskBlackout=true') }
             if (project.findProperty('bloomMaskProbe') == 'true') { vmArg('-Dseamlessportals.bloomMaskProbe=true') }
+            // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
+            // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
+            // for lever-row parity) —
+            if (project.findProperty('actProbe') == 'true') { vmArg('-Dseamlessportals.actProbe=true') }
+            if (project.findProperty('actVolumeProbe') == 'true') { vmArg('-Dseamlessportals.actVolumeProbe=true') }
         }
     }
 }
