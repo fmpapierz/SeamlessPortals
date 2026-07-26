@@ -207,5 +207,21 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_DELIVERY_TEST =
         Boolean.getBoolean("seamlessportals.seamDeliveryTest");
 
+    /**
+     * Disables SAME-DIMENSION PORTAL TERRAIN FRESHNESS —
+     * {@code -Dseamlessportals.disableSameDimRemesh=true}.
+     *
+     * <p>With the fix ON (default), a section that changes behind a same-dimension portal is
+     * scheduled for a rebuild, so the portal window updates live. With it OFF, stock behaviour
+     * returns: the block reaches the client correctly and the picture never changes until the
+     * player goes and looks at the region directly.
+     *
+     * <p>It exists to make the defect <b>demonstrable</b> rather than merely asserted — the
+     * RS-DELIVERY-TEST inversion discipline. See {@code com.warwa.seamlessportals.render.SameDimRemesh}
+     * for which two losses it closes and why the obvious repair was rejected.
+     */
+    public static final boolean DISABLE_SAME_DIM_REMESH =
+        Boolean.getBoolean("seamlessportals.disableSameDimRemesh");
+
     private AperturePassthroughLever() {}
 }

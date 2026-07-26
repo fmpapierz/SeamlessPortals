@@ -137,6 +137,7 @@ loom {
             if (project.findProperty('disableSeamTargeting') == 'true') { vmArg('-Dseamlessportals.disableSeamTargeting=true') }
             if (project.findProperty('disableMirrorAuthority') == 'true') { vmArg('-Dseamlessportals.disableMirrorAuthority=true') }
             if (project.findProperty('disableFrameMirror') == 'true') { vmArg('-Dseamlessportals.disableFrameMirror=true') }
+            if (project.findProperty('disableSameDimRemesh') == 'true') { vmArg('-Dseamlessportals.disableSameDimRemesh=true') }
             // RS (a) PROBE LEVERS — all DEFAULT-OFF. seamAimProbe is the step-3 gate: it settles the
             // one thing the design panel's two verifiers disagreed about and neither observed.
             if (project.findProperty('seamMapProbe') == 'true') { vmArg('-Dseamlessportals.seamMapProbe=true') }
@@ -299,6 +300,7 @@ loom {
             if (project.findProperty('disableSeamTargeting') == 'true') { vmArg('-Dseamlessportals.disableSeamTargeting=true') }
             if (project.findProperty('disableMirrorAuthority') == 'true') { vmArg('-Dseamlessportals.disableMirrorAuthority=true') }
             if (project.findProperty('disableFrameMirror') == 'true') { vmArg('-Dseamlessportals.disableFrameMirror=true') }
+            if (project.findProperty('disableSameDimRemesh') == 'true') { vmArg('-Dseamlessportals.disableSameDimRemesh=true') }
             if (project.findProperty('seamMapProbe') == 'true') { vmArg('-Dseamlessportals.seamMapProbe=true') }
             if (project.findProperty('seamReconcileProbe') == 'true') { vmArg('-Dseamlessportals.seamReconcileProbe=true') }
             if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }

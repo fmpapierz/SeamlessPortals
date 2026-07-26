@@ -1457,25 +1457,37 @@ public class CrossingSmoke implements FabricClientGameTest {
         // break them exactly the way a leftover staged block already broke the ender-pearl leg once.
         Vec3 playerHome = context.computeOnClient(mc -> mc.player.position());
         final int wx = 2600, wy = 90, wz = 2600;      // source side
-        // 600 blocks east: DELIBERATELY beyond the client's render distance (6 chunks = 96 blocks),
-        // because that is where stage 6 predicts the loss. SectionUpdateTracker.setDirty
-        // (REF :26-31) discards a remesh request whose section is outside its rotating window, and
-        // that window is render-distance-sized and centred on the camera. A same-dimension
-        // destination therefore shares the PLAYER's window; a cross-dimension one gets its own,
-        // centred on the portal-view camera. A 60-block destination would sit inside the window and
-        // pass, which is exactly the kind of fixture that makes a bug look absent.
-        final int wdx = 3200;
+        // ★ THE FIXTURE FOR DEFECT A, and its two properties are both load-bearing.
+        //
+        // NEAR (60 blocks) so the destination is inside the SectionUpdateTracker's window AND inside
+        // the ViewArea's grid — a RenderSection exists there and can be rebuilt.
+        // OCCLUDED (a sealed chamber 50 blocks underground) so the main camera's SectionOcclusionGraph
+        // BFS cannot reach it, which is what keeps the section out of visibleSections and reproduces
+        // the real defect: marked dirty, never consumed.
+        //
+        // An earlier fixture put the destination 600 blocks away. That reproduced a DIFFERENT defect
+        // (the out-of-window mark drop) and, worse, one this fix cannot repair: at that range the
+        // same-dim ViewArea has no columns at all, because same-dim passes deliberately never call
+        // repositionCamera. getRenderSection returns null, there is nothing to rebuild, and nothing
+        // renders there either. See the class note on SameDimRemesh for why defect B is out of scope.
+        final int wdx = 2660;
+        final int wdy = 40;
         runCommands(context, List.of(
             "forceload add " + (wx - 16) + " " + (wz - 16) + " " + (wx + 16) + " " + (wz + 16),
             "forceload add " + (wdx - 16) + " " + (wz - 16) + " " + (wdx + 16) + " " + (wz + 16),
+            // source side: a small stone pad with clear air above it
             "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
                 + (wx + 3) + " " + (wy - 1) + " " + (wz + 3) + " minecraft:stone",
             "fill " + (wx - 3) + " " + wy + " " + (wz - 3) + " "
                 + (wx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
-            "fill " + (wdx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
-                + (wdx + 3) + " " + (wy - 1) + " " + (wz + 3) + " minecraft:stone",
-            "fill " + (wdx - 3) + " " + wy + " " + (wz - 3) + " "
-                + (wdx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air"
+            // destination: SOLID stone, then a sealed chamber carved inside it. The solid shell is
+            // the point — it is what stops the main camera's occlusion BFS reaching the chamber, so
+            // its sections stay out of visibleSections and the defect is reproduced rather than
+            // accidentally avoided.
+            "fill " + (wdx - 6) + " " + (wdy - 4) + " " + (wz - 6) + " "
+                + (wdx + 6) + " " + (wdy + 8) + " " + (wz + 6) + " minecraft:stone",
+            "fill " + (wdx - 2) + " " + wdy + " " + (wz - 2) + " "
+                + (wdx + 2) + " " + (wdy + 4) + " " + (wz + 2) + " minecraft:air"
         ));
         context.waitTicks(20);
         runOnServer(context, server -> {
@@ -1486,7 +1498,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (p == null) throw new AssertionError(LOG + "[RS-DELIVERY-TEST] portal create returned null");
             p.setOriginPos(new Vec3(wx + 0.5, wy + 1.5, wz + 0.5));
             p.setDestinationDimension(Level.OVERWORLD);
-            p.setDestination(new Vec3(wdx + 0.5, wy + 1.5, wz + 0.5));
+            p.setDestination(new Vec3(wdx + 0.5, wdy + 1.5, wz + 0.5));
             p.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 3, 3);
             // The wand's own four-entity cluster, same calls in the same order
             // (PortalWandInteraction.java:271-283).
@@ -1505,7 +1517,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             McHelper.spawnServerEntity(parallel);
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "[RS-DELIVERY-TEST] wand-shaped SAME-DIM cluster spawned: 4 entities,"
-                    + " origin ({},{},{}) -> dest ({},{},{})", wx, wy, wz, wdx, wy, wz);
+                    + " origin ({},{},{}) -> dest ({},{},{})", wx, wy, wz, wdx, wdy, wz);
         });
         context.waitTicks(40);   // let the four entities tick and bind before the registry is read
 
@@ -1605,6 +1617,8 @@ public class CrossingSmoke implements FabricClientGameTest {
             context.waitTicks(80);
             deliveryArm(context, "SAME-DIM WAND-SHAPED (4 entities, bi-way + bi-faced)",
                 Level.OVERWORLD, wandDim.get()[0], Level.OVERWORLD, wandDim.get()[1]);
+            context.waitTicks(20);
+            sameDimRemeshVerdict(context, wandDim.get()[1]);
         } finally {
             // Cleanup in a finally, per the hazard that an evidence leg must never perturb a
             // functional one: legs 3 and 4 both use the nether around (0,129,0), which is exactly
@@ -1636,7 +1650,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                 for (qouteall.imm_ptl.core.portal.Portal p : ow.getEntitiesOfClass(
                     qouteall.imm_ptl.core.portal.Portal.class,
                     new net.minecraft.world.phys.AABB(
-                        wx - 40, wy - 20, wz - 40, wdx + 40, wy + 30, wz + 40),
+                        wx - 40, wdy - 20, wz - 40, wdx + 40, wy + 30, wz + 40),
                     p -> true)) {
                     p.discard();
                     removed++;
@@ -1648,8 +1662,8 @@ public class CrossingSmoke implements FabricClientGameTest {
             runCommands(context, List.of(
                 "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
                     + (wx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
-                "fill " + (wdx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
-                    + (wdx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
+                "fill " + (wdx - 6) + " " + (wdy - 4) + " " + (wz - 6) + " "
+                    + (wdx + 6) + " " + (wdy + 8) + " " + (wz + 6) + " minecraft:air",
                 "forceload remove " + (wx - 16) + " " + (wz - 16) + " "
                     + (wx + 16) + " " + (wz + 16),
                 "forceload remove " + (wdx - 16) + " " + (wz - 16) + " "
@@ -1657,6 +1671,60 @@ public class CrossingSmoke implements FabricClientGameTest {
             seamStand(context, playerHome.x, playerHome.y, playerHome.z);
             context.waitTicks(20);
         }
+    }
+
+    /**
+     * THE SAME-DIM REMESH INVERSION — the assertion that makes the fix a proof rather than a hope.
+     *
+     * <p>Its verdict flips on {@code -PdisableSameDimRemesh=true}, in the RS-TEARDOWN-TEST
+     * discipline: with the fix ON a mirrored write behind a same-dimension portal must SCHEDULE a
+     * rebuild, and with it OFF it must schedule none. A fixed expectation would be actively
+     * misleading in whichever configuration it was not written for, and — more to the point — a
+     * one-directional assertion cannot tell "the fix works" from "the defect never existed here",
+     * which is the failure that let three wrong fixes ship earlier in this engagement.
+     *
+     * <p><b>Asserted on THE CELL THAT WAS WRITTEN, not on a count and not on a client block read.</b>
+     * Two distinct traps, both already sprung in this engagement:
+     * <ul>
+     *   <li>A client block read proves nothing — the block DATA was correct throughout this bug.</li>
+     *   <li>A count delta proves nothing either. The first cut of the fix passed a "&gt; 0 rebuilds
+     *       scheduled" assertion while its queue had saturated and <b>dropped the very write under
+     *       test</b>. Asserting the specific section is what makes the gate able to fail.</li>
+     * </ul>
+     */
+    private static void sameDimRemeshVerdict(ClientGameTestContext context, BlockPos destCell) {
+        boolean fixDisabled = AperturePassthroughLever.DISABLE_SAME_DIM_REMESH;
+        String counters = context.computeOnClient(mc ->
+            com.warwa.seamlessportals.render.SameDimRemesh.counters());
+        boolean scheduledThisCell = context.computeOnClient(mc ->
+            com.warwa.seamlessportals.render.SameDimRemesh.didScheduleSectionAt(
+                destCell.getX(), destCell.getY(), destCell.getZ()));
+
+        if (fixDisabled) {
+            if (scheduledThisCell) {
+                throw new AssertionError(LOG + "[RS-DELIVERY-TEST] *** REGRESSION *** the same-dim"
+                    + " remesh fix is DISABLED, yet a rebuild was scheduled for " + destCell
+                    + "'s section. The disable lever is not restoring stock behaviour."
+                    + " counters: " + counters);
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH INVERSION PASS — fix DISABLED and no"
+                    + " rebuild was scheduled for {}, which is the defect reproduced on demand."
+                    + " counters: {}", destCell, counters);
+            return;
+        }
+        if (!scheduledThisCell) {
+            throw new AssertionError(LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH FAILED: a block was"
+                + " mirrored to " + destCell + " behind a same-dimension portal and NO rebuild was"
+                + " scheduled for that section, so the window will show stale terrain there."
+                + " A non-zero scheduled count in the counters below does NOT excuse this — it"
+                + " means other sections were rebuilt while this one was missed."
+                + " counters: " + counters);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH PASS — the section holding {} was scheduled"
+                + " for rebuild, which stock 26.2 never does for a same-dimension portal's far"
+                + " side. counters: {}", destCell, counters);
     }
 
     /**
