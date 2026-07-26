@@ -198,12 +198,48 @@ public final class SeamMap {
             return false;
         }
         DQuaternion rotation = portal.getRotation();
-        if (rotation == null) {
-            return true;    // identity — trivially lattice-preserving
+        if (rotation != null) {
+            if (!isSignedUnitAxis(portal.transformLocalVecNonScale(new Vec3(1, 0, 0)))
+                || !isSignedUnitAxis(portal.transformLocalVecNonScale(new Vec3(0, 1, 0)))
+                || !isSignedUnitAxis(portal.transformLocalVecNonScale(new Vec3(0, 0, 1)))) {
+                return false;
+            }
         }
-        return isSignedUnitAxis(portal.transformLocalVecNonScale(new Vec3(1, 0, 0)))
-            && isSignedUnitAxis(portal.transformLocalVecNonScale(new Vec3(0, 1, 0)))
-            && isSignedUnitAxis(portal.transformLocalVecNonScale(new Vec3(0, 0, 1)));
+        // THE TRANSLATION TERM — everything above tests only the LINEAR part.
+        // transformPoint is AFFINE: p -> R*p + (destPos - R*originPos) (Portal.java:508-512). The
+        // checks above constrain R alone and never touch getOriginPos()/getDestPos(), so a portal
+        // pair with a half-block offset between their planes passes them all while mapping a source
+        // cell onto a span STRADDLING TWO destination cells — a geometry with no well-defined mirror
+        // target at all. An earlier comment here claimed a null rotation was "trivially
+        // lattice-preserving"; that was false, because identity rotation with a non-integral
+        // translation still shifts the lattice off itself.
+        return latticeAligned(portal, BlockPos.containing(portal.getOriginPos()));
+    }
+
+    /**
+     * Whether this portal maps the BLOCK LATTICE onto itself — the test {@link #isMirrorable}'s other
+     * clauses do NOT make.
+     *
+     * <p>Those clauses constrain only the LINEAR part of the transform: scale 1, a signed-unit normal,
+     * and every axis carried to a signed axis. A signed axis permutation already carries ℤ³ onto ℤ³,
+     * so the whole affine map preserves the lattice <b>iff its translation is integral</b> — and
+     * because the linear part is a permutation, ONE lattice corner settles it for all of ℤ³. This is a
+     * proof, not an enumeration of degenerate cases.
+     *
+     * <p>Worked: planes at (Z0+0.5, Z1+0.5) → integral ✔; (Z0, Z1) → integral ✔;
+     * (Z0+0.3, Z1+0.7) → integral ✔; <b>(Z0, Z1+0.5) → NOT integral ✘</b>, correctly refused —
+     * that pair's image of a cell straddles two cells, so no mirror target exists.
+     *
+     * <p>Tolerance is 1e-4, not 1e-6: {@code transformPoint} runs through {@link DQuaternion}, and a
+     * rotated portal accumulates more error than 1e-6 allows.
+     */
+    public static boolean latticeAligned(Portal portal, BlockPos anyLocalCell) {
+        Vec3 image = portal.transformPoint(Vec3.atLowerCornerOf(anyLocalCell));
+        return nearInt(image.x) && nearInt(image.y) && nearInt(image.z);
+    }
+
+    private static boolean nearInt(double v) {
+        return Math.abs(v - Math.round(v)) < 1.0e-4;
     }
 
     /** True when the vector is (±1,0,0), (0,±1,0) or (0,0,±1) to within rounding. */
