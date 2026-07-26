@@ -1,8 +1,6 @@
 package com.warwa.seamlessportals.neoforge.network;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
-import com.warwa.seamlessportals.chunk.RemoteChunkManager;
-import com.warwa.seamlessportals.network.ModPayloads;
 import com.warwa.seamlessportals.network.PlatformHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -170,77 +168,10 @@ public class NeoForgePlatformHelper implements PlatformHelper {
 
     public static void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(SeamlessPortalsConstants.MOD_ID);
-
-        // Server -> Client
-        registrar.playToClient(
-            ModPayloads.PortalSyncPayload.TYPE,
-            ModPayloads.PortalSyncPayload.STREAM_CODEC,
-            NeoForgePlatformHelper::handlePortalSync
-        );
-        registrar.playToClient(
-            ModPayloads.RemoteChunkDataPayload.TYPE,
-            ModPayloads.RemoteChunkDataPayload.STREAM_CODEC,
-            NeoForgePlatformHelper::handleRemoteChunkData
-        );
-        registrar.playToClient(
-            ModPayloads.RemoteChunkUnloadPayload.TYPE,
-            ModPayloads.RemoteChunkUnloadPayload.STREAM_CODEC,
-            NeoForgePlatformHelper::handleRemoteChunkUnload
-        );
-        registrar.playToClient(
-            ModPayloads.RemoteBlockUpdateBatchPayload.TYPE,
-            ModPayloads.RemoteBlockUpdateBatchPayload.STREAM_CODEC,
-            NeoForgePlatformHelper::handleRemoteBlockUpdateBatch
-        );
-
-        // Client -> Server
-        registrar.playToServer(
-            ModPayloads.PortalTeleportPayload.TYPE,
-            ModPayloads.PortalTeleportPayload.STREAM_CODEC,
-            NeoForgePlatformHelper::handlePortalTeleport
-        );
-
-        // S0 seam drain: payload types queued through the loader-neutral
-        // registerClientboundPayload/registerServerboundPayload seams (empty
-        // until the ported IP network stage, S7, starts feeding them).
         PENDING_CLIENTBOUND.forEach((type, codec) -> registerQueuedClientbound(registrar, type, codec));
         PENDING_SERVERBOUND.forEach((type, codec) -> registerQueuedServerbound(registrar, type, codec));
 
         SeamlessPortalsConstants.LOGGER.info("NeoForge network payloads registered");
     }
 
-    private static void handlePortalSync(ModPayloads.PortalSyncPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            SeamlessPortalsConstants.LOGGER.debug("Received portal sync: {}", payload.portalId());
-        });
-    }
-
-    private static void handleRemoteChunkData(ModPayloads.RemoteChunkDataPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            RemoteChunkManager.handleChunkData(
-                payload.dimensionId(), payload.chunkX(), payload.chunkZ(), payload.chunkData()
-            );
-        });
-    }
-
-    private static void handleRemoteChunkUnload(ModPayloads.RemoteChunkUnloadPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            RemoteChunkManager.handleChunkUnload(
-                payload.dimensionId(), payload.chunkX(), payload.chunkZ()
-            );
-        });
-    }
-
-    private static void handlePortalTeleport(ModPayloads.PortalTeleportPayload payload, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            SeamlessPortalsConstants.LOGGER.debug("Received teleport confirmation from client: {}", payload.portalId());
-        });
-    }
-
-    private static void handleRemoteBlockUpdateBatch(
-            ModPayloads.RemoteBlockUpdateBatchPayload payload, IPayloadContext context) {
-        context.enqueueWork(() ->
-            com.warwa.seamlessportals.chunk.RemoteBlockUpdater.applyBatch(
-                payload.dimensionId(), payload.positions(), payload.blockStateIds()));
-    }
 }

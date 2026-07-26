@@ -1,7 +1,5 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.warwa.seamlessportals.client.SeamlessClientTeleport;
-import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.minecraft.client.Minecraft;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -109,18 +107,17 @@ public abstract class MinecraftFramePumpMixin {
         // Ordering mirrors IP's MixinGameRenderer.onFarBeforeRendering: teleport/crossing management
         // FIRST, then the per-frame upload/upkeep.
 
-        // 1. Crossing detection — the block-era analog of ClientTeleportationManager
-        //    .manageTeleportation(false). Called UNCONDITIONALLY, exactly as the old
-        //    GameRenderer.update-HEAD site did: it self-guards on player/level == null and
-        //    resets the crossing tracer in that case (SeamlessClientTeleport:201-204).
-        SeamlessClientTeleport.checkCameraCrossingPerFrame();
-
-        // 2. Per-frame upkeep (A4 re-home) — block-era analog of MyRenderHelper.earlyRemoteUpload.
-        //    Gated on level != null, mirroring IP's pre-render-block guard
-        //    (MixinGameRenderer.java:78) and preserving the old renderLevel-HEAD precondition
-        //    (renderLevel only fires with a level present).
-        if (Minecraft.getInstance().level != null) {
-            StencilPortalRenderer.frameUpkeep();
-        }
+        // S20: the block-era half of this pump is gone. Its two calls were
+        // SeamlessClientTeleport.checkCameraCrossingPerFrame() (the block-era analog of
+        // ClientTeleportationManager.manageTeleportation(false)) and
+        // StencilPortalRenderer.frameUpkeep() (the block-era analog of
+        // MyRenderHelper.earlyRemoteUpload) — and the FLAG-ON chain above already drives both of
+        // those IP originals directly (:95 manageTeleportation(false), :98 earlyRemoteUpload).
+        //
+        // THIS FILE REMAINS THE SOLE HOST of that flag-ON IP pre-render chain (audit §G.2): each of
+        // PRE_TOTAL_RENDER_TASK_LIST.processTasks, RenderStates.updatePreRenderInfo,
+        // ClientPortalAnimationManagement.update, manageTeleportation(false), PRE_GAME_RENDER_EVENT,
+        // MyRenderHelper.earlyRemoteUpload and RenderStates.frameIndex++ has exactly ONE call site
+        // in the whole tree, and it is here. Do not delete this file as block-era collateral.
     }
 }

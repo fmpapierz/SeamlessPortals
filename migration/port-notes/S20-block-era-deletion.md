@@ -693,6 +693,72 @@ would violate the suite-green-per-increment rule and leave the branch in a state
 The tree is therefore back at `75d5e64` (compile green ×3, suite ALL LEGS PASS). Reproducing the dry
 run costs one `git rm` batch from the list above.
 
+### G.11 THE FABRIC-LOADER ROUND — 4 specs + 4 adversarial verifies + a completeness critic
+
+The three remaining RED Fabric files were spec'd, each spec attacked by an independent verifier, and
+then a completeness critic asked what all eight documents missed. All four verifiers returned
+`spec-has-defects` — no spec survived unamended, which is the expected and healthy outcome.
+
+**Verifier catches that changed the work (not cosmetic):**
+1. **`IpHeldPaths.groovy` cannot be deleted alone.** Its two Groovy `import` statements at
+   `multiloader-common.gradle:1` and `multiloader-loader.gradle:1` would fail `buildSrc`'s
+   `compileGroovy`, and removing only the two call lines inside `multiloader-common.gradle:22-29`
+   leaves two empty `tasks.named(...).configure {}` closures. Delete the whole block.
+2. **The ModMenu entrypoint swap must be ATOMIC with the flag deletion, not landed early.** IP's
+   Cloth config is registered ONLY inside the flag-ON arm — `AutoConfig.register(IPConfig.class, …)`
+   at `IPModMain.java:146` ← `IPModMain.init():63`. Swapping `fabric.mod.json:24` to
+   `IPModMenuConfigEntry` before the flag dies points ModMenu at an unregistered config.
+3. **String-literal references to deleted classes inside `SeamlessMixinConfigPlugin`** — `:43`
+   names `LevelRendererCullTerrainMixin` in `SODIUM_INCOMPATIBLE_MIXINS` and `:58` names
+   `ClientPacketListenerLocalPlayerFallbackMixin` in `ENTITY_PORTALS_SUPERSEDED_MIXINS`. Both are
+   compiler-invisible AND mixin-config-invisible (they are plain strings in a Java set), so neither
+   the compile gate nor the deregistration sweep sees them. Increment-4 cleanup: the sodium set now
+   has no live member.
+4. **`IPCompatMixinPlugin:136` must become `return isFabricLoaderPresent();`, never `return true;`**
+   when the flag dies — the same property already flagged for `SeamlessMixinConfigPlugin`. Increment 1
+   pre-armed both with `isFabricLoaderPresent() && isOn()`, so the collapse yields this automatically.
+5. A trap I caught myself while applying: the spec told me to delete `SeamlessPortalsModFabric`'s
+   import block `:20-26`, but `ImplRemoteProcedureCall` in that range is used by the **surviving
+   flag-ON arm** at `:122-142`. I deleted only compile-required (deleted-class) imports and let javac
+   confirm the rest — unused imports are warnings, a deleted-but-needed import is an error.
+
+**The completeness critic's three genuine misses** (nothing in the other eight documents named these):
+
+- **★ `gametest/CrossingSmoke.java` — THE 8-LEG GATE ITSELF depends on the dying flag.** `:3` imports
+  `EntityPortalsFlag`; `:88-93` is a flag-OFF abort; and **`:87` passes `isOn()` as a LOG ARGUMENT,
+  not inside an `if`** — so a mechanical "collapse every gate" pass misses it entirely. The moment the
+  flag dies, `:fabric:compileJava` goes red on a FOURTH file and `runCrossingGametest` cannot build:
+  **the gate that guards every increment would break itself.** Edit: delete `:3`, replace `:86-93`
+  with the log line minus the flag argument. Keep the `LivingEntityHurtAccessor` import at `:5` (it
+  survives). Companion: `fabric/build.gradle:270-275`'s comment becomes false, and **`:285`'s
+  `immersive_portals.json` seed MUST stay** (it suppresses IP's first-launch splash, which the
+  client-gametest framework's bare-title-screen assertion needs).
+- **`fabric/SeamlessConfigScreen.java` (~110 lines) appears in none of the eight documents.** Its only
+  entry point is `ModMenuIntegration:40 (SeamlessConfigScreen::new)`, in the flag-OFF arm — so the
+  instant `ModMenuIntegration` is deleted it is fully orphaned, still compiles, and **no gate fires**.
+  Delete it in the same commit. The critic also verified the swap is behaviour-preserving:
+  `IPModMenuConfigEntry:25` returns `IPConfigGUI::createClothConfigScreen`, byte-equivalent to
+  `ModMenuIntegration`'s own flag-ON arm at `:39`.
+- **A spec justification was factually wrong:** it claimed `SeamlessPortalsConfig.loadFrom` must
+  survive because `portalRenderDistance`/`entityLoadDistance`/`speculativePrewarm` are still read.
+  They are not — after the block-era deletion **no surviving Java reads any of the six knobs**;
+  `SeamlessConfigScreen` was their last reader. So the whole class goes in increment 4, not just the
+  flag method.
+
+**Critic findings that de-risk rather than add work** (recorded so nobody redoes them): all 8
+`.mixins.json` now have **0** dangling entries (my deregistration verified independently by reverse-
+checking every array element against disk); `common/src/test/**` has zero references to any deleted
+class and zero flag references; both `META-INF/services/…PlatformHelper` files point at surviving
+classes; all 16 `@Mixin(targets = "…")` string targets name vanilla/third-party classes only;
+`seamlessportals.accesswidener` and `accesstransformer.cfg` are vanilla-only; `IpHeldPaths.groovy` is
+**not** a build breaker today; and `TitleCardCapture` compiles as-is (it is behaviourally stale, per §C,
+but not broken).
+
+**One naming trap to never "clean":** exactly two deleted simple names collide with surviving classes —
+`DimensionRenderHelper` (survives at `qouteall/imm_ptl/core/render/context_management/`) and
+`VisibleSectionDiscovery` (survives at `qouteall/imm_ptl/core/render/`). Every hit on those names in
+`:common` refers to the SURVIVING class.
+
 ### G.6 A stale label that S20 itself creates
 
 `ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's

@@ -1,6 +1,5 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.warwa.seamlessportals.client.PortalParticleClip;
 import net.minecraft.client.Camera;
 import net.minecraft.client.particle.QuadParticleGroup;
 import net.minecraft.client.renderer.culling.Frustum;
@@ -101,16 +100,20 @@ public abstract class QuadParticleGroupMixin {
         // INSIDE the portal view, already bounded by the stencil mask — and
         // applying it (source-dim portals vs dest-dim positions/camera) would
         // wrongly drop them. So render all in-frustum dest particles.
-        if (com.warwa.seamlessportals.render.PortalContextSwitch.isRenderingPortal) {
+        // S20: the block-era discriminator (PortalContextSwitch.isRenderingPortal) is replaced by
+        // its FLAG-ON equivalent, the IP dest-extract bracket. Same intent, stated for the surviving
+        // architecture: particles extracted for a DEST pass are inside the portal view and already
+        // bounded by the stencil mask, so a source-dim portal cull must not touch them. Flag-ON dest
+        // passes should not even reach this redirect (S14.40's MixinParticleEngine HEAD-cancels the
+        // vanilla dest extract, and ip_extractIsolated bypasses this class), so this stays as a
+        // defensive belt on that invariant rather than a load-bearing branch.
+        if (qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
             return true;
         }
-        // Additional cull: particle behind any active portal from camera.
-        // No-op when no portals are present in the player's current dim.
-        if (seamlessportals$currentCamera != null
-            && PortalParticleClip.isPositionBehindPortal(
-                x, y, z, seamlessportals$currentCamera)) {
-            return false;
-        }
+        // S20: the block-era behind-portal cull (PortalParticleClip, fed by the block-era
+        // PortalManager tracker) died with the block era. NOTE FOR THE is5-shadow MERGE: that branch
+        // re-introduces a flag-ON behind-portal cull sourced from IP Portal ENTITIES via IPMcHelper
+        // (its §2c fix, port-note §A/§E.6) — when it merges, its version lands here unconditionally.
         return true;
     }
 }

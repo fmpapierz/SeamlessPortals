@@ -4,7 +4,6 @@ import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.fabric.network.FabricPlatformHelper;
 import com.warwa.seamlessportals.network.PlatformHelper;
-import com.warwa.seamlessportals.render.StencilPortalRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
@@ -59,7 +58,6 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         // nothing — EXECUTION_PLAN §3 S13 step 5).
         registerPortalEntityRenderers();
 
-        if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) client init — S13 step 4 =====================
             // DEPENDENCY_ORDER §4.2 client init order: the MiscUtilModEntryClient sequence
             // (ImplRemoteProcedureCall.initClient → MiscNetworking.initClient) THEN IPModMainClient.init
@@ -160,53 +158,6 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (client); "
                     + "flag-ON render dispatch registered (AFTER_TRANSLUCENT_TERRAIN)");
-        } else {
-            // ===== BLOCK-ERA client driver set (flag-OFF, the shipping baseline — UNCHANGED) =======
-            FabricPlatformHelper.registerClientHandlers();
-
-            // Phase 2 (stencil mask + composite) at AFTER_TRANSLUCENT_TERRAIN: this is
-            // the ONLY point where the framegraph's camera/projection matrices are live
-            // (moving it to renderLevel RETURN composites in the wrong screen position).
-            // S14.29 ORDERING CORRECTION (round-3 verified; the old claim here — "the source
-            // sky/celestial renders later in the same framegraph and paints over this
-            // composite" — is WRONG and seeded a refuted defect-hunt lead): the verified 26.2
-            // execution order is clear -> SKY pass -> main pass (this hook fires INSIDE the
-            // main pass, AFTER the sky already executed) — mc262 LevelRenderer.java:195-212 +
-            // migration/inventory/current-mod-render.md. Any historical "blank curtain" had a
-            // different mechanism. See GameRendererPortalPrepareMixin for the old diagnosis.
-            LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
-                StencilPortalRenderer.renderPortals();
-            });
-
-            // Drain the remote-chunk queues in small batches per tick. Without
-            // these, the post-teleport chunk processing (both the server's burst
-            // of ~289 incoming chunks AND the secondary-renderer's initial feed
-            // of pre-loaded chunks) would freeze the render thread for seconds.
-            ClientTickEvents.END_CLIENT_TICK.register(client -> {
-                // T2: drain queued redirected dest chunks within a per-tick time budget
-                // (was: apply each inline the moment it arrived → a burst froze the render
-                // thread ~155ms). Runs FIRST so freshly-applied chunks are available to the
-                // compile pump below. The deferred chunk-light lambdas land on each dest
-                // level's pollLightUpdates inside tickRemoteWorlds below.
-                // DIAG: each client-tick subsystem timed + attributed off-thread
-                // ([SEAMLESS TIMERS], reported per 5s) so the "stutters even when not looking
-                // at the portal" cost is read from data, not guessed.
-                com.warwa.seamlessportals.render.PerfTimers.time("drainChunks",
-                    com.warwa.seamlessportals.chunk.RedirectedPacketApplier::drainPending);
-                com.warwa.seamlessportals.render.PerfTimers.time("advanceCompilePipelines",
-                    com.warwa.seamlessportals.client.PortalWorldManager::advanceCompilePipelines);
-                com.warwa.seamlessportals.render.PerfTimers.time("syncTime",
-                    com.warwa.seamlessportals.client.PortalWorldManager::syncTimeToCachedLevels);
-                com.warwa.seamlessportals.render.PerfTimers.time("tickRemoteWorlds",
-                    com.warwa.seamlessportals.client.PortalWorldManager::tickRemoteWorlds);
-                com.warwa.seamlessportals.render.PerfTimers.time("tickCachedParticles",
-                    com.warwa.seamlessportals.client.PortalWorldManager::tickCachedParticles);
-                com.warwa.seamlessportals.render.PerfTimers.time("evictUnboundedStores",
-                    com.warwa.seamlessportals.client.PortalWorldManager::evictUnboundedStores);
-            });
-
-            SeamlessPortalsConstants.LOGGER.info("Seamless Portals: Registered AFTER_TRANSLUCENT_TERRAIN stencil render hook");
-        }
     }
 
     /**
