@@ -8,6 +8,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.minecraft.client.gui.screens.worldselection.WorldCreationUiState;
 import net.minecraft.commands.CommandSourceStack;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughLever;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -349,6 +350,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             // one INFERRED claim the whole seam model rests on — does the stencil actually clip a
             // block sitting in the aperture at the portal plane? Lever-gated + fail-soft.
             rsSeamEvidenceLegs(context, px, py, pz, planeZ);
+            rsTeardownTest(context, py);
             emOutlineEvidenceLegs(context, px, py, pz, planeZ);
             maybeCreativeBrowse(context, "em-g-post");
             // EM-G-R3 the untested trigger: my 3 static-shaders harness configs never
@@ -762,6 +764,201 @@ public class CrossingSmoke implements FabricClientGameTest {
                     LOG + "[RS-SEAM] CLEANUP FAILED — later legs may see a blocked window", t);
             }
         }
+    }
+
+    /**
+     * RS-TEARDOWN-TEST — settles, empirically, whether a block in a lit portal's opening actually
+     * breaks the portal.
+     *
+     * <p>WHY THIS EXISTS. {@code migration/REDSTONE_RECON.md} §1 asserts, from reading
+     * {@code NetherPortalEntity.isPortalIntactOnThisSide():72-82} and the teardown chain, that a
+     * non-placeholder block in ANY opening cell breaks the portal and its cross-dimension twin
+     * within at most 233 ticks. That claim has NEVER BEEN OBSERVED: every armed probe run reported
+     * {@code intact=true} only, because the suite never puts anything in a real aperture, so the
+     * failure path never fired. The user reports not seeing a portal break in play. A code reading
+     * does not outrank that, so this leg triggers the path directly.
+     *
+     * <p>METHOD. Builds its OWN obsidian frame far from every other leg's staging (-600,-600) and
+     * ignites it through the same entry the flint/fire mixins use
+     * ({@code IntrinsicPortalGeneration.onFireLitOnObsidian}), so the portal under test is a real
+     * generated {@code NetherPortalEntity}, not a synthetic {@code Portal}. Then, WITH THE TEARDOWN
+     * SUPPRESSOR OFF, it drops a rail into a mid-height opening cell, waits past the 233-tick sweep,
+     * and reports three things: whether the rail is still there, whether the portal entity survived,
+     * and what the opening cell holds afterwards.
+     *
+     * <p>Isolated by construction — nothing else references this portal, so whichever way the result
+     * falls it cannot perturb another leg. Gated behind its own DEFAULT-OFF lever and fail-soft, so
+     * the 8-leg gate stays byte-identical; asserts nothing, it only reports.
+     */
+    private static void rsTeardownTest(ClientGameTestContext context, int py) {
+        if (!AperturePassthroughLever.TEARDOWN_TEST) {
+            return;
+        }
+        // ISOLATION IS LOAD-BEARING, AND -600 WAS NOT FAR ENOUGH. At (-600,-600) the nether
+        // counterpart lands at ~(-75,-75), which is INSIDE leg 6a's 128-block match radius around
+        // its ideal dest (-25,-25) — so leg 6a matched THIS leg's frame instead of fabricating its
+        // own and false-failed with "Last portal seen: the_nether @ (-71,73.5,-73.5)". At
+        // (-4000,-4000) the counterpart is ~(-500,-500), ~672 blocks clear of leg 6a's ideal dest
+        // and ~5200 from leg 6b's OW window. The frames are ALSO deleted in the finally, because
+        // teardown only wipes the opening — the obsidian frame survives and stays matchable.
+        final int fx = -4000, fz = -4000;
+        Vec3 destSeen = null;
+        try {
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-TEARDOWN-TEST] building + igniting an isolated frame at ({},{})"
+                    + " — suppressor is {} for this leg",
+                fx, fz, AperturePassthroughLever.SUPPRESS_TEARDOWN ? "ON (test is INVALID)" : "OFF");
+
+            runCommands(context, List.of(
+                "forceload add " + (fx - 16) + " " + (fz - 16) + " " + (fx + 16) + " " + (fz + 16),
+                fill(fx - 1, py, fz, fx + 2, py, fz),          // base
+                fill(fx - 1, py + 4, fz, fx + 2, py + 4, fz),  // lintel
+                fill(fx - 1, py + 1, fz, fx - 1, py + 3, fz),  // left column
+                fill(fx + 2, py + 1, fz, fx + 2, py + 3, fz),  // right column
+                "fill " + fx + " " + (py + 1) + " " + fz + " "
+                    + (fx + 1) + " " + (py + 3) + " " + fz + " minecraft:air"
+            ));
+            context.waitTicks(20);
+            runOnServer(context, server ->
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "[RS-TEARDOWN-TEST] ignition fired={}",
+                    qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                        .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                            new BlockPos(fx, py + 1, fz), null)));
+
+            // MUST wait for the portal to actually EXIST. Destination search is async — leg 6a
+            // allows 1200 ticks. A fixed short wait measured zero portals and made the whole test
+            // meaningless (the setblock fired before there was anything to break).
+            final net.minecraft.world.phys.AABB testBox = new net.minecraft.world.phys.AABB(
+                new Vec3(fx - 8, py - 8, fz - 8), new Vec3(fx + 8, py + 8, fz + 8));
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer s = mc.getSingleplayerServer();
+                    if (s == null) return false;
+                    ServerLevel ow = s.getLevel(Level.OVERWORLD);
+                    return ow != null && !ow.getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                        testBox, p -> true).isEmpty();
+                }, 1200);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "[RS-TEARDOWN-TEST] ABORT — no portal generated within 1200 ticks;"
+                        + " the test proves nothing", t);
+                return;
+            }
+
+            // Capture the nether counterpart's position BEFORE the teardown, so the finally can
+            // delete that frame too — an empty obsidian frame is exactly what the
+            // match-existing-frame search looks for.
+            AtomicReference<Vec3> destRef = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow == null) return;
+                ow.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    testBox, p -> true).stream().findFirst()
+                    .ifPresent(p -> destRef.set(p.getDestPos()));
+            });
+            destSeen = destRef.get();
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-TEARDOWN-TEST] nether counterpart at {} (will be deleted in cleanup)",
+                destSeen);
+
+            int before = countTestPortals(context, testBox);
+            // Mid-height opening cell — deliberately NOT the bottom row, per the "any height" decision.
+            final int cellY = py + 2;
+            final BlockPos cell = new BlockPos(fx, cellY, fz);
+            // SERVER-side read. The client has no chunks this far out (render distance 6), so a
+            // client read returns void_air and tells us nothing.
+            String cellBefore = serverBlockAt(context, cell);
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-TEARDOWN-TEST] BEFORE: portals={} openingCell({},{},{})={}"
+                    + " (must be the portal placeholder, else the test is mis-aimed)",
+                before, fx, cellY, fz, cellBefore);
+
+            runCommands(context, List.of(
+                "setblock " + fx + " " + cellY + " " + fz + " minecraft:rail"));
+            context.waitTicks(5);
+            String cellAfterSet = serverBlockAt(context, cell);
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-TEARDOWN-TEST] after setblock (+5t): openingCell={} portals={}"
+                    + " (if this is not a rail, the setblock was rejected and the test proves nothing)",
+                cellAfterSet, countTestPortals(context, testBox));
+
+            // Past the 233-tick sweep, so a portal that survives this has genuinely survived.
+            context.waitTicks(260);
+            int after = countTestPortals(context, testBox);
+            String cellFinal = serverBlockAt(context, cell);
+
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-TEARDOWN-TEST] VERDICT after 265 ticks: portalsBefore={} portalsAfter={}"
+                    + " openingCell={} => {}",
+                before, after, cellFinal,
+                after < before
+                    ? "TEARDOWN CONFIRMED — the block DID break the portal (recon reading correct)"
+                    : "NO TEARDOWN — the portal SURVIVED a block in its opening (recon reading WRONG"
+                        + " or the block never landed; compare openingCell above)");
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(
+                LOG + "[RS-TEARDOWN-TEST] FAILED (non-fatal, evidence only)", t);
+        } finally {
+            // MANDATORY CLEANUP. Teardown wipes only the OPENING; the obsidian frame survives, and a
+            // bare obsidian frame is precisely what the match-existing-frame search finds. Leaving
+            // one behind made leg 6a link to this leg's portal and false-fail. Delete both frames.
+            try {
+                List<String> clean = new java.util.ArrayList<>();
+                clean.add("fill " + (fx - 2) + " " + (py - 1) + " " + (fz - 2) + " "
+                    + (fx + 3) + " " + (py + 5) + " " + (fz + 2) + " minecraft:air");
+                if (destSeen != null) {
+                    int dx = (int) Math.floor(destSeen.x), dy = (int) Math.floor(destSeen.y),
+                        dz = (int) Math.floor(destSeen.z);
+                    clean.add(inDim("minecraft:the_nether",
+                        "fill " + (dx - 4) + " " + (dy - 3) + " " + (dz - 4) + " "
+                            + (dx + 4) + " " + (dy + 5) + " " + (dz + 4) + " minecraft:air"));
+                }
+                clean.add("forceload remove " + (fx - 16) + " " + (fz - 16) + " "
+                    + (fx + 16) + " " + (fz + 16));
+                runCommands(context, clean);
+                context.waitTicks(10);
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "[RS-TEARDOWN-TEST] frames deleted (OW @ {},{} and nether @ {}) —"
+                        + " nothing left for another leg's frame-match search to find",
+                    fx, fz, destSeen);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "[RS-TEARDOWN-TEST] CLEANUP FAILED — a leftover obsidian frame may"
+                        + " false-fail a later ignition leg", t);
+            }
+        }
+    }
+
+    /**
+     * Read a block state on the SERVER thread. Never use {@code computeOnClient} for this: the
+     * client only holds chunks inside its render distance, and an unloaded client chunk reports
+     * {@code void_air}, which is indistinguishable from a genuinely empty cell. That mistake made
+     * the first RS-TEARDOWN-TEST run report {@code void_air} for a cell 600 blocks from the player.
+     */
+    private static String serverBlockAt(ClientGameTestContext context, BlockPos pos) {
+        AtomicReference<String> out = new AtomicReference<>("(unread)");
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            out.set(ow == null ? "(no overworld)" : ow.getBlockState(pos).getBlock().toString());
+        });
+        return out.get();
+    }
+
+    /** Count generated nether portals in a box, on the SERVER thread. */
+    private static int countTestPortals(
+        ClientGameTestContext context, net.minecraft.world.phys.AABB box
+    ) {
+        AtomicReference<Integer> out = new AtomicReference<>(-1);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            out.set(ow == null ? -1 : ow.getEntitiesOfClass(
+                qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                box, p -> true).size());
+        });
+        return out.get();
     }
 
     /** Place the player for a seam shot, pinning the client so the server tp cannot rubber-band. */

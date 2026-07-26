@@ -44,6 +44,18 @@ lifecycle-persistence) → fold. Top claims re-verified by hand afterwards. Path
    sub-block phase (obsidian pairs — the coincident cell is unambiguous). Under decision 6 (general
    phase) the source block's far half can straddle TWO destination cells, and which one receives the
    mirrored block is undecided. Must be settled before (a) is implemented.
+7. **MIRRORING RULES (user, 2026-07-25, after the visual round):**
+   - **Conflict → REFUSE PLACEMENT.** If the destination's coincident cell is already occupied, the
+     placement is refused outright — no overwrite, no source-only half-placement. A seam is either
+     whole or it does not happen. (Design consequence: placement validation must consult the
+     DESTINATION world, which may be unloaded — see the hold/deny question for the unloaded case.)
+   - **Break one half → break the other.** Removing either half removes its counterpart. Must
+     survive chunk unload, a fully unloaded destination, and the four-portals-per-frame cluster
+     (a per-portal mirror driver would otherwise fire twice per side — cluster-dedupe required).
+   - **Phase-offset target = GREATEST OVERLAP.** Under a sub-block phase offset the mirrored block
+     goes to whichever destination cell holds the greatest overlap with the source block's far half.
+     This deliberately reproduces the half-block jog the user predicted ("the blocks that get built
+     through are offset by .5 blocks") rather than concealing it. Proposed by Claude, **user-approved**.
 6. **General sub-block phase from day one.** Every rail/redstone/minecart decision must be
    phase-agnostic. Obsidian nether-portal pairs always have both planes mid-block, so the coincident
    case is what they produce; portals whose planes sit on a block boundary (wand/custom) produce a
@@ -79,7 +91,24 @@ Three independent blockers, all confirmed by both verifiers:
 |---|---|---|
 | 1 | **Cell is occupied and non-replaceable.** `Properties.of().noCollision().sound(GLASS).strength(1.0f,0).noOcclusion().noLootTable().lightLevel(15)` — no `.replaceable()`, so `BlockPlaceContext.canPlace()` is false and `BlockItem.place` fails. | `PortalPlaceholderBlock.java:60-72`; `REF/…/item/context/BlockPlaceContext.java:52-54` |
 | 2 | **You cannot even aim at it.** A placeholder hit is scored distance `23333` (∞) and aim is rerouted through the aperture to the destination world. | `BlockManipulationClient.java:104-109`, `:78-93`; `MixinClipContext.java:71-85` |
-| 3 | **Integrity self-destruct.** `isPortalIntactOnThisSide()` requires **every** `area` cell to still be `== PortalPlaceholderBlock.instance`. Re-checked on notify or every 233 ticks; failure → `markShouldBreak` → `breakPortalOnThisSide` → opening wiped to AIR, entity killed, **and the kill propagates to the paired portal in the other dimension**. | `NetherPortalEntity.java:72-82`; `BreakablePortalEntity.java:158-176`, `:127-140`, `:234-268`; notify path `PortalPlaceholderBlock.java:104-129` |
+| 3 | **Integrity self-destruct.** `isPortalIntactOnThisSide()` requires **every** `area` cell to still be `== PortalPlaceholderBlock.instance`. Failure → `markShouldBreak` → `breakPortalOnThisSide` → opening wiped to AIR, entity killed, **and the kill propagates to the paired portal in the other dimension**. | `NetherPortalEntity.java:72-82`; `BreakablePortalEntity.java:158-176`, `:127-140`, `:234-268`; notify path `PortalPlaceholderBlock.java:104-129` |
+
+> **Blocker 3 CONFIRMED LIVE 2026-07-25 (RS-TEARDOWN-TEST leg, suppressor OFF).** Until this run the
+> teardown was asserted from source reading and had **never been observed** — every armed probe run
+> reported `intact=true` only, because the suite never puts a block in a real aperture. The user reported
+> not seeing a portal break in play, which was correct *and* compatible with the mechanism being real:
+> blockers 1+2 mean a hand-placed block never lands in the opening at all (aim redirects through the
+> portal), so there is nothing to break over. It is only reachable via `/setblock`.
+>
+> Three corrections the run forced:
+> 1. **It is IMMEDIATE, not "within 233 ticks."** Kill landed on the *same tick* as the `setblock`
+>    (tick 549) via the `NOTIFY` path. The 233-tick sweep is only the backstop.
+> 2. **All four entities die**, both coincident portals on the near side and both nether twins —
+>    cross-dimension propagation observed, not inferred.
+> 3. **Teardown wipes only the OPENING; the obsidian frame survives** and remains matchable by the
+>    destination frame-search. (This is what makes user decision 4 — "re-light over a surviving rail" —
+>    coherent, and it is also a harness hazard: a leftover test frame inside another leg's 128-block
+>    match radius false-failed leg 6a.)
 
 **The restatement that DOES hold — and it is the one that matters:** the entity architecture is
 *indifferent* to what sits in the aperture. Geometry is frozen entity state, never re-derived from blocks
@@ -135,9 +164,19 @@ Three consequences to design around:
   `PortalManipulation.java:132-156`), cluster-bound at `:107`. Any per-portal feature state must be
   cluster-aware or it desyncs between the two faces.
 
-**Support is already fine** (free win): `BaseRailBlock.canSurvive` = `canSupportRigidBlock(level, pos.below())`
-(`REF/…/BaseRailBlock.java:58-61`), `RedStoneWireBlock.canSurvive` (`:259-266`) — the obsidian sill is
-face-sturdy. Rails and dust are `noCollision`, as is the placeholder, so nothing about collision changes.
+**Support is fine ONLY on the bottom row — and that is now a REQUIREMENT GAP.** `BaseRailBlock.canSurvive`
+= `canSupportRigidBlock(level, pos.below())` (`REF/…/BaseRailBlock.java:58-61`), `RedStoneWireBlock.canSurvive`
+(`:259-266`). For the bottom opening row the block below is the obsidian sill, which is face-sturdy — fine.
+**At any greater height the block below is another opening cell holding `PortalPlaceholderBlock`, which is
+`noCollision` and therefore NOT rigid support.** OBSERVED 2026-07-25 (RS-TEARDOWN-TEST): a rail
+`/setblock`-ed into a mid-height opening cell **popped instantly** — final cell state `minecraft:air`, not
+`minecraft:rail` — while still tripping the teardown on its way out. Under user decision 2 ("ordinary
+building space at ANY height") sub-feature (a) must therefore solve **support**, not merely placement.
+Rails and dust are `noCollision`, as is the placeholder, so nothing about collision changes.
+
+> ⚠ **This invalidates a line in the brief given to the (a) design panel**, which stated support was
+> already fine, citing the sill. That is true only for the bottom row. Any design that lets a rail float
+> at mid-height must say what holds it up.
 
 ---
 
