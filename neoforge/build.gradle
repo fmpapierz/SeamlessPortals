@@ -74,11 +74,12 @@ dependencies {
     // retired F21 me.shedaniel.autoconfig no-op. This loader recompiles :common's raw source
     // (multiloader-loader.gradle `source(configurations.commonJava)`), which imports
     // me.shedaniel.autoconfig.* — so the real API must resolve on THIS compile too, exactly as
-    // on :common and :fabric. compileOnly ONLY: cloth-config-fabric is a FABRIC-published jar
-    // and the flag is force-OFF on NeoForge (EntityPortalsFlag S13-B P4) — it must NEVER enter
-    // the NeoForge runtime. Excludes mirror IP build.gradle:85 (fabric-api) + drop cloth's
-    // transitive fabric-loader (never wanted on NeoForge). Remap-free build → plain compileOnly.
-    // Retired at S20/C2.
+    // on :common and :fabric. compileOnly ONLY: cloth-config-fabric is a FABRIC-published jar and
+    // nothing on NeoForge reaches IP's config path (IPModMain.init is never called there) — it must
+    // NEVER enter the NeoForge runtime. Excludes mirror IP build.gradle:85 (fabric-api) + drop
+    // cloth's transitive fabric-loader (never wanted on NeoForge). Remap-free build → plain
+    // compileOnly. (S20 CORRECTION: "Retired at S20/C2" — S20 did not retire it; :neoforge still
+    // recompiles the raw common source, which imports the autoconfig API. C7's call.)
     compileOnly("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
         exclude(group: 'net.fabricmc.fabric-api')
         exclude(group: 'net.fabricmc', module: 'fabric-loader')

@@ -14,10 +14,12 @@ package qouteall.imm_ptl.core.compat;
  *
  * <p>The warn-and-force machinery below survives for the D7 iris-resolve-failure fallback and
  * for gate-false (rollback) builds; the D11 tracker feed installs independently of the gate
- * whenever sodium is present (correctness plumbing). Flag-OFF this is entirely inert (the
- * detection lives inside the {@code entityPortals} client-init branch; the block-era compat
- * handling owns that baseline). DISPOSITION: the C2-5 close-out decides whether this class
- * survives as the rollback switch or is deleted with the warn machinery.
+ * whenever sodium is present (correctness plumbing). (S20: the note that this was "entirely inert
+ * flag-OFF" is history — the {@code entityPortals} flag is deleted, and the detection its
+ * client-init branch hosted now always runs on Fabric.) DISPOSITION: the C2-5 close-out decides
+ * whether this class survives as the rollback switch or is deleted with the warn machinery — it is
+ * NOT S20 collateral, and note that {@link #ENABLE_SODIUM_IRIS_COMPAT}'s VALUE is load-bearing for
+ * the IS4 default-ON shaderpack portal views (port-note §E.1 row 2).
  */
 public final class ExperimentalCompatGate {
     private ExperimentalCompatGate() {}

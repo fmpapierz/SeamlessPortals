@@ -6,8 +6,11 @@
 // no dynamic add/remove/client-resync, so they never fire. Loading the dynamic provider (runtime
 // dimension add/remove + client resync) is R13g-PHASE-2 (deferred; see §6 "NAMED DEVIATION").
 //
-// NOT loaded at all when entityPortals is OFF (nothing references it until IP init is wired flag-ON);
-// the load-event mixin is likewise woven flag-ON only (qouteall.* gate). Deleted at S20.
+// S20 CORRECTION: this note said "NOT loaded at all when entityPortals is OFF ... Deleted at S20."
+// Both halves are dead letters — the flag is deleted (there is no OFF state) and the class is NOT
+// deleted: it is live IP API reached through IP init. What survives of the old sentence is the
+// LOADER half: the load-event mixin weaves on Fabric only (the qouteall.* gate in
+// SeamlessMixinConfigPlugin).
 package qouteall.dimlib.api;
 
 import com.mojang.logging.LogUtils;

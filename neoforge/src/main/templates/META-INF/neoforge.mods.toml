@@ -19,8 +19,11 @@ config = "seamlessportals-ip-core-common.mixins.json"
 config = "seamlessportals-ip-client.mixins.json"
 
 # S16 consistency (verify wf_91b049a9-0c1 minor): listed like the other IP configs. NEAR-inert on
-# NeoForge — EntityPortalsFlag force-falses off Fabric (S13-B P4), so the plugin skips every
-# qouteall.* mixin EXCEPT the two D3 carve-out sets, which bypass the flag and weave here too:
+# NeoForge — SeamlessMixinConfigPlugin's weave gate is isFabricLoaderPresent(), so the plugin skips
+# every qouteall.* mixin EXCEPT the two D3 carve-out sets, which bypass that gate and weave here too:
+# (S20 increment 4 note: the gate USED to be `isFabricLoaderPresent() && EntityPortalsFlag.isOn()`.
+# The flag is deleted; the loader half was always what kept this inert here, and it is now the whole
+# gate. Do NOT "simplify" that gate — see the plugin's javadoc.)
 # the worldgen accessors (S19-D; pure @Accessor/@Invoker) and the wand/stick legacy-item datafix
 # (S19 commons tail; additive @Inject(RETURN), references only DFU/guava/log4j — audited benign on
 # NeoForge, where the peripheral items are C7-deferred; converting the NBT preserves the data for a
@@ -47,9 +50,10 @@ config = "seamlessportals-ip-dimlib.mixins.json"
 
 # C2-0 (migration/C2_DESIGN.md §6.1/§6.3): the real Sodium/Iris compat config. Listed on both
 # loaders because it ships in :common. INERT on NeoForge: its IPCompatMixinPlugin gate 2 is
-# EntityPortalsFlag.isOn(), which is force-false off Fabric (S13-B P4) — so gate 2 skips EVERY
-# compat class here regardless of whether sodium/embeddium/iris are present. No invoker install
-# exists on NeoForge either, so the facades no-op. (embeddium is NOT treated as sodium by the
-# plugin — design §6.3.) Flag-ON NeoForge is C7.
+# isFabricLoaderPresent() (S20 increment 4; it was `isFabricLoaderPresent() && EntityPortalsFlag
+# .isOn()` until the flag was deleted) — so gate 2 skips EVERY compat class here regardless of
+# whether sodium/embeddium/iris are present. No invoker install exists on NeoForge either, so the
+# facades no-op. (embeddium is NOT treated as sodium by the plugin — design §6.3.) NeoForge portal
+# support is C7.
 [[mixins]]
 config = "seamlessportals-ip-compat.mixins.json"

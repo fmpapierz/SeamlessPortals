@@ -11,7 +11,13 @@ import qouteall.imm_ptl.core.render.SecondaryWorldRenderCore;
 
 /**
  * S17 pre-flip hardening (the two S14-ledgered items, port-note S14C-round7 "S17 hardening
- * items (rounds 1-3)"; flag-ON only — the block-era baseline stays byte-vanilla).
+ * items (rounds 1-3)").
+ *
+ * <p><b>S20 INCREMENT 4:</b> both handlers were {@code if (!isEntityPortals()) return;} — flag-ON
+ * only. The flag is gone and the guards with it. The loader half is NOT gone: this class is listed
+ * in {@code SeamlessMixinConfigPlugin.FABRIC_ONLY_IP_DRIVERS} and is not woven off Fabric, because
+ * both bodies drive IP code ({@code SecondaryWorldRenderCore}, {@code q_misc_util.Helper}) that has
+ * no engine behind it on NeoForge until C7.
  *
  * <p><b>(a) CAPTURE-POINT WINDOW RESOLUTION.</b> Vanilla applies the loadedChunks delta
  * window order-dependently (addAll-then-removeAll); a chunk in BOTH sets nets to
@@ -50,9 +56,6 @@ public abstract class LevelExtractorWindowHardeningMixin {
         )
     )
     private void seamlessportals$resolveWindowAtCapture(CallbackInfo ci) {
-        if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
-            return;
-        }
         if (level != null) {
             // Resolves the CURRENT accumulating sets in place — the same object refs the
             // render state just captured (pre-flip), so the applied window is order-free.
@@ -62,9 +65,6 @@ public abstract class LevelExtractorWindowHardeningMixin {
 
     @Inject(method = "setLevel", at = @At("HEAD"))
     private void seamlessportals$assertNoMidLifeReArm(ClientLevel newLevel, CallbackInfo ci) {
-        if (!com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
-            return;
-        }
         if (newLevel != null && newLevel == this.level && !seamlessportals$reArmWarned) {
             seamlessportals$reArmWarned = true;
             qouteall.q_misc_util.Helper.err(

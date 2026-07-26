@@ -74,8 +74,9 @@ import qouteall.imm_ptl.core.render.context_management.RenderStates;
  * (mixin-client.md §10 ⑨): 1.21.3 {@code bobView(PoseStack,F)} → {@code bobView(CameraRenderState,PoseStack)}
  * ({@code 26.2:GameRenderer.java:322}), whose body still has exactly one {@code poseStack.translate(FFF)}
  * ({@code :326-330}); {@code renderItemInHand(Camera,F,Matrix4f)} → {@code renderItemInHand(CameraRenderState,
- * float,Matrix4fc)} ({@code :336}). REPLACES the live {@code MainProjectionBobMixin} at the S13 exclusivity
- * flip (row A7); flag-OFF only the block-era mixin runs, flag-ON only this — never both.
+ * float,Matrix4fc)} ({@code :336}). REPLACED the block-era {@code MainProjectionBobMixin} at the S13
+ * exclusivity flip (row A7); that mixin was deleted at S20 increment 4 (its surviving arm was a pure
+ * identity redirect once the flag died), so this is now the only world-bob handler.
  *
  * <p><b>R13k handler ⑪ — view-rotation post-process (API_RISKS R13k; render-sub C2; mixin-client §10 ⑪).</b>
  * IP wrapped {@code Matrix4f.rotation(Quaternionfc)} inside 1.21.3 {@code renderLevel} to run

@@ -1,6 +1,5 @@
 package qouteall.imm_ptl.core.compat;
 
-import com.warwa.seamlessportals.EntityPortalsFlag;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.compat.SodiumCompat;
 import net.fabricmc.api.EnvType;
@@ -24,11 +23,10 @@ import java.util.Set;
  * and of its {@code renderSectionManager} (reached through the newly-registered
  * {@code IESodiumWorldRenderer} accessor).
  *
- * <p><b>Three guards, checked in order — ZERO effect and ZERO Sodium classloading without all
- * three:</b>
+ * <p><b>Two guards, checked in order — ZERO effect and ZERO Sodium classloading without both</b>
+ * (S20 increment 4 removed a third, {@code EntityPortalsFlag.isOn()}, with the flag):
  * <ol>
  *   <li>the {@code -Dseamlessportals.compatProbe=true} lever ({@link #PROBE_ENABLED}, read once);</li>
- *   <li>{@link EntityPortalsFlag#isOn()} (flag-ON substrate only);</li>
  *   <li>{@link SodiumCompat#isSodiumLoaded()} (Sodium actually installed).</li>
  * </ol>
  *
@@ -59,9 +57,9 @@ public final class SodiumCompatProbe {
         if (!PROBE_ENABLED) {
             return;
         }
-        if (!EntityPortalsFlag.isOn()) {
-            return;
-        }
+        // S20 increment 4: the `if (!EntityPortalsFlag.isOn()) return;` gate died with the flag.
+        // The probe's only call site is ClientWorldLoader.createSecondaryClientWorld — IP engine
+        // code, reached on Fabric only — so the lever + sodium checks are the whole guard now.
         if (!SodiumCompat.isSodiumLoaded()) {
             return;
         }

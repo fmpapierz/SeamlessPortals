@@ -20,12 +20,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 // (:709) — the compile-time access is restored by the paired seamlessportals.accesswidener /
 // accesstransformer.cfg `accessible class ...$ItemStackData` entries (IP carries the same widen).
 //
-// D3 GATING: this datafix WEAVES IN BOTH FLAG STATES via the D3_UNCONDITIONAL_ITEM_DATAFIX carve-out
-// in SeamlessMixinConfigPlugin — it is the on-load counterpart of the unconditionally-registered
-// wand/command-stick DataComponentTypes (port-note §1.1). See that carve-out's javadoc for the full
-// rationale: the flag defaults ON since S17, but explicit entityPortals=false stays a supported
-// two-way switch until S20, and a flag-OFF legacy-world load must still convert the item data (else
-// the pre-1.20.5 command/mode tags get swept into minecraft:custom_data — permanent data loss).
+// D3 GATING: this datafix WEAVES ON BOTH LOADERS via the D3_UNCONDITIONAL_ITEM_DATAFIX carve-out in
+// SeamlessMixinConfigPlugin — it is the on-load counterpart of the unconditionally-registered
+// wand/command-stick DataComponentTypes (port-note §1.1). S20 increment 4 changed the carve-out's
+// AXIS, not its necessity: it was written for both entityPortals states, and with the flag deleted
+// it is the only reason this weaves on NeoForge, where the qouteall.* weave gate is false. Without
+// it a NeoForge open of a legacy pre-1.20.5 world sweeps the stored command/mode tags into
+// minecraft:custom_data — permanent data loss, surfacing when the world later moves to Fabric.
+// See that carve-out's javadoc for the full rationale.
 @Mixin(ItemStackComponentizationFix.class)
 public class MixinItemStackComponentizationFix {
     @Unique

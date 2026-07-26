@@ -1,7 +1,6 @@
 package com.warwa.seamlessportals.fabric;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
-import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.fabric.network.FabricPlatformHelper;
 import com.warwa.seamlessportals.network.PlatformHelper;
 import net.fabricmc.api.ClientModInitializer;
@@ -51,20 +50,18 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         // (Appendix A.9). MANDATORY unconditionally: the entity types are registered
         // unconditionally (D3, common entrypoint), and the client's Minecraft.selfTest()
         // (IS_RUNNING_IN_IDE) -> EntityRenderers.validateRegistrations() THROWS
-        // ("...game data is foobar...") if any registered entity type lacks a renderer. Flag-OFF
-        // the portals are never spawned, so these renderers are instantiated (trivial
-        // super(context) ctors — no flag-ON state touched) but never asked to render: no block-era
-        // behavior change. Flag-ON they render the rung-1 portals (without this, rung 1 renders
-        // nothing — EXECUTION_PLAN §3 S13 step 5).
+        // ("...game data is foobar...") if any registered entity type lacks a renderer. (S20: the
+        // "both flag states" framing above is history — the flag is deleted. The registration stays
+        // unconditional because the entity TYPES are, and because these renderers are what draw the
+        // portals.)
         registerPortalEntityRenderers();
 
             // ===== ENTITY-PORTAL (Immersive Portals) client init — S13 step 4 =====================
             // DEPENDENCY_ORDER §4.2 client init order: the MiscUtilModEntryClient sequence
             // (ImplRemoteProcedureCall.initClient → MiscNetworking.initClient) THEN IPModMainClient.init
             // (teleport client → renderers on the render thread → collision client → networking client →
-            // DimensionIntId.initClient, all internal to IPModMainClient.init). Only reached when
-            // entityPortals=true; flag-OFF this branch is never class-loaded, so the block-era baseline
-            // is byte-unchanged (D3 pure gate).
+            // DimensionIntId.initClient, all internal to IPModMainClient.init). S20: this was the
+            // flag-ON branch of a D3 pure gate; the flag is gone and it is the only client init path.
             qouteall.q_misc_util.ImplRemoteProcedureCall.initClient();
             qouteall.q_misc_util.MiscNetworking.initClient();
             qouteall.imm_ptl.core.IPModMainClient.init();
@@ -143,21 +140,14 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
                 IPCGlobal.renderer.finishRendering();
             });
 
-            // ===== S18: Mechanism-B main-pass draw site (R3 seam, design §2.1.3 decided) =====
-            // Fires inside the main-pass framegraph lambda AFTER the entity feature phases
-            // (solid/translucent/outline) execute and BEFORE translucent terrain — IP's exact
-            // end-of-entity-rendering slot, so translucent terrain still tints bracketed entities
-            // drawn behind it (drawing at AFTER_TRANSLUCENT_TERRAIN would depth-reject them:
-            // translucent terrain writes depth). Thin timing driver only; all logic is common-side
-            // (F12). Inert under Mechanism A and with no straddling entities (one map lookup).
-            // Dest passes have their own direct call sites in SecondaryWorldRenderCore (no
-            // framegraph runs there — this event never fires for them).
-            LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
-                qouteall.imm_ptl.core.render.PerEntityClipBracket.onMainPassBeforeTranslucentTerrain());
-
+            // S20 increment 4: the S18 Mechanism-B main-pass draw site
+            // (LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN → PerEntityClipBracket
+            // .onMainPassBeforeTranslucentTerrain) is gone with the C4 loser cleanup. Checkpoint C4
+            // decided for Mechanism A (SUBMIT_ORDER_UNIFORM), whose clip delivery runs through the
+            // executePhase bracket (MixinPreparedFrame), not through a per-pass draw site.
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (client); "
-                    + "flag-ON render dispatch registered (AFTER_TRANSLUCENT_TERRAIN)");
+                    + "render dispatch registered (AFTER_TRANSLUCENT_TERRAIN)");
     }
 
     /**

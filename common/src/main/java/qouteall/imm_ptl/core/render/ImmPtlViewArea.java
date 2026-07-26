@@ -44,8 +44,10 @@ import java.util.function.LongConsumer;
  *
  * <p><b>Install (S12):</b> a mixin {@code @Redirect} of the {@code new ViewArea(...)} construction
  * inside {@code LevelRenderer.invalidateCompiledGeometry} constructs this subclass instead, gated on
- * the GLOBAL {@code entityPortals} flag (NEVER on {@code mc.levelRenderer} identity — SPIKE-R4 §4-S1:
- * the mod swaps that field per portal-render frame). See {@code fragments/S11B-viewarea.md}.
+ * a GLOBAL static boolean (NEVER on {@code mc.levelRenderer} identity — SPIKE-R4 §4-S1: the mod swaps
+ * that field per portal-render frame). S20: that global was {@code entityPortals} until the flag was
+ * deleted; the gate is now IP's own {@code IPCGlobal.useHackedChunkRenderDispatcher}. See
+ * {@code fragments/S11B-viewarea.md}.
  *
  * <p><b>26.2 reconcile (render-core G25/C22-C29, SPIKE-R4 §3):</b> 26.2's {@code ViewArea} wraps a
  * {@code private final RotatingSectionStorage} with no {@code sections}/{@code level}/grid-size

@@ -1,5 +1,3 @@
-import com.warwa.seamlessportals.gradle.IpHeldPaths
-
 plugins {
     id 'multiloader-common'
 }
@@ -20,22 +18,30 @@ dependencies {
 
     // F21 stub-classpath (entity-portal migration — S00-U0-decisions F21;
     // migration/EXECUTION_PLAN.md §3 S4(a)). This loader's compileJava recompiles the RAW
-    // common source directory (source(configurations.commonJava) below), so at the
-    // -Pip_scc_closed=true probe it also compiles IP's held compat files, which reference
-    // third-party sodium/iris/gravity_changer types absent on MC 26.2. The same empty
-    // shells :common uses must therefore be on THIS task's compile classpath too.
-    // compileOnly ONLY — never shipped by the loader jar. Removed at S20.
+    // common source directory (source(configurations.commonJava) below), so it also compiles IP's
+    // compat files, which reference third-party gravity_changer types absent on MC 26.2. The same
+    // empty shells :common uses must therefore be on THIS task's compile classpath too.
+    // compileOnly ONLY — never shipped by the loader jar.
+    //
+    // S20 CORRECTION: this comment used to end "Removed at S20." IT IS NOT — deleting the line
+    // reds BOTH :fabric and :neoforge (it is UNGATED, unlike the fabricStubs one below), and the
+    // ipStubs set itself survives because GravityChangerInterface still imports its shells. See
+    // common/build.gradle's matching corrections and port-note §E.1 row 6 / §E.3.
     compileOnly project(path: ':common', configuration: 'ipStubsClasspath')
 
-    // S13-B fabricStubs seam for NON-fabric loaders. Post-flip (ip_scc_closed=true) this task
-    // recompiles the RAW common source, which now includes the held qouteall tree's net.fabricmc.*
-    // references (@Environment, FabricLoader, tick/chunk events, config-phase networking, the
-    // attachment-impl sync types + the S13-B FabricServerConfigurationPacketListenerImpl injected
-    // interface). The FABRIC loader resolves those against REAL fabric-api and must NOT see these
-    // shells (they would shadow the real PayloadTypeRegistry etc. FabricPlatformHelper uses —
-    // common/build.gradle fabricStubs note / S10A §6). Every other loader (NeoForge) has no
-    // fabric-api, so it consumes the same shells :common uses. compileOnly ONLY — never shipped.
-    // Removed at S20.
+    // S13-B fabricStubs seam for NON-fabric loaders. This task recompiles the RAW common source,
+    // which includes the qouteall tree's net.fabricmc.* references (@Environment, FabricLoader,
+    // tick/chunk events, config-phase networking, the attachment-impl sync types + the S13-B
+    // FabricServerConfigurationPacketListenerImpl injected interface). The FABRIC loader resolves
+    // those against REAL fabric-api and must NOT see these shells (they would shadow the real
+    // PayloadTypeRegistry etc. FabricPlatformHelper uses — common/build.gradle fabricStubs note /
+    // S10A §6). Every other loader (NeoForge) has no fabric-api, so it consumes the same shells
+    // :common uses. compileOnly ONLY — never shipped.
+    //
+    // S20 CORRECTION: this comment used to end "Removed at S20." IT IS NOT — the three lines below
+    // are :neoforge's only source for the 31 distinct net.fabricmc types the ported tree imports.
+    // Retiring the stub sets is a multiloader build re-architecture (give :common a real fabric-api
+    // dependency), explicitly out of S20's deletion-only scope — port-note §E.1 rows 4-6 / §E.3.
     if (project.name != 'fabric') {
         compileOnly project(path: ':common', configuration: 'fabricStubsClasspath')
     }
@@ -43,13 +49,9 @@ dependencies {
 
 tasks.named('compileJava', JavaCompile).configure { JavaCompile t ->
     t.source(configurations.commonJava)
-    // D1 holding machinery (migration/EXECUTION_PLAN.md §1 D1 item 2): the line above
-    // feeds the RAW common source directory to this loader's compiler, so a held-paths
-    // filter on :common:compileJava does NOT propagate here — the same MAIN list must be
-    // applied to this task too, or the loader build goes red the moment the first held
-    // qouteall/** file lands. Inert while the MAIN list has no matches on disk; gated on
-    // ip_scc_closed != 'true'. Removed at S20.
-    IpHeldPaths.applyHolding(project, t, IpHeldPaths.MAIN_HELD_PATHS)
+    // S20 increment 4: the D1 holding machinery's loader-side wiring
+    // (IpHeldPaths.applyHolding on this task) is deleted with the rest of it — see
+    // multiloader-common.gradle.
 }
 
 tasks.named('processResources', ProcessResources).configure {

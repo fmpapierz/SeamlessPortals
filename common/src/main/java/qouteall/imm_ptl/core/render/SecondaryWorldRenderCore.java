@@ -2148,12 +2148,9 @@ public class SecondaryWorldRenderCore {
             mv.mul(destViewMatrix);
             try {
                 acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
-                // S18 Mechanism-B dest-pass draw site (PerEntityClipBracket design §2.1.3, decided):
-                // drain this pass's deferred one-entity brackets INSIDE the pushed dest view matrix
-                // and the armed inner clip + stencil, right after the pass's own feature draws —
-                // the dest-pass analog of IP's end-of-entity-rendering immediate draws. Inert under
-                // Mechanism A (empty deferred list).
-                qouteall.imm_ptl.core.render.PerEntityClipBracket.drawBracketedEntitiesIfAny(storage);
+                // S20 increment 4: the S18 Mechanism-B dest-pass draw site
+                // (PerEntityClipBracket.drawBracketedEntitiesIfAny) went with the C4 loser cleanup.
+                // Mechanism A needs no per-pass draw site — its clip rides the executePhase bracket.
             } finally {
                 mv.popMatrix();
             }
@@ -2411,11 +2408,8 @@ public class SecondaryWorldRenderCore {
                 mv.mul(destViewMatrix);
                 try {
                     sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
-                    // S18 Mechanism-B same-dim draw site (mirrors renderPortalEntities): drain the
-                    // brackets this pass's submitEntities deferred (keyed by sameDimSubmitStorage),
-                    // inside the same matrix/clip/stencil scope. Inert under Mechanism A.
-                    qouteall.imm_ptl.core.render.PerEntityClipBracket
-                        .drawBracketedEntitiesIfAny(sameDimSubmitStorage);
+                    // S20 increment 4: the S18 Mechanism-B same-dim draw site went with the C4
+                    // loser cleanup (mirrors renderPortalEntities).
                 } finally {
                     mv.popMatrix();
                 }
@@ -2434,8 +2428,9 @@ public class SecondaryWorldRenderCore {
             // submitted before the throw, and a stuck-open PreparedFrame makes every later
             // renderAllFeatures throw anyway; three strikes disables the pass for the session.
             // S18: evict the replaced storage's seam state first (its PassState + phase
-            // registrations would otherwise linger keyed to a dead identity, with any deferred
-            // Mechanism-B brackets orphaned).
+            // registrations would otherwise linger keyed to a dead identity). This call is
+            // Mechanism-A load-bearing and survived the C4 loser cleanup — see evictPassState's
+            // own javadoc (port-note §G.3).
             sameDimEntityThrowCount++;
             qouteall.imm_ptl.core.render.PerEntityClipBracket.evictPassState(sameDimSubmitStorage);
             sameDimSubmitStorage = new net.minecraft.client.renderer.SubmitNodeStorage();

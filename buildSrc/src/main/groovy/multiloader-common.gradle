@@ -1,5 +1,3 @@
-import com.warwa.seamlessportals.gradle.IpHeldPaths
-
 plugins {
     id 'java-library'
     id 'maven-publish'
@@ -11,22 +9,10 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-// D1 holding machinery (entity-portal migration — migration/EXECUTION_PLAN.md §1 D1, §3 S0):
-// held IP source under qouteall/** is excluded from :common's compile TASKS while the
-// gradle property ip_scc_closed != 'true' (never from the source set — see IpHeldPaths).
-// The loader modules' compileJava tasks get the same MAIN-list wiring in
-// multiloader-loader.gradle, next to the source(configurations.commonJava) consumption;
-// :common:compileTestJava carries its OWN list (D1.3). Compile probe (expected red until S13):
-//   .\gradlew.bat :common:compileJava -Pip_scc_closed=true --console=plain --no-daemon
-// Removed at S20 with the rest of the holding machinery.
-if (project.path == ':common') {
-    tasks.named('compileJava', JavaCompile).configure { JavaCompile t ->
-        IpHeldPaths.applyHolding(project, t, IpHeldPaths.MAIN_HELD_PATHS)
-    }
-    tasks.named('compileTestJava', JavaCompile).configure { JavaCompile t ->
-        IpHeldPaths.applyHolding(project, t, IpHeldPaths.TEST_HELD_PATHS)
-    }
-}
+// S20 increment 4: the D1 holding machinery (IpHeldPaths + the ip_scc_closed property + both
+// held lists + the probe) is deleted. It existed to exclude ported-but-not-yet-closed IP source
+// under qouteall/** from the compile TASKS while the port was in flight; the SCC closed at S13-B
+// and the property has been permanently true since.
 
 version = project.mod_version
 group = project.mod_group_id

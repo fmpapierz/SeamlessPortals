@@ -129,16 +129,13 @@ public class CommandStickItem extends Item {
             return;
         }
 
-        // S19 D3 guard (NOT in IP; dies with the flag at S20; verify catch wf_7e348eaa-89b):
-        // flag-OFF the permission gate below is WIDE OPEN — IPGlobal.easeCommandStickPermission's
-        // raw default is TRUE and its normalization to false runs only in the flag-ON config
-        // path (IPModMain.init → onConfigChanged), so a stick persisted from a flag-ON session
-        // would execute its stored command at GAMEMASTER level for ANY player on a flag-OFF
-        // load. Same guard pattern as PortalWandItem.use().
-        if (!com.warwa.seamlessportals.EntityPortalsFlag.isOn()) {
-            return;
-        }
-
+        // S20 increment 4: the S19 D3 guard here (NOT in IP) died with the flag, as its own note
+        // said it would. What it protected against was the flag-OFF state, where the permission
+        // gate below was WIDE OPEN — IPGlobal.easeCommandStickPermission's raw default is TRUE and
+        // its normalization to false runs only inside IPModMain.init → onConfigChanged, which
+        // flag-OFF never ran. IPModMain.init is now unconditional on Fabric (and this item is not
+        // registered on NeoForge at all — PeripheralModMain is Fabric-wired only), so the
+        // normalization always runs and canUseCommand is the real gate again, exactly as in IP.
         if (canUseCommand(player)) {
             Data data = stack.get(COMPONENT_TYPE);
             

@@ -39,12 +39,13 @@ import qouteall.imm_ptl.core.render.ImmPtlViewArea;
  * the 26.2 super ctor dropped.
  *
  * <p><b>Gate: the GLOBAL flag, NEVER {@code mc.levelRenderer} identity.</b> Verbatim IP gate
- * {@code IPCGlobal.useHackedChunkRenderDispatcher} — a global static boolean, the driver-swap toggle the S13
- * exclusivity wiring binds to {@code entityPortals}. SPIKE-R4 §4-S1 proved an identity check
+ * {@code IPCGlobal.useHackedChunkRenderDispatcher} — a global static boolean. (Until S20 the S13
+ * exclusivity wiring bound it to {@code entityPortals}; that flag is deleted and the gate is IP's
+ * own toggle again.) SPIKE-R4 §4-S1 proved an identity check
  * ({@code Minecraft.levelRenderer == this}) is UNRELIABLE here: the mod swaps {@code Minecraft.levelRenderer}
- * per portal-render frame, so a secondary renderer's ctor self-identifies as "MAIN". Flag-OFF → the redirect
- * is inert and vanilla {@code new ViewArea} runs unchanged (block-era render untouched); flag-ON → the
- * subclass installs for main + every secondary renderer (SPIKE-R4 CONFIRMED for both).
+ * per portal-render frame, so a secondary renderer's ctor self-identifies as "MAIN". Toggle off → the
+ * redirect is inert and vanilla {@code new ViewArea} runs unchanged; on → the subclass installs for
+ * main + every secondary renderer (SPIKE-R4 CONFIRMED for both).
  *
  * <p><b>Held/UNREGISTERED.</b> Not listed in {@code seamlessportals-ip-client.mixins.json "client":[]}; it
  * compiles as ordinary annotated Java in the probe and is registered flag-ON at S13. IP upstream ships a

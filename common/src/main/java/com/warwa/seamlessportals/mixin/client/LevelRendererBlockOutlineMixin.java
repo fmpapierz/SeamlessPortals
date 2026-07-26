@@ -39,14 +39,13 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
  * <p>No ordinal on the @At: both {@code submitHitOutline} calls (the
  * high-contrast black backing line and the main outline) are modified.
  *
- * <p><b>S18.5 flag-ON trigger (the S17 sweep finding closed):</b> {@code anyPortalNearCamera}
- * scans the BLOCK-ERA PortalManager/PortalTracker only — under {@code entityPortals=true} it never
- * fires for entity portals, so the sliver returned flag-ON. The flag-ON branch keys on IP's own
+ * <p><b>S18.5 trigger (the S17 sweep finding closed):</b> the original trigger
+ * {@code anyPortalNearCamera} scanned the BLOCK-ERA PortalManager/PortalTracker only, so it never
+ * fired for entity portals and the sliver came back. The surviving branch keys on IP's own
  * per-frame structure instead: {@code RenderStates.lastPortalRenderInfos} — non-empty exactly when
  * a portal RENDERED last frame (the outline submit happens before this frame's portal passes, so
  * the 1-frame-stale signal is the freshest available; hysteresis is invisible for a draw-bucket
- * choice). Exclusive ternary: flag-OFF byte-equivalent to the pre-S18 behavior, and the qouteall
- * class is never touched (short-circuit = no class-load) flag-OFF.
+ * choice). S20 collapsed the exclusive ternary to that branch with the block era and the flag.
  */
 @Mixin(LevelRenderer.class)
 public abstract class LevelRendererBlockOutlineMixin {

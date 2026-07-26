@@ -11,9 +11,12 @@
 
 ## Status
 
-**The block-era portal system is DELETED and the tree is GREEN.** `com.warwa.seamlessportals` went
-from **150 → 75** java files. The `entityPortals` flag itself is the ONE remaining code stage
-(increment 4), then the 12-point close-out round.
+**The block-era portal system is DELETED, the `entityPortals` flag is DELETED, and the tree is
+GREEN.** `com.warwa.seamlessportals` went from **150 → ~70** java files. **All code stages are
+done** (increment 4 landed — §G.13); what remains is the 12-point close-out round
+(`migration/S20_REGRESSION_CHECKLIST.md`) and then the constraint-5 close-out commit (§D/§G.8:
+`SeamlessClientTeleport`'s file deletion, once the regression puts its two (verify) sub-items on
+record).
 
 | Gate | Result at `81e6f57` |
 |---|---|
@@ -542,7 +545,9 @@ removal is a deliberate feature removal — atomic with the enum constant, the f
 |---|---|---|---|
 | 0 | `20e1670` | §0 discharged, §A-§E audit record, 2 booby-trap comments fixed | compile ×3, suite ALL LEGS PASS |
 | 1 | `ff7401c` | Loader gate hoisted in BOTH weave plugins; §G audit record; NeoForge decision | compile ×3, suite ALL LEGS PASS, 0 mixin-apply failures |
-| 2a | (this) | **FIRST DELETIONS** — the self-contained dead group, 5 files | compile ×3, suite |
+| 2a | `663ef37` | **FIRST DELETIONS** — the self-contained dead group, 5 files | compile ×3, suite |
+| 2+3 | `81e6f57` | The core + render deletion, merged green (70 files) | compile ×3, suite ALL LEGS PASS |
+| 4 | (this) | **THE FLAG'S DEATH** + C4 loser + holding machinery + title-card reshape — see §G.13 | compile ×3, suite ALL LEGS PASS, 0 mixin-apply failures |
 
 **Increment 2a — deleted (verified self-contained before deletion, not assumed):**
 `mixin/client/GameRendererObliqueClipMixin`, `mixin/client/LevelRendererDiagMixin`,
@@ -937,6 +942,106 @@ change, not a no-op.
 - The title-card reshape additionally has a **pre-existing aiming bug** worth fixing while there: the
   camera is positioned and aimed from FEET, not EYE, mis-framing the aperture in the one artefact
   whose entire purpose is composition.
+
+### G.13 ★★ INCREMENT 4 — APPLIED. The flag is dead; all three platforms green, 8 legs PASS
+
+Applied per §G.12 (which supersedes §F/§G.7 on the runtime gates). **One commit**, per §1 of
+`S20_CONTINUATION_PROMPT.md` — the two weave-gate collapses could not land before the rest without
+creating a mixed state that exists in no design.
+
+| Gate | Result |
+|---|---|
+| `:common` + `:fabric` + `:neoforge` `compileJava` | **BUILD SUCCESSFUL** |
+| `:fabric:runCrossingGametest` | **ALL LEGS PASS** — 1, 2, 3, 4, 5, 6a, 6b, 7; exit 0 |
+| Mixin apply / InvalidInjection / critical-injection in that run | **0** |
+| `seamlessportals` ERROR lines in that run | **0** |
+| `[SEAMLESS EXCLUSIVITY] Skipping IP-driver mixin` on Fabric | **0** (required: the new set must be inert on Fabric) |
+
+**The blocker, resolved as decided.** `FABRIC_ONLY_IP_DRIVERS` added to
+`SeamlessMixinConfigPlugin.shouldApplyMixin`, skipped when `!isFabricLoaderPresent()`, reusing the
+increment-1 predicate. Members: `MinecraftFramePumpMixin`, `LevelExtractorWindowHardeningMixin` —
+and **`GameRendererMixin`**, which §G.12's six-gate framing did not name.
+
+**★ ONE FINDING BEYOND THE SPEC — `GameRendererMixin` was already exposed.** §G.12 enumerated the
+runtime gates by grepping for live flag references, so it could only see gates that still HELD one.
+`GameRendererMixin`'s gate was collapsed to unconditional at **increment 3**, which dropped it out
+of that grep while leaving the identical hazard live on the branch: a `render` TAIL that calls four
+IP frame-end entry points (`MyGameRenderer.endFramePooled`,
+`SecondaryWorldRenderCore.closeFrameTransientUbos`, `DrawCallTrace.onFrameEnd`,
+`TeleportFlashProbe.onFrameEnd`) every frame, woven on NeoForge, with no flag left to keep it
+asleep. It is in the set for that reason, not because increment 4 changed the file. Generalised
+lesson for the close-out: *a collapsed gate leaves no grep trace, so "sites still referencing the
+flag" undercounts "sites the flag was protecting" by exactly the ones already collapsed.*
+
+**Deliberately NOT widened.** `SkyRendererTargetMixin`, `LevelRendererEntityVisibilityMixin` and
+`LevelRendererBlockOutlineMixin` also read qouteall state ungated on NeoForge — but they have done
+so since long before S20 (they were never flag-gated), so adding them would be an untested
+behaviour change on a platform no gate here exercises. Ledgered for C7, not touched.
+
+**Two intentional NeoForge behaviour changes** (release notes; both are file DELETIONS whose
+surviving arm was a no-op on Fabric, so Fabric is byte-identical):
+1. `MainProjectionBobMixin` deleted — its flag-ON arm was an identity redirect. On NeoForge both
+   redirects took the flag-OFF **no-op** path, so world-projection walk-bob / hurt-tilt were
+   suppressed there; vanilla view-bob returns. (§G.12 predicted exactly this.)
+2. `NetherPortalUninteractableMixin` deleted — its whole body was flag-OFF-only. On NeoForge that
+   suppression was live, so vanilla nether-portal blocks were unbreakable/uninteractable there;
+   vanilla interaction returns. Correct for a platform that now has no portal implementation.
+
+**`QuadParticleGroupMixin` KEPT as an identity redirect** (§3's "watch the non-gates" case). Both
+arms died — the flag-ON arm was vanilla-frustum-only, the flag-OFF arm was the block-era cull — so
+the collapse leaves `return frustum.pointInFrustum(...)`. The file survives because its camera
+capture is live substrate for `iris-on/is5-shadow`'s §2c geometric cull, which lands in this exact
+method and reads `seamlessportals$currentCamera`; deleting it would turn that merge into a
+delete/modify conflict over live sibling work (§A/§E.6). Stated as inert in the code, not implied.
+
+**The other non-gates behaved as §G.12 warned:** `SodiumFogOverrideMixin:69` and `CrossingSmoke:87`
+were LOG ARGUMENTS (a mechanical gate-collapse pass misses both; the second breaks the 8-leg gate's
+own build).
+
+**Full contents of the commit**, in the §3 order: (1) `SeamlessMixinConfigPlugin:191` →
+`&& !isFabricLoaderPresent()`, `IPCompatMixinPlugin:136` → `return isFabricLoaderPresent();`, plus
+`FABRIC_ONLY_IP_DRIVERS`; (2) D3 carve-out sets KEPT with both `!…contains(…)` terms, and their
+javadocs re-stated on the NeoForge axis; (3) the runtime gates collapsed individually; (4)
+`EntityPortalsFlag`, `SeamlessPortalsConfig`, `ModMenuIntegration`, `SeamlessConfigScreen` deleted +
+`fabric.mod.json:24` swapped to `IPModMenuConfigEntry` in the same commit; (5) `CrossingSmoke:3`
++ `:86-93` fixed; (6) `ENTITY_PORTALS_SUPERSEDED_MIXINS` deleted (`SODIUM_INCOMPATIBLE_MIXINS` left
+for its own commit); (7) the C4 Mechanism-B removal, with `IPConfig`'s null guard dying WITH its
+field; (8) the holding machinery, at the corrected ranges; (9) the TITLE-CARD reshape; (10)
+`EXCLUSIVITY_LEDGER.md` archived.
+
+**Corrections made while applying (each would have broken something):**
+- **The title-card run dir needed a REPLACEMENT seed, not just a deletion.** §3.9's ranges are
+  right, but dropping the `runClientGametest` flag-OFF pin leaves that run dir with no
+  `immersive_portals.json` — and with IP now always initialising, it gets IP's first-launch splash,
+  which the client-gametest framework's bare-title-screen assertion trips over. The `doFirst` block
+  is re-shaped to seed the splash suppression rather than removed. (The crossing run's own seed at
+  `:285` was already ledgered as load-bearing for the same reason; this is the same fact arriving
+  at the other run config.)
+- **`SeamlessPortalsConfig.loadFrom`'s call site** (`SeamlessPortalsModFabric:34`) and two now-dead
+  imports had to go with the class. Confirmed the §G.11 critic's finding first: no surviving Java
+  reads any of the six knobs.
+- **`ClientWorldLoader.registerCoreOwnedFeatureBuffers` survives** with its comment untouched — it
+  already named `SecondaryWorldRenderCore` as first registrant, so it never read as B's (§G.3).
+
+**Stale-prose sweep** (the booby-trap discipline — every one of these asserted something the commit
+made false): `neoforge.mods.toml` ×2 (both blocks explained NeoForge inertness via the flag's
+force-false; they now name the loader predicate), `neoforge/build.gradle:78` (+ a false "Retired at
+S20/C2"), `common/build.gradle` ×6 remaining "Removed at S20" / `-Pip_scc_closed` references,
+`ModMenuApi` stub, `DimensionAPI:9`, `MixinLevelRenderer:43`, `ImmPtlViewArea:47`,
+`MixinItemStackComponentizationFix:26`, `MixinIrisSodiumTransformPatcher_ClipInject:55`,
+`ExperimentalCompatGate:18`, `MixinGameRenderer:77`, `LevelRendererBlockOutlineMixin`,
+`MinecraftFramePumpMixin` header, `SeamlessPortalsModFabric`, `SeamlessPortalsClientFabric`,
+`CrossingSmoke` header.
+
+**What these gates still do NOT cover** (unchanged from §4 of the continuation prompt, and now the
+close-out round's job): the NeoForge weave contract — including whether the three
+`FABRIC_ONLY_IP_DRIVERS` skips fire and whether the client boots at all; the D3 carve-outs; the
+`fabric.mod.json` modmenu entrypoint swap (a resource — `compileJava` cannot see it); the gson
+config migration; and the title-card re-shoot, which the 8-leg suite does not run.
+
+**Left standing deliberately:** `ExperimentalCompatGate` (its disposition is C2-5's call, not the
+flag's — and §E.1 row 2 makes its VALUE load-bearing for IS4 default-ON shaderpack views);
+`SODIUM_INCOMPATIBLE_MIXINS` (block-era collateral, its own commit per §G.12).
 
 ### G.6 A stale label that S20 itself creates
 

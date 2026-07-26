@@ -28,10 +28,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <p>So we cull particles geometrically instead of relying on stencil:
  * any particle whose 3D position lies "behind" an active portal from
  * the camera's view is dropped before it's added to the
- * {@link ParticleGroupRenderState} for submission. The geometry test
- * is the same line-vs-quad intersection
- * ({@link com.warwa.seamlessportals.portal.PortalInfo#intersectsMovement})
- * already used by teleport detection — proven correct.
+ * {@link ParticleGroupRenderState} for submission.
+ *
+ * <p><b>S20 STATE — the cull itself is currently ABSENT.</b> Its block-era implementation died
+ * with the block era; the redirect below is an identity pass-through and the camera capture is the
+ * substrate the replacement will use. See the redirect's own comment.
  *
  * <p>Hook strategy: vanilla
  * {@link QuadParticleGroup#extractRenderState(Frustum, Camera, float)}
@@ -85,35 +86,19 @@ public abstract class QuadParticleGroupMixin {
     )
     private boolean seamlessportals$cullBehindPortal(
             Frustum frustum, double x, double y, double z) {
-        // D3 EXCLUSIVITY GATE (A5 — the block-era PortalParticleClip cull call inside this KEEP'd
-        // substrate mixin). Flag ON → IP render-side clipping (FrontClipping + CrossPortalEntityRenderer)
-        // owns particle clipping, so skip the block-era portal cull but KEEP vanilla frustum culling.
-        // Flag OFF (default) → falls through to the full block-era cull below, unchanged.
-        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
-            return frustum.pointInFrustum(x, y, z);
-        }
-        // Vanilla cull first (cheap; frustum check is fast).
-        if (!frustum.pointInFrustum(x, y, z)) return false;
-        // During the DEST portal render the camera + particles are the
-        // destination dimension's own (per-dest engine extract). The
-        // source-dim portal clip is meaningless there — these particles are
-        // INSIDE the portal view, already bounded by the stencil mask — and
-        // applying it (source-dim portals vs dest-dim positions/camera) would
-        // wrongly drop them. So render all in-frustum dest particles.
-        // S20: the block-era discriminator (PortalContextSwitch.isRenderingPortal) is replaced by
-        // its FLAG-ON equivalent, the IP dest-extract bracket. Same intent, stated for the surviving
-        // architecture: particles extracted for a DEST pass are inside the portal view and already
-        // bounded by the stencil mask, so a source-dim portal cull must not touch them. Flag-ON dest
-        // passes should not even reach this redirect (S14.40's MixinParticleEngine HEAD-cancels the
-        // vanilla dest extract, and ip_extractIsolated bypasses this class), so this stays as a
-        // defensive belt on that invariant rather than a load-bearing branch.
-        if (qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
-            return true;
-        }
-        // S20: the block-era behind-portal cull (PortalParticleClip, fed by the block-era
-        // PortalManager tracker) died with the block era. NOTE FOR THE is5-shadow MERGE: that branch
-        // re-introduces a flag-ON behind-portal cull sourced from IP Portal ENTITIES via IPMcHelper
-        // (its §2c fix, port-note §A/§E.6) — when it merges, its version lands here unconditionally.
-        return true;
+        // S20 INCREMENT 4 — THIS REDIRECT IS CURRENTLY AN IDENTITY, and that is the honest state,
+        // not an oversight. Its two arms were: flag-ON → vanilla frustum cull only (IP render-side
+        // clipping owned particle clipping); flag-OFF → the block-era behind-portal cull. The
+        // block-era cull (PortalParticleClip fed by the block-era PortalManager tracker) died with
+        // the block era at increment 3, and the flag died here, so what a mechanical collapse
+        // leaves is exactly `frustum.pointInFrustum(...)`.
+        //
+        // WHY THE CLASS SURVIVES the collapse rather than being deleted as dead weight: the camera
+        // capture above is live substrate for the incoming behind-portal cull. `iris-on/is5-shadow`
+        // re-introduces a geometric source-particle cull HERE — sourced from IP Portal ENTITIES via
+        // IPMcHelper, reading seamlessportals$currentCamera, lever-gated default-ON (its §2c fix;
+        // port-note §A/§E.6). Deleting this file would turn that merge into a delete/modify
+        // conflict over live sibling work. When it lands, its cull replaces this return.
+        return frustum.pointInFrustum(x, y, z);
     }
 }

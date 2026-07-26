@@ -1,6 +1,5 @@
 package qouteall.imm_ptl.core.compat;
 
-import com.warwa.seamlessportals.EntityPortalsFlag;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -23,12 +22,12 @@ import java.util.Set;
  *       BOTH mods, not just the first arm that matches. Any class that matches NONE of the arms
  *       defaults to {@code false} (default-off) — a compat mixin that forgets to name its target
  *       mod is silently skipped, never accidentally woven.</li>
- *   <li><b>Gate 2 — OUR {@link EntityPortalsFlag#isOn()} entity-portal master switch</b>, applied
- *       to EVERY class. This is the composition that IP's plugin alone cannot express: without it,
- *       IP's substring gate would weave the whole compat set flag-OFF (block-era), violating the
- *       one-driver-per-session weave contract. Off Fabric the flag is force-{@code false}
- *       (S13-B P4), so on NeoForge gate 2 skips EVERY compat class — benign, no invoker install
- *       exists there anyway (design §6.3).</li>
+ *   <li><b>Gate 2 — OURS: FabricLoader must be present</b>, applied to EVERY class. This is the
+ *       composition that IP's plugin alone cannot express. Until S20 it read
+ *       {@code isFabricLoaderPresent() && EntityPortalsFlag.isOn()}; the flag is deleted and the
+ *       loader half is what always mattered — on NeoForge gate 2 skips EVERY compat class, which
+ *       is required, not merely benign: no invoker install exists there (design §6.3) and the
+ *       ported engine is Fabric-only until C7.</li>
  * </ol>
  *
  * <h2>PRESERVED FOOTGUN — read before adding any class to the compat config</h2>
@@ -95,7 +94,7 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
 
     /**
      * COMPOSED gate. Gate 1 (IP order-sensitive substring presence) AND gate 2
-     * ({@link EntityPortalsFlag#isOn()}). A {@code null} mixin class name defaults off.
+     * ({@link #isFabricLoaderPresent()}). A {@code null} mixin class name defaults off.
      */
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
@@ -121,24 +120,23 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         if (!gate1) {
             return false;
         }
-        // Gate 2 (ours): the entity-portal master switch. Flag-OFF (or any non-Fabric loader, where
-        // the flag is force-false) skips every compat class — today's block-era behavior is intact.
+        // Gate 2 (ours): FABRIC ONLY. This is the SECOND weave gate in the tree — the migration
+        // notes named only SeamlessMixinConfigPlugin — and it is the sole reason the 15-mixin
+        // Sodium/Iris compat set stays unwoven on plain NeoForge (neoforge.mods.toml:47-53 states
+        // exactly that in prose, and ip-compat is a SEVENTH qouteall config the "six IP blocks"
+        // framing misses).
         //
-        // S20 INCREMENT 1 — THE LOADER GATE IS NOW EXPLICIT (do not remove it with the flag). This
-        // is the SECOND flag-driven weave gate in the tree; the migration notes named only
-        // SeamlessMixinConfigPlugin, and this one is the sole reason the 15-mixin Sodium/Iris compat
-        // set stays unwoven on plain NeoForge (neoforge.mods.toml:47-53 states exactly that in
-        // prose, and ip-compat is a SEVENTH qouteall config the "six IP blocks" framing misses).
-        // S20 deletes the flag, collapsing gate 2 to always-true, so the loader half is hoisted out
-        // here first. NO-OP today (isOn() already implies the loader), load-bearing after the flag
-        // dies. See port-note S20-block-era-deletion.md §E.2/§G and
+        // S20 INCREMENT 4 — `&& EntityPortalsFlag.isOn()` deleted here, and NEVER replaced by
+        // `return true`. The flag's own off-Fabric force-false was what this gate actually relied
+        // on; increment 1 hoisted the loader half out so this collapse would be a one-term
+        // deletion. See port-note S20-block-era-deletion.md §E.2/§G.12 and
         // SeamlessMixinConfigPlugin.isFabricLoaderPresent's javadoc for the ledgered non-blockers.
-        return isFabricLoaderPresent() && EntityPortalsFlag.isOn();
+        return isFabricLoaderPresent();
     }
 
     /**
      * Whether FabricLoader is on the runtime classpath. Second copy of the predicate (the original
-     * is {@code private static} on the dying {@code EntityPortalsFlag:147}; the sibling copy lives
+     * was {@code private static} on the deleted {@code EntityPortalsFlag}; the sibling copy lives
      * on {@code SeamlessMixinConfigPlugin}, which carries the full rationale). Duplicated rather
      * than shared because a mixin config plugin runs at bootstrap, before any shared utility class
      * of ours is safe to touch, and because the two plugins must not be able to drift apart by one

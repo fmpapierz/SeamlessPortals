@@ -1,6 +1,5 @@
 package com.warwa.seamlessportals.fabric.gametest;
 
-import com.warwa.seamlessportals.EntityPortalsFlag;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.mixin.LivingEntityHurtAccessor;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
@@ -32,9 +31,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * S15 (D4.6) — automated server-side entity-crossing smoke on the UNIFIED path
  * ({@code Portal.SERVER_PORTAL_TICK_SIGNAL} → {@code getEntitiesToTeleport} →
  * {@code teleportRegularEntity}), EXECUTION_PLAN §S15(a): spawn portals + entities,
- * assert arrival position/dimension. Runs flag-ON only (the {@code crossingGametest}
- * Gradle run config seeds {@code entityPortals=true} into the run dir's config before
- * launch); aborts loudly if the flag did not resolve ON.
+ * assert arrival position/dimension. (Until S20 this ran flag-ON only, with the
+ * {@code crossingGametest} run config seeding {@code entityPortals=true} into the run dir's config
+ * before launch and this class aborting if the flag did not resolve ON. The flag is deleted; both
+ * the seed and the abort are gone.)
  *
  * <p>Three legs, all server-asserted (the client is only the harness):
  * <ol>
@@ -83,14 +83,10 @@ public class CrossingSmoke implements FabricClientGameTest {
             return;
         }
 
-        SeamlessPortalsConstants.LOGGER.info(LOG + "starting; entityPortals flag = {}",
-            EntityPortalsFlag.isOn());
-        if (!EntityPortalsFlag.isOn()) {
-            throw new AssertionError(LOG + "entityPortals flag is OFF — the crossingGametest "
-                + "run config must seed entityPortals=true into <runDir>/config/"
-                + "seamlessportals.properties BEFORE launch (see fabric/build.gradle). "
-                + "The unified entity path does not exist flag-OFF; aborting.");
-        }
+        // S20 increment 4: the entityPortals flag is deleted, so both the log argument and the
+        // flag-OFF abort below it are gone. The abort existed because the unified entity path did
+        // not exist flag-OFF; there is no other state now.
+        SeamlessPortalsConstants.LOGGER.info(LOG + "starting");
 
         context.runOnClient(mc -> mc.options.renderDistance().set(6));
 

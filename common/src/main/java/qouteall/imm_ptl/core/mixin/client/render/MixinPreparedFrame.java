@@ -12,7 +12,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.render.PerEntityClipBracket;
 
 /**
- * S12-A (Slice C) — R3 mixin 4 of 4: the Mechanism-A execute bracket (S11-R3-clip-bracketing.md §1.2.4).
+ * S12-A (Slice C) — R3 mixin 4 of 4: THE clip-delivery execute bracket (S11-R3-clip-bracketing.md
+ * §1.2.4). Its javadoc used to call it "Mechanism-A", implying an alternative; since the S20 C4
+ * loser cleanup there is only this. <b>Do not read the deleted Mechanism B's paperwork onto this
+ * file</b> — it was proposed for deletion with B on the strength of a stale "always under
+ * Mechanism B" line and is in fact A's ONLY clip-delivery bracket; deleting it makes straddling
+ * entities draw unclipped (port-note §G.3).
  * HEAD/RETURN inject on the private
  * {@code FeatureRenderDispatcher.PreparedFrame.executePhase(FeatureRenderPhase, FeatureFrameContext)}
  * ({@code 26.2:.../feature/FeatureRenderDispatcher.java:258-266}) — the point at which one phase object's
@@ -24,8 +29,8 @@ import qouteall.imm_ptl.core.render.PerEntityClipBracket;
  * <p><b>HEAD:</b> {@code prev = PerEntityClipBracket.beginPhaseIfRegistered(phase)} captures the ambient store
  * and pushes the registered plane onto the proven {@code com.warwa.seamlessportals.render.FrontClipping} store
  * (whose per-draw upload is the always-on {@code GlCommandEncoderClipMixin}); {@code null} when the phase is
- * unregistered (the common case, and always under Mechanism B) — {@code endPhase(null)} then no-ops, so with
- * no collided entities this mixin is two map-miss branches per phase per frame.
+ * unregistered (the common case) — {@code endPhase(null)} then no-ops, so with no collided entities
+ * this mixin is two map-miss branches per phase per frame.
  * <b>RETURN:</b> {@code PerEntityClipBracket.endPhase(prev)} restores the ambient store.
  *
  * <p><b>Scoping (Verifier-1 P2).</b> {@code prev} is held in a {@code @Unique} field on the mixed
@@ -35,8 +40,8 @@ import qouteall.imm_ptl.core.render.PerEntityClipBracket;
  * The RETURN restore fires on normal completion; the (exceptional) throw path is KNOWN-OPEN and accepted
  * (S18 port-note ledger): a throw inside {@code executePhase} skips the RETURN restore, but on the main
  * path nothing above swallows — the frame dies anyway (vanilla behavior for a feature-renderer throw), so
- * the leaked plane never draws. The seam's own dispatcher path IS throw-fenced (S18:
- * {@code PerEntityClipBracket.drawBracketedEntitiesIfAny} try/finally + 3-strike dead-latch).
+ * the leaked plane never draws. (The seam's own throw-fenced dispatcher path was Mechanism B's, and
+ * went with it at S20.)
  *
  * <p>REGISTERED + LIVE (seamlessportals-ip-client.mixins.json "client" array) — brackets every
  * executePhase on every dispatcher instance (main + secondaries + the seam's own) since S13.

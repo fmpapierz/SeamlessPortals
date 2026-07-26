@@ -26,13 +26,27 @@ import java.util.List;
 /**
  * S11-C (Slice A) — the R3 per-entity clip-bracketing SEAM (design round
  * {@code migration/port-notes/S11-R3-clip-bracketing.md} §3.1). The ported
- * {@link CrossPortalEntityRenderer} never branches on the delivery mechanism (D3: its IP body stays
- * flag-clean); this class owns BOTH candidate mechanisms and the S18 A/B switch, and realizes IP's
- * per-entity {@code endBatch()} clip-split semantics on the 26.2 submit render model (render-core
- * G2/G3/G23; there is no mid-batch flush on 26.2 — the draw-call boundary must come from the submit-side
- * data model).
+ * {@link CrossPortalEntityRenderer} never branches on the delivery mechanism; this class owns the
+ * mechanism and realizes IP's per-entity {@code endBatch()} clip-split semantics on the 26.2 submit
+ * render model (render-core G2/G3/G23; there is no mid-batch flush on 26.2 — the draw-call boundary
+ * must come from the submit-side data model).
  *
- * <h2>Mechanism A — {@code SUBMIT_ORDER_UNIFORM} (DEFAULT, design §1)</h2>
+ * <p><b>S20 INCREMENT 4 — ONE MECHANISM.</b> The class carried two candidates behind a live A/B
+ * switch under the C4 rider. Checkpoint C4 DECIDED for Mechanism A ({@code SUBMIT_ORDER_UNIFORM},
+ * S18 sign-off), with B kept wired as a fallback "until the S20 loser cleanup" — this is that
+ * cleanup. Deleted atomically with it: the {@code Mechanism} enum, {@code IPGlobal}'s and
+ * {@code IPConfig}'s {@code crossPortalEntityClipMechanism} fields (the config field's null guard
+ * died WITH the field, never before it — a stale {@code "ISOLATED_STORAGE_BRACKET"} in a shipped
+ * user config deserializes to NULL through gson and overwrites the initializer, port-note §G.3),
+ * both {@code en_us.json} option keys, the config-load log line, and B's three draw sites. What was
+ * NOT deleted, despite carrying B-flavoured comments: {@link #evictPassState}, the
+ * {@link #DISABLED_CLIP} null-plane substitution, {@code MixinPreparedFrame}, and
+ * {@code ClientWorldLoader.registerCoreOwnedFeatureBuffers} — all four are Mechanism-A
+ * load-bearing (§G.3). B was runtime-selectable by every user via
+ * {@code /imm_ptl_client_debug config}, so its removal is a deliberate feature removal, not dead
+ * code.
+ *
+ * <h2>The mechanism — {@code SUBMIT_ORDER_UNIFORM} (design §1)</h2>
  * {@code SubmitNodeStorage.order(int)} partitions submits into per-order {@link SubmitNodeCollection}s
  * (26.2:SubmitNodeStorage.java:33-37), each owning its OWN {@link FeatureRenderPhase} objects
  * (26.2:SubmitNodeCollection.java:54-68). {@code PhaseSubmitGrouper} is built per phase object and
@@ -44,24 +58,6 @@ import java.util.List;
  * {@link com.warwa.seamlessportals.render.FrontClipping#capture()}/{@code restore(Snapshot)} so the
  * always-on {@code GlCommandEncoderClipMixin} uploads the entity's plane to that group's draws only.
  *
- * <h2>Mechanism B — {@code ISOLATED_STORAGE_BRACKET} (design §2)</h2>
- * Each clipped render is submitted into its OWN one-entity {@link SubmitNodeStorage} and drawn later via a
- * DEDICATED {@link FeatureRenderDispatcher} (mechanism B MUST construct its own — the main dispatcher's
- * single {@code PreparedFrame} throws "PreparedFrame already in use" if re-entered,
- * 26.2:FeatureRenderDispatcher.java:35,187-190), bracketed by the plane store. The draw fires from
- * {@link #drawBracketedEntitiesIfAny(SubmitNodeStorage)} at the S18-DECIDED per-pass call sites
- * (design §2.1.3 resolved): main pass via {@link #onMainPassBeforeTranslucentTerrain()} (Fabric
- * {@code BEFORE_TRANSLUCENT_TERRAIN} — IP's end-of-entity-rendering slot, before translucent terrain);
- * dest passes via direct calls after each {@code renderAllFeatures} in
- * {@code SecondaryWorldRenderCore.renderPortalEntities} / {@code renderPortalEntitiesSameDim}.
- *
- * <p><b>C4 rider (BINDING):</b> neither mechanism is hard-committed — both are always compiled and both
- * sets of hooks are registered (each inert when not selected), so the A/B flip is a no-restart switch read
- * live per frame from the {@code IPGlobal.crossPortalEntityClipMechanism} field via {@link #getMechanism()}.
- * That live-read field is the landed interim one-line switch (the rider's "documented one-line switch");
- * persisting it as an {@code IPConfig} in-game config-screen entry rides the S12 config/mixin wiring
- * (design §5).
- *
  * <p><b>SIGN NOTE (D4.4):</b> every plane→view-space conversion reuses the S11-B qouteall
  * {@link FrontClipping} bridge feed ({@code captureOuterClipping}/{@code captureInnerClipping}: column-form
  * {@code M·v}, {@code planeW = c}; the anti-"fix" guard against {@code mulTranspose} applies). The view
@@ -71,27 +67,10 @@ import java.util.List;
  * checks (design §6, S11-B §3.1).
  *
  * <p>LIVE since S13 (the S12 anchor + executePhase mixins are registered in
- * seamlessportals-ip-client.mixins.json and fire per pass); Mechanism B's draw sites + the
- * ownRenderBuffers endFrame lifecycle landed at S18 — both mechanisms are now fully wired for the
- * C4 live A/B.
+ * seamlessportals-ip-client.mixins.json and fire per pass).
  */
 @Environment(EnvType.CLIENT)
 public class PerEntityClipBracket {
-
-    public enum Mechanism {
-        /** Default: per-draw clip uniform keyed off submit-order partitioning (design §1). */
-        SUBMIT_ORDER_UNIFORM,
-        /** Fallback: one-entity SubmitNodeStorage + renderAllFeatures bracketed by clip state (design §2). */
-        ISOLATED_STORAGE_BRACKET
-    }
-
-    /** Live-read each frame from the {@code IPGlobal.crossPortalEntityClipMechanism} field — the S18 A/B
-     *  switch (design §5). Persistence is LANDED: {@code IPConfig.crossPortalEntityClipMechanism}
-     *  (IPConfig:51, null-guarded :179, synced to IPGlobal at :196) — flip via
-     *  {@code config/immersive_portals.json} + restart, or the config GUI. */
-    public static Mechanism getMechanism() {
-        return IPGlobal.crossPortalEntityClipMechanism;
-    }
 
     // ------------------------------------------------------------------------------------------------
     // Shared band constants (design §1.2.1). Each clipped entity claims its OWN band of consecutive submit
@@ -137,31 +116,9 @@ public class PerEntityClipBracket {
     /** Per-pass (per-storage) frame-scoped seam state. */
     private static final class PassState {
         int nextClipOrder = INITIAL_CLIP_ORDER;
-        // Mechanism A: exactly the global-registry phases THIS pass registered this frame, so the next
-        // frame's HEAD reset removes only its own entries, leaving other live passes' entries intact.
+        // Exactly the global-registry phases THIS pass registered this frame, so the next frame's
+        // HEAD reset removes only its own entries, leaving other live passes' entries intact.
         final List<FeatureRenderPhase<?>> registeredPhases = new ArrayList<>();
-        // Mechanism B: this pass's deferred isolated-storage draws, drained at its own draw site.
-        final List<BracketEntry> deferredBrackets = new ArrayList<>();
-    }
-
-    @Nullable
-    private static FeatureRenderDispatcher ownDispatcher;
-
-    // Lifecycle: registered into ClientWorldLoader's core-owned per-frame endFrame walk at allocation
-    // (S18; memory gpu-buffer-leak-endframe / S11-A B5/B6 — see getOrCreateOwnDispatcher).
-    @Nullable
-    private static RenderBuffers ownRenderBuffers;
-
-    /** One deferred isolated-storage draw: a filled one-entity storage + its (nullable) clip plane. */
-    private static final class BracketEntry {
-        final SubmitNodeStorage storage;
-        @Nullable
-        final Snapshot plane;
-
-        BracketEntry(SubmitNodeStorage storage, @Nullable Snapshot plane) {
-            this.storage = storage;
-            this.plane = plane;
-        }
     }
 
     private static PassState passStateFor(SubmitNodeStorage storage) {
@@ -170,9 +127,9 @@ public class PerEntityClipBracket {
 
     /**
      * Frame reset — called from the submitEntities-HEAD anchor (design §3.3 row 1). PER-STORAGE: resets
-     * only THIS pass's band counter / deferred brackets and removes only THIS pass's prior-frame phase
-     * registrations from the global registry, so a nested dest pass invoked mid-main-framegraph does not
-     * wipe the outer pass's still-pending state (Verifier-1 P2).
+     * only THIS pass's band counter and removes only THIS pass's prior-frame phase registrations from
+     * the global registry, so a nested dest pass invoked mid-main-framegraph does not wipe the outer
+     * pass's still-pending state (Verifier-1 P2).
      */
     public static void onFrameSubmitBegin(SubmitNodeStorage storage) {
         PassState st = passStateFor(storage);
@@ -180,7 +137,6 @@ public class PerEntityClipBracket {
             phaseRegistry.remove(phase);
         }
         st.registeredPhases.clear();
-        st.deferredBrackets.clear();
         st.nextClipOrder = INITIAL_CLIP_ORDER;
     }
 
@@ -197,12 +153,7 @@ public class PerEntityClipBracket {
         // IP's setupOuterClipping math via the S11-B bridge, WITHOUT touching the live store (design §1.2.2).
         Snapshot outerPlane = FrontClipping.captureOuterClipping(collidingPortal, cam.viewRotationMatrix);
 
-        if (getMechanism() == Mechanism.ISOLATED_STORAGE_BRACKET) {
-            deferIsolatedBracket(storage, dispatcher, state, cam, camX, camY, camZ, poseStack, outerPlane);
-            return;
-        }
-
-        // Mechanism A: the entity's own draw-order band + register the plane against every touched phase.
+        // The entity's own draw-order band + register the plane against every touched phase.
         // outerPlane == null (portal shape has no outer clipping) → unregistered → unclipped draw under the
         // main pass's ambient (disabled) store, matching IP's setupOuterClipping(null) → disableClipping.
         submitToOwnOrderBand(dispatcher, state, cam, camX, camY, camZ, poseStack, storage, outerPlane);
@@ -231,18 +182,13 @@ public class PerEntityClipBracket {
             // yields none): IP draws the projection UNCLIPPED (CrossPortalEntityRenderer :101 disableClipping,
             // or :206/:210 setupInnerClipping(null) → disableClipping). Register an EXPLICITLY DISABLED
             // snapshot so the entity's band draws unclipped, NOT under the ambient dest inner clip
-            // (Verifier-1 P1). Fed to Mechanism B's bracket below for the same reason.
+            // (Verifier-1 P1).
             innerPlane = DISABLED_CLIP;
         }
 
         double x = state.x - newCameraPos.x;
         double y = state.y - newCameraPos.y;
         double z = state.z - newCameraPos.z;
-
-        if (getMechanism() == Mechanism.ISOLATED_STORAGE_BRACKET) {
-            deferIsolatedBracket(storage, dispatcher, state, cam, x, y, z, poseStack, innerPlane);
-            return;
-        }
 
         submitToOwnOrderBand(dispatcher, state, cam, x, y, z, poseStack, storage, innerPlane);
     }
@@ -252,7 +198,7 @@ public class PerEntityClipBracket {
     // ------------------------------------------------------------------------------------------------
 
     /**
-     * Mechanism A: route one entity's submits — which may span several relative orders internally — into a
+     * Route one entity's submits — which may span several relative orders internally — into a
      * dedicated, collision-free absolute-order band of the MAIN storage (via {@link OffsetStorage}), then
      * register the (nullable) clip plane against exactly the collections the entity touched. Every submit
      * stays in its correct vanilla framegraph pass; the clip is scoped to the entity's own draw calls.
@@ -272,23 +218,6 @@ public class PerEntityClipBracket {
                 registerPhases(collection, plane, st);
             }
         }
-    }
-
-    /**
-     * Mechanism B: submit one entity into its OWN one-entity {@link SubmitNodeStorage} (which naturally
-     * preserves its internal multi-order layering) and record it + its (nullable) plane against the pass's
-     * {@link PassState} for the deferred isolated-storage draw in
-     * {@link #drawBracketedEntitiesIfAny(SubmitNodeStorage)}. {@code passStorage} is the pass's MAIN storage
-     * (the per-pass key), not the one-entity scratch storage.
-     */
-    private static void deferIsolatedBracket(
-        SubmitNodeStorage passStorage,
-        EntityRenderDispatcher dispatcher, EntityRenderState state, CameraRenderState cam,
-        double x, double y, double z, PoseStack poseStack, @Nullable Snapshot plane
-    ) {
-        SubmitNodeStorage scratch = new SubmitNodeStorage();
-        dispatcher.submit(state, cam, x, y, z, poseStack, scratch);
-        passStateFor(passStorage).deferredBrackets.add(new BracketEntry(scratch, plane));
     }
 
     private static void registerPhases(SubmitNodeCollection collection, Snapshot snapshot, PassState st) {
@@ -352,140 +281,20 @@ public class PerEntityClipBracket {
         }
     }
 
-    /**
-     * Mechanism B deferred bracket (design §2.1.2/§2.1.3), called from the S18-chosen per-pass draw-site
-     * hook with the pass's MAIN storage. Draws each recorded one-entity storage for THAT pass through the
-     * OWN dispatcher, bracketed by the plane store: capture → feed the entity's plane (if any) →
-     * {@code renderAllFeatures} → restore. No-op (and never touches the own dispatcher) when the pass
-     * recorded nothing — so when Mechanism A is active this is inert. Per-storage so a nested dest pass does
-     * not consume the outer pass's brackets before the outer draw site runs (Verifier-1 P2).
-     */
-    public static void drawBracketedEntitiesIfAny(SubmitNodeStorage storage) {
-        PassState st = passStates.get(storage);
-        if (st == null || st.deferredBrackets.isEmpty()) {
-            return;
-        }
-        // S18 throw fence (verify fold wf_a5599a71-df0, all three lenses): the S15 same-dim
-        // discipline. Without it, one swallowed dest-side throw that wedges the own dispatcher's
-        // PreparedFrame open (a prepareFrame throw AFTER begin() — renderAllFeatures'
-        // try-with-resources only closes a frame prepareFrame RETURNED) converts into an
-        // UNCAUGHT "PreparedFrame already in use" at the main-pass site every later frame —
-        // a deterministic crash during the C4 live A/B. Three strikes dead-latch B for the
-        // session (degrades to: bracketed entities missing — the pre-S18 state).
-        if (bracketThrowCount >= 3) {
-            st.deferredBrackets.clear();
-            return;
-        }
-        try {
-            FeatureRenderDispatcher dispatcher = getOrCreateOwnDispatcher();
-            for (BracketEntry entry : st.deferredBrackets) {
-                Snapshot prev = com.warwa.seamlessportals.render.FrontClipping.capture();
-                try {
-                    if (entry.plane != null) {
-                        com.warwa.seamlessportals.render.FrontClipping.restore(entry.plane);
-                    }
-                    dispatcher.renderAllFeatures(entry.storage);
-                } finally {
-                    // ALWAYS restore — a skipped restore leaks the entry's plane (or a
-                    // DISABLED_CLIP that DISARMS the dest pass's CASE-3 inner clip) into the
-                    // ambient store for the rest of the frame (verify scenario A).
-                    com.warwa.seamlessportals.render.FrontClipping.restore(prev);
-                }
-            }
-        } catch (Throwable t) {
-            bracketThrowCount++;
-            // The wedged-PreparedFrame recovery: discard the dispatcher (its PreparedFrame may be
-            // stuck open); the next attempt rebuilds it around the SAME registered ownRenderBuffers
-            // (no re-registration, no buffer leak). One-shot log per session (render-thread
-            // logging discipline).
-            ownDispatcher = null;
-            if (!bracketThrowLogged) {
-                bracketThrowLogged = true;
-                qouteall.q_misc_util.Helper.err(
-                    "[PerEntityClipBracket] bracket draw swallowed (first per session, strike "
-                        + bracketThrowCount + "/3): " + t);
-                t.printStackTrace();
-            }
-        } finally {
-            // Drop strands regardless of outcome (the S15 discipline) — a half-drawn list must
-            // not be re-attempted by a later pass under a different camera.
-            st.deferredBrackets.clear();
-        }
-    }
-
-    // S18 throw fence state (see drawBracketedEntitiesIfAny). Session-scoped; reset at cleanup.
-    private static int bracketThrowCount = 0;
-    private static boolean bracketThrowLogged = false;
-
-    private static FeatureRenderDispatcher getOrCreateOwnDispatcher() {
-        if (ownDispatcher == null) {
-            Minecraft mc = Minecraft.getInstance();
-            // Dedicated RenderBuffers — mechanism B MUST NOT reuse the main dispatcher (its single
-            // PreparedFrame is in use during the main pass; begin() throws "PreparedFrame already in use",
-            // 26.2:FeatureRenderDispatcher.java:187-190). S18 lifecycle wiring: registered into
-            // ClientWorldLoader's core-owned per-frame endFrame walk (endFrameOnSecondaryFeatureBuffers,
-            // driven from GameRenderer.render TAIL flag-ON) — the exact S15 same-dim pipeline pattern
-            // (memory gpu-buffer-leak-endframe; every mod-created RenderBuffers needs the per-frame
-            // endFrame or its StagedVertexBuffer pools never fence-recycle).
-            // On a throw-fence rebuild (ownDispatcher nulled, see drawBracketedEntitiesIfAny's
-            // catch) the SAME already-registered buffers are reused — only the dispatcher (and its
-            // possibly-wedged PreparedFrame) is discarded.
-            if (ownRenderBuffers == null) {
-                ownRenderBuffers = new RenderBuffers(0);
-                qouteall.imm_ptl.core.ClientWorldLoader.registerCoreOwnedFeatureBuffers(ownRenderBuffers);
-            }
-            ownDispatcher = new FeatureRenderDispatcher(
-                ownRenderBuffers,
-                mc.getModelManager(),
-                mc.getAtlasManager(),
-                mc.font,
-                mc.gameRenderer.gameRenderState()
-            );
-        }
-        return ownDispatcher;
-    }
 
     /**
-     * S18 main-pass Mechanism B draw site (design §2.1.3 candidate (i), decided S18): called from the
-     * Fabric {@code LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN} registration — inside the main-pass
-     * framegraph lambda AFTER all entity feature phases (solid/translucent/outline) execute and BEFORE
-     * translucent terrain draws. This is IP's exact slot (IP's per-entity endBatch draws + CASE-2
-     * projections fired at end-of-entity-rendering, before translucent terrain), so water/glass in front
-     * of a bracketed entity still tints it: the entity writes depth first and translucent terrain blends
-     * over it. Drawing later (e.g. AFTER_TRANSLUCENT_TERRAIN) would depth-reject the entity behind
-     * already-drawn translucent terrain — the entity would vanish through water. The model-view stack
-     * still holds the view rotation there (pushed for the whole framegraph execute,
-     * 26.2:LevelRenderer.java:170-172/:252), matching Mechanism A's phase-draw transform.
+     * Evict one pass's seam state (its band counter and its prior-frame phase registrations from the
+     * global registry). Called by the same-dim throw fence when it REPLACES its
+     * {@code SubmitNodeStorage} (the replaced storage's PassState would otherwise linger forever),
+     * and available for dimension-churn eviction of a discarded secondary renderer's storage
+     * (design §1.2.5).
      *
-     * <p>Dest (portal) passes do NOT run a framegraph — their draw sites are direct calls in
-     * {@code SecondaryWorldRenderCore.renderPortalEntities} / {@code renderPortalEntitiesSameDim}
-     * right after each pass's {@code renderAllFeatures}, inside the pushed dest view matrix and the
-     * armed inner clip + stencil. The event never fires for them; the defensive guard below only
-     * protects against a future re-entrant framegraph render.
-     */
-    public static void onMainPassBeforeTranslucentTerrain() {
-        if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
-            return;
-        }
-        Minecraft mc = Minecraft.getInstance();
-        // 26.2 renders frames MID-PACKET: skip (never assert) on the transient mc.level mismatch frame.
-        if (mc.level == null || mc.levelRenderer == null) {
-            return;
-        }
-        SubmitNodeStorage storage =
-            ((com.warwa.seamlessportals.mixin.client.LevelRendererAccessorMixin) mc.levelRenderer)
-                .seamlessportals$getSubmitNodeStorage();
-        if (storage != null) {
-            drawBracketedEntitiesIfAny(storage);
-        }
-    }
-
-    /**
-     * Evict one pass's seam state (its band counter, its deferred Mechanism-B brackets, and its
-     * prior-frame phase registrations from the global registry). Called by the same-dim throw fence
-     * when it REPLACES its {@code SubmitNodeStorage} (the replaced storage's PassState would otherwise
-     * linger forever with orphaned brackets), and available for dimension-churn eviction of a discarded
-     * secondary renderer's storage (design §1.2.5).
+     * <p><b>NOT Mechanism-B collateral</b> — both this method and its call site at
+     * {@code SecondaryWorldRenderCore:2440} carried "orphaned Mechanism-B bracket" comments and were
+     * proposed for deletion with the C4 loser; they are load-bearing for Mechanism A. The loop below
+     * removes A's {@code registeredPhases} from {@link #phaseRegistry}, which is never cleared
+     * wholesale — drop it and stale clip planes clip reused phase objects for the rest of the
+     * session, silently (port-note §G.3).
      */
     public static void evictPassState(SubmitNodeStorage storage) {
         PassState st = passStates.remove(storage);
@@ -504,12 +313,10 @@ public class PerEntityClipBracket {
      * {@code CrossPortalEntityRenderer.cleanUp()}. No frame is in flight at these boundaries.
      */
     public static void onClientCleanup() {
+        // BOTH lines are load-bearing for Mechanism A and must survive any future cleanup here —
+        // without them A leaks stale clips across world sessions (port-note §G.3). The Mechanism-B
+        // throw-fence + own-dispatcher reset that used to follow died with the C4 loser.
         phaseRegistry.clear();
         passStates.clear();
-        // Per-session throw-fence reset (the S15 same-dim discipline: a new world session gets a
-        // fresh 3-strike budget; a wedged dispatcher from the old session is discarded for rebuild).
-        bracketThrowCount = 0;
-        bracketThrowLogged = false;
-        ownDispatcher = null;
     }
 }

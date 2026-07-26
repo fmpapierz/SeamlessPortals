@@ -1,6 +1,26 @@
 # EXCLUSIVITY LEDGER — the committed dual-driver contract
 
-**Status: POPULATED + ENFORCED (S13-B WIRE 1).** Created per EXECUTION_PLAN §1 D3 and §3 S0(a) /
+> ## ⚠ ARCHIVED AT S20 INCREMENT 4 (2026-07-26) — HISTORICAL RECORD, NOT A LIVE CONTRACT
+>
+> This ledger existed to make ONE property auditable: *at no point do two portal drivers run in one
+> session.* It is retired because the property is now structural rather than enforced — **there is
+> only one driver.** S20 deleted the block-era portal system (increments 2-3) and then the
+> `entityPortals` flag itself (increment 4), so every gate this document tracks is gone: the flag,
+> its 46 runtime/weave gate sites, and the two-way switch. Its own lifecycle line
+> (D3: *"archived at S20"*) called for exactly this.
+>
+> **Read it for history, never as instructions.** Every "flag OFF → …" row below describes a state
+> that no longer exists, and following a §1 row's gate instruction today would be re-adding a gate
+> to a driver that has no rival. The two mechanisms that OUTLIVED the flag are cross-**loader**, not
+> cross-driver, and live in code rather than here: the `qouteall.*` weave gate and
+> `FABRIC_ONLY_IP_DRIVERS`, both in `SeamlessMixinConfigPlugin`, plus the composed gate in
+> `IPCompatMixinPlugin`. If you came here from a code comment citing "EXCLUSIVITY_LEDGER §4",
+> that is what it now means.
+>
+> Ledger of record for the deletion: `migration/port-notes/S20-block-era-deletion.md`
+> (executive summary, then §G.12 for increment 4).
+
+**Status: ARCHIVED (was: POPULATED + ENFORCED at S13-B WIRE 1).** Created per EXECUTION_PLAN §1 D3 and §3 S0(a) /
 "Immediately-next actions" item 3. Lifecycle (D3): skeleton at S0 → **fully populated + ENFORCED at
 S13 step 3, BEFORE the first flag-ON run** (every block-era driver gains its `!entityPortals` gate in
 the SAME commit that registers the IP mixin set) → updated at S16 (structural suppression replaces the

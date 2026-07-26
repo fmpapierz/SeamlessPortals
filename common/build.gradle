@@ -9,8 +9,11 @@ plugins {
 // no MC 26.2 build at F21. This source set holds EMPTY shells of exactly those types
 // (correct FQN/kind + only the members IP touches). It is compileOnly ONLY — never shipped:
 // it is wired onto :common's and the loaders' COMPILE classpaths (the loaders recompile the
-// raw common source, so the -Pip_scc_closed=true probe there also needs the shells) but
-// never onto runtime/implementation. Deleted at S20 with the rest of the holding machinery.
+// raw common source and need the shells too) but never onto runtime/implementation.
+//
+// S20 CORRECTION: "Deleted at S20 with the rest of the holding machinery" stood here and is
+// REFUTED. The holding machinery (IpHeldPaths / ip_scc_closed) IS deleted at S20; the STUB
+// SOURCE SETS are not — see the two S20 CORRECTION notes further down and port-note §E.3.
 //
 // S19-E UPDATE: the sodium (net.caffeinemc.mods.sodium.*) and iris (net.irisshaders.iris.*)
 // shells were RETIRED this stage — real Sodium 0.9.1 + Iris 1.11.2 DO ship for 26.2 and are
@@ -28,8 +31,8 @@ sourceSets {
     // wired onto :common's compile classpath ONLY (below), NEVER onto the loader classpath
     // (ipStubsClasspath). That keeps them off the fabric loader compile, where a stub of e.g.
     // PayloadTypeRegistry would SHADOW the real fabric-api type that FabricPlatformHelper uses
-    // and turn the shipping :fabric build red. At S13 (ip_scc_closed=true) the fabric loader
-    // recompiles the held tree against REAL fabric-api, which provides every net.fabricmc type
+    // and turn the shipping :fabric build red. The fabric loader
+    // recompiles the common tree against REAL fabric-api, which provides every net.fabricmc type
     // (and the addTask/completeTask interface injections a compileOnly stub cannot reproduce).
     // compileOnly only, never shipped.
     //
@@ -142,15 +145,14 @@ dependencies {
     // (MixinAbstractContainerMenu, MixinContainer, MixinServerPlayerGameMode, MixinBucketItem;
     // the landed chunk_sync/mc_util mixins used base Mixin only, hence no prior need). MixinExtras
     // is bundled with the loader at runtime (the neoforge run uses mixinextras 0.5.4), exactly
-    // like base Mixin above — so this is compileOnly, never shipped. Needed for the
-    // -Pip_scc_closed=true probe to compile the held IP mixin tree. Removed at S20.
+    // like base Mixin above — so this is compileOnly, never shipped. Needed for the ported IP
+    // mixin tree to compile. (S20 CORRECTION: "Removed at S20" stood here and is REFUTED — that
+    // tree is the shipping mixin set now, so this dependency is permanent.)
     compileOnly group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.5.3'
 
     // F21 stub shells on :common:compileJava's compile classpath ONLY (never runtime,
     // never in the shipped jar — jar packages sourceSets.main.output only). Referenced by
-    // the held compat files, which are excluded in the shipping build and compiled only at
-    // the -Pip_scc_closed=true probe. See the ipStubs source set above and S00-U0-decisions
-    // F21.
+    // the IP compat files. See the ipStubs source set above and S00-U0-decisions F21.
     //
     // S20 CORRECTION (2026-07-25): this line used to end "Removed at S20." It is NOT removed —
     // see the fabricStubs note below and port-note S20-block-era-deletion.md §E.1/§E.3. What
@@ -162,8 +164,8 @@ dependencies {
 
     // S10-A: net.fabricmc.* shells on :common:compileJava's compile classpath ONLY. NOT
     // exposed to the loader classpath (no ipStubsClasspath entry) — the loaders provide the
-    // real fabric-api. This resolves the held tree's loader-facade/@Environment/config-phase
-    // references at the -Pip_scc_closed=true probe without shadowing real fabric-api on the
+    // real fabric-api. This resolves the ported tree's loader-facade/@Environment/config-phase
+    // references without shadowing real fabric-api on the
     // fabric build. compileOnly only, never shipped. See fabricStubs above and
     // port-note S10A-loader-seam.md.
     //
@@ -185,8 +187,8 @@ dependencies {
     // S0 JUnit test infrastructure for the entity-portal migration
     // (migration/EXECUTION_PLAN.md §3 S0(a); D4.5 math harness — the S2
     // DQuaternion/Plane invariant tests and, at S13, the carried IP
-    // Mesh2DTest/HelperTest run through this). :common:compileTestJava
-    // carries its OWN held-paths list (IpHeldPaths.TEST_HELD_PATHS, D1.3).
+    // Mesh2DTest/HelperTest run through this). (S20: :common:compileTestJava used to carry its own
+    // D1 held-paths list; the holding machinery is deleted.)
     testImplementation platform('org.junit:junit-bom:5.13.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     // Gradle 9 no longer injects the platform launcher onto the test runtime
@@ -208,21 +210,24 @@ configurations {
         canBeConsumed = true
     }
     // F21: consumable view of the compiled stub classes so the loader modules — which
-    // recompile the RAW common source directory and therefore also see the held compat
-    // files at the -Pip_scc_closed=true probe — can put the same shells on their
-    // compileJava classpath (multiloader-loader.gradle). Consume-only; never resolved here.
-    // Removed at S20.
+    // recompile the RAW common source directory and therefore also see the IP compat
+    // files — can put the same shells on their compileJava classpath
+    // (multiloader-loader.gradle). Consume-only; never resolved here.
+    // (S20 CORRECTION: "Removed at S20" stood here and is REFUTED — it feeds the ipStubs set,
+    // which survives; deleting the wiring reds :fabric AND :neoforge. Port-note §E.1 row 6/§E.3.)
     ipStubsClasspath {
         canBeResolved = false
         canBeConsumed = true
     }
     // S13-B: consumable view of the compiled net.fabricmc.* shells, for loaders that do NOT
-    // provide real fabric-api (NeoForge). Post-flip (ip_scc_closed=true) the loaders recompile
-    // the RAW common source directory, which now includes the held qouteall tree's net.fabricmc.*
-    // references. The fabric loader resolves those against REAL fabric-api (so it must NOT see
-    // these shells — they would SHADOW the real types FabricPlatformHelper uses, §6 above); the
-    // NeoForge loader has no fabric-api, so it consumes THESE shells instead. Wired neoforge-only
-    // in multiloader-loader.gradle. Consume-only; never resolved here. Removed at S20.
+    // provide real fabric-api (NeoForge). The loaders recompile the RAW common source directory,
+    // which includes the qouteall tree's net.fabricmc.* references. The fabric loader resolves
+    // those against REAL fabric-api (so it must NOT see these shells — they would SHADOW the real
+    // types FabricPlatformHelper uses, §6 above); the NeoForge loader has no fabric-api, so it
+    // consumes THESE shells instead. Wired neoforge-only in multiloader-loader.gradle.
+    // Consume-only; never resolved here.
+    // (S20 CORRECTION: "Removed at S20" stood here and is REFUTED — this is :neoforge's only
+    // source for the 31 net.fabricmc types the ported tree imports. Port-note §E.1 row 4/§E.3.)
     fabricStubsClasspath {
         canBeResolved = false
         canBeConsumed = true
@@ -230,7 +235,7 @@ configurations {
 }
 
 // F21: package the compiled stub shells into a jar exposed via ipStubsClasspath. compileOnly
-// on the consuming side — never shipped. Removed at S20.
+// on the consuming side — never shipped. (S20 CORRECTION: not removed — see ipStubsClasspath.)
 tasks.register('ipStubsJar', Jar) {
     archiveClassifier = 'f21-ipstubs'
     from sourceSets.ipStubs.output
@@ -238,7 +243,7 @@ tasks.register('ipStubsJar', Jar) {
 
 // S13-B: package the compiled net.fabricmc.* shells into a jar exposed via fabricStubsClasspath,
 // consumed compileOnly by non-fabric loaders (NeoForge) that lack real fabric-api. Never shipped.
-// Removed at S20.
+// (S20 CORRECTION: not removed — see fabricStubsClasspath.)
 tasks.register('fabricStubsJar', Jar) {
     archiveClassifier = 's10a-fabricstubs'
     from sourceSets.fabricStubs.output

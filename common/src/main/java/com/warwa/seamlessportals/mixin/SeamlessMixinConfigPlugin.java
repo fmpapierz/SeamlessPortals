@@ -1,6 +1,5 @@
 package com.warwa.seamlessportals.mixin;
 
-import com.warwa.seamlessportals.EntityPortalsFlag;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
@@ -26,6 +25,17 @@ import java.util.Set;
  * <p>The set in {@link #SODIUM_INCOMPATIBLE_MIXINS} lists fully-qualified
  * class names of mixins to omit when Sodium is present. Add to it as new
  * conflicts are discovered.
+ *
+ * <p><b>S20 INCREMENT 4 — this class now holds the ENTIRE cross-loader contract for the mod's
+ * mixin set.</b> The {@code entityPortals} flag is deleted; what used to gate the ported
+ * Immersive-Portals weave was {@code EntityPortalsFlag.isOn()}, whose internal off-Fabric
+ * force-false was doing the real work. Two rules replace it, both keyed on
+ * {@link #isFabricLoaderPresent()}: the {@code qouteall.*} weave gate in
+ * {@link #shouldApplyMixin} (minus the two D3 carve-outs, which weave on BOTH loaders by
+ * design) and {@link #FABRIC_ONLY_IP_DRIVERS} for the mod-owned mixins that drive the IP
+ * engine. Read both before changing either — port-note
+ * {@code migration/port-notes/S20-block-era-deletion.md} §E.2/§G.1/§G.12 records why every
+ * simplification that suggests itself here is wrong, and why no gate in this repo can catch it.
  */
 public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
 
@@ -44,25 +54,56 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
     );
 
     /**
-     * WEAVE-LEVEL EXCLUSIVITY (D3 extension, S13 first-light attempt 3): block-era mixins that
-     * COLLIDE at the bytecode level with a registered IP mixin on the same injection site
-     * (two {@code @Redirect}s on one instruction = Mixin skips the second and its
-     * {@code require} check kills the boot). Runtime {@code !entityPortals} gates cannot help
-     * here — the collision happens at transform time. These are skipped when the flag is ON;
-     * their function is superseded by the IP counterpart (each entry documents by what).
+     * <b>S20 INCREMENT 4 — THE LOADER GATE FOR MOD-OWNED IP DRIVERS.</b> These are
+     * {@code com.warwa} mixins whose bodies unconditionally drive the ported IP engine. They do
+     * NOT start with {@code "qouteall."}, so the weave gate in {@link #shouldApplyMixin} never saw
+     * them: they fall through to {@code return true} at the end of that method and ARE woven on
+     * plain NeoForge (which loads {@code seamlessportals-common.mixins.json} via
+     * {@code neoforge.mods.toml}).
+     *
+     * <p>Until S20 that was harmless because every one of their bodies sat behind
+     * {@code entityPortals}, which {@code EntityPortalsFlag} force-falsed off Fabric. The flag is
+     * gone, so the loader half has to be stated here or the first NeoForge client frame reaches
+     * IP's {@code IPGlobal} static initialiser — a hard {@code NoClassDefFoundError} on Fabric's
+     * {@code EventFactory} → {@code ExceptionInInitializerError} on the render thread → a client
+     * that no longer boots. NOTHING catches this: {@code compileJava} is green either way and the
+     * 8-leg gametest suite is Fabric-only (port-note S20-block-era-deletion.md §G.12).
+     *
+     * <p>Skipping them on NeoForge costs that platform nothing — there is no IP engine there to
+     * drive (§G.1: NeoForge has no portal behaviour until C7), so every one of these bodies would
+     * be pure crash surface. On Fabric the set is inert (the predicate is true, nothing is
+     * skipped) and the woven result is byte-identical to today.
+     *
+     * <p>NOTE {@code GameRendererMixin}: its IP frame-end chain was collapsed to unconditional at
+     * increment 3, before this mechanism existed, which left exactly this hazard live on NeoForge
+     * (four IP calls per frame — {@code MyGameRenderer.endFramePooled},
+     * {@code SecondaryWorldRenderCore.closeFrameTransientUbos}, {@code DrawCallTrace.onFrameEnd},
+     * {@code TeleportFlashProbe.onFrameEnd}). It is listed here for that reason, not because
+     * increment 4 changed it.
+     *
+     * <p>NOT exhaustive of NeoForge exposure, and deliberately so: several ungated
+     * {@code com.warwa} client mixins have READ qouteall state on NeoForge since long before S20
+     * ({@code SkyRendererTargetMixin}, {@code LevelRendererEntityVisibilityMixin},
+     * {@code LevelRendererBlockOutlineMixin}). That is pre-existing and unchanged by S20; it
+     * belongs to the C7 NeoForge round, and widening this set to cover it would be an untested
+     * behaviour change on a platform no gate here exercises.
      */
-    private static final Set<String> ENTITY_PORTALS_SUPERSEDED_MIXINS = Set.of(
-        // superseded by qouteall...client.sync.MixinClientPacketListener redirectGetEntityById
-        // (IP resolves entities across per-dim client worlds — strict superset of the
-        // local-player fallback; see the block-era mixin's own IP-parity javadoc note)
-        "com.warwa.seamlessportals.mixin.client.ClientPacketListenerLocalPlayerFallbackMixin"
+    private static final Set<String> FABRIC_ONLY_IP_DRIVERS = Set.of(
+        "com.warwa.seamlessportals.mixin.client.MinecraftFramePumpMixin",
+        "com.warwa.seamlessportals.mixin.client.GameRendererMixin",
+        "com.warwa.seamlessportals.mixin.client.LevelExtractorWindowHardeningMixin"
     );
 
     /**
      * S19-D D3 CARVE-OUT (see the shouldApplyMixin comment): the alt-dim worldgen ACCESSOR
-     * mixins that must weave in BOTH flag states so a flag-ON-created alternate-dimension
-     * world reopens flag-OFF (level.dat → unconditional codec seam → these accessors at
-     * generation time). Pure additive accessors/invokers — no injections, no behavior.
+     * mixins that must weave on BOTH LOADERS so an alternate-dimension world created on Fabric
+     * reopens on NeoForge (level.dat → unconditional codec seam → these accessors at generation
+     * time). Pure additive accessors/invokers — no injections, no behavior.
+     *
+     * <p><b>S20 INCREMENT 4:</b> the carve-out's original job was both-FLAG-STATES parity, and
+     * the flag is gone — but the set is NOT redundant, it has simply changed axis. On NeoForge the
+     * collapsed weave gate is FALSE, so this set is now the only reason these three weave there,
+     * and they weave there today. See the gate body in {@link #shouldApplyMixin}.
      */
     private static final Set<String> D3_UNCONDITIONAL_WORLDGEN_ACCESSORS = Set.of(
         "qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension.IEChunkAccess_AlternateDim",
@@ -72,22 +113,22 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
 
     /**
      * S19 COMMONS-TAIL D3 CARVE-OUT (port-note S19 §1.1 lineage): the legacy-item DATAFIX mixin must
-     * weave in BOTH flag states. {@code ItemStackComponentizationFix} only fires when loading a
+     * weave on BOTH LOADERS. {@code ItemStackComponentizationFix} only fires when loading a
      * PRE-1.20.5 (pre-componentization) save; IP's addition moves a legacy
      * {@code immersive_portals:command_stick} / {@code portal_wand} stack's {@code tag} data into the
      * {@code iportal:command_stick_data} / {@code iportal:portal_wand_data} components. Those items —
      * and their DataComponentTypes — are registered UNCONDITIONALLY on Fabric (D3 save-parity,
-     * port-note §1.1), so a flag-OFF world can carry them. The flag has defaulted ON since the S17
-     * cutover, but EXPLICIT {@code entityPortals=false} remains a supported two-way switch until S20 —
-     * gating this datafix flag-ON would mean a flag-OFF user opening a legacy pre-1.20.5 IP world gets
-     * the stored command/mode silently swept into {@code minecraft:custom_data} (permanent item-data
-     * loss if the flag is later flipped ON). NOTE the carve-out also weaves on NeoForge (where the flag
-     * is force-false and the peripheral items are C7-deferred) — audited benign: the handler references
-     * only DFU/guava/log4j, and converting the on-disk NBT there preserves the data for a later world
-     * move to Fabric (S19 verify, recorded decision). The handler is a pure additive
-     * {@code @Inject(RETURN)} guarded by {@code is("immersive_portals:...")} — byte-neutral for every
-     * other item, zero engine dependency — so weaving it flag-OFF is harmless AND required for D3
-     * item-data parity. Exactly parallel to {@link #D3_UNCONDITIONAL_WORLDGEN_ACCESSORS} (an
+     * port-note §1.1), so any Fabric world can carry them.
+     *
+     * <p><b>S20 INCREMENT 4 — the reason to keep this INVERTED but did not weaken.</b> It was
+     * written for both-flag-states parity; with the flag gone, what it now buys is NeoForge. The
+     * collapsed weave gate is false there, so this set is the ONLY reason the datafix weaves on
+     * NeoForge — and without it a NeoForge open of a legacy pre-1.20.5 world sweeps the stored
+     * command/mode into {@code minecraft:custom_data}: permanent item-data loss, realised later
+     * when the world moves to Fabric. Weaving it there was audited benign at S19 (the handler
+     * references only DFU/guava/log4j and is a pure additive {@code @Inject(RETURN)} guarded by
+     * {@code is("immersive_portals:...")} — byte-neutral for every other item, zero engine
+     * dependency). Exactly parallel to {@link #D3_UNCONDITIONAL_WORLDGEN_ACCESSORS} (an
      * unconditional serialize seam demands an unconditional load path).
      */
     private static final Set<String> D3_UNCONDITIONAL_ITEM_DATAFIX = Set.of(
@@ -146,57 +187,48 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        // D3 EXCLUSIVITY GATE (entity-portal migration, migration/EXCLUSIVITY_LEDGER.md §4):
-        // the ported Immersive-Portals mixin set lives in the qouteall.* packages. It is woven
-        // ONLY when the entity-portal engine is ON. Flag OFF (the explicit opt-out; the default
-        // has been ON since the S17 cutover) → every IP
-        // mixin is skipped here, so the block-era com.warwa mixins are the only portal driver set
-        // applied. This is the load-time half of the one-driver-per-session contract; the runtime
-        // half is the `!entityPortals` gates in the block-era mod driver code.
+        // THE LOADER GATE (S20 increment 4; was the D3 exclusivity gate,
+        // migration/EXCLUSIVITY_LEDGER.md §4 — now ARCHIVED with the flag). The ported
+        // Immersive-Portals mixin set lives in the qouteall.* packages and is woven on FABRIC
+        // ONLY. It used to read `isFabricLoaderPresent() && EntityPortalsFlag.isOn()`; increment 1
+        // hoisted the loader half out precisely so the flag's death would be a one-term deletion
+        // here rather than a re-derivation.
         if (mixinClassName != null && mixinClassName.startsWith("qouteall.")) {
-            // S19-D D3 CARVE-OUT (port-note S19 §6/§8): the three alt-dim WORLDGEN ACCESSOR
-            // mixins weave in BOTH flag states. Rationale = save-parity symmetry with the
-            // UNCONDITIONAL chunk-generator/biome-source codec seam: a flag-ON-created world
-            // containing an alternate dimension persists its generator in level.dat; a
-            // flag-OFF reopen deserializes it through those codecs and GENERATES through
-            // these accessors — gating them flag-OFF would crash the reopen (the exact D3
-            // scenario the unconditional seams exist to protect). All three are pure
-            // additive @Accessor/@Invoker on vanilla classes: zero behavior, zero injection,
-            // byte-neutral for a world that never references the generators.
+            // DO NOT collapse this to `true`. `isOn()` carried an off-Fabric force-false, so the
+            // flag term was never "just the flag" — it was the ONLY thing keeping the whole IP
+            // mixin set unwoven on plain NeoForge. Removing the loader term weaves
+            // MixinPlayerChunkSender there, which @Overwrites vanilla chunk sending and reroutes
+            // it to ImmPtlChunkTracking — a driver whose init() is only ever reached from
+            // IPModMain.init, never called on NeoForge. The result is a world that sends ZERO
+            // chunks, with no exception and no log line. A green NeoForge boot does NOT detect it
+            // (weave and boot both succeed; every failure is first-use), so this guard cannot be
+            // validated away by testing. Port-note S20-block-era-deletion.md §E.2 + §G.
             //
-            // S19 COMMONS-TAIL carve-out: D3_UNCONDITIONAL_ITEM_DATAFIX joins the same both-states
-            // rule — the wand/command-stick legacy-item datafix is the load-time counterpart of the
-            // UNCONDITIONALLY-registered item DataComponentTypes. The flag defaults ON since S17,
-            // but explicit flag-OFF stays a supported two-way switch until S20, and a flag-OFF
-            // legacy-world load must still convert the item data (see that set's javadoc).
-            //
-            // S20 INCREMENT 1 — THE LOADER GATE IS NOW EXPLICIT HERE (do not remove it with the
-            // flag). Today `EntityPortalsFlag.isOn()` force-falses off Fabric at TWO internal sites
-            // (EntityPortalsFlag:98-100 in readFromDisk, :89 in seedIfUnset), and that force-false
-            // is the ONLY thing keeping the whole IP mixin set unwoven on plain NeoForge. S20
-            // deletes the flag, which collapses this term to always-true — so the loader half is
-            // hoisted out to its own predicate BEFORE the flag dies. Adding it is a NO-OP today
-            // (`isFabricLoaderPresent() && isOn()` == `isOn()`, since isOn() already implies it)
-            // and becomes the load-bearing guard the moment `isOn()` is replaced by `true`.
-            //
-            // WHY IT MATTERS (S20 adversarial audit; port-note S20-block-era-deletion.md §E.2 +
-            // §G): without it the collapse weaves MixinPlayerChunkSender on NeoForge, which
-            // @Overwrites vanilla chunk sending and reroutes it to ImmPtlChunkTracking — a driver
-            // whose init() is only ever reached from IPModMain.init, never called on NeoForge. The
-            // result is a world that sends ZERO chunks with no exception and no log line. A green
-            // NeoForge boot does NOT detect it (weave and boot both succeed; the failures are all
-            // first-use), so this guard cannot be validated away by testing.
+            // KEEP BOTH CARVE-OUT TERMS (the alt-dim worldgen accessors, S19-D §6/§8; the
+            // legacy-item datafix, S19 commons-tail). Post-flag they look redundant and are not:
+            // the tempting reading ("on Fabric the gate is now always true, so a carve-out
+            // short-circuits a branch never taken") holds on Fabric and is exactly backwards on
+            // NeoForge, where the gate is FALSE and these two sets are the ONLY reason those four
+            // classes weave — and they weave there TODAY. Dropping them would sweep legacy
+            // command_stick/portal_wand item data into minecraft:custom_data on a NeoForge open of
+            // a pre-1.20.5 world (permanent loss on a later move to Fabric) and cost an alt-dim
+            // world its generation accessors. Invisible to compile, suite and a green boot alike
+            // (port-note §G.12). Each set's javadoc carries the full argument.
             if (!D3_UNCONDITIONAL_WORLDGEN_ACCESSORS.contains(mixinClassName)
                 && !D3_UNCONDITIONAL_ITEM_DATAFIX.contains(mixinClassName)
-                && !(isFabricLoaderPresent() && EntityPortalsFlag.isOn())) {
+                && !isFabricLoaderPresent()) {
                 return false;
             }
         }
-        // The mirror half: flag ON suppresses block-era mixins whose injection sites collide
-        // with a registered IP mixin (weave-level exclusivity; see the set's javadoc).
-        if (EntityPortalsFlag.isOn() && ENTITY_PORTALS_SUPERSEDED_MIXINS.contains(mixinClassName)) {
-            System.out.println("[SEAMLESS EXCLUSIVITY] Skipping block-era mixin " + mixinClassName
-                + " (superseded by the IP set while entityPortals is ON)");
+        // S20 INCREMENT 4: the same loader rule for the mod-owned mixins that DRIVE the IP engine.
+        // They are not "qouteall." prefixed, so the gate above never sees them — see the set's
+        // javadoc for why an unguarded weave here is a NeoForge boot crash rather than a
+        // regression.
+        else if (mixinClassName != null
+            && FABRIC_ONLY_IP_DRIVERS.contains(mixinClassName)
+            && !isFabricLoaderPresent()) {
+            System.out.println("[SEAMLESS EXCLUSIVITY] Skipping IP-driver mixin " + mixinClassName
+                + " (FabricLoader absent — the ported IP engine is Fabric-only until C7)");
             return false;
         }
         if (isSodiumPresent() && SODIUM_INCOMPATIBLE_MIXINS.contains(mixinClassName)) {
@@ -213,9 +245,9 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
      * the IP set needs ARE actually present). {@code false} on plain NeoForge, where those types
      * exist only as compileOnly shells (see {@code common/build.gradle}'s {@code fabricStubs} set).
      *
-     * <p><b>S20 INCREMENT 1.</b> Body copied verbatim from {@code EntityPortalsFlag}'s private
-     * method of the same name (it is {@code private static} there — {@code EntityPortalsFlag:147} —
-     * so it could not be called across, and the class itself dies at S20). Copied rather than
+     * <p><b>S20 INCREMENT 1/4 — this is now the load-bearing cross-loader predicate.</b> Body
+     * copied verbatim from the deleted {@code EntityPortalsFlag}'s private method of the same name
+     * (it was {@code private static} there, so it could not be called across). Copied rather than
      * re-invented because this exact reflective shape is already PROVEN to work at mixin-bootstrap
      * time, which is when this plugin runs; anything cleverer here risks the whole Fabric weave.
      *

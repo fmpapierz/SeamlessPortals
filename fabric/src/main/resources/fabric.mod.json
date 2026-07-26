@@ -21,7 +21,7 @@
       "com.warwa.seamlessportals.fabric.gametest.CrossingSmoke"
     ],
     "modmenu": [
-      "com.warwa.seamlessportals.fabric.ModMenuIntegration"
+      "qouteall.imm_ptl.core.platform_specific.IPModMenuConfigEntry"
     ]
   },
   "accessWidener": "seamlessportals.accesswidener",

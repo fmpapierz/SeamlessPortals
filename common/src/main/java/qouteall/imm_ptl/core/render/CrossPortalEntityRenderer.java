@@ -58,9 +58,10 @@ import java.util.WeakHashMap;
  *       and all the rough-check gating are ported <b>VERBATIM</b>.</li>
  *   <li>The two per-entity {@code endBatch()} clip splits (CASE 1) and the projection {@code endBatch()}
  *       (CASE 2) are REPLACED by the {@link PerEntityClipBracket} seam, which realizes IP's endBatch-split
- *       semantics natively on the 26.2 submit-order data model (Mechanism A, default) or an isolated
- *       one-entity {@code SubmitNodeStorage}+{@code renderAllFeatures} bracket (Mechanism B) — both stay
- *       wired behind {@code IPGlobal.crossPortalEntityClipMechanism} for the S18 live A/B test (C4 rider).</li>
+ *       semantics natively on the 26.2 submit-order data model. (Until S20 a second mechanism — an
+ *       isolated one-entity {@code SubmitNodeStorage} + {@code renderAllFeatures} bracket — was wired
+ *       alongside it behind {@code IPGlobal.crossPortalEntityClipMechanism} for the C4 live A/B;
+ *       C4 decided for submit-order and the loser was removed at S20 increment 4.)</li>
  *   <li>The renderEntity duck is KILLED (render-core G3): {@code dispatcher.extractEntity} +
  *       {@code EntityRenderDispatcher.submit} (both public) replace {@code ip_myRenderEntity}.</li>
  * </ul>

@@ -1,7 +1,6 @@
 package com.warwa.seamlessportals.fabric;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
-import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
 import com.warwa.seamlessportals.fabric.network.FabricPlatformHelper;
 import com.warwa.seamlessportals.mixin.TicketTypeInvoker;
 import net.fabricmc.api.ModInitializer;
@@ -28,13 +27,13 @@ public class SeamlessPortalsModFabric implements ModInitializer {
     public void onInitialize() {
         SeamlessPortalsConstants.LOGGER.info("Seamless Portals initializing (Fabric)");
 
-        // Load the configurable knob(s) (portalRenderDistance = dest loading/mesh depth) — this also
-        // round-trips the entityPortals master switch into the properties file. UNCONDITIONAL: config
-        // load is identical in both flag states.
-        SeamlessPortalsConfig.loadFrom(
-            net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir());
-
-
+        // S20 increment 4: SeamlessPortalsConfig is deleted and with it the
+        // seamlessportals.properties load. Its six knobs were block-era
+        // (portalRenderDistance/entityLoadDistance/maxPortalRenderDepth/enablePortalRendering/
+        // unboundedClientChunkStore/speculativePrewarm) and had no surviving reader after the
+        // block-era deletion — SeamlessConfigScreen was the last one — and the seventh key,
+        // entityPortals, was the flag. The mod's live configuration is IP's own IPConfig
+        // (config/immersive_portals.json, Cloth screen via IPModMenuConfigEntry).
         FabricPlatformHelper helper = new FabricPlatformHelper();
         helper.registerPayloads();
 
@@ -101,34 +100,33 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         ImmPtlChunkTickets.TICKET_TYPE = TicketTypeInvoker.seamlessportals$invokeRegister(
             "imm_ptl", TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION);
 
-            // ===== ENTITY-PORTAL (Immersive Portals) server/common init — S13 step 4 ==============
-            // DEPENDENCY_ORDER §4.2 init order: the MiscUtilModEntry sequence
-            // (ImplRemoteProcedureCall.init → MiscNetworking.init → DimensionIntId.init) THEN
-            // IPModMain.init (networking → global portals → teleport → collision → commands →
-            // ServerTaskList → CustomPortalGenManager → config). Only reached when entityPortals=true;
-            // flag-OFF this whole branch is never class-loaded, so the block-era baseline is byte-
-            // unchanged (D3 pure gate). WIRE 2 (S13 step 5) adds the UNCONDITIONAL entity-type /
-            // placeholder-block / argument-type / payload registration + the entity-renderer seam.
-            qouteall.q_misc_util.ImplRemoteProcedureCall.init();
-            qouteall.q_misc_util.MiscNetworking.init();
-            qouteall.q_misc_util.dimension.DimensionIntId.init();
-            qouteall.imm_ptl.core.IPModMain.init();
-            // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
-            // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
-            // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally
-            // irrelevant for the ported subset (identifiers are only read post-init; nothing in
-            // it is init-order-sensitive), so this placement stands as the tidier one-branch
-            // shape. Minimal subset: everything except the portal-generation cargo is held to
-            // S19 (see PeripheralModMain header).
-            qouteall.imm_ptl.peripheral.PeripheralModMain.init();
-            // S19-A: the creative TAB registers FLAG-ON only — tabs are not world state, and
-            // the block-era baseline must not surface entity-portal features in its UI. IP's
-            // PeripheralModEntry registers the tab BEFORE init(); here it sits after (the
-            // flag-ON branch shape) — functionally identical because displayItems is lazy, the
-            // same argument IP's own ordering note relies on for the command-stick map.
-            qouteall.imm_ptl.peripheral.PeripheralModMain.registerCreativeTabs(
-                (id, tab) -> Registry.register(BuiltInRegistries.CREATIVE_MODE_TAB, id, tab));
-            SeamlessPortalsConstants.LOGGER.info(
-                "Seamless Portals: entity-portal engine initialized (server/common)");
+        // ===== ENTITY-PORTAL (Immersive Portals) server/common init — S13 step 4 ==============
+        // DEPENDENCY_ORDER §4.2 init order: the MiscUtilModEntry sequence
+        // (ImplRemoteProcedureCall.init → MiscNetworking.init → DimensionIntId.init) THEN
+        // IPModMain.init (networking → global portals → teleport → collision → commands →
+        // ServerTaskList → CustomPortalGenManager → config). S20: this was the flag-ON branch of a
+        // D3 pure gate; the flag is gone and it is the only init path. WIRE 2 (S13 step 5) adds the
+        // entity-type / placeholder-block / argument-type / payload registration + the
+        // entity-renderer seam above (kept UNCONDITIONAL: they are world-save registry entries).
+        qouteall.q_misc_util.ImplRemoteProcedureCall.init();
+        qouteall.q_misc_util.MiscNetworking.init();
+        qouteall.q_misc_util.dimension.DimensionIntId.init();
+        qouteall.imm_ptl.core.IPModMain.init();
+        // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
+        // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
+        // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally
+        // irrelevant for the ported subset (identifiers are only read post-init; nothing in
+        // it is init-order-sensitive), so this placement stands. Minimal subset: everything
+        // except the portal-generation cargo is held to S19 (see PeripheralModMain header).
+        qouteall.imm_ptl.peripheral.PeripheralModMain.init();
+        // S19-A: the creative TAB. It registered flag-ON only (tabs are not world state, and the
+        // block-era baseline must not surface entity-portal features in its UI); post-S20 it is
+        // simply registered. IP's PeripheralModEntry registers the tab BEFORE init(); here it sits
+        // after — functionally identical because displayItems is lazy, the same argument IP's own
+        // ordering note relies on for the command-stick map.
+        qouteall.imm_ptl.peripheral.PeripheralModMain.registerCreativeTabs(
+            (id, tab) -> Registry.register(BuiltInRegistries.CREATIVE_MODE_TAB, id, tab));
+        SeamlessPortalsConstants.LOGGER.info(
+            "Seamless Portals: entity-portal engine initialized (server/common)");
     }
 }

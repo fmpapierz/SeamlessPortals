@@ -205,15 +205,11 @@ public class PortalWandItem extends Item {
     // -> InteractionResult.SUCCESS; the held ItemStack payload is dropped (26.2 no longer carries it).
     @Override
     public InteractionResult use(Level world, Player player, InteractionHand hand) {
-        // S19 D3 guard (NOT in IP; dies with the flag at S20): the item is registered in BOTH
-        // flag states (world-save parity), so flag-OFF a /give'd wand must be INERT — its client
-        // state machines + RPC chain would otherwise create entity portals on the block-era
-        // substrate (an untested hybrid that persists into the save). The server-side mirror
-        // guard lives in PortalWandInteraction.checkPermission.
-        if (!com.warwa.seamlessportals.EntityPortalsFlag.isOn()) {
-            return InteractionResult.PASS;
-        }
-
+        // S20 increment 4: the S19 D3 guard here (NOT in IP) died with the flag, as its own note
+        // said it would. It kept a /give'd wand INERT flag-OFF, where its client state machines +
+        // RPC chain would have created entity portals on the block-era substrate. That substrate is
+        // gone and the wand is live in the only state that now exists. The server-side mirror guard
+        // in PortalWandInteraction.checkPermission was removed in the same commit.
         ItemStack itemStack = player.getItemInHand(hand);
         Mode mode = itemStack.getOrDefault(COMPONENT_TYPE, Mode.FALLBACK);
 

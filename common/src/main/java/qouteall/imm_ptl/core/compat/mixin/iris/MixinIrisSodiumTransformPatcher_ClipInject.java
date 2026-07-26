@@ -51,8 +51,10 @@ import java.util.Set;
  * through Patch.COMPOSITE — none of which should carry a view-space terrain clip (§4.0 option b:
  * those stay defined-and-unclipped via the per-draw definedness guards). The compat plugin's
  * gate-1 requires the simple name contain {@code "IrisSodium"} (tested BEFORE {@code "Iris"} /
- * {@code "Sodium"}, load-bearing order) → weaves only when BOTH mods are present; gate-2 is the
- * {@code EntityPortalsFlag} master switch (force-false off Fabric → skipped entirely on NeoForge).
+ * {@code "Sodium"}, load-bearing order) → weaves only when BOTH mods are present; gate-2 is
+ * {@code isFabricLoaderPresent()} (S20 increment 4 — it was the {@code EntityPortalsFlag} master
+ * switch, whose off-Fabric force-false is what this note was really describing), so this is
+ * skipped entirely on NeoForge either way.
  *
  * <h2>Compat- vs core-profile (jar-verified §4.2 correction)</h2>
  * {@code getVertexPosition()} is a defined symbol only on the compat-profile path

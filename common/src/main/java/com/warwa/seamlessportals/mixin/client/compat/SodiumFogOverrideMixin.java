@@ -59,14 +59,16 @@ public abstract class SodiumFogOverrideMixin {
             require = 0)
     private void seamlessportals$overrideFog(CallbackInfoReturnable<Object> cir) {
         Object override = SodiumFogOverride.currentOverride();
-        // C2-0 probe P8 (lever-gated, one-shot): record that this getter fired under Sodium + the
-        // entity-portal flag state, to answer whether the block-era fog override coexists / is
-        // reachable flag-ON (design §4 P8; feeds the S20 pre-deletion gate-audit).
+        // C2-0 probe P8 (lever-gated, one-shot): record that this getter fired under Sodium.
+        // S20 increment 4: the `entityPortals={}` argument is gone with the flag — it was a LOG
+        // ARGUMENT, not an `if`, so a mechanical "collapse every gate" pass misses it and leaves a
+        // compile error behind (port-note §G.12). The pair itself is flag-ON load-bearing and stays
+        // (§0.2): SecondaryWorldRenderCore arms the override for the dest extract's duration.
         if (seamlessportals$probe && !seamlessportals$probeP8Logged) {
             seamlessportals$probeP8Logged = true;
             com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                "[COMPAT PROBE P8] SodiumFogOverrideMixin.sodium$getFogParameters fired; entityPortals={} activeOverride={}",
-                com.warwa.seamlessportals.EntityPortalsFlag.isOn(), override != null);
+                "[COMPAT PROBE P8] SodiumFogOverrideMixin.sodium$getFogParameters fired; activeOverride={}",
+                override != null);
         }
         if (override != null) {
             cir.setReturnValue(override);

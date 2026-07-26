@@ -200,9 +200,8 @@ loom {
             property('seamlessportals.gametest.only', 'titlecard')
         }
         // S15 entity-crossing smoke on the UNIFIED path (EXECUTION_PLAN §S15,
-        // D4.6 — re-run at every later stage). Own run dir: its config is
-        // seeded with entityPortals=true (the load-time master switch) before
-        // every launch, so it never contaminates the title-card run dir.
+        // D4.6 — re-run at every later stage). Own run dir, kept separate from
+        // the title-card run so the two captures never contaminate each other.
         crossingGametest {
             client()
             setConfigName('Entity Crossing Smoke')
@@ -254,34 +253,28 @@ loom {
     }
 }
 
-// S17: the TITLE-CARD capture drives the BLOCK-ERA flow (NetherPortalBlock.entityInside
-// teleport + the block-era portal view) — post-flip the default is entity portals, so its
-// run dir is pinned flag-OFF to preserve the capture's purpose (a flag-ON title card is a
-// future re-shoot; its June-era config file predates the flag key and would resolve to the
-// new TRUE default otherwise).
+// S20 increment 4: the TITLE-CARD run dir was pinned entityPortals=false to keep the capture on
+// the block-era flow. Both the block era and the flag are gone; TitleCardCapture now drives the
+// entity-portal flow, so the pin is deleted. What REPLACES it is the splash suppression the
+// crossing run already needed — with IP always initialising, this run dir gets IP's first-launch
+// screen too, and the client-gametest framework asserts a bare title screen between tests.
 tasks.matching { it.name == 'runClientGametest' }.configureEach {
     doFirst {
         def cfgDir = file('runs/gametest/config')
         cfgDir.mkdirs()
-        new File(cfgDir, 'seamlessportals.properties').text = 'entityPortals=false\n'
+        new File(cfgDir, 'immersive_portals.json').text = '{\n  "initialScreenShown": true\n}\n'
     }
 }
 
-// Seed the entity-portal MASTER SWITCH into the crossing-smoke run dir before every
-// launch. EntityPortalsFlag reads <configDir>/seamlessportals.properties ONCE at
-// mixin-bootstrap (load-time, before any mod initializer), so the file must exist
-// before the JVM starts — no in-game mechanism can flip it.
-// S17 note: the explicit seed stays (redundant with the flipped default, but the test's
-// contract should not silently depend on the shipping default).
 tasks.matching { it.name == 'runCrossingGametest' }.configureEach {
     doFirst {
         def cfgDir = file('runs/gametest-crossing/config')
         cfgDir.mkdirs()
-        new File(cfgDir, 'seamlessportals.properties').text = 'entityPortals=true\n'
-        // Suppress IP's one-time first-launch splash (IPortalInitialScreen,
-        // MixinGui append gate !initialScreenShown) — the client-gametest
-        // framework asserts a bare title screen between tests, and the splash
-        // sits over it. Gson AutoConfig leaves absent fields at their defaults.
+        // S20 increment 4: the entityPortals=true seed is deleted with the flag. The seed below
+        // is NOT collateral — it suppresses IP's one-time first-launch splash
+        // (IPortalInitialScreen, MixinGui append gate !initialScreenShown), and the
+        // client-gametest framework asserts a bare title screen between tests with the splash
+        // sitting over it. Gson AutoConfig leaves absent fields at their defaults.
         new File(cfgDir, 'immersive_portals.json').text = '{\n  "initialScreenShown": true\n}\n'
     }
 }

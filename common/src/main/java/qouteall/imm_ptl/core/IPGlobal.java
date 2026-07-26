@@ -138,13 +138,9 @@ public class IPGlobal {
     
     public static boolean correctCrossPortalEntityRendering = true;
 
-    // R3 (S11-C): the cross-portal entity clip DELIVERY mechanism. Read live per frame by
-    // PerEntityClipBracket.getMechanism(); the C4 rider (BINDING) keeps BOTH mechanisms wired so the S18
-    // A/B live test is a no-restart config toggle. Design: migration/port-notes/S11-R3-clip-bracketing.md §5.
-    // (The Mechanism enum is nested in the client-side PerEntityClipBracket; this field only names the
-    // constant, so class-loading IPGlobal on a dedicated server never force-loads the client render class.)
-    public static qouteall.imm_ptl.core.render.PerEntityClipBracket.Mechanism crossPortalEntityClipMechanism =
-        qouteall.imm_ptl.core.render.PerEntityClipBracket.Mechanism.SUBMIT_ORDER_UNIFORM;
+    // S20 increment 4: crossPortalEntityClipMechanism (the R3 clip-delivery A/B switch) is gone.
+    // Checkpoint C4 decided for SUBMIT_ORDER_UNIFORM and the loser cleanup rode S20 — there is one
+    // mechanism now, so there is nothing to select. See PerEntityClipBracket's class javadoc.
 
     public static boolean disableTeleportation = false;
     
