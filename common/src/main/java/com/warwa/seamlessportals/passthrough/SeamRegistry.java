@@ -170,9 +170,13 @@ public final class SeamRegistry {
 
         SeamIndexHolder holder = (SeamIndexHolder) level;
         int bound = 0;
+        // Resolve the destination portal ONCE, so every column's mirror cell can be defined as the
+        // cell that portal itself claims — see resolveDestCell.
+        Portal reverse = mirrorable ? findDestinationPortal(portal) : null;
+
         for (Vec3 column : SeamMap.enumerateColumns(portal)) {
             BlockPos src = SeamMap.seamCell(portal, column);
-            BlockPos dst = mirrorable ? SeamMap.mirrorCell(portal, column) : null;
+            BlockPos dst = mirrorable ? resolveDestCell(portal, reverse, column) : null;
 
             SeamBinding binding = new SeamBinding(
                 facing, destDim, dst, rotation == null ? Rotation.NONE : rotation, portal.getUUID());
@@ -191,6 +195,61 @@ public final class SeamRegistry {
                 portal.getId(), portal.getUUID(), level.dimension().identifier(), bound, mirrorable,
                 facing, rotation);
         }
+    }
+
+    /**
+     * The portal on the far side of this one, or null if none can be found.
+     *
+     * <p>Located by position rather than by {@code reversePortalId}, so it works for plain
+     * {@code Portal} entities as well as {@code BreakablePortalEntity} pairs: the reverse portal is
+     * the one whose own origin sits at this portal's destination.
+     */
+    @Nullable
+    private static Portal findDestinationPortal(Portal portal) {
+        if (portal.level() == null || portal.level().getServer() == null) {
+            return null;
+        }
+        Level destLevel = portal.level().getServer().getLevel(portal.getDestDim());
+        if (destLevel == null) {
+            return null;
+        }
+        Vec3 destPos = portal.getDestPos();
+        for (Portal candidate : destLevel.getEntitiesOfClass(Portal.class,
+            new net.minecraft.world.phys.AABB(destPos.subtract(2, 2, 2), destPos.add(2, 2, 2)),
+            p -> p != portal)) {
+            if (candidate.getOriginPos().distanceToSqr(destPos) < 0.25) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The destination cell for one column — <b>defined as the cell the DESTINATION portal claims</b>,
+     * not as an independent computation.
+     *
+     * <p><b>Why this is not just {@code SeamMap.mirrorCell}.</b> Computing the mirror cell purely from
+     * the source portal's transform lets the two sides DISAGREE about which block is "theirs".
+     * Observed live: a source portal mirrored a rail to {@code (-495,75,-500)} while the destination
+     * portal's own {@code seamCell} was {@code (-495,75,-501)} — off by one along the through-axis,
+     * because the transform landed the point half a block from that portal's actual plane. Provenance
+     * was then recorded against a cell no portal claimed, so the frame-break rule found nothing to
+     * clear and the mirrored half survived as a duplicate.
+     *
+     * <p>Resolving through the destination portal makes the invariant hold BY CONSTRUCTION rather
+     * than by two computations happening to agree: the mirror writes exactly where the far portal
+     * will look. Falls back to the pure arithmetic when no destination portal exists (an unpaired or
+     * one-way portal), which is the only case where nothing can disagree anyway.
+     */
+    private static BlockPos resolveDestCell(Portal portal, @Nullable Portal reverse, Vec3 column) {
+        if (reverse == null) {
+            return SeamMap.mirrorCell(portal, column);
+        }
+        // Project the transformed point onto the DESTINATION portal's own plane, then take the cell
+        // that portal would take. Any half-block drift in the transform is corrected by the
+        // projection, because the far portal's plane is the authority on where its aperture is.
+        Vec3 transformed = portal.transformPoint(column);
+        return SeamMap.seamCell(reverse, SeamMap.onPlane(reverse, transformed));
     }
 
     /** Drop every binding owned by this portal. Sections are only dropped when they empty out. */

@@ -63,6 +63,20 @@ public final class AperturePassthroughInit {
         Portal.CLIENT_PORTAL_TICK_SIGNAL.register(AperturePassthroughInit::onPortalTick);
         Portal.PORTAL_DISPOSE_SIGNAL.register(AperturePassthroughInit::onPortalDispose);
 
+        // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
+        // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was
+        // not possible at the time.
+        // END_SERVER_TICK, iterating levels — the event ServerTaskList.java:11 already proves
+        // available in this module (there is no END_WORLD_TICK in this Fabric API version).
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (AperturePassthroughLever.DISABLED) {
+                return;
+            }
+            for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
+                SeamJournal.drain(level);
+            }
+        });
+
         LOGGER.info("[RS-SEAM-REGISTRY] aperture passthrough initialised (disabled={})",
             AperturePassthroughLever.DISABLED);
     }
