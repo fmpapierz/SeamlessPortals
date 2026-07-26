@@ -300,6 +300,7 @@ public final class SeamMirror {
             BlockState existing = dest.getBlockState(destPos);
             if (!existing.isAir()) {
                 dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                forceClientSync(dest, destPos);
                 clearedMirrors++;
                 probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
             }
@@ -327,11 +328,46 @@ public final class SeamMirror {
         dest.setBlock(destPos, rotated,
             net.minecraft.world.level.block.Block.UPDATE_ALL
                 | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+        forceClientSync(dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
         holder.seamlessportals$mirrorCreatedCells().add(destKey);
         mirroredWrites++;
         probe("mirrored to", destPos, dest, sourcePos, sourceLevel);
+    }
+
+    /**
+     * Push a mirrored write into per-player block tracking explicitly.
+     *
+     * <p><b>Why the ordinary update flags are not enough.</b> The write already carries
+     * {@code UPDATE_CLIENTS}, but that only reaches the client if {@code Level.markAndNotifyBlock}
+     * decides to call {@code sendBlockUpdated} ({@code REF Level.java:247}) — and it applies its own
+     * conditions on the way there. This project has been bitten by exactly that before: cross-dimension
+     * fluid flow was invisible because vanilla filtered out the great majority of fluid-spread writes
+     * before they ever reached {@code sendBlockUpdated}, and the fix was to notify the tracking layer
+     * directly rather than hope the write survived the filters.
+     *
+     * <p><b>The symptom this removes.</b> User-observed: with the player standing on the SOURCE side,
+     * blocks mirrored into the destination were written correctly and persisted — the world data was
+     * always right — but did not RENDER until the player teleported there and the region meshed
+     * normally. Changes made while standing on the destination side appeared instantly, because those
+     * were near the player. That asymmetry is the signature of a write that lands in world state but
+     * never reaches the viewer.
+     *
+     * <p>{@code ServerChunkCache.blockChanged} ({@code REF ServerChunkCache.java:458}) is the direct
+     * route into per-player tracking, so a mirrored write is broadcast on the same terms as any other
+     * block change regardless of which filters the write itself passed.
+     */
+    private static void forceClientSync(ServerLevel dest, BlockPos pos) {
+        try {
+            dest.getChunkSource().blockChanged(pos);
+        }
+        catch (Throwable t) {
+            // Never let a display concern break the write that already succeeded.
+            LOGGER.warn("[RS-SEAM-MIRROR] client sync push failed for {} in {} — the block IS written,"
+                + " it may just not render until the region is remeshed",
+                pos, dest.dimension().identifier(), t);
+        }
     }
 
     private static void probe(
@@ -415,6 +451,7 @@ public final class SeamMirror {
                     dest.setBlock(destPos, srcState.rotate(binding.stateRotation()),
                         net.minecraft.world.level.block.Block.UPDATE_ALL
                             | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+                    forceClientSync(dest, destPos);
                     ((SeamIndexHolder) dest).seamlessportals$mirrorCreatedCells().add(destPos.asLong());
                     reconciled++;
                     done++;
@@ -489,6 +526,7 @@ public final class SeamMirror {
             // that is when the far side is brought up to match — see repairFarFrameOnIgnition.
             if (nowAir && !farState.isAir()) {
                 far.setBlockAndUpdate(link.to(), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                forceClientSync(far, link.to());
                 frameMirrored++;
                 probe("frame break mirrored to", link.to(), far, pos, level);
             }
@@ -552,6 +590,7 @@ public final class SeamMirror {
                     continue;   // this side is not repaired either — nothing to copy
                 }
                 far.setBlockAndUpdate(link.to(), nearState);
+                forceClientSync(far, link.to());
                 frameMirrored++;
                 repaired++;
             }
