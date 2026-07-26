@@ -16,6 +16,8 @@ import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.platform_specific.O_O;
 import qouteall.imm_ptl.core.portal.PortalPlaceholderBlock;
 import qouteall.q_misc_util.my_util.DQuaternion;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughLever;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughProbe;
 
 public class NetherPortalEntity extends BreakablePortalEntity {
     private static final OverlayInfo overlay_x = new OverlayInfo(
@@ -71,10 +73,30 @@ public class NetherPortalEntity extends BreakablePortalEntity {
     @Override
     protected boolean isPortalIntactOnThisSide() {
 
-        return blockPortalShape.area.stream()
-            .allMatch(blockPos ->
-                level().getBlockState(blockPos).getBlock() == PortalPlaceholderBlock.instance
-            ) &&
+        // REDSTONE/RAIL/MINECART PASSTHROUGH (a) — diagnose-first probe seam.
+        // The opening-contents half of this predicate is what makes a /setblock into the aperture
+        // kill this portal AND its cross-dimension twin within at most 233 ticks, which makes the
+        // decisive seam-rendering experiment impossible to observe. The DEFAULT-OFF lever
+        // -Dseamlessportals.apertureSuppressTeardown=true relaxes ONLY that half; the obsidian
+        // frame requirement below is deliberately untouched, so a genuine frame break still tears
+        // down. See migration/REDSTONE_RECON.md §1 and §5.
+        boolean openingIntact;
+        if (AperturePassthroughLever.SUPPRESS_TEARDOWN) {
+            openingIntact = true;
+        }
+        else {
+            openingIntact = true;
+            for (net.minecraft.core.BlockPos blockPos : blockPortalShape.area) {
+                net.minecraft.world.level.block.state.BlockState state = level().getBlockState(blockPos);
+                if (state.getBlock() != PortalPlaceholderBlock.instance) {
+                    AperturePassthroughProbe.intactFailure(getId(), blockPos, state);
+                    openingIntact = false;
+                    break;
+                }
+            }
+        }
+
+        return openingIntact &&
             blockPortalShape.frameAreaWithoutCorner.stream()
                 .allMatch(blockPos ->
                     O_O.isObsidian(level().getBlockState(blockPos))
