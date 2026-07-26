@@ -428,7 +428,7 @@ public final class ActSeedProbe {
             .append("  packCullingState=").append(readObj(fPackCullingState, sr)).append('\n');
         block.append("      shadowDistanceEffective=").append(effectiveShadowDistance())
             .append("   (0 => renderShadows early-returns at off.9)\n");
-        block.append("      shadowcompConfig: ").append(describeShadowcomp(sr)).append('\n');
+        block.append("      shadowcompConfig: ").append(describeShadowcomp("MAIN", sr)).append('\n');
 
         List<Object> imgs = customImages(pipeline);
         block.append("      images: ").append(describeImages(imgs)).append('\n');
@@ -502,7 +502,7 @@ public final class ActSeedProbe {
             .append("  destShadowRenderer=").append(identityString(destSr))
             .append(' ').append(destSr == mainShadowRenderer ? "SAME-AS-MAIN" : "DIFFERENT").append('\n');
         block.append("      comp=").append(identityString(readObj2(fCompositeRenderer, destSr)))
-            .append("  destShadowcomp: ").append(describeShadowcomp(destSr)).append('\n');
+            .append("  destShadowcomp: ").append(describeShadowcomp("DEST", destSr)).append('\n');
 
         List<Object> destImgs = destPipeline == null ? new ArrayList<>() : customImages(destPipeline);
         int dVox = imageId(destImgs, "voxel_img");
@@ -758,19 +758,39 @@ public final class ActSeedProbe {
         return readbackBuf;
     }
 
+    /**
+     * RUN-1 DEFECT FIX. The first live run gated leg [4] on {@code caps.OpenGL45} and lost the whole
+     * volume verdict: MC 26.2 / Sodium create a <b>3.3 core context</b> ("OpenGL Version: 3.3.0
+     * NVIDIA"), so the CORE-VERSION flag is false on a card that plainly supports 4.6 — iris itself
+     * runs compute shaders on that same context via ARB extensions. Gate on the FUNCTION's
+     * availability (core OR ARB) instead, and log every relevant capability so the verdict is
+     * evidence rather than inference on the next run.
+     */
     private static boolean ensureGl45() {
         if (!gl45Checked) {
             gl45Checked = true;
+            String caps = "unavailable";
             try {
-                gl45Ok = GL.getCapabilities().OpenGL45;
+                org.lwjgl.opengl.GLCapabilities c = GL.getCapabilities();
+                // LWJGL populates the GL45 entry points from the ARB extension too, so either route
+                // makes the call legal; both are reported so a future failure is self-diagnosing.
+                gl45Ok = c.OpenGL45
+                    || (c.GL_ARB_get_texture_sub_image && c.GL_ARB_direct_state_access);
+                caps = "OpenGL45=" + c.OpenGL45
+                    + " OpenGL43=" + c.OpenGL43
+                    + " OpenGL30=" + c.OpenGL30
+                    + " ARB_get_texture_sub_image=" + c.GL_ARB_get_texture_sub_image
+                    + " ARB_direct_state_access=" + c.GL_ARB_direct_state_access;
             }
             catch (Throwable t) {
                 gl45Ok = false;
             }
+            LOGGER.info(P + "readback capability: {} => leg [4] {}", caps, gl45Ok ? "ARMED" : "OFF");
             if (!gl45Ok) {
-                warnOnce("gl45", P + "GL 4.5 (glGetTextureSubImage / glGetTextureLevelParameteriv)"
-                    + " unavailable — leg [4] is PERMANENTLY OFF this session. Legs [1]-[3] remain"
-                    + " valid, but the voxel/floodfill verdict CANNOT be made from this run.", null);
+                warnOnce("gl45", P + "neither core GL 4.5 nor ARB_get_texture_sub_image +"
+                    + " ARB_direct_state_access is available (" + caps + ") — leg [4] is PERMANENTLY"
+                    + " OFF this session. Legs [1]-[3] remain valid, but the voxel/floodfill verdict"
+                    + " CANNOT be made from this run.", null);
             }
         }
         return gl45Ok;
@@ -848,16 +868,27 @@ public final class ActSeedProbe {
     // Shadowcomp / image description helpers
     // =============================================================================================
 
-    private static String describeShadowcomp(Object shadowRenderer) {
+    /**
+     * RUN-1 DEFECT FIX (two of them). (1) {@code pass.getClass().getDeclaredField("computes")} threw
+     * {@code NoSuchFieldException} on every element: the declared generic type
+     * {@code ImmutableList<ShadowCompositeRenderer$Pass>} is ERASED, so it never proved the runtime
+     * element class. Walk the hierarchy and, on a miss, log the ACTUAL class and its field names so
+     * the next run diagnoses itself instead of guessing again. (2) the old code then fired the
+     * "pack ships no shadowcomp compute" FINDING off that unavailable {@code withComputes=0} — a
+     * FALSE ALARM on missing data. A count that could not be measured now reads {@code n/a} and
+     * asserts nothing.
+     */
+    private static String describeShadowcomp(String role, Object shadowRenderer) {
         if (shadowRenderer == null) {
             return "n/a (shadowRenderer==null)";
         }
         try {
             Object comp = readObj2(fCompositeRenderer, shadowRenderer);
             if (comp == null) {
-                warnOnce("compnull", P + "FINDING (once-only): dest ShadowCompositeRenderer is null —"
-                    + " the pack ships no shadowcomp for this dimension. The dest volume is unseeded"
-                    + " BY PACK CONFIG, not by our nested render.", null);
+                warnOnce("compnull-" + role, P + "FINDING (once-only): " + role
+                    + " ShadowCompositeRenderer is null — the pack ships no shadowcomp for this"
+                    + " dimension. That volume is unseeded BY PACK CONFIG, not by our nested render.",
+                    null);
                 return "compositeRenderer==null";
             }
             Object passesObj = fPasses == null ? null : readObj2(fPasses, comp);
@@ -867,11 +898,20 @@ public final class ActSeedProbe {
             int n = 0;
             int withComputes = 0;
             int computes = 0;
+            boolean computesKnown = true;
             for (Object pass : passes) {
                 n++;
+                Field fc = findFieldInHierarchy(pass.getClass(), "computes");
+                if (fc == null) {
+                    computesKnown = false;
+                    warnOnce("computesfield", P + "pass element class "
+                        + pass.getClass().getName() + " has no 'computes' field in its hierarchy"
+                        + " (declared fields: " + declaredFieldNames(pass.getClass()) + ") —"
+                        + " withComputes reads n/a and asserts NOTHING; the dispatch verdict is"
+                        + " UNAVAILABLE (legs [3]/[4] still valid).", null);
+                    continue;
+                }
                 try {
-                    Field fc = pass.getClass().getDeclaredField("computes");
-                    fc.setAccessible(true);
                     Object arr = fc.get(pass);
                     if (arr instanceof Object[] a && a.length > 0) {
                         withComputes++;
@@ -879,22 +919,55 @@ public final class ActSeedProbe {
                     }
                 }
                 catch (Throwable t) {
-                    warnOnce("computesfield", P + "ShadowCompositeRenderer$Pass.computes not"
-                        + " resolvable — withComputes reads n/a; the dispatch verdict is UNAVAILABLE"
-                        + " (legs [3]/[4] still valid)", t);
+                    computesKnown = false;
+                    warnOnce("computesread", P + "pass 'computes' field present but unreadable —"
+                        + " withComputes reads n/a and asserts NOTHING.", t);
                 }
             }
-            if (n == 0 || withComputes == 0) {
-                warnOnce("compnull", P + "FINDING (once-only): dest ShadowCompositeRenderer has"
-                    + " passes=" + n + " withComputes=" + withComputes + " — the pack ships no"
-                    + " shadowcomp compute for this dimension. The dest volume is unseeded BY PACK"
-                    + " CONFIG, not by our nested render.", null);
+            // Only a MEASURED zero is evidence. An unmeasurable one is not.
+            if (computesKnown && n > 0 && withComputes == 0) {
+                warnOnce("compnone-" + role, P + "FINDING (once-only): " + role
+                    + " ShadowCompositeRenderer has passes=" + n + " and MEASURED withComputes=0 —"
+                    + " the pack ships no shadowcomp compute for this dimension. That volume is"
+                    + " unseeded BY PACK CONFIG, not by our nested render.", null);
             }
-            return "passes=" + n + " withComputes=" + withComputes + " computes=" + computes;
+            return "passes=" + n
+                + " withComputes=" + (computesKnown ? String.valueOf(withComputes) : "n/a")
+                + " computes=" + (computesKnown ? String.valueOf(computes) : "n/a");
         }
         catch (Throwable t) {
             return "read-failed(" + t + ")";
         }
+    }
+
+    private static Field findFieldInHierarchy(Class<?> start, String name) {
+        for (Class<?> c = start; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f;
+            }
+            catch (Throwable ignored) {
+                // keep walking up
+            }
+        }
+        return null;
+    }
+
+    private static String declaredFieldNames(Class<?> c) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            for (Field f : c.getDeclaredFields()) {
+                if (sb.length() > 0) {
+                    sb.append(',');
+                }
+                sb.append(f.getName());
+            }
+        }
+        catch (Throwable ignored) {
+            sb.append("?");
+        }
+        return sb.toString();
     }
 
     @SuppressWarnings("unchecked")
