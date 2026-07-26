@@ -31,8 +31,19 @@ lifecycle-persistence) → fold. Top claims re-verified by hand afterwards. Path
    its near half. The two visible halves join into one continuous block across the seam.
    **PLUS mirroring:** placing a block in one aperture cell auto-places it in the coincident cell on
    the other side, so a seam block never has to be built twice from both dimensions.
-   ⚠ **The slicing is INFERRED, not observed** (§6). It is load-bearing for this entire model and is
-   the first thing the live round must settle.
+   ✅ **CLIPPING CONFIRMED LIVE by the user, 2026-07-25** (dev client, both levers armed). Observed:
+   the plane does sit in the middle of the block, and a block placed there **is clipped at the plane** —
+   the slicing is real, no longer an inference. Same for a rail.
+   ❗ **But the far half does NOT become part of the destination world.** It remains a
+   **source-dimension** block living behind the portal, merely hidden from the window. There is
+   nothing on the destination side for it to meet. So the clipping half of the seam model HOLDS and
+   the model is *incomplete without mirroring* — mirroring is not a convenience, it is the mechanism
+   that puts a counterpart in the destination's coincident cell so the two clipped halves face each
+   other and read as one block. This is now a REQUIRED part of (a), not an option.
+   ⚠ **Open design problem this exposes:** mirroring is well-defined when the two planes share
+   sub-block phase (obsidian pairs — the coincident cell is unambiguous). Under decision 6 (general
+   phase) the source block's far half can straddle TWO destination cells, and which one receives the
+   mirrored block is undecided. Must be settled before (a) is implemented.
 6. **General sub-block phase from day one.** Every rail/redstone/minecart decision must be
    phase-agnostic. Obsidian nether-portal pairs always have both planes mid-block, so the coincident
    case is what they produce; portals whose planes sit on a block boundary (wand/custom) produce a

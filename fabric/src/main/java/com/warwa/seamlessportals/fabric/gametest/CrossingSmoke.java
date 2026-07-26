@@ -345,6 +345,10 @@ public class CrossingSmoke implements FabricClientGameTest {
             // outline-target shots + the post-portal creative-browse checkpoint. All
             // lever-gated + fail-soft (the maybeScreenshot never-throw discipline) — these
             // legs CAPTURE state as evidence, they assert nothing.
+            // RS PASSTHROUGH (a) SEAM EVIDENCE (migration/REDSTONE_RECON.md §0.5 / §6): settles the
+            // one INFERRED claim the whole seam model rests on — does the stencil actually clip a
+            // block sitting in the aperture at the portal plane? Lever-gated + fail-soft.
+            rsSeamEvidenceLegs(context, px, py, pz, planeZ);
             emOutlineEvidenceLegs(context, px, py, pz, planeZ);
             maybeCreativeBrowse(context, "em-g-post");
             // EM-G-R3 the untested trigger: my 3 static-shaders harness configs never
@@ -625,6 +629,158 @@ public class CrossingSmoke implements FabricClientGameTest {
      *       pick range even measured through the portal.</li>
      * </ul>
      */
+    /**
+     * RS-SEAM (redstone/rail/minecart passthrough, sub-feature (a) — the DECISIVE visual round).
+     *
+     * <p>The pinned seam model ({@code migration/REDSTONE_RECON.md} §0.5) assumes that a block
+     * sitting in a portal's aperture is already clipped at the plane by the stencil, so its near
+     * half draws in the source world and its far half is replaced by the portal view. That claim is
+     * INFERRED from the stencil mechanics, never observed. Everything downstream — rail continuity,
+     * the "two visible halves read as one block" behaviour, the 0.5-phase-offset case — depends on
+     * it. This leg settles it.
+     *
+     * <p><b>The discriminator.</b> Portal B is 3×3, centred on {@code (px+4.5, py+1.5, planeZ)},
+     * normal +Z, and {@code planeZ = pz - 5.5} — i.e. the plane bisects the block layer at
+     * {@code z = pz-6}, exactly as an obsidian frame's plane does. Three white_concrete blocks go
+     * into ONE column at {@code (px+4, py+1)}, differing only in z:
+     * <ul>
+     *   <li>{@code z = pz-5} — spans [pz-5, pz-4], entirely SOUTH of the plane → must render WHOLE.</li>
+     *   <li>{@code z = pz-6} — spans [pz-6, pz-5], STRADDLES the plane → the decisive cell. Half =
+     *       model is clipped at the plane (seam model HOLDS). Whole = no clipping, the block draws
+     *       over the portal view (seam model FAILS). Absent = the portal view draws over it entirely
+     *       (seam model FAILS the other way).</li>
+     *   <li>{@code z = pz-7} — spans [pz-7, pz-6], entirely NORTH of the plane and inside the window
+     *       → must be FULLY HIDDEN by the portal view.</li>
+     * </ul>
+     * The top and bottom blocks are controls: if they do not behave as stated, the shot is
+     * mis-framed and the middle block proves nothing. All three in one frame means a single
+     * screenshot answers the question with its own calibration built in.
+     *
+     * <p>A rail line is laid along the same column at foot level ({@code y = py}, on the obsidian
+     * platform) running {@code z = pz-3 … pz-7}, straight through the aperture — the actual feature
+     * geometry, so the round also shows what a real track through a portal looks like today.
+     *
+     * <p>Three shots: head-on, close-up head-on, and oblique. The oblique separates model clipping
+     * from stencil overdraw — a model-clipped block stays half at every angle, whereas an overdrawn
+     * one changes with viewing angle.
+     *
+     * <p>Asserts nothing (evidence only), fail-soft throughout, and gated behind the screenshots
+     * lever so the default 8-leg suite stays byte-identical.
+     */
+    private static void rsSeamEvidenceLegs(
+        ClientGameTestContext context, int px, int py, int pz, double planeZ
+    ) {
+        if (!screenshotsLeverOn()) {
+            return;
+        }
+        try {
+            final int colX = px + 4;          // portal B's centre column
+            final int apertureZ = pz - PORTAL_OFFSET_Z;   // the block layer the plane bisects
+            final int southZ = apertureZ + 1; // fully in front of the plane
+            final int northZ = apertureZ - 1; // fully behind the plane, inside the window
+
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-SEAM] plane z={} bisects block layer z={} (spans [{}, {}]);"
+                    + " discriminator column x={} y={}: SOUTH(whole)={} STRADDLE(decisive)={}"
+                    + " NORTH(hidden)={}; rail line y={} along z={}..{}",
+                planeZ, apertureZ, apertureZ, apertureZ + 1, colX, py + 1,
+                southZ, apertureZ, northZ, py, pz - 3, pz - 7);
+
+            runCommands(context, List.of(
+                // the three-block discriminator column
+                "setblock " + colX + " " + (py + 1) + " " + southZ + " minecraft:white_concrete",
+                "setblock " + colX + " " + (py + 1) + " " + apertureZ + " minecraft:white_concrete",
+                "setblock " + colX + " " + (py + 1) + " " + northZ + " minecraft:white_concrete",
+                // a real rail line running straight through the aperture at foot level
+                "fill " + colX + " " + py + " " + (pz - 7) + " "
+                    + colX + " " + py + " " + (pz - 3) + " minecraft:rail"
+            ));
+            context.waitTicks(20);
+
+            // Report what actually landed — a rail that failed canSurvive, or a concrete block that
+            // was rejected, would otherwise be invisible in the screenshot for the wrong reason.
+            String placed = context.computeOnClient(mc -> {
+                if (mc.level == null) return "level null";
+                return "south=" + mc.level.getBlockState(new BlockPos(colX, py + 1, southZ)).getBlock()
+                    + " straddle=" + mc.level.getBlockState(new BlockPos(colX, py + 1, apertureZ)).getBlock()
+                    + " north=" + mc.level.getBlockState(new BlockPos(colX, py + 1, northZ)).getBlock()
+                    + " railInAperture=" + mc.level.getBlockState(new BlockPos(colX, py, apertureZ)).getBlock();
+            });
+            SeamlessPortalsConstants.LOGGER.info(LOG + "[RS-SEAM] placement result: {}", placed);
+
+            // ---- Shot 1: head-on, 3.5 blocks south of the plane, eye on the straddling block ----
+            seamStand(context, px + 4.5, py, pz - 2.0);
+            context.getInput().lookAt(new BlockPos(colX, py + 1, apertureZ));
+            context.waitTicks(10);
+            maybeScreenshot(context, "rs-seam-1-headon");
+
+            // ---- Shot 2: close-up head-on (1.5 blocks out) — maximises the visible half ----
+            seamStand(context, px + 4.5, py, pz - 4.0);
+            context.getInput().lookAt(new BlockPos(colX, py + 1, apertureZ));
+            context.waitTicks(10);
+            maybeScreenshot(context, "rs-seam-2-closeup");
+
+            // ---- Shot 3: oblique — separates model clipping from stencil overdraw ----
+            seamStand(context, px + 8.0, py, pz - 3.0);
+            context.getInput().lookAt(new BlockPos(colX, py + 1, apertureZ));
+            context.waitTicks(10);
+            maybeScreenshot(context, "rs-seam-3-oblique");
+
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-SEAM] evidence captured — read the three shots against the column:"
+                    + " SOUTH block whole + NORTH block hidden = shot is correctly framed;"
+                    + " then the STRADDLE block half = seam model HOLDS, whole or absent = FAILS");
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(LOG + "[RS-SEAM] FAILED (non-fatal, evidence only)", t);
+        } finally {
+            // MANDATORY CLEANUP — this leg stages blocks INSIDE portal B's window, and leg 4 throws
+            // an ender pearl straight through that window at (originB.x, originB.y-0.3) heading -Z.
+            // The straddling block sits exactly on the pearl's path, so leaving it in place fails
+            // leg 4 (observed: "owner never arrived in the nether"). An evidence leg must never
+            // perturb a functional leg — restore the staging box before handing control back.
+            try {
+                final int colX = px + 4;
+                final int apertureZ = pz - PORTAL_OFFSET_Z;
+                runCommands(context, List.of(
+                    "fill " + colX + " " + (py + 1) + " " + (pz - 7) + " "
+                        + colX + " " + (py + 1) + " " + (pz - 5) + " minecraft:air",
+                    "fill " + colX + " " + py + " " + (pz - 7) + " "
+                        + colX + " " + py + " " + (pz - 3) + " minecraft:air"
+                ));
+                context.waitTicks(10);
+                String after = context.computeOnClient(mc -> {
+                    if (mc.level == null) return "level null";
+                    return "straddle=" + mc.level.getBlockState(
+                        new BlockPos(colX, py + 1, apertureZ)).getBlock()
+                        + " railInAperture=" + mc.level.getBlockState(
+                            new BlockPos(colX, py, apertureZ)).getBlock();
+                });
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "[RS-SEAM] staging cleared (must both be air before leg 4): {}", after);
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "[RS-SEAM] CLEANUP FAILED — later legs may see a blocked window", t);
+            }
+        }
+    }
+
+    /** Place the player for a seam shot, pinning the client so the server tp cannot rubber-band. */
+    private static void seamStand(ClientGameTestContext context, double x, double y, double z) {
+        runOnServer(context, server -> {
+            CommandSourceStack src = server.createCommandSourceStack().withSuppressedOutput();
+            server.getCommands().performPrefixedCommand(src,
+                "tp @p " + x + " " + y + " " + z + " 180 0");
+        });
+        context.runOnClient(mc -> {
+            mc.player.setPos(x, y, z);
+            mc.player.xo = x;
+            mc.player.yo = y;
+            mc.player.zo = z;
+            mc.player.setDeltaMovement(Vec3.ZERO);
+        });
+        context.waitTicks(5);
+    }
+
     private static void emOutlineEvidenceLegs(
         ClientGameTestContext context, int px, int py, int pz, double planeZ
     ) {
