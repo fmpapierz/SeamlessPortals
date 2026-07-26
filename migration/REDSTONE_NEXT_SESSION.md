@@ -106,6 +106,42 @@ Still worth taking from step 7: **IP-core edit 10**, the re-ignition guard
 the bug family that already bit once — two portal pairs binding the same aperture cell with different
 destinations.
 
+## ★ THE DERIVED-STATE AUDIT (2026-07-26) — the root modelling error in (a), and what is still open
+
+**Three defects surfaced in (a) AFTER it was called complete, and they are ONE FAMILY.** (a) mirrors
+BLOCK STATE, and block state is not an inert value — **the game re-derives it**, before the write,
+during the write, and after it. Every mirrored block kind inherits this; redstone dust and repeaters
+have exactly this shape of derived connection state, so **(c) will hit it hardest**.
+
+| # | defect | status |
+|---|---|---|
+| 1 | mirror wrote the **pre-resolution** state — resolution happens in a NESTED `setBlock` (`LevelChunk.java:326-327` dispatches `onPlace` inside its own body) and the OUTER inject re-mirrored its stale parameter | **FIXED** — mirror reads the live state |
+| 2 | `isMirrorable` never tested the **translation** term of the affine transform | **FIXED** — `SeamMap.latticeAligned` |
+| 3 | the mirrored copy **re-resolved itself** against the destination's neighbours on placement | **FIXED** — write with `Block.UPDATE_SKIP_ON_PLACE` (512) |
+
+### STILL OPEN — found by the audit, NOT yet fixed
+
+`UPDATE_SKIP_ON_PLACE` only suppresses the **placement-time** re-derive. The destination can still
+rewrite or delete a mirrored block afterwards:
+
+- **`BaseRailBlock.neighborChanged`** (REF, verified) → `updateState` → `updateDir` → re-resolution.
+  Any neighbour update in the DESTINATION dimension re-derives the mirrored rail's shape against
+  destination neighbours, so the halves can diverge again after placement.
+- **`BaseRailBlock.shouldBeRemoved`** (REF, verified) → `canSupportRigidBlock(level, pos.below())`
+  evaluated in the DESTINATION, then `dropResources` + `removeBlock`.
+  ⚠ **THIS IS AN ITEM-DUPLICATION ROUTE.** The source rail still exists; the destination drops a rail
+  item. One placement, two rails. Reachable whenever the destination cell lacks support the source
+  cell has.
+- **`canSurvive`** — same support test, same asymmetry.
+
+**PROPOSED RULE (not yet implemented, needs the user's word):** *a mirrored cell's validity and shape
+are the SOURCE cell's* — the destination must not independently re-derive or delete a block it did not
+author. Provenance (`mirrorCreatedCells`) already identifies exactly those cells. That one rule closes
+all three open paths together, rather than patching each.
+
+Note this also means the (b) spec was written against an (a) that had defects 1–3, so any part of it
+reasoning about mirrored-state behaviour may be reasoning about the broken version.
+
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
 
 - **`ApertureOccupancy.areaPredicate()` is load-bearing in THREE systems at once**: flood-fill
