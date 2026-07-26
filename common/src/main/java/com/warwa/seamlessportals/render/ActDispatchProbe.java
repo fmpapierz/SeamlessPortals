@@ -108,6 +108,8 @@ public final class ActDispatchProbe {
 
     private static int firstDestProgId = -1;
     private static int distinctDestProgIds = 0;
+    private static long crossIdTotal = 0L;
+    private static long sameIdTotal = 0L;
 
     // =============================================================================================
     // Reflective handles
@@ -207,6 +209,24 @@ public final class ActDispatchProbe {
     // Bracket hooks, driven by ActSeedProbe
     // =============================================================================================
 
+    /**
+     * Called from {@code ActSeedProbe.endPortal} so the cross-dim watchdog can fire. SAME-dim windows
+     * can NEVER produce a dest ACT dispatch — IS5-FF's NoopShadowCompositeRenderer suppresses them by
+     * design — so a session that only ever views a same-dim portal yields zero measurement and looks
+     * deceptively like a healthy run. That happened once; hence the loud watchdog below.
+     */
+    public static void noteWindowClass(boolean crossId) {
+        if (!ENABLED || broken) {
+            return;
+        }
+        if (crossId) {
+            crossIdTotal++;
+        }
+        else {
+            sameIdTotal++;
+        }
+    }
+
     public static void onFrameArmed(boolean armed) {
         if (!ENABLED || broken) {
             return;
@@ -214,6 +234,14 @@ public final class ActDispatchProbe {
         captureArmed = armed;
         if (armed) {
             armedFrames++;
+            if (armedFrames == 1) {
+                // RUN SELF-IDENTIFICATION. Two runs of this kit differ only by a JVM flag, and a log
+                // that does not say which one it is cannot be adjudicated later. Emit it once, loudly.
+                LOGGER.info(P + "RUN CONFIG: prevUniformHeal={} (IS5-PH) · actProbe=on ·"
+                        + " actDispatchProbe=on. For the Step-0 A/B this line is what distinguishes"
+                        + " run A (heal DISABLED) from run B (heal ACTIVE).",
+                    qouteall.imm_ptl.core.IPGlobal.isPrevUniformHealActive() ? "ACTIVE" : "DISABLED");
+            }
             if (mainCaptureAgeMs >= 0) {
                 mainCaptureAgeMs = (System.nanoTime() - lastMainCaptureNanos) / 1_000_000L;
             }
@@ -558,6 +586,16 @@ public final class ActDispatchProbe {
     // =============================================================================================
 
     private static void watchdogs() {
+        // THE VOID-RUN GUARD. A session that only ever views a SAME-dim window produces zero dest ACT
+        // dispatches BY DESIGN (IS5-FF's noop) and therefore zero measurement — but nothing in the log
+        // says so, and it reads like a healthy run. Cost us one live round; never again.
+        if (armedFrames == 45 && crossIdTotal == 0) {
+            warnOnce("dnocross", P + "VOID RUN WARNING: " + sameIdTotal + " same-dimension portal"
+                + " windows seen and ZERO cross-dimension ones after ~45 armed seconds. SAME-DIM"
+                + " WINDOWS CANNOT PRODUCE THIS MEASUREMENT — IS5-FF suppresses their dest shadowcomp"
+                + " by design (renderAll=0, act=0). Go look through an OVERWORLD<->NETHER portal, or"
+                + " this run answers nothing.", null);
+        }
         if (armedFrames == 120) {
             if (dispatchTotal == 0L) {
                 warnOnce("dnever", P + "FINDING (once-only): the ComputeProgram.dispatch hook NEVER"
