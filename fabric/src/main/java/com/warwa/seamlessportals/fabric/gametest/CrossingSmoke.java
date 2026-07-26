@@ -935,6 +935,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
 
             int registryChecks = 0;
+            int phaseChecks = 0;
             for (qouteall.imm_ptl.core.portal.Portal p : portals) {
                 if (!com.warwa.seamlessportals.passthrough.SeamMap.isMirrorable(p)) continue;
                 for (Vec3 col : com.warwa.seamlessportals.passthrough.SeamMap.enumerateColumns(p)) {
@@ -1002,6 +1003,51 @@ public class CrossingSmoke implements FabricClientGameTest {
                             }
                         }
                     }
+                    // ---- (b) PRIMITIVE: phase classification and continuationCell ----
+                    // The two topologies differ by exactly ONE cell and neither error throws:
+                    // in COINCIDENT the destination aperture cell IS this cell, so continuing into
+                    // it would connect a rail to itself; in DISJOINT it is a genuinely distinct
+                    // neighbour. Asserted here because every later (b)/(c)/(d) consumer inherits it.
+                    var bForPhase = cell.bindings().stream()
+                        .filter(x -> x.portalUuid().equals(p.getUUID()) && x.isMirrorable())
+                        .findFirst().orElse(null);
+                    if (bForPhase != null) {
+                        double dPlane = Math.abs(p.getDistanceToPlane(Vec3.atCenterOf(src)));
+                        var expectedPhase = dPlane < 0.25
+                            ? com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
+                            : com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.DISJOINT;
+                        if (bForPhase.phase() != expectedPhase) {
+                            failure.set("PHASE MISCLASSIFIED at " + src + ": binding says "
+                                + bForPhase.phase() + " but the plane is " + dPlane
+                                + " from the cell centre, i.e. " + expectedPhase);
+                            return;
+                        }
+                        BlockPos cont = bForPhase.continuationCell();
+                        if (cont == null) {
+                            failure.set("continuationCell null for a mirrorable binding at " + src);
+                            return;
+                        }
+                        boolean sameAsDest = cont.equals(bForPhase.destPos());
+                        // COINCIDENT must step PAST the shared slot; DISJOINT must land ON it.
+                        if (expectedPhase == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
+                            && sameAsDest) {
+                            failure.set("COINCIDENT seam at " + src + " returned the destination"
+                                + " aperture cell " + cont + " as its continuation — but that cell IS"
+                                + " this cell (they are one mirrored slot), so a rail would connect to"
+                                + " itself. It must step BEYOND it.");
+                            return;
+                        }
+                        if (expectedPhase == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.DISJOINT
+                            && !sameAsDest) {
+                            failure.set("DISJOINT seam at " + src + " skipped the destination aperture"
+                                + " cell " + bForPhase.destPos() + " and returned " + cont
+                                + " — in this topology the two cells are distinct neighbours and the"
+                                + " destination cell IS the next cell.");
+                            return;
+                        }
+                        phaseChecks++;
+                    }
+
                     registryChecks++;
                 }
             }
@@ -1012,7 +1058,8 @@ public class CrossingSmoke implements FabricClientGameTest {
 
             report.set("examined " + examined + " mirrorable portal(s), "
                 + involutions.get() + " involution check(s), "
-                + registryChecks + " registry cross-check(s)" + sb);
+                + registryChecks + " registry cross-check(s), "
+                + phaseChecks + " phase/continuation check(s)" + sb);
         });
 
         String f = failure.get();

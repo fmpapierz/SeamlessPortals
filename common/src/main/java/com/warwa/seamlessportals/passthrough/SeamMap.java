@@ -217,6 +217,43 @@ public final class SeamMap {
     }
 
     /**
+     * The two seam TOPOLOGIES, decided by where the plane falls relative to the aperture cell.
+     *
+     * <p>This distinction is the whole of sub-feature (b), and it is NOT cosmetic:
+     * <ul>
+     *   <li>{@link #COINCIDENT} — the plane BISECTS the aperture cell (obsidian frames, whose planes
+     *       are always mid-block). The source and destination aperture cells occupy the same span:
+     *       one physical slot seen from two sides, which (a) keeps mirrored. A block here straddles
+     *       the plane and each side draws its own half. The track's next cell through the plane is
+     *       therefore the one BEYOND the destination aperture cell, not the destination cell itself —
+     *       that cell is already this cell.</li>
+     *   <li>{@link #DISJOINT} — the plane lies ON the cell boundary (custom/wand portals). Nothing
+     *       straddles: source and destination cells are DISTINCT, face-to-face neighbours in two
+     *       dimensions, and are NOT mirrored. Here the destination aperture cell IS the neighbour.</li>
+     * </ul>
+     *
+     * <p>Getting this backwards silently produces an off-by-one track: connecting to the wrong cell
+     * in topology A, or skipping a real cell in topology B.
+     */
+    public enum SeamPhase { COINCIDENT, DISJOINT }
+
+    /**
+     * Which topology this cell sits in, derived from the plane's position rather than assumed from
+     * the portal kind.
+     *
+     * <p>The discriminator is the distance from the plane to the CELL CENTRE: the plane bisects the
+     * cell (distance ≈ 0) or lies on its face (distance ≈ 0.5). Nothing here inspects whether the
+     * portal came from obsidian or a wand — a custom portal that happens to be mid-block is
+     * COINCIDENT and behaves as one, which is the correct answer.
+     */
+    public static SeamPhase phaseOf(Portal portal, BlockPos cell) {
+        double d = Math.abs(portal.getDistanceToPlane(Vec3.atCenterOf(cell)));
+        // Mid-block ⇒ ~0. Boundary ⇒ ~0.5. Anything between is a phase this build does not model;
+        // treat it as DISJOINT, the conservative reading (distinct cells, no mirroring).
+        return d < 0.25 ? SeamPhase.COINCIDENT : SeamPhase.DISJOINT;
+    }
+
+    /**
      * Whether this portal maps the BLOCK LATTICE onto itself — the test {@link #isMirrorable}'s other
      * clauses do NOT make.
      *

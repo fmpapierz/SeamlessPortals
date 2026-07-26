@@ -64,10 +64,39 @@ public final class SeamRegistry {
         @Nullable ResourceKey<Level> destDim,
         @Nullable BlockPos destPos,
         Rotation stateRotation,
-        UUID portalUuid
+        UUID portalUuid,
+        SeamMap.SeamPhase phase
     ) {
         public boolean isMirrorable() {
             return destDim != null && destPos != null;
+        }
+
+        /**
+         * ★ THE (b) PRIMITIVE — the cell a track continues into when it crosses this seam.
+         *
+         * <p>The two topologies answer differently, and the difference is exactly one cell:
+         * <ul>
+         *   <li>{@link SeamMap.SeamPhase#DISJOINT} — source and destination cells are DISTINCT,
+         *       face-to-face across the plane. The destination aperture cell IS the neighbour.</li>
+         *   <li>{@link SeamMap.SeamPhase#COINCIDENT} — the two cells are one slot, already mirrored.
+         *       The destination aperture cell IS this cell, so continuing into it would connect a
+         *       rail to itself. The real next cell is the one BEYOND it, stepping in the destination's
+         *       own outward direction.</li>
+         * </ul>
+         * Returning the wrong one produces a track that is silently off by a cell — connected to
+         * nothing in topology A, or skipping a real rail in topology B.
+         */
+        @Nullable
+        public BlockPos continuationCell() {
+            if (destPos == null) {
+                return null;
+            }
+            if (phase == SeamMap.SeamPhase.DISJOINT) {
+                return destPos;
+            }
+            // COINCIDENT: step past the shared slot, in the destination's outward direction — which
+            // is the source facing carried through the portal's own rotation.
+            return destPos.relative(stateRotation.rotate(srcFacing));
         }
     }
 
@@ -127,16 +156,54 @@ public final class SeamRegistry {
      */
     @Nullable
     public static GlobalPos lookupAcross(Level level, BlockPos pos, Direction dir) {
+        SeamBinding b = bindingAcross(level, pos, dir);
+        return b == null ? null : GlobalPos.of(b.destDim(), b.continuationCell());
+    }
+
+    /**
+     * The binding a track/wire/cart would follow leaving {@code pos} in direction {@code dir}, or
+     * null when that direction does not cross a seam here.
+     *
+     * <p>Exposed as the binding rather than just a position because (b), (c) and (d) all need more
+     * than the cell: (b) needs {@link SeamBinding#stateRotation()} to reorient a rail shape, (c) needs
+     * {@link #mapDir} to carry a signal's direction across, and (d) needs both to steer a minecart.
+     * Returning a bare {@code GlobalPos} would force each of them to re-look-up what this already knows.
+     */
+    @Nullable
+    public static SeamBinding bindingAcross(Level level, BlockPos pos, Direction dir) {
         SeamCell cell = lookup(level, pos);
         if (cell == null) {
             return null;
         }
         for (SeamBinding b : cell.bindings()) {
-            if (b.srcFacing() == dir && b.isMirrorable()) {
-                return GlobalPos.of(b.destDim(), b.destPos());
+            // A binding faces ONE way. Asking for its own facing is asking to cross; any other
+            // direction is an ordinary in-world neighbour and must fall through to vanilla.
+            if (b.srcFacing() == dir && b.isMirrorable() && b.continuationCell() != null) {
+                return b;
             }
         }
         return null;
+    }
+
+    /**
+     * The block on the far side of the seam, or null when {@code dir} does not cross one here or the
+     * destination is unavailable. Reads only — never loads a chunk, so a cold far side reports
+     * "nothing there" rather than stalling a shape resolution or a signal read on a chunk load.
+     */
+    @Nullable
+    public static net.minecraft.world.level.block.state.BlockState stateAcross(
+        Level level, BlockPos pos, Direction dir
+    ) {
+        SeamBinding b = bindingAcross(level, pos, dir);
+        if (b == null || level.getServer() == null) {
+            return null;
+        }
+        net.minecraft.server.level.ServerLevel dest = level.getServer().getLevel(b.destDim());
+        BlockPos target = b.continuationCell();
+        if (dest == null || target == null || !dest.hasChunkAt(target)) {
+            return null;
+        }
+        return dest.getBlockState(target);
     }
 
     /** Map a direction through a seam, for callers that must reorient a block state or a motion. */
@@ -179,7 +246,8 @@ public final class SeamRegistry {
             BlockPos dst = mirrorable ? resolveDestCell(portal, reverse, column) : null;
 
             SeamBinding binding = new SeamBinding(
-                facing, destDim, dst, rotation == null ? Rotation.NONE : rotation, portal.getUUID());
+                facing, destDim, dst, rotation == null ? Rotation.NONE : rotation, portal.getUUID(),
+                SeamMap.phaseOf(portal, src));
 
             long key = src.asLong();
             SeamCell existing = holder.seamlessportals$seamCells().get(key);
