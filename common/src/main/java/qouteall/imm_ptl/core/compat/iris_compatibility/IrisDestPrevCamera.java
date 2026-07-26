@@ -160,6 +160,7 @@ public final class IrisDestPrevCamera {
 
     private static long lastProbeNanos = 0L;
     private static long lastRegimeLogNanos = 0L;
+    private static long lastMainSampleNanos = 0L;
     private static final float[] TMP3 = new float[4];
     private static final float[] TMP16 = new float[16];
     private static final float[] WRITE16 = new float[16];
@@ -237,8 +238,20 @@ public final class IrisDestPrevCamera {
     // =============================================================================================
 
     public static void onPassProgramBound(Object renderer, int i) {
-        if (armed == null || broken) {
+        if (armed == null) {
+            // THE MAIN-CHAIN CONTROL ROW. Sampling only inside the armed window left us blind to the
+            // main composite chain — and MbGateProbe had already measured the poisoned pair
+            // (cam=DEST, prev=MAIN, |d|=125.82) on rows it labelled MAIN, while its DEST rows were
+            // gated with delta=0. Since the main chain's composite4 runs over the WHOLE frame AFTER
+            // the portal window is stamped, it is a live candidate for the smear and must be measured
+            // rather than argued about. Probe-gated, so this is zero-cost at the shipped default.
+            if (!broken && IPGlobal.DEST_PREV_CAMERA_PROBE) {
+                sampleUnarmed(renderer, i);
+            }
             return; // THE byte-inert gate: one static read on every non-portal composite pass
+        }
+        if (broken) {
+            return;
         }
         try {
             if (!ensureReflection()) {
@@ -517,6 +530,64 @@ public final class IrisDestPrevCamera {
             return false;
         }
         return true;
+    }
+
+    /**
+     * MAIN-chain control sample: the same draw-time state, for the guarded pass when NO portal window
+     * is armed. Log-only and probe-gated; it never writes, never allocates a Pending, and never touches
+     * the per-dest map. Reading DEST and MAIN rows side by side is what separates "the window is
+     * smeared by its own composite" from "the whole frame is smeared by the main composite after the
+     * window was stamped into it".
+     */
+    private static void sampleUnarmed(Object renderer, int i) {
+        try {
+            long nowNs = System.nanoTime();
+            if (nowNs - lastMainSampleNanos < 1_000_000_000L) {
+                return;
+            }
+            if (!ensureReflection()) {
+                return;
+            }
+            Object passesObj = fPasses.get(renderer);
+            if (!(passesObj instanceof List<?> passes) || i < 0 || i >= passes.size()) {
+                return;
+            }
+            Object pass = passes.get(i);
+            String name = String.valueOf(fPassName.get(pass));
+            if (!TARGET_PASSES.contains(name)) {
+                return;
+            }
+            Object prog = fPassProgram.get(pass);
+            if (prog == null) {
+                return;
+            }
+            lastMainSampleNanos = nowNs;
+            int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+            int lc = GL20.glGetUniformLocation(pid, "cameraPosition");
+            int lp = GL20.glGetUniformLocation(pid, "previousCameraPosition");
+            if (lc < 0 || lp < 0) {
+                return;
+            }
+            float[] cur = new float[4];
+            float[] prev = new float[4];
+            GL20.glGetUniformfv(pid, lc, cur);
+            GL20.glGetUniformfv(pid, lp, prev);
+            double dx = cur[0] - prev[0];
+            double dy = cur[1] - prev[1];
+            double dz = cur[2] - prev[2];
+            double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            LOGGER.info(P + "MAIN-CHAIN CONTROL (1Hz): pass={} prog={} cameraPosition=({},{},{})"
+                    + " prevCameraPosition=({},{},{}) |cam-prev|={} maxAbsDiff(modelView)={}"
+                    + " — a LARGE |cam-prev| here means the MAIN composite blurs the whole frame"
+                    + " (portal window included, since the window is stamped BEFORE this runs);"
+                    + " ~0 here AND ~0 on the DEST row means motion blur is not the smear source at all.",
+                name, pid, fmt(cur[0]), fmt(cur[1]), fmt(cur[2]),
+                fmt(prev[0]), fmt(prev[1]), fmt(prev[2]), fmt(d),
+                matDiff(pid, "gbufferModelView", "gbufferPreviousModelView"));
+        }
+        catch (Throwable t) {
+            // diagnostic only — never disarm the feature over a control sample
+        }
     }
 
     /**
