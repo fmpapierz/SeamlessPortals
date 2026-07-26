@@ -132,6 +132,12 @@ public abstract class BreakablePortalEntity extends Portal {
         AperturePassthroughProbe.teardown(
             getId(), level().dimension().identifier().toString(), level().getGameTime()
         );
+        // RECORDED IP DEVIATION — RS PASSTHROUGH (a) step 7, the frame-break rule (§0.8): the
+        // originally-placed block survives in its own dimension, its MIRROR is removed. Runs HERE,
+        // before the opening is wiped and before bindings are dropped — after either, the mapping
+        // needed to tell a player's block from a mirrored one is gone. Provenance is the only thing
+        // that distinguishes them, and this is the sole consumer of it.
+        com.warwa.seamlessportals.passthrough.SeamMirror.onPortalTornDown(this);
         blockPortalShape.area.forEach(
             blockPos -> {
                 if (level().getBlockState(blockPos).getBlock() == PortalPlaceholderBlock.instance) {

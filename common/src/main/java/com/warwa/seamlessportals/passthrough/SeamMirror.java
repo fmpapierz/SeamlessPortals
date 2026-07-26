@@ -261,7 +261,21 @@ public final class SeamMirror {
         //
         // Cost is bounded: this only ever runs for a cell genuinely bound to a seam, and a live
         // portal usually keeps its far-side chunks resident anyway.
-        dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+        try {
+            dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+        }
+        catch (Throwable t) {
+            // Loading refused or failed. A CLEAR must not be lost — a stale block left behind with no
+            // counterpart is the permanent half-seam the journal exists to prevent. A PLACE is safe
+            // to drop: the source is authoritative and re-mirrors on its next change.
+            if (newState.isAir()) {
+                SeamJournal.enqueue(dest, destPos, true);
+            }
+            LOGGER.warn("[RS-SEAM-MIRROR] could not load destination {} in {} — {}",
+                destPos, dest.dimension().identifier(),
+                newState.isAir() ? "clear JOURNALLED" : "place dropped (source will re-mirror)", t);
+            return;
+        }
 
         SeamIndexHolder holder = (SeamIndexHolder) dest;
         long destKey = destPos.asLong();
@@ -313,10 +327,87 @@ public final class SeamMirror {
             sourcePos, sourceLevel.dimension().identifier());
     }
 
+    // =============================================================================================
+    // STEP 7 — THE FRAME-BREAK RULE
+    // =============================================================================================
+
+    private static long frameBreakCleared = 0L;
+
+    /**
+     * Called when a portal tears down, BEFORE its bindings are dropped.
+     *
+     * <p><b>The rule</b> (user decision, {@code REDSTONE_RECON.md} §0.8): on a frame break the
+     * originally-placed block survives in its own dimension and its MIRROR is removed. Not
+     * keep-both — that turns one block the player placed into two, which is a duplication route.
+     *
+     * <p><b>This is what provenance is for, and the only thing it is for.</b> After a break, the two
+     * halves of a seam are indistinguishable by inspection: same block, same state, one on each side.
+     * Only {@link SeamIndexHolder#seamlessportals$mirrorCreatedCells()} records which one this level
+     * received from a mirror rather than from a player. Without it the rule is undecidable and a
+     * break would sometimes delete the half the player actually built.
+     *
+     * <p><b>Ordering is load-bearing.</b> It must run before {@code SeamRegistry.unbind}, because
+     * after unbinding there is no mapping left to find a counterpart with — teardown destroys the
+     * very structure the cleanup depends on. (The same constraint governs frame mirroring's dormant
+     * link.) Cells are read from the portal's own geometry rather than the registry so the pass is
+     * self-sufficient even if bindings are already partly gone.
+     */
+    public static void onPortalTornDown(qouteall.imm_ptl.core.portal.Portal portal) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
+            return;
+        }
+        Level level = portal.level();
+        if (level == null || level.isClientSide() || !(level instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (applying) {
+            return;
+        }
+        applying = true;
+        try {
+            SeamIndexHolder holder = (SeamIndexHolder) level;
+            for (net.minecraft.world.phys.Vec3 column : SeamMap.enumerateColumns(portal)) {
+                BlockPos cellPos = SeamMap.seamCell(portal, column);
+                long key = cellPos.asLong();
+                if (!holder.seamlessportals$mirrorCreatedCells().contains(key)) {
+                    continue;   // the player built this one — it survives, per §0.4
+                }
+                BlockState state = serverLevel.getBlockState(cellPos);
+                if (!state.isAir()) {
+                    serverLevel.setBlockAndUpdate(cellPos,
+                        net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                    frameBreakCleared++;
+                }
+                holder.seamlessportals$mirrorCreatedCells().remove(key);
+            }
+            if (AperturePassthroughLever.SEAM_MIRROR_PROBE) {
+                StringBuilder cells = new StringBuilder();
+                for (net.minecraft.world.phys.Vec3 col : SeamMap.enumerateColumns(portal)) {
+                    BlockPos p = SeamMap.seamCell(portal, col);
+                    cells.append("\n    ").append(p)
+                        .append(" state=").append(serverLevel.getBlockState(p).getBlock())
+                        .append(" mirrorCreated=")
+                        .append(holder.seamlessportals$mirrorCreatedCells().contains(p.asLong()));
+                }
+                LOGGER.info("[RS-SEAM-MIRROR] frame break on portal {} in {} — cleared {} mirrored"
+                        + " half(s); provenance set size={} ; cells:{}",
+                    portal.getId(), level.dimension().identifier(), frameBreakCleared,
+                    holder.seamlessportals$mirrorCreatedCells().size(), cells);
+            }
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-SEAM-MIRROR] frame-break cleanup failed for portal {}", portal.getId(), t);
+        }
+        finally {
+            applying = false;
+        }
+    }
+
     /** Probe/test accounting. */
     public static String counters() {
         return "allowed=" + allowed + " refusedConflict=" + refusedConflict
             + " refusedBlockEntity=" + refusedBlockEntity + " refusedMultiCell=" + refusedMultiCell
-            + " mirroredWrites=" + mirroredWrites + " clearedMirrors=" + clearedMirrors;
+            + " mirroredWrites=" + mirroredWrites + " clearedMirrors=" + clearedMirrors
+            + " frameBreakCleared=" + frameBreakCleared;
     }
 }

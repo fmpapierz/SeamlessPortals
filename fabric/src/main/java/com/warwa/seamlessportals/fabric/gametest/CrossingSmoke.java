@@ -960,9 +960,47 @@ public class CrossingSmoke implements FabricClientGameTest {
                             && expectedDst.equals(b.destPos()));
                     if (!found) {
                         failure.set("registry binding at " + src + " for portal " + p.getId()
-                            + " does not carry SeamMap's destination " + expectedDst
-                            + " — registry and arithmetic disagree; bindings=" + cell.bindings());
+                            + " does not carry a destination consistent with SeamMap ("
+                            + expectedDst + "); bindings=" + cell.bindings());
                         return;
+                    }
+
+                    // THE CROSS-SIDE AGREEMENT CHECK — the assertion whose absence let a real bug
+                    // through. The mirror gate only ever verified the binding against ITSELF, which
+                    // is self-consistent by construction and therefore proves nothing. What matters
+                    // is that the cell this side WRITES TO is the same cell the far portal CLAIMS.
+                    // Observed live before the fix: source mirrored to (-495,75,-500) while the
+                    // destination portal's own seamCell was (-495,75,-501) — provenance was recorded
+                    // against a cell no portal owned, so the frame-break rule found nothing to clear
+                    // and the mirrored half survived as a duplicate.
+                    var bindingForP = cell.bindings().stream()
+                        .filter(b -> b.portalUuid().equals(p.getUUID()) && b.isMirrorable())
+                        .findFirst().orElse(null);
+                    if (bindingForP != null) {
+                        ServerLevel destLevel = server.getLevel(bindingForP.destDim());
+                        if (destLevel != null) {
+                            Vec3 dpos = p.getDestPos();
+                            var farPortals = destLevel.getEntitiesOfClass(
+                                qouteall.imm_ptl.core.portal.Portal.class,
+                                new net.minecraft.world.phys.AABB(
+                                    dpos.subtract(2, 2, 2), dpos.add(2, 2, 2)),
+                                q -> q != p && q.getOriginPos().distanceToSqr(dpos) < 0.25);
+                            if (!farPortals.isEmpty()) {
+                                var far = farPortals.get(0);
+                                BlockPos farClaims = com.warwa.seamlessportals.passthrough.SeamMap
+                                    .seamCell(far, com.warwa.seamlessportals.passthrough.SeamMap
+                                        .onPlane(far, p.transformPoint(col)));
+                                if (!farClaims.equals(bindingForP.destPos())) {
+                                    failure.set("CROSS-SIDE DISAGREEMENT at " + src + ": portal "
+                                        + p.getId() + " mirrors to " + bindingForP.destPos()
+                                        + " but the destination portal " + far.getId()
+                                        + " claims " + farClaims + " as its own aperture cell."
+                                        + " Provenance would be recorded against a cell no portal"
+                                        + " owns, and the frame-break rule would leave a duplicate.");
+                                    return;
+                                }
+                            }
+                        }
                     }
                     registryChecks++;
                 }
@@ -1154,6 +1192,14 @@ public class CrossingSmoke implements FabricClientGameTest {
                         + (dxc + 16) + " " + (dzc + 16))));
                 context.waitTicks(60);
                 rsMirrorGate(context, cell);
+                // BOTTOM OPENING ROW, not the mid-height cell the mirror gate uses. Support is
+                // vanilla (user clarification §0.2): a rail at mid-height sits on another aperture
+                // cell holding the noCollision placeholder, so when teardown wipes those cells with
+                // setBlockAndUpdate the neighbour update reaches the rail, canSurvive fails and it
+                // pops — the rail is gone before the frame-break rule is even observable. The bottom
+                // row rests on the obsidian sill and genuinely survives, which is what makes the
+                // provenance question testable at all.
+                rsFrameBreakGate(context, new BlockPos(fx, py + 1, fz), fx, py, fz);
                 runCommands(context, List.of(inDim("minecraft:the_nether",
                     "forceload remove " + (dxc - 16) + " " + (dzc - 16) + " "
                         + (dxc + 16) + " " + (dzc + 16))));
@@ -1300,6 +1346,122 @@ public class CrossingSmoke implements FabricClientGameTest {
             LOG + "RS-A steps 5+6 MIRROR GATE PASS — wrote, provenance-cleared, and refused on"
                 + " conflict. {} | counters: {}",
             detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+    }
+
+    /**
+     * RS-A STEP-7 GATE — the FRAME-BREAK RULE (user decision, {@code REDSTONE_RECON.md} §0.8).
+     *
+     * <p>On a frame break the originally-placed block survives in its own dimension and its MIRROR is
+     * removed. The user chose this over keep-both precisely because keep-both turns one placed block
+     * into two — a duplication route.
+     *
+     * <p><b>This is the only consumer of provenance, and the only test of it.</b> After a break the
+     * two halves are indistinguishable by inspection: same block, same state, one per side. Only
+     * {@code mirrorCreatedCells} records which half this level RECEIVED rather than had built in it.
+     * If provenance is wrong or missing, this gate fails in the most informative way possible —
+     * either the player's block vanishes (rule inverted) or the mirror survives (duplication).
+     *
+     * <p>Written because the first step-7 run reported {@code frameBreakCleared=0}: the rule was
+     * shipped-but-never-executed, the same coverage trap that has already produced a probe which only
+     * logged its passing case and a gate that skipped its own central assertion.
+     */
+    private static void rsFrameBreakGate(
+        ClientGameTestContext context, BlockPos sourceCell, int fx, int py, int fz
+    ) {
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<BlockPos> destRef = new AtomicReference<>(null);
+        AtomicReference<net.minecraft.resources.ResourceKey<Level>> destDimRef = new AtomicReference<>(null);
+
+        // Place a rail: it mirrors, and the destination copy is recorded as mirror-created.
+        runCommands(context, List.of(
+            "setblock " + sourceCell.getX() + " " + sourceCell.getY() + " " + sourceCell.getZ()
+                + " minecraft:rail"));
+        context.waitTicks(10);
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            var scell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, sourceCell);
+            if (scell == null) { failure.set("seam binding vanished before the frame-break test"); return; }
+            var b = scell.bindings().stream()
+                .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                .findFirst().orElse(null);
+            if (b == null) { failure.set("no mirrorable binding for the frame-break test"); return; }
+            destRef.set(b.destPos());
+            destDimRef.set(b.destDim());
+            ServerLevel dest = server.getLevel(b.destDim());
+            dest.getChunk(b.destPos().getX() >> 4, b.destPos().getZ() >> 4);
+            if (!dest.getBlockState(b.destPos()).is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                failure.set("setup failed: the rail did not mirror, so the frame-break rule cannot"
+                    + " be tested");
+            }
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(LOG + "RS-A step-7 FRAME-BREAK GATE SETUP FAILED: " + failure.get());
+        }
+
+        // Break ONE obsidian of the frame — a genuine frame break, the trigger the rule is written for.
+        runCommands(context, List.of(
+            "setblock " + (fx - 1) + " " + (py + 2) + " " + fz + " minecraft:air"));
+
+        // WAIT FOR THE FAR PORTAL TO ACTUALLY TEAR DOWN, do not assume a tick count. The frame-break
+        // rule fires from the DESTINATION portal's own teardown, and cross-dimension propagation runs
+        // through markShouldBreak -> a deferred ServerTaskList task that RETRIES while the far side
+        // is not ready. A fixed 60-tick wait asserted before that had happened and reported "THE
+        // MIRROR SURVIVED" — a precondition failure wearing a defect's clothes, and it pointed
+        // straight at innocent provenance code.
+        final BlockPos farCell = destRef.get();
+        final net.minecraft.resources.ResourceKey<Level> farDim = destDimRef.get();
+        try {
+            context.waitFor(mc -> {
+                MinecraftServer s = mc.getSingleplayerServer();
+                if (s == null) return false;
+                ServerLevel d = s.getLevel(farDim);
+                if (d == null) return false;
+                return d.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    new net.minecraft.world.phys.AABB(
+                        Vec3.atCenterOf(farCell).subtract(8, 8, 8),
+                        Vec3.atCenterOf(farCell).add(8, 8, 8)),
+                    p -> true).isEmpty();
+            }, 600);
+        } catch (Throwable t) {
+            throw new AssertionError(LOG + "RS-A step-7 FRAME-BREAK GATE FAILED: the destination"
+                + " portal never tore down within 600 ticks of the source frame being broken —"
+                + " cross-dimension teardown propagation did not reach it, so the frame-break rule"
+                + " never ran. This is a propagation failure, NOT a provenance failure.", t);
+        }
+        context.waitTicks(10);
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            ServerLevel dest = server.getLevel(destDimRef.get());
+            BlockPos destPos = destRef.get();
+            dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+
+            net.minecraft.world.level.block.state.BlockState sourceState = ow.getBlockState(sourceCell);
+            net.minecraft.world.level.block.state.BlockState destState = dest.getBlockState(destPos);
+
+            if (!sourceState.is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                failure.set("THE PLAYER'S BLOCK WAS DELETED — source " + sourceCell + " holds "
+                    + sourceState.getBlock() + " after the frame break, expected minecraft:rail."
+                    + " §0.4 says blocks survive in their own dimension; provenance is inverted.");
+                return;
+            }
+            if (!destState.isAir()) {
+                failure.set("THE MIRROR SURVIVED — destination " + destPos + " still holds "
+                    + destState.getBlock() + " after the frame break. §0.8 says the mirrored half is"
+                    + " cleared; leaving it turns one placed block into two (duplication).");
+            }
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS-A step-7 FRAME-BREAK GATE FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS-A step-7 FRAME-BREAK GATE PASS — player-placed half survived at {}, mirrored"
+                + " half cleared at {} | counters: {}",
+            sourceCell, destRef.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
     }
 
     /**
