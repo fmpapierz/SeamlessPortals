@@ -297,9 +297,19 @@ public class NetherPortalGeneration {
         BlockPortalShape blockPortalShape
     ) {
         blockPortalShape.area.forEach(
-            blockPos -> setPortalContentBlock(
-                world, blockPos, blockPortalShape.axis
-            )
+            blockPos -> {
+                // RECORDED IP DEVIATION — RS PASSTHROUGH (a); IP-core edit 8 of REDSTONE_A_SPEC.md
+                // §3.1. IP overwrites EVERY opening cell with the placeholder. When a frame is
+                // re-lit over a surviving rail line (user decision §0.4) that would silently delete
+                // the track the player just kept — the portal would come back and the rails would
+                // not. Survivors keep their block; the portal renders and functions identically
+                // because its geometry is entity state and never read from these cells.
+                if (com.warwa.seamlessportals.passthrough.ApertureOccupancy
+                        .isSurvivor(world, blockPos)) {
+                    return;
+                }
+                setPortalContentBlock(world, blockPos, blockPortalShape.axis);
+            }
         );
     }
 

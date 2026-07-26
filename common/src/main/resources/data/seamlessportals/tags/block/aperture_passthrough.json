@@ -1,0 +1,15 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:rail",
+    "minecraft:powered_rail",
+    "minecraft:detector_rail",
+    "minecraft:activator_rail",
+    "minecraft:redstone_wire",
+    "minecraft:repeater",
+    "minecraft:comparator",
+    "minecraft:lever",
+    "minecraft:redstone_torch",
+    "minecraft:redstone_wall_torch"
+  ]
+}
