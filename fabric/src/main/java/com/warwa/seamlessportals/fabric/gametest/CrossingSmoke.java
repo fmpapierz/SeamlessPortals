@@ -1598,6 +1598,37 @@ public class CrossingSmoke implements FabricClientGameTest {
                 failure.set("IGNITION DID NOT RESTORE THE FAR FRAME — the partner "
                     + partnerRef.get() + " is still air after the near side was repaired AND lit."
                     + " The dormant link is the only path that can do this with both portals dead.");
+                return;
+            }
+
+            // BIND-TIME RECONCILIATION. A rail that SURVIVED the frame break is already sitting in
+            // the aperture when the portal re-lights, so it never changes and change-driven mirroring
+            // never carries it — the user's "relight with a rail on the portal floor and half the
+            // rail gets cut off". The surviving source rail must have a counterpart again.
+            ServerLevel ow2 = server.getLevel(Level.OVERWORLD);
+            BlockPos survivor = new BlockPos(fx, py + 1, fz);
+            if (ow2.getBlockState(survivor).is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                var reCell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow2, survivor);
+                if (reCell == null) {
+                    failure.set("no seam binding at the surviving rail " + survivor + " after relight");
+                    return;
+                }
+                var reBind = reCell.bindings().stream()
+                    .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                    .findFirst().orElse(null);
+                if (reBind != null) {
+                    ServerLevel d2 = server.getLevel(reBind.destDim());
+                    d2.getChunk(reBind.destPos().getX() >> 4, reBind.destPos().getZ() >> 4);
+                    if (!d2.getBlockState(reBind.destPos())
+                            .is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                        failure.set("BIND RECONCILIATION FAILED — a rail survived the frame break at "
+                            + survivor + " and the portal was re-lit, but its counterpart "
+                            + reBind.destPos() + " in " + reBind.destDim().identifier()
+                            + " holds " + d2.getBlockState(reBind.destPos()).getBlock()
+                            + ". Mirroring is change-driven, so a pre-existing block is only carried"
+                            + " across by the bind-time pass — half the seam is missing without it.");
+                    }
+                }
             }
         });
 

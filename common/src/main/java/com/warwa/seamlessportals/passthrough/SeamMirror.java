@@ -346,6 +346,96 @@ public final class SeamMirror {
     }
 
     // =============================================================================================
+    // BIND-TIME RECONCILIATION
+    // =============================================================================================
+
+    private static long reconciled = 0L;
+
+    /**
+     * Mirror aperture contents that are ALREADY PRESENT when a portal binds.
+     *
+     * <p><b>The gap this closes.</b> Mirroring is CHANGE-DRIVEN — the driver only observes
+     * {@code setBlockState}. A block that is already sitting in the aperture when a portal comes into
+     * existence never changes, so it is never mirrored, and the seam has one half and not the other.
+     *
+     * <p>User-reported: break a frame with a rail on the portal floor (the rail survives, per §0.4),
+     * repair and re-light, and *"half the rail gets cut off and does not mirror"*. Exactly this: the
+     * surviving rail was never re-mirrored because nothing wrote to it.
+     *
+     * <p><b>Conflict rule is unchanged.</b> A destination cell that already holds a real block is
+     * LEFT ALONE — that block is the far side's own, and overwriting it would destroy a player's work
+     * to satisfy a mirror. Only air and placeholder cells receive. So two players who each built their
+     * own half keep both, and the common case (one surviving half, an empty counterpart) is restored.
+     *
+     * <p>Idempotent, and cheap: it runs only when a portal's geometry fingerprint changes, which for a
+     * stable portal is once.
+     */
+    public static void reconcileApertureOnBind(qouteall.imm_ptl.core.portal.Portal portal) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
+            return;
+        }
+        Level level = portal.level();
+        if (!(level instanceof ServerLevel serverLevel) || applying) {
+            return;
+        }
+        MinecraftServer server = serverLevel.getServer();
+        if (server == null) {
+            return;
+        }
+        applying = true;
+        int done = 0;
+        try {
+            for (net.minecraft.world.phys.Vec3 column : SeamMap.enumerateColumns(portal)) {
+                BlockPos src = SeamMap.seamCell(portal, column);
+                BlockState srcState = serverLevel.getBlockState(src);
+                if (srcState.isAir()
+                    || srcState.getBlock() == qouteall.imm_ptl.core.portal.PortalPlaceholderBlock.instance) {
+                    continue;   // nothing to carry
+                }
+                SeamRegistry.SeamCell cell = SeamRegistry.lookup(serverLevel, src);
+                if (cell == null) {
+                    continue;
+                }
+                for (SeamRegistry.SeamBinding binding : cell.bindings()) {
+                    if (!binding.isMirrorable()) {
+                        continue;
+                    }
+                    ServerLevel dest = server.getLevel(binding.destDim());
+                    if (dest == null) {
+                        continue;
+                    }
+                    BlockPos destPos = binding.destPos();
+                    dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+                    BlockState destState = dest.getBlockState(destPos);
+                    boolean free = destState.isAir()
+                        || destState.getBlock() == qouteall.imm_ptl.core.portal.PortalPlaceholderBlock.instance;
+                    if (!free) {
+                        continue;   // the far side's own block — never clobber it
+                    }
+                    dest.setBlock(destPos, srcState.rotate(binding.stateRotation()),
+                        net.minecraft.world.level.block.Block.UPDATE_ALL
+                            | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+                    ((SeamIndexHolder) dest).seamlessportals$mirrorCreatedCells().add(destPos.asLong());
+                    reconciled++;
+                    done++;
+                    break;   // one write per cell; the faces share a destination
+                }
+            }
+            if (done > 0 && AperturePassthroughLever.SEAM_MIRROR_PROBE) {
+                LOGGER.info("[RS-SEAM-MIRROR] bind reconciliation carried {} pre-existing aperture"
+                        + " block(s) across for portal {} in {}",
+                    done, portal.getId(), serverLevel.dimension().identifier());
+            }
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-SEAM-MIRROR] bind reconciliation failed for portal {}", portal.getId(), t);
+        }
+        finally {
+            applying = false;
+        }
+    }
+
+    // =============================================================================================
     // FRAME MIRRORING
     // =============================================================================================
 
