@@ -99,6 +99,8 @@ public class IrisCompatPaste {
     private static RenderPipeline PORTAL_AREA_SAMPLE;
     /** IS5-MB attribution sibling: identical but depth WRITE off. Selected only by the lever. */
     private static RenderPipeline PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE;
+    /** IS5-RC: one line per session naming the stamp pipeline actually bound (see stampPortalArea). */
+    private static boolean stampPipelineReported = false;
     private static RenderPipeline PORTAL_STRAIGHT_COPY;
 
     static {
@@ -322,10 +324,33 @@ public class IrisCompatPaste {
                     // IS5-MB attribution lever: swap to the no-depth-write sibling to test whether the
                     // stamped DEST depth is what makes composite4 compute a huge per-pixel velocity
                     // in the window region. DEFAULT keeps today's depth-writing pipeline.
-                    pass.setPipeline(
+                    //
+                    // IS5-RC SELF-REPORT (once-only). The previous stamp-depth A/B is UNUSABLE and must
+                    // be re-run, because this selection had THREE silent no-op paths and reported none
+                    // of them: the -P row might never have reached the JVM; the sibling pipeline might
+                    // have failed to register, in which case the `!= null` clause below silently falls
+                    // back to the depth-WRITING pipeline; or the stamp might not have run at all. The
+                    // run-config block covers the first. This line covers the other two by naming the
+                    // pipeline that was ACTUALLY bound at the point of effect. A leg whose log lacks
+                    // this line stamped nothing and measured nothing.
+                    boolean noDepthWrite =
                         qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER
-                            && PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null
-                            ? PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE : PORTAL_AREA_SAMPLE);
+                            && PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null;
+                    if (!stampPipelineReported) {
+                        stampPipelineReported = true;
+                        Helper.LOGGER.info(
+                            "[Seamless Portals] IS5-RC STAMP PIPELINE (once-only): bound={} ;"
+                                + " lever disableStampDepthWrite={} ; no-depth-write pipeline"
+                                + " registered={}. If the lever is set but bound=DEPTH-WRITE, the"
+                                + " sibling pipeline FAILED TO BUILD and this leg is VOID — the stamp"
+                                + " still wrote depth.",
+                            noDepthWrite ? "NO-DEPTH-WRITE" : "DEPTH-WRITE",
+                            qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER,
+                            PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null
+                        );
+                    }
+                    pass.setPipeline(
+                        noDepthWrite ? PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE : PORTAL_AREA_SAMPLE);
                     pass.setUniform("Projection", combinedSlice);
                     pass.bindTexture(
                         "InSampler", sampleSource.getColorTextureView(),

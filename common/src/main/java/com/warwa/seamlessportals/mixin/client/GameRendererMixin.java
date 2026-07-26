@@ -69,6 +69,17 @@ public abstract class GameRendererMixin {
         qouteall.imm_ptl.core.render.TeleportFlashProbe.onFrameEnd();
         // §2b dest-entity funnel probe (1Hz; byte-inert without -Dseamlessportals.entityProbe).
         qouteall.imm_ptl.core.render.EntityVisibilityProbe.onFrameEnd();
+        // IS5-CEN: the composite bind census's FRAME BOUNDARY. This is the only anchor in the mod that
+        // fires exactly once per rendered frame unconditionally — RenderStates.frameIndex is NOT
+        // usable for it, because MinecraftFramePumpMixin deliberately SKIPS the increment on
+        // mid-packet player/level-mismatch frames, which would silently merge two frames into one
+        // census row and corrupt the per-frame bind COUNT that is the whole point of the measurement.
+        // Byte-inert without -Dseamlessportals.compositeCensus.
+        com.warwa.seamlessportals.render.IrisCompositeCensus.onFrameEnd();
+        // IS5-RC: run self-identification watchdog. Always on, once per session — if no portal has
+        // been rendered by then it emits the config block anyway, so a run that measured nothing still
+        // says so IN THE LOG rather than looking deceptively healthy.
+        com.warwa.seamlessportals.render.RunConfigReport.tickFrame();
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }

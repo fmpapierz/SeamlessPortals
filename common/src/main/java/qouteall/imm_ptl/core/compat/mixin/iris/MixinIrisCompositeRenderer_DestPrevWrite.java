@@ -10,8 +10,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera;
 
 /**
- * IS5-MB (S1) — the WRITE seam for per-dest previous-frame camera state. Default-ON feature; see
- * {@link IrisDestPrevCamera} for the measured defect and the full mechanism.
+ * IS5-MB (S1) — the WRITE seam for per-dest previous-frame camera state. The feature is <b>DEFAULT OFF</b>
+ * as of 2026-07-26 (arm it with {@code -Dseamlessportals.enableIrisDestPrevCamera}); see
+ * {@link IrisDestPrevCamera} for the measured defect, the full mechanism, and why it does not ship on.
  *
  * <p><b>Why this exact target.</b> {@code Lnet/irisshaders/iris/gl/program/Program;use()V} occurs
  * <b>exactly once</b> in the whole of {@code CompositeRenderer} (bytecode offset 419 in

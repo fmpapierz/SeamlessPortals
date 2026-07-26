@@ -265,10 +265,12 @@ loom {
             // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
             if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
-            // IS5-MB per-dest previous-frame camera state (2026-07-26) — the same-dim portal-window
-            // motion-blur smear fix, DEFAULT-ON. Pass this to force it OFF and reproduce the
-            // saturated stationary smear (attribution both directions) —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
+            // IS5-MB per-dest previous-frame camera state (2026-07-26) — DEFAULT **OFF** (user ruling):
+            // it corrects a real measured 204-264 block previousCameraPosition error but changes
+            // nothing observable, so it does not ship on. Pass the ENABLE lever to turn it on for an
+            // A/B leg; the DISABLE lever still wins if both are set —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PenableIrisDestPrevCamera=true
+            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
             // A/B: force camera-position-only, dropping the previous-MATRIX half — expected loss of
             // rotational blur, and wrong on a rotated portal. Proves the matrices are load-bearing —
@@ -286,6 +288,17 @@ loom {
             // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
             if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF).
+            // Counts EVERY Program.use() in the process and, for the motion-blur pass, logs all six
+            // gbuffer matrices, both camera vectors, the two never-before-measured inverse-consistency
+            // checks (max|M*Minv - I|), and a CPU replay of composite4's own velocity arithmetic over a
+            // 3x3x3 screen/depth grid — reported as the blur span in PIXELS. Emits one block per second
+            // listing every bind of the most recent frame plus the whole second's bind-count range —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true
+            if (project.findProperty('compositeCensus') == 'true') { vmArg('-Dseamlessportals.compositeCensus=true') }
+            // Rename the deeply-measured pass if the roster line shows the pack calls it something else
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PcompositeCensusPasses=composite4,composite5
+            if (project.hasProperty('compositeCensusPasses')) { vmArg("-Dseamlessportals.compositeCensusPasses=${project.property('compositeCensusPasses')}") }
             // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
             // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
             // (attribution both directions) —
@@ -444,10 +457,12 @@ loom {
             // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
             if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
-            // IS5-MB per-dest previous-frame camera state (2026-07-26) — the same-dim portal-window
-            // motion-blur smear fix, DEFAULT-ON. Pass this to force it OFF and reproduce the
-            // saturated stationary smear (attribution both directions) —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
+            // IS5-MB per-dest previous-frame camera state (2026-07-26) — DEFAULT **OFF** (user ruling):
+            // it corrects a real measured 204-264 block previousCameraPosition error but changes
+            // nothing observable, so it does not ship on. Pass the ENABLE lever to turn it on for an
+            // A/B leg; the DISABLE lever still wins if both are set —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PenableIrisDestPrevCamera=true
+            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
             // A/B: force camera-position-only, dropping the previous-MATRIX half — expected loss of
             // rotational blur, and wrong on a rotated portal. Proves the matrices are load-bearing —
@@ -465,6 +480,17 @@ loom {
             // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
             if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF).
+            // Counts EVERY Program.use() in the process and, for the motion-blur pass, logs all six
+            // gbuffer matrices, both camera vectors, the two never-before-measured inverse-consistency
+            // checks (max|M*Minv - I|), and a CPU replay of composite4's own velocity arithmetic over a
+            // 3x3x3 screen/depth grid — reported as the blur span in PIXELS. Emits one block per second
+            // listing every bind of the most recent frame plus the whole second's bind-count range —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true
+            if (project.findProperty('compositeCensus') == 'true') { vmArg('-Dseamlessportals.compositeCensus=true') }
+            // Rename the deeply-measured pass if the roster line shows the pack calls it something else
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PcompositeCensusPasses=composite4,composite5
+            if (project.hasProperty('compositeCensusPasses')) { vmArg("-Dseamlessportals.compositeCensusPasses=${project.property('compositeCensusPasses')}") }
             // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
             // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
             if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }

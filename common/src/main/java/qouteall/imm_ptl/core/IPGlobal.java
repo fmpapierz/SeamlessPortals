@@ -225,14 +225,29 @@ public class IPGlobal {
     // the dest pass reads prev=main_N/cur=dest_N. Cross-dim is clean (own pipeline, own tracker) and is
     // EXCLUDED by construction. Fix = write the dest's own previous trio into the guarded composite
     // program between its Program.use() and its draw, then RESTORE iris's values before the next pass.
-    // DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableIrisDestPrevCamera.
+    // DEFAULT **FALSE** as of 2026-07-26 — USER RULING. The mechanism works and the defect it corrects
+    // is real and measured (writes=1243/run, a 204-264 block previousCameraPosition error), but it
+    // changes NOTHING observable: the portal-window smear is byte-for-byte identical with it on and
+    // off. Shipping an unproven render-path change for zero visible benefit is the wrong trade, and
+    // the correction is not free — correctIfDestChain runs on EVERY guarded composite bind whenever the
+    // per-dest map is non-empty (outside every portal bracket), issuing glGetUniformfv reads and
+    // glUniform3f writes into iris's own uniform storage whose correctness rests on a paired restore
+    // injection firing. It also confounds any measurement of the smear, since it mutates the very state
+    // being measured. The class, both mixins and every lever are KEPT: the corrected state is one flag
+    // away if the ping-pong-parity line of attack turns out to need it.
+    // Turn ON for an A/B leg with -Dseamlessportals.enableIrisDestPrevCamera; the disable lever still
+    // wins over the enable lever, so a script that sets both is unambiguous.
     public static final boolean IRIS_DEST_PREV_CAMERA_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableIrisDestPrevCamera");
-    public static boolean irisDestPrevCamera = true;
+    public static final boolean IRIS_DEST_PREV_CAMERA_ENABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.enableIrisDestPrevCamera");
+    public static boolean irisDestPrevCamera = false;
 
-    /** True when the same-dim dest composite should receive its OWN previous-frame camera state. */
+    /** True when the same-dim dest composite should receive its OWN previous-frame camera state.
+     *  Default OFF (see above); the enable lever arms it, and the disable lever always wins. */
     public static boolean isIrisDestPrevCameraActive() {
-        return irisDestPrevCamera && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
+        return (irisDestPrevCamera || IRIS_DEST_PREV_CAMERA_ENABLED_LEVER)
+            && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
     }
 
     /** IS5-MB matrix half. Set to force camera-position-only — the A/B leg proving the previous
@@ -262,6 +277,15 @@ public class IPGlobal {
     // COST while set: re-opens the #13 "second portal paints over the first" artifact. Diagnostic only.
     public static final boolean STAMP_DEPTH_WRITE_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableStampDepthWrite");
+
+    // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
+    // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
+    // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
+    // the census reads its own system properties directly (see IrisCompositeCensus).
+    public static final boolean COMPOSITE_CENSUS_PROBE =
+        Boolean.getBoolean("seamlessportals.compositeCensus");
+    public static final String COMPOSITE_CENSUS_PASSES =
+        System.getProperty("seamlessportals.compositeCensusPasses", "composite4");
 
     public static int irisDestPrevWriteCount = 0;
     public static int irisDestPrevNeutralizeCount = 0;
