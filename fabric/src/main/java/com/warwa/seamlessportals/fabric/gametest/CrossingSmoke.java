@@ -904,8 +904,52 @@ public class CrossingSmoke implements FabricClientGameTest {
                 }
             }
             if (examined == 0) { failure.set("no mirrorable portals examined"); return; }
+
+            // ---- STEP-2 GATE: the registry must agree with the arithmetic ----
+            // SeamMap says which cells pair up; SeamRegistry indexes them by position. If the two
+            // disagree, every later stage reads a lie. Checked against the SAME portals just
+            // verified above, so a registry that indexed nothing cannot pass by being empty.
+            int registryChecks = 0;
+            for (qouteall.imm_ptl.core.portal.Portal p : portals) {
+                if (!com.warwa.seamlessportals.passthrough.SeamMap.isMirrorable(p)) continue;
+                for (Vec3 col : com.warwa.seamlessportals.passthrough.SeamMap.enumerateColumns(p)) {
+                    BlockPos src = com.warwa.seamlessportals.passthrough.SeamMap.seamCell(p, col);
+                    BlockPos expectedDst =
+                        com.warwa.seamlessportals.passthrough.SeamMap.mirrorCell(p, col);
+
+                    if (!com.warwa.seamlessportals.passthrough.SeamRegistry
+                            .sectionHasSeam(p.level(), src)) {
+                        failure.set("registry hot-path gate missed section for bound cell " + src
+                            + " (portal " + p.getId() + ") — setBlockState would skip it entirely");
+                        return;
+                    }
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry
+                        .lookup(p.level(), src);
+                    if (cell == null) {
+                        failure.set("registry has no binding at " + src + " (portal " + p.getId()
+                            + ") though SeamMap binds that column");
+                        return;
+                    }
+                    boolean found = cell.bindings().stream()
+                        .anyMatch(b -> b.portalUuid().equals(p.getUUID())
+                            && expectedDst.equals(b.destPos()));
+                    if (!found) {
+                        failure.set("registry binding at " + src + " for portal " + p.getId()
+                            + " does not carry SeamMap's destination " + expectedDst
+                            + " — registry and arithmetic disagree; bindings=" + cell.bindings());
+                        return;
+                    }
+                    registryChecks++;
+                }
+            }
+            if (registryChecks == 0) {
+                failure.set("zero registry cross-checks ran — the step-2 assertion never executed");
+                return;
+            }
+
             report.set("examined " + examined + " mirrorable portal(s), "
-                + involutions.get() + " involution check(s)" + sb);
+                + involutions.get() + " involution check(s), "
+                + registryChecks + " registry cross-check(s)" + sb);
         });
 
         String f = failure.get();
