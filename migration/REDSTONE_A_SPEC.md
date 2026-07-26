@@ -1,5 +1,24 @@
 # FINAL IMPLEMENTABLE SPEC — Sub-feature (a): placeable, mirrored portal aperture
 
+> ## ⚠ USER DECISIONS 2026-07-25 — THESE OVERRIDE THE SPEC BELOW WHERE THEY DIFFER
+>
+> The spec's §8 listed three items as needing the user. All three are now decided:
+>
+> 1. **Frame break → `SEVER_CLEAR_DEST`, NOT `KEEP_BOTH`.** The spec's default duplicates blocks; the
+>    user rejected that. The originally-placed block survives in its own dimension and its mirror is
+>    removed. **This adds a requirement the spec does not have: PROVENANCE.** `SeamBinding` must record
+>    which half was player-placed and which was the mirror, otherwise "clear the destination half" is
+>    undecidable. Add the field in staging step 2 and consume it in step 6/7.
+> 2. **Non-item writes → accept best-effort**, exactly as §8 proposes. The refuse-on-conflict violation
+>    is knowingly accepted for (a).
+> 3. **§4.1's ignition rule → CONFIRMED.** It is no longer "a Claude-made reconciliation … confirm it
+>    before step 4"; it is a user decision. Build it as written.
+>
+> **Two future plans, explicitly out of scope for (a)** (recorded in `REDSTONE_RECON.md` §0.9): genuine
+> *fractional* seam blocks so a frame break loses nothing, and fully correct non-item write behaviour.
+> Do not build either now; do not lose them.
+
+
 Worktree root `W` = `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\redstone`; `REF` = `C:\Users\warwa\ModDev\mc262-ref`. All paths below are relative to `W` unless prefixed `REF/`.
 
 Citation status of every load-bearing line is one of: **[V]** = I re-opened it this session; **[V2]** = attested by both the design and a verifier and consistent with what I opened; **[UNVERIFIED]** = asserted upstream, not opened by me.
