@@ -543,6 +543,52 @@ and `IPCompatMixinPlugin`'s new loader term; C4 removal atomic per §G.3 includi
 (`IPConfig:179-182` dies WITH `:41-52`); add the **loud NeoForge init-time notice** the user's
 decision requires; re-shape TITLE-CARD per §C.
 
+### G.8 THE CONSTRAINT-5 GATE — (ii) DISCHARGED, (i) reduced to ONE live observation
+
+**The ordering problem, measured.** §D assumed `SeamlessClientTeleport`'s deletion could simply move
+to the final increment. Measurement refutes that: it is **mutually exclusive** with the core
+deletion. It references 8 dying classes (`ModPayloads` ×8, `PortalLink` ×6, `PortalWorldManager` ×3,
+`PortalManager` ×2, `PortalContextSwitch` ×2, `DimensionRenderHelper` ×2, `StencilPortalRenderer`,
+`SeamlessClientChunkMap`) and is referenced by 15 files, **five of them audit-confirmed SURVIVORS**
+(`ClientPacketListenerTeleportToleranceMixin`, `LivingEntitySprintCancelDiagMixin`,
+`LevelRendererAccessorMixin`, `MinecraftFramePumpMixin`, `CrossingTracer`). So keeping it while
+deleting its dependency web turns `:common` RED, and essentially every remaining deletion is behind
+this gate. **The (verify) record must therefore be obtained BEFORE the deletion, not after** — which
+is fine, because both sub-items concern the PORTED (flag-ON) path, and that path is the shipping
+default today.
+
+**(ii) Sprint-modifier keeper — DISCHARGED ANALYTICALLY (structural claim, settled structurally).**
+S08 §10 predicted "Expected green (the wipe's precondition is absent by construction)". Confirmed
+still true on this branch at
+`qouteall/imm_ptl/core/teleportation/ClientTeleportationManager.changePlayerDimension` (`:460`):
+the body carries the SAME `LocalPlayer` instance — `player.unRide()` →
+`ip_setWorld(toWorld)` on the connection → `fromWorld.removeEntity(id, CHANGED_DIMENSION)` →
+`((IEEntity) player).ip_setWorld(toWorld)` → `toWorld.addEntity(player)` — with **zero**
+`new LocalPlayer`, `assignAllValues`, `replaceFrom`/`restoreFrom`, `createPlayer`, or `AttributeMap`
+/`getAttributes` manipulation. The sprint theft's precondition was an attribute-modifier wipe
+clearing `minecraft:sprinting`; with the `AttributeMap` carried rather than copied, that wipe cannot
+occur. Live re-confirmation is still welcome as a regression row, but the sub-item's claim was
+structural and the structure is verified.
+
+**(i) Lagged-rotation-field shift — the gap is REAL at the API level, and now precisely pinned.**
+The ported `TransformationManager:198-203` writes the full IP six-field set absolutely
+(`yRotO`, `xRotO`, `yBob`, `xBob`, `yBobO`, `xBobO`), so the port itself is faithful. But S11A:122-125's
+flag ("26.2's camera bob reads `ClientAvatarState.bob`, so the write-set may need avatarState fields
+too") is **confirmed against 26.2 source**: `GameRenderer.bobView` (`mc262-ref`, `:322-334`) reads
+`cameraState.entityRenderState.backwardsInterpolatedWalkDistance` and
+`cameraState.entityRenderState.bob` — **not** `player.yBob`/`xBob`. The avatar-state route is the
+live one, as the mod's own `CrossingTracer.java:112` demonstrates
+(`mc.player.avatarState().getInterpolatedBob(1.0f)`).
+
+Consequence, stated precisely rather than alarmingly: the **rotation** half (`yRotO`/`xRotO`) is
+still genuinely load-bearing on 26.2 (previous-tick rotation for interpolation) and is intact — that
+half IS the hand-glitch-chain core. The **bob** half's writes no longer reach 26.2's camera-bob
+input, so they are faithful-but-inert there. Whether that produces a visible artifact at a crossing
+cannot be settled by inspection (it depends on whether the avatar-state bob wants an equivalent
+reset), so it reduces to **one narrow live observation**: walk and sprint through a portal, watch
+the hand and the FOV. That single check discharges (i) and empirically re-confirms (ii), and unblocks
+the entire remaining deletion.
+
 ### G.6 A stale label that S20 itself creates
 
 `ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's
