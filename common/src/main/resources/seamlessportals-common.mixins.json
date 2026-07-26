@@ -32,6 +32,7 @@
     "client.LocalPlayerMixin",
     "client.ChunkPacketGuardMixin",
     "client.ClientBlockUpdateDeliveryProbeMixin",
+    "client.SectionUpdateTrackerDeliveryProbeMixin",
     "client.SectionDirtyStateAccessor",
     "client.SectionOcclusionGraphAccessorMixin",
     "client.SectionOcclusionGraphPartialUpdateSkipMixin",
