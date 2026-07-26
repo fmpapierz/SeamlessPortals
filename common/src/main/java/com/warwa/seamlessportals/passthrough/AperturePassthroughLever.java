@@ -88,6 +88,19 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamMirror");
 
     /**
+     * Disables MIRROR AUTHORITY — {@code -Dseamlessportals.disableMirrorAuthority=true}.
+     *
+     * <p>With the fix ON, a cell whose occupant this level received from a mirror is not re-derived
+     * or deleted by the destination: its shape and validity are the source cell's. With it OFF,
+     * vanilla runs — which re-resolves the mirrored copy against destination neighbours (the two
+     * halves then hold different shapes) and can delete it for lack of support at the destination,
+     * dropping an item while the source block survives. That last path is an ITEM DUPLICATION route,
+     * so this lever exists to DEMONSTRATE the defect, not as a supported configuration.
+     */
+    public static final boolean DISABLE_MIRROR_AUTHORITY =
+        Boolean.getBoolean("seamlessportals.disableMirrorAuthority");
+
+    /**
      * Disables the seam TARGETING fix — {@code -Dseamlessportals.disableSeamTargeting=true}.
      *
      * <p>With the fix on, a crosshair resting on a seam cell that holds a REAL block targets that
