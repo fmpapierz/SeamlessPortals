@@ -235,3 +235,45 @@ Falsifiable prediction to check against the existing probe line, unchanged: dest
 
 **The single trigger that justifies going further than round 3:**
 If Step 0 / P1 confirms the heal, the retarget lands, and the dest `posOffset` measurably drops to ~0 — **and the user still reports standard-coloured light in the window** — then the volume is not the problem and every further volume measurement is wasted. At that point, and only at that point, run **P6 (the paint test)**. Blue window ⇒ the consumption path is good and the remaining fault is the dest voxelisation (the `nz` 11940-vs-18024 / `max` 13-vs-28 defect). Unchanged window ⇒ the window's shading never samples the dest ACT volume, the entire IS5-ACT line of investigation is closed, and the work moves downstream to `GetLightVolume` / the dest gbuffer pass's sampler bindings.
+
+---
+
+# ★ ENGAGEMENT CLOSED — 2026-07-26, LIVE-CONFIRMED BY THE USER
+
+**User verdict:** *"colored light works now, ghost still gone … colored light not creeping in, showing
+up nice and smooth, good."*
+
+**Fix shipped `e33bc4e`** — retarget the IS5-PH heal to the PRE-LOOP captured main pipeline.
+Lever `-Dseamlessportals.disableHealRetarget` (DEFAULT-ON fix, rows in both gradle blocks).
+
+## The A/B ladder, in one table
+
+| run | heal | retarget | DEST `\|posOffset\|∞` | dest floodfill nz |
+|---|---|---|---|---|
+| 3 | ACTIVE | — | 132 ×38, 133, 134 | **plateau 90** |
+| 5 (Step 0) | DISABLED | — | 0.0 ×85, 1.0 ×3, 2.0 ×1 | 135 → **15283** |
+| 6 | ACTIVE | **ON** | 0.0 ×171, 1.0 ×15, 2.0 ×2 | **4149–7293** |
+| 7 (no probes) | ACTIVE | ON | — | user: colour correct, ghost absent |
+
+Final clean run: GL census **6** = exactly the known iris `copyPre*` baseline, zero probe output
+(correctly default-off), full fix stack live (`IS5-PH`, `IS5-G`, `C3-BLOOM`, `iris-bob-sync`,
+`DESPAWN-SUPPRESS`), and all 43 warnings pre-existing third-party noise.
+
+## Residual watch items (none blocking)
+
+1. **~16 of ~204 dest `posOffset` samples read 53–68** in run 6 — most likely genuine camera jumps at
+   crossing/teleport frames. Unproven; benign so far.
+2. **Dest voxelisation is thinner than main** (as DEST `voxel nz=11940 max=13`; same texture as MAIN
+   23 s later `nz=18024 max=28`, and `bes=0` on every dest frame). A real, independent defect that the
+   `previousCameraPosition` fix does not touch — it cannot explain a 67× flood-fill deficit (the seed
+   deficit is 1.5×), but it will slightly degrade in-window colour. Not user-reported.
+3. **The ~45× in-window frame-rate collapse** (0.84 fps with a cross-dim window open vs 38–56 fps out)
+   — entirely separate performance item, and the reason "60 dispatches" looked anomalous in run 3.
+4. **`-PactVolumeProbe` is the lag source** (1 Hz GPU→CPU readback). Never leave it on for gameplay.
+
+## The prediction that was wrong in the good direction
+
+The design panel predicted the fill would "creep in over ~30 s" (~1 block per 2 dispatches under
+`OPTIMIZATION_ACT_HALF_RATE_SPREADING`) and pre-registered that as the success signature so it would
+not be misread as a second bug. The user reports it arriving **smooth and immediate**. Conservative
+prediction, better reality — no action needed.
