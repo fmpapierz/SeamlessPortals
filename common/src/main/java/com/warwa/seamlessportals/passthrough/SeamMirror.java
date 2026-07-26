@@ -267,15 +267,29 @@ public final class SeamMirror {
         long destKey = destPos.asLong();
 
         if (newState.isAir()) {
-            // The source half was removed. Clear the counterpart ONLY if we created it — provenance.
-            // Without this check, breaking your own block would delete the one the player built from
-            // the other side, which is the opposite of the user's rule.
-            if (holder.seamlessportals$mirrorCreatedCells().contains(destKey)) {
+            // BREAKING EITHER HALF BREAKS BOTH — unconditionally, NOT gated on provenance.
+            //
+            // User-reported defect (live round #2): with the clear gated on
+            // mirrorCreatedCells.contains(dest), breaking the MIRRORED half looked for provenance on
+            // the counterpart cell, did not find it (the player placed that one by hand), and so left
+            // the source half standing. The player then could not replace the block they had just
+            // broken — the placement was refused because the surviving source half occupied the
+            // seam. It presented as "the rail places and instantly disappears".
+            //
+            // Provenance belongs to the FRAME-BREAK rule (§0.8 "frame break clears the destination
+            // half"), which must distinguish the player's block from the mirror's. A manual break is
+            // a different act: the player is removing the seam, and both halves go.
+            //
+            // Item drops come out right for free: setBlockAndUpdate does NOT drop, so only the side
+            // the player actually broke yields an item — exactly "the rail drops on whatever side it
+            // was broken on", with no duplication.
+            BlockState existing = dest.getBlockState(destPos);
+            if (!existing.isAir()) {
                 dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
-                holder.seamlessportals$mirrorCreatedCells().remove(destKey);
                 clearedMirrors++;
-                probe("cleared mirror at", destPos, dest, sourcePos, sourceLevel);
+                probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
             }
+            holder.seamlessportals$mirrorCreatedCells().remove(destKey);
             return;
         }
 

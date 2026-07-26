@@ -32,6 +32,13 @@ import java.util.UUID;
  * {@link SeamIndexHolder#seamlessportals$mirrorCreatedCells()} — because those are facts about blocks,
  * not about geometry, and cannot be recomputed.
  *
+ * <p><b>A portal binds only while it TICKS.</b> Seeding runs off {@code SERVER_PORTAL_TICK_SIGNAL},
+ * so a portal in a non-ticking chunk holds no bindings, and a block changed in its aperture has no
+ * seam to act on — the mirror is silently one-directional until the far side is alive. Usually
+ * invisible in play (a portal you are standing at keeps its counterpart loaded), but it is exactly
+ * why the steps 5+6 gate must force-load and TICK the far portal before asserting the reverse
+ * direction. Making the mirror durable across a cold far side is the step-7 journal's job.
+ *
  * <p><b>Two bindings per cell.</b> An obsidian frame produces FOUR portal entities — two coincident
  * opposite-normal ones per side (confirmed live: ids 13+14 at identical overworld coordinates). Both
  * faces bind the same aperture cell, so a cell carries up to two bindings and a driver that fires
