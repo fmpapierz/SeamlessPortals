@@ -1810,6 +1810,10 @@ public class SecondaryWorldRenderCore {
             // seams); endPass() emits the provenance/roster/identity/occupancy block in the finally.
             // Lever-gated -Dseamlessportals.shadowAliasProbe; byte-inert at the default.
             com.warwa.seamlessportals.render.ShadowAliasProbe.beginPass(destCameraPos);
+            // IS5-ACT gate probe — PORTAL bracket open (same try/finally that pairs ShadowAliasProbe
+            // above). Snapshots the iris ShadowRenderer statics so endPortal can prove a shadow pass
+            // ran INSIDE this nested dest render. Log-only; never throws.
+            com.warwa.seamlessportals.render.ActSeedProbe.beginPortal(destDim, sharedState, destCameraPos);
             // §8-14 LRS-identity HARD assert immediately before render() (port-note §1-E):
             // extract writes the extractor's LRS; render() reads the renderer's field — a
             // divergence here silently drops entities/clouds/particles.
@@ -1962,6 +1966,13 @@ public class SecondaryWorldRenderCore {
             // (batch provenance split by shadow/camera scope, in-scope rosters, list identity
             // collisions + woven-RSM snapshot state, and the whole-map occupancy grid + yaw).
             com.warwa.seamlessportals.render.ShadowAliasProbe.endPass();
+            // IS5-ACT gate probe — PORTAL bracket close + capture. THIS SLOT IS LOAD-BEARING:
+            // client.level is still the DEST here (MyGameRenderer:595 sets it, :669 restores it in
+            // switchAndRenderTheWorldFullPipeline's own finally, which has not run yet), so
+            // Iris.getCurrentDimension() and getPipelineNullable() both resolve to the DEST. The
+            // same read taken in IrisCompatOn262Renderer.invokeWorldRendering's finally would see
+            // the SOURCE dimension. Log-only; never throws.
+            com.warwa.seamlessportals.render.ActSeedProbe.endPortal();
             // §8-3(c) — re-run SOURCE setupFog so any capture-at-setupFog observer serves SOURCE
             // fog for the frame's remainder (block-era Step-9 discipline). Compute-only for the
             // UBO on 26.2; the shared AtmosphericFogEnvironment takes one extra lerp step toward

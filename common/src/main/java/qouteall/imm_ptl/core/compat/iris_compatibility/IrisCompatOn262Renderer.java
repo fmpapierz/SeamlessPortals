@@ -239,6 +239,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // family's onBeforeHandRendering is the empty base body — shaders-OFF runs zero of this.
         IrisBobSync.deriveFramePose(modelView);
 
+        // IS5-ACT gate probe — FRAME bracket open. MUST precede IrisShadowCompositeSuppressor
+        // .install() below: after the install the MAIN pipeline's ShadowRenderer.compositeRenderer
+        // is the no-op with an EMPTY passes list, and leg [2]'s roster would read a lie.
+        // Log-only, default OFF (-Dseamlessportals.actProbe); never throws.
+        com.warwa.seamlessportals.render.ActSeedProbe.beginFrame();
+
         isInsideOwnRenderPortals = true;
         try {
             // IS5-FF (§2h lava-light phantom): swap the MAIN pipeline's ShadowRenderer
@@ -287,6 +293,11 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
                 anyFullPipelineDestRendered = false;
                 IrisInterface.invoker.healPreviousFrameUniforms();
             }
+
+            // IS5-ACT gate probe — FRAME bracket close + the 1Hz single-call emit. Last statement
+            // of the finally: strictly outside the verify-fold F1 ordering (uninstall / blit-back /
+            // guard-restore / heal), and still runs on a mid-loop throw. Log-only; never throws.
+            com.warwa.seamlessportals.render.ActSeedProbe.endFrame();
         }
 
         CHelper.checkGlError();
@@ -460,6 +471,10 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
     protected void renderPortals(Matrix4f modelView) {
         List<Portal> portalsToRender = getPortalsToRender(modelView);
+
+        // IS5-ACT census: the LISTED count (pre-occlusion). Splits "no portal on screen" from
+        // "every portal occlusion-rejected" in the watchdog. Log-only; never throws.
+        com.warwa.seamlessportals.render.ActSeedProbe.onPortalListSize(portalsToRender.size());
 
         for (Portal portal : portalsToRender) {
             doRenderPortal(portal, modelView);
