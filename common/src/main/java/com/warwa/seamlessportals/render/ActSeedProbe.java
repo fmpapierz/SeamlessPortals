@@ -401,6 +401,8 @@ public final class ActSeedProbe {
             else {
                 sameIdThisFrame++;
             }
+            // Feeds the round-2 VOID-RUN guard: a session of only same-dim windows measures nothing.
+            ActDispatchProbe.noteWindowClass(crossId);
 
             if (!liveLogged) {
                 liveLogged = true;
