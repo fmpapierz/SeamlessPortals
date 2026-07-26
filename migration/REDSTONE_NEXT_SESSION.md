@@ -8,6 +8,29 @@
 2. `migration/REDSTONE_A_SPEC.md` — the (a) spec. **Its top banner overrides the body** where they differ.
 3. This file.
 
+## ★ SUB-FEATURE (a) IS COMPLETE — 2026-07-26, tip `7070101`
+
+All 8 spec steps plus frame mirroring and the targeting fix are landed, gated in both lever
+directions, and pushed. **Next engagement is (b) rail connection across the plane**, which consumes
+the `SeamMap` / `SeamRegistry` primitive built here via `lookupAcross` / `mapDir` / `seamGroup`.
+
+What works, user-verified live:
+- The aperture is ordinary building space at any height; blocks placed there mirror across the seam
+  and read as one block spanning it.
+- Breaking either half breaks both, dropping an item only on the side broken. No duplication.
+- A conflict refuses the placement outright, before any world write.
+- A frame break keeps the player's block and clears the mirror (provenance).
+- Frame **breaks** mirror instantly; frame **repairs** stage until ignition, which then restores the
+  far frame through the persisted dormant link with no portal alive, and relinks to the same partner.
+- A block aimed into an aperture stays in the player's own dimension, while reaching THROUGH an empty
+  aperture still works.
+
+Not built: (b) rail connection, (c) redstone bridge, (d) minecart traversal. Rails are still just
+blocks that mirror — they do not connect or carry carts.
+
+**`SeamJournal` has never executed.** It guards a state with no known reachable path (see below). It
+is insurance, not verified code.
+
 ## STATE: steps 0–4 of 8 landed, gated, pushed
 
 | step | what | commit |
@@ -93,10 +116,30 @@ destinations.
   Never add a frame material to `aperture_support`. Never admit the placeholder.
 - **STAGING FLAW in the spec:** IP-core edit 10 (re-ignition guard) is scheduled at step 7 but guards a
   hazard created at step 4. Root fix is already in; keep edit 10 as defence in depth.
-- **Instruments must assert their own COVERAGE, not just their result.** Three separate times an
-  instrument reported success without exercising what it tested: the teardown probe that only ever
-  logged `intact=true`; a client-side block read returning `void_air` for unloaded chunks; the seam
-  gate passing while skipping its involution because no bi-way pair was in range.
+- **Instruments must assert their own COVERAGE, not just their result. FIVE false readings this
+  engagement, every one of which looked like evidence:**
+  1. the teardown probe that only ever logged `intact=true`, so the failure path was never exercised;
+  2. a client-side block read returning `void_air` for chunks outside render distance;
+  3. the seam gate passing while skipping its involution, because no bi-way pair was in range;
+  4. a gate whose `AssertionError` was swallowed by an enclosing `catch (Throwable)` — `ALL LEGS PASS`
+     printed while the gate had failed;
+  5. the aim probe measuring the code path the targeting fix REPLACED — it logged the decision before
+     applying the override, and cried "SEAM CELL LOST" 17 times about hits the fix was keeping local.
+  Gates caught 1–4. The USER caught 5, by testing by hand. Reading a stale probe as evidence would
+  have sent me rewriting working code.
+- **A gate whose setup is invalid produces a CONFIDENT WRONG VERDICT.** Twice the frame-break gate
+  accused innocent code — "THE PLAYER'S BLOCK WAS DELETED — provenance is inverted" (actually a rail
+  placed with no support, popped by vanilla rules) and "THE MIRROR SURVIVED — duplication" (actually
+  asserting before cross-dimension teardown had propagated). Both times the *probe* output
+  disambiguated it: `cleared 0 ... provenance set size=0` with every cell already air describes a rule
+  that NEVER RAN, not one that ran and answered wrongly. Gates must log their working, not a verdict.
+- **Self-consistent tests prove nothing.** The mirror gate read `binding.destPos()` and then verified
+  THAT SAME CELL, so it could not see that the mirror was writing one block off from what the far
+  portal claimed. That bug survived the involution gate, the mirror gate AND a live user test (a rail
+  one block off next to a portal looks right); it took a FOURTH consumer — the frame-break rule — to
+  expose it. Cross-side invariants need a test that spans both sides.
+- **Wait for preconditions, never a tick count.** Cross-dimension teardown runs through
+  `markShouldBreak` into a deferred RETRYING task, so it has no fixed latency.
 - **An evidence gametest leg must never perturb a functional leg** — twice: a staged block left in
   portal B's window failed the ender-pearl leg, and a leftover obsidian FRAME inside another leg's
   128-block match radius made leg 6a link to it. Cleanup belongs in a `finally`.
