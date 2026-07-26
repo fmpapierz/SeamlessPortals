@@ -22,7 +22,9 @@
     "sodium.MixinSodiumFullbrightProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe",
     "iris.MixinIrisSodiumTransformPatcher_ClipInject",
-    "iris.MixinIrisCompositeRenderer_BloomApertureMask"
+    "iris.MixinIrisCompositeRenderer_BloomApertureMask",
+    "iris.MixinIrisComputeProgram_ActDispatch",
+    "iris.MixinIrisShadowCompositeRenderer_ActRenderAll"
   ],
   "injectors": {
     "defaultRequire": 1

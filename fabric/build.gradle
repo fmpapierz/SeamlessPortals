@@ -271,6 +271,12 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PactProbe=true -PactVolumeProbe=true
             if (project.findProperty('actProbe') == 'true') { vmArg('-Dseamlessportals.actProbe=true') }
             if (project.findProperty('actVolumeProbe') == 'true') { vmArg('-Dseamlessportals.actVolumeProbe=true') }
+            // IS5-ACT ROUND-2 dispatch witness (log-only, default OFF; REQUIRES -PactProbe).
+            // 2 log-only iris mixins (ComputeProgram.dispatch HEAD + ShadowCompositeRenderer
+            // .renderAll HEAD) + GL uniform/image-binding queries, one capture per armed portal
+            // window, folded into the existing 1Hz emit —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PactProbe=true -PactVolumeProbe=true -PactDispatchProbe=true
+            if (project.findProperty('actDispatchProbe') == 'true') { vmArg('-Dseamlessportals.actDispatchProbe=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -406,6 +412,10 @@ loom {
             // for lever-row parity) —
             if (project.findProperty('actProbe') == 'true') { vmArg('-Dseamlessportals.actProbe=true') }
             if (project.findProperty('actVolumeProbe') == 'true') { vmArg('-Dseamlessportals.actVolumeProbe=true') }
+            // IS5-ACT round-2 (the suite runs iris-ABSENT => both mixins are declined by
+            // IPCompatMixinPlugin and ActDispatchProbe disarms on ClassNotFoundException —
+            // structurally inert; row kept for lever-row parity) —
+            if (project.findProperty('actDispatchProbe') == 'true') { vmArg('-Dseamlessportals.actDispatchProbe=true') }
         }
     }
 }

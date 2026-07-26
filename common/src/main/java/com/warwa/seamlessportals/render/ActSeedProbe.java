@@ -196,6 +196,52 @@ public final class ActSeedProbe {
     private static boolean gl45Checked = false;
     private static boolean gl45Ok = false;
 
+    /** Round-2: the current portal's dest floodfill ids, published for {@link ActDispatchProbe}'s
+     *  R-4 binding check. Set in {@code appendPortalRow}; -1 outside a captured portal row. */
+    private static int destFfId = -1;
+    private static int destFfCopyId = -1;
+
+    static Vec3 currentDestCam() {
+        return pDestCam;
+    }
+
+    /**
+     * Resolved LIVE, not from the cached per-row fields: the round-2 dispatch capture fires DURING the
+     * nested dest render, i.e. BEFORE {@code appendPortalRow} runs, so the cached ids would be the
+     * previous portal's. At capture time {@code getPipelineNullable()} already resolves to the dest
+     * pipeline (the level swap is in force), so a fresh lookup is both correct and cheap enough for a
+     * once-per-armed-window call.
+     */
+    static int currentDestFfId() {
+        int id = liveImageId("floodfill_img");
+        return id > 0 ? id : destFfId;
+    }
+
+    static int currentDestFfCopyId() {
+        int id = liveImageId("floodfill_img_copy");
+        return id > 0 ? id : destFfCopyId;
+    }
+
+    private static int liveImageId(String name) {
+        try {
+            if (!reflectionReady) {
+                return -1;
+            }
+            Object pm = mGetPipelineManager.invoke(null);
+            if (pm == null) {
+                return -1;
+            }
+            Object pipeline = mGetPipelineNullable.invoke(pm);
+            if (pipeline == null || !irisPipelineClass.isInstance(pipeline)) {
+                return -1;
+            }
+            return imageId(customImages(pipeline), name);
+        }
+        catch (Throwable t) {
+            return -1;
+        }
+    }
+
     // =============================================================================================
     // Public entries — every one is total: it never throws into the render path.
     // =============================================================================================
@@ -231,6 +277,10 @@ public final class ActSeedProbe {
 
             long now = System.nanoTime();
             armed = (now - lastEmitNanos) >= RATE_LIMIT_NS;
+            // Round-2: the dispatch witness shares this frame clock (its MAIN capture keeps its own,
+            // because the MAIN shadowcomp has already dispatched by the time this anchor runs).
+            ActDispatchProbe.checkLeverPairing(ENABLED);
+            ActDispatchProbe.onFrameArmed(armed);
             if (!armed) {
                 return;
             }
@@ -272,6 +322,7 @@ public final class ActSeedProbe {
                     + " records may be mis-attributed. Treat this session's census as unreliable.", null);
             }
             inPortal = true;
+            ActDispatchProbe.beginWindow();
             kThisFrame++;
             renderedTotal++;
             pDestDim = destDim == null ? "null" : destDim.identifier().toString();
@@ -318,6 +369,7 @@ public final class ActSeedProbe {
                     + " records may be mis-attributed. Treat this session's census as unreliable.", null);
             }
             inPortal = false;
+            ActDispatchProbe.endWindow();
             if (!reflectionReady) {
                 return;
             }
@@ -377,6 +429,9 @@ public final class ActSeedProbe {
             inFrame = false;
             foldRing();
             if (armed && block != null) {
+                // Round-2: the MAIN ACT-DISPATCH positive control (its own 1 Hz clock — the main
+                // shadowcomp has already dispatched by the time beginFrame runs).
+                ActDispatchProbe.appendMainSection(block);
                 appendCensus();
                 emittedBlocks++;
                 LOGGER.info(block.toString());
@@ -508,6 +563,8 @@ public final class ActSeedProbe {
         int dVox = imageId(destImgs, "voxel_img");
         int dFf = imageId(destImgs, "floodfill_img");
         int dFfC = imageId(destImgs, "floodfill_img_copy");
+        destFfId = dFf;
+        destFfCopyId = dFfC;
         block.append("      destImages: voxel=").append(dVox)
             .append(dVox == mainVoxelId ? " SAME-ID-AS-MAIN" : " DIFFERENT")
             .append("  ff=").append(dFf).append('/').append(dFfC)
@@ -538,6 +595,9 @@ public final class ActSeedProbe {
                 .append(" == main ").append(mainVoxelId)
                 .append(" => shared volume; the MAIN row already describes it)\n");
         }
+
+        // Round-2: the per-window dispatch census + the [5] DEST ACT-DISPATCH section.
+        ActDispatchProbe.appendDestSection(block);
     }
 
     private static void appendFrustumLine(String which, Field holderField, Object destSr) {
@@ -898,6 +958,7 @@ public final class ActSeedProbe {
             int n = 0;
             int withComputes = 0;
             int computes = 0;
+            int nonNullComputes = 0;
             boolean computesKnown = true;
             for (Object pass : passes) {
                 n++;
@@ -916,6 +977,14 @@ public final class ActSeedProbe {
                     if (arr instanceof Object[] a && a.length > 0) {
                         withComputes++;
                         computes += a.length;
+                        // E1 (round-2): `a.length` is iris's fixed CAPACITY (27 ComputeSource slots),
+                        // so `withComputes` can NEVER read 0 and the old zero-test was unreachable.
+                        // Only the count of NON-NULL entries says whether a compute was actually built.
+                        for (Object c : a) {
+                            if (c != null) {
+                                nonNullComputes++;
+                            }
+                        }
                     }
                 }
                 catch (Throwable t) {
@@ -924,16 +993,19 @@ public final class ActSeedProbe {
                         + " withComputes reads n/a and asserts NOTHING.", t);
                 }
             }
-            // Only a MEASURED zero is evidence. An unmeasurable one is not.
-            if (computesKnown && n > 0 && withComputes == 0) {
-                warnOnce("compnone-" + role, P + "FINDING (once-only): " + role
-                    + " ShadowCompositeRenderer has passes=" + n + " and MEASURED withComputes=0 —"
-                    + " the pack ships no shadowcomp compute for this dimension. That volume is"
-                    + " unseeded BY PACK CONFIG, not by our nested render.", null);
+            // Only a MEASURED zero is evidence. An unmeasurable one is not. E1: the meaningful zero is
+            // nonNullComputes, NOT withComputes (which counts iris's fixed 27-slot capacity).
+            if (computesKnown && n > 0 && nonNullComputes == 0) {
+                warnOnce("compnone-" + role, P + "FINDING (once-only): the " + role
+                    + " ShadowCompositeRenderer has passes=" + n + " but MEASURED nonNullComputes=0 —"
+                    + " no shadowcomp compute program was built for this dimension. That volume is"
+                    + " unseeded UPSTREAM of dispatch (pipeline/ProgramSet construction), not by our"
+                    + " nested render.", null);
             }
             return "passes=" + n
                 + " withComputes=" + (computesKnown ? String.valueOf(withComputes) : "n/a")
-                + " computes=" + (computesKnown ? String.valueOf(computes) : "n/a");
+                + " computes=" + (computesKnown ? String.valueOf(computes) : "n/a")
+                + " nonNullComputes=" + (computesKnown ? String.valueOf(nonNullComputes) : "n/a");
         }
         catch (Throwable t) {
             return "read-failed(" + t + ")";
