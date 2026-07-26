@@ -433,10 +433,20 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // targets (restored later) while the dest reads its own per-dim pipeline — wasted-but-
         // harmless; counts include cross-dim portals. No-op unless the guard saved this frame.
         IrisTemporalTargetGuard.clearForDestPass();
+        // IS5-MB: arm the per-dest previous-frame camera state for THIS portal's nested dest composite
+        // chain. SAME-DIM ONLY — cross-dim already runs its own per-dimension pipeline whose
+        // addCameraUniforms built a FRESH CameraPositionTracker, so its prev=dest(N-1)/cur=dest(N) is
+        // already correct and writing there would INTRODUCE a defect. The exclusion is decided mod-side
+        // inside arm(), with zero iris symbols, so the cross-dim path stays byte-identical.
+        IrisDestPrevCamera.arm(
+            PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null);
         try {
             MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
         }
         finally {
+            // FIRST in the finally: the arm can never outlive the window even if the bump throws —
+            // the IrisShadowCompositeSuppressor.uninstall() discipline.
+            IrisDestPrevCamera.disarmAndReport();
             IrisInterface.invoker.bumpPerFrameUniformCounter();
         }
     }
@@ -509,6 +519,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // (idempotent — shared statics, double-called via onSwitchedAway; re-created lazily).
         try {
             IrisBloomApertureMask.teardown();
+        } catch (Throwable t) {
+            // disposal is best-effort
+        }
+        // IS5-MB: drop the per-portal previous-camera records + the location cache (idempotent).
+        try {
+            IrisDestPrevCamera.teardown();
         } catch (Throwable t) {
             // disposal is best-effort
         }

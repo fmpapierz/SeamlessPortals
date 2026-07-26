@@ -217,6 +217,44 @@ public class IPGlobal {
         return !HEAL_RETARGET_DISABLED_LEVER;
     }
 
+    // IS5-MB PER-DEST PREVIOUS-FRAME CAMERA STATE (2026-07-26) — the same-dim portal-window motion-blur
+    // smear fix. MEASURED: at the same-dim dest composite4 the shader reads cameraPosition=dest_N but
+    // previousCameraPosition=main_N (|d|=125.82 with the player STATIONARY) => the pack's soft clamp
+    // velocity/(1+|velocity|)*STRENGTH saturates => full-strength smear that needs no player motion.
+    // Cause: CameraPositionTracker ticks 3x on a portal frame (main BLR, dest BLR, our IS5-PH heal), so
+    // the dest pass reads prev=main_N/cur=dest_N. Cross-dim is clean (own pipeline, own tracker) and is
+    // EXCLUDED by construction. Fix = write the dest's own previous trio into the guarded composite
+    // program between its Program.use() and its draw, then RESTORE iris's values before the next pass.
+    // DEFAULT TRUE; A/B OFF via -Dseamlessportals.disableIrisDestPrevCamera.
+    public static final boolean IRIS_DEST_PREV_CAMERA_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisDestPrevCamera");
+    public static boolean irisDestPrevCamera = true;
+
+    /** True when the same-dim dest composite should receive its OWN previous-frame camera state. */
+    public static boolean isIrisDestPrevCameraActive() {
+        return irisDestPrevCamera && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
+    }
+
+    /** IS5-MB matrix half. Set to force camera-position-only — the A/B leg proving the previous
+     *  MATRICES are load-bearing (expected: rotational blur is lost, and a rotated portal is wrong):
+     *  -Dseamlessportals.irisDestPrevCameraNoMatrices */
+    public static final boolean IRIS_DEST_PREV_NO_MATRICES =
+        Boolean.getBoolean("seamlessportals.irisDestPrevCameraNoMatrices");
+
+    /** IS5-MB guarded-pass names, comma-separated. Default "composite4" (Complementary's sole
+     *  MOTION_BLURRING_STRENGTH consumer). Override only if a pack renames the pass — the once-only
+     *  roster line names every pass actually seen, so the value is never guesswork. */
+    public static final String IRIS_DEST_PREV_PASSES =
+        System.getProperty("seamlessportals.irisDestPrevCameraPass", "composite4");
+
+    /** IS5-MB 1Hz [IS5-MB] counter probe (default OFF): -Dseamlessportals.destPrevCameraProbe */
+    public static final boolean DEST_PREV_CAMERA_PROBE =
+        Boolean.getBoolean("seamlessportals.destPrevCameraProbe");
+
+    public static int irisDestPrevWriteCount = 0;
+    public static int irisDestPrevNeutralizeCount = 0;
+    public static int irisDestPrevMissCount = 0;
+
     /** Confirm-counter: incremented once per healed frame. Render-thread int. */
     public static int prevUniformHealCount = 0;
 

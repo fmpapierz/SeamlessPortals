@@ -23,6 +23,8 @@
     "sodium.MixinSodiumChunkRenderList_Probe",
     "iris.MixinIrisSodiumTransformPatcher_ClipInject",
     "iris.MixinIrisCompositeRenderer_BloomApertureMask",
+    "iris.MixinIrisCompositeRenderer_DestPrevWrite",
+    "iris.MixinIrisCompositeRenderer_DestPrevRestore",
     "iris.MixinIrisComputeProgram_ActDispatch",
     "iris.MixinIrisShadowCompositeRenderer_ActRenderAll"
   ],
