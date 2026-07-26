@@ -66,6 +66,33 @@ lifecycle-persistence) → fold. Top claims re-verified by hand afterwards. Path
    case is what they produce; portals whose planes sit on a block boundary (wand/custom) produce a
    true 0.5 offset. Both are in scope and both get tested.
 
+8. **POST-PANEL DECISIONS (user, 2026-07-25), resolving the three conflicts the panel surfaced:**
+   - **Frame break → CLEAR THE DESTINATION HALF.** The originally-placed block survives in its own
+     dimension; its mirror is removed. No duplication. This matches decision 4's original wording
+     ("survive on the side it was originally placed") more exactly than the spec's `KEEP_BOTH` default did.
+     ⚠ **Implementation consequence not in the spec:** this requires **provenance** — the registry must
+     record which half of a bound pair was player-placed and which was the mirror, or "clear the
+     destination half" is undecidable. Add to the `SeamBinding` record; gate at staging step 6/7.
+   - **Non-item writes (piston, dispenser, explosion, gravity, `/setblock`, `/fill`) → ACCEPT BEST-EFFORT**
+     as the spec proposes: mirror when possible, leave a source-only half on conflict. Knowingly a
+     violation of refuse-on-conflict, accepted for now.
+   - **Ignition rule → CONFIRMED AS WRITTEN** (`REDSTONE_A_SPEC.md` §4.1): rails/redstone always
+     admitted; a support cube admitted only when the cell directly above it holds a whitelisted block;
+     frame must remain at least half air. This retires the "Claude-made reconciliation" caveat on §0.3 —
+     it is now a user decision.
+
+9. **FUTURE PLANS (user-requested, explicitly OUT of scope for (a) — do not build now, do not lose):**
+   - **Fractional seam blocks.** Instead of clearing the destination half on a frame break, BOTH halves
+     survive as genuine *partial* blocks — a half-rail, or whatever fraction of a whole the portal's
+     sub-block offset dictates. This is the "real half-blocks" option rejected for (a) as too large
+     (custom block states, collision, models), revived as a later goal. It would make the break rule
+     lossless and would generalise the seam from "two whole blocks each clipped" to "one block genuinely
+     divided".
+   - **Correct non-item write behaviour.** Pistons, dispensers, explosions, gravity blocks and commands
+     all mirror correctly with refuse-on-conflict honoured universally — no best-effort half-seams. The
+     spec's blocker is that reverting an end-of-tick piston move corrupts the piston state machine, so
+     this needs a synchronous mirror (which (c) may build anyway).
+
 **Geometric fact underpinning 5 and 6** (hand-verified, §2): the portal plane sits at the **middle**
 of the aperture blocks, not on a boundary. For an obsidian pair, both planes are mid-block, so the
 source and destination aperture cells map onto the **same** span across the seam — they are coincident,
