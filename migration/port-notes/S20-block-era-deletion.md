@@ -324,3 +324,145 @@ before the §4 regression (§D).
 | **4** | **Flag + ledger + machinery removal** (commit 3) | The `entityPortals` flag and all 46 gate sites collapsed in the proven direction — including the four qouteall-side sites, two of which are PERMISSION paths (`CommandStickItem:138`, `PortalWandInteraction:492`) pending the adversarial verdict. `SeamlessPortalsConfig`, `SeamlessConfigScreen`, `ModMenuIntegration` (+ swap `fabric.mod.json`'s "modmenu" entrypoint to `IPModMenuConfigEntry`), the D3 carve-out sets, the C2 gate scaffolding by **COLLAPSING `ENABLE_SODIUM_IRIS_COMPAT` TO ALWAYS-TRUE** (§E.1 row 2) with the D11 feed **RE-HOMED** out of the deleted warn branch (§E.1 row 3), the re-shaped D7 warn path, the C4 Mechanism-B loser cleanup, `IpHeldPaths`/`ip_scc_closed` (but NOT the stub source sets — §E.3), archive `EXCLUSIVITY_LEDGER.md`. **ATOMIC with the TITLE-CARD re-shape** (§C: retarget `TitleCardCapture` to `spawnTestPortal`, drop the flag-OFF pin) — the suite must not silently lose a leg. | compile ×3 + suite |
 | **5** | **§4 regression** — ASK THE USER FIRST | The 12-point round. Named rows added on top of the standard checklist: the two constraint-5 (verify) sub-items (hand steady / sprint preserved through a crossing — §D); cross-dim live fluid flow (§E.4 item 2); alternate-dims worldgen (skyland/bright_skyland/chaos/bright_void — §E.1 row 7); the hand-light fade (§E.1 row 8, checkpoint C6); a plain-NeoForge sanity check for §E.2. Sodium/iris matrix rows scoped to THIS branch only — the six shipped polish fixes + ACT probe kit live on `iris-on/is5-shadow` and are NOT merged, so those rows may not be reported green on their strength. | live |
 | **6** | **Constraint-5 close-out + survivor-audit note** (commit 4) | Delete `SeamlessClientTeleport` once increment 5 puts its two (verify) sub-items on record; final survivor-audit note + regression record. | compile ×3 + suite |
+
+---
+
+## §G THE ADVERSARIAL SURVIVOR AUDIT — 6 verifiers, **38 REFUTED DELETIONS**
+
+Method: §D step 3. Six independent skeptics, each told *the burden of proof is on deletion* and
+*default to "still load-bearing" when uncertain*. Totals: **38 refuted-deletion, 25 needs-reshape,
+47 deletion-holds, 1 unresolved** (the unresolved one is §G.1, escalated to the user and decided).
+
+This pass earned its keep many times over. The single worst near-miss: **four stencil substrate
+mixins sat on a bulk "flag-OFF-only client mixins" delete list and are in fact UNGATED and the only
+thing that gives 26.2 a stencil buffer at all** — `GlConstMixin` (3 injects rewriting
+`GpuFormat.D32_FLOAT` → `GL_DEPTH24_STENCIL8`), `GlBackendMixin` (`setWindowHints` +
+`GLFW_STENCIL_BITS=8`), `RenderTargetMixin` (`createFbo` stencil attachment),
+`GlStateManagerMixin` (`_glBindFramebuffer`). IP's own flag-ON `RendererUsingStencil:56-57`/`:179`
+names them as "the KEEP substrate". Deleting them would have destroyed the flag-ON stencil renderer
+while leaving a green build and a green suite.
+
+### G.1 THE NEOFORGE SCOPE ALARM — escalated and **USER-DECIDED**
+
+`EntityPortalsFlag:89` + `:98-100` force the flag FALSE whenever FabricLoader is absent, and the
+class javadoc `:40-49` says it outright: *"only NeoForge is pinned to the block-era baseline."*
+So **the block-era system IS NeoForge's portal implementation** — S20 removes NeoForge's only
+working portals. The IP engine cannot take over there: `IPModMain.init` is never called
+(`SeamlessPortalsModNeoForge:24-49`), `IPGlobal.<clinit>` (`:26/:28/:37` → `Helper:1424-1432` →
+`net.fabricmc…EventFactory`) is a hard `NoClassDefFoundError`, and the ~31 `net.fabricmc` types are
+compileOnly shells there. The verifier also proved **a green NeoForge boot detects none of this** —
+the only `net.fabricmc` references inside registered mixin classes are `@Environment` annotations
+that Mixin reads via ASM and the JVM ignores, so weave and boot both succeed; every failure is
+first-use (a silent zero-chunk world with no throw, `IPGlobal` NoClassDefFoundError,
+`MixinWorldDimensions` silently pinning dimension lifecycle to `stable()`).
+
+**USER DECISION (2026-07-25): accept and ledger it loudly.** Proceed with the full deletion;
+NeoForge has no portal behaviour until C7 (already the ask-first post-S20 checkpoint, where the
+module is a "KEEP-skeleton"). **Required by that decision:** a loud NeoForge init-time notice that
+portals are Fabric-only pending C7, so the portal-less state can never present as a silent
+zero-chunk world. Recorded here and to be added to the forced-deviation register.
+
+Corollary trap, confirmed: `SeamlessPortalsModNeoForge:69` is the ONE site among the 46 whose
+direction is **INVERTED** by the loader force-false — `!isEntityPortals()` is always TRUE on
+NeoForge, so "collapse in the proven direction" would kill a live NeoForge path. Every collapse must
+be checked per-site, never applied as a rule.
+
+### G.2 REFUTED — survivors a symbol/package sweep would have taken
+
+| Entry | Why deletion is refuted |
+|---|---|
+| **The 4 stencil substrate mixins** | Above. UNGATED; the only source of a stencil buffer on 26.2. |
+| **`render/StencilState`** | Its two writers are those surviving substrate mixins (`GlStateManagerMixin:30` `lastBoundFbo`, `RenderTargetMixin:75` `gameFboId`). Deleting the class turns both survivors RED. |
+| **`render/PerfTimers`** | Called UNGATED from the KEEP-TAIL of `GameRendererMixin:70` (registered `…mixins.json:8`; disposition "KEEP TAIL" `current-mod-render.md:470`). **F16 is vindicated** — this settles the inter-cluster conflict. Note `qouteall` calls `PerfTimers` ZERO times; the load-bearing caller is a `com.warwa` KEEP mixin. |
+| **`SeamlessPortalsConstants`** | Highest blast radius. `@Mod(SeamlessPortalsConstants.MOD_ID)` at `SeamlessPortalsModNeoForge:19` is a **compile-time annotation constant** — not shimmable — plus 4 surviving `qouteall` files and ~15 `com.warwa` survivors use `.LOGGER`. 62 files reference it. |
+| **`render/CrossingTracer`** | Ungated surviving callers `ClientPacketListenerTeleportToleranceMixin:62/:66`, `LivingEntitySprintCancelDiagMixin:41`. Needs in-file surgery (`:88-106`, `:109`), not deletion. |
+| **`render/RenderSpikeMonitor`** | Compiles standalone but its two call sites die with `StencilPortalRenderer` — needs **re-homing**, not deleting (F16). |
+| **`render/PortalRenderTypes`** | Surviving `qouteall` consumers `MyRenderHelper:18/:562/:719/:722`, `ViewAreaRenderer:12/:252`. All its `com.warwa` callers die, so an orphan-scan WILL flag it — and deleting it is `:common` RED. |
+| **`ClipDiscriminatorProbe`, `ShadowEmptinessProbe`** | `com.warwa` diagnostics called UNGATED from surviving `qouteall`: `SecondaryWorldRenderCore:1683/:1814` and `:1693-1698/:1821`. `ShadowEmptinessProbe` is also the live IS5 decision gate that commit `8e51e5b` makes its shadow fix conditional on. |
+| **`TicketTypeInvoker`** | `SeamlessPortalsModFabric:110` calls it UNCONDITIONALLY (its own comment: "UNCONDITIONAL in both flag states"). Deleting turns `:fabric` RED and re-opens the S13-F crash. |
+| **3 accessors** — `LivingEntityHurtAccessor`, `FireworkRocketEntityAccessor`, `SectionDirtyStateAccessor` | Cast to and used by surviving `qouteall`: `ServerTeleportationManager:786-789`, `:107/:467`, `LightSectionDump:84/:86`. The first is also imported by the 8-leg gate (`CrossingSmoke:5/:220`, leg 3). |
+| **`LevelExtractorWindowHardeningMixin`** | **FLAG-ON ONLY** (both handlers `if (!isEntityPortals()) return;`) and the sole CAPTURE-POINT caller of `SecondaryWorldRenderCore.preResolvePromotedWindow:59`. Deleting it silently reopens the round-1 §0-4 and round-7 §0c window bugs **with a green build and a green suite**. Named in no plan or table. |
+| **`LevelRendererBlockOutlineMixin`** | `:64-69` is an exclusive ternary whose flag-ON arm is the live S18.5 outline-bucket fix. Only the `StencilPortalRenderer` arm dies — and `:4/:69` import `StencilPortalRenderer.anyPortalNearCamera()`, so increment 3 as originally written would have gone RED. |
+| **`MinecraftFramePumpMixin`**, **`GameRendererMixin`**, **`LevelRendererEntityVisibilityMixin`**, **`QuadParticleGroupMixin`** | Confirmed independently. Each MIXES a dying flag-OFF gate with a load-bearing flag-ON one in the same class → edit, never delete. |
+
+### G.3 REFUTED — the C4 Mechanism-B cleanup is mostly **mislabelled Mechanism-A code**
+
+Six refutations here, all of the same shape: comments say "Mechanism B" but the code serves
+Mechanism A (the SURVIVING `SUBMIT_ORDER_UNIFORM`).
+
+- **`PerEntityClipBracket.evictPassState`** (`:490-497`) + its call site `SecondaryWorldRenderCore:2440`
+  are labelled "orphaned Mechanism-B brackets" in BOTH comments but are A load-bearing: `:493-495`
+  removes A's `registeredPhases` from the never-wholesale-cleared global `phaseRegistry`. Deleting
+  them leaves **stale clip planes clipping reused phase objects for the rest of the session,
+  silently.**
+- **`MixinPreparedFrame`** — javadoc says "always under Mechanism B" (`:27`) but it IS A's only
+  clip-delivery bracket (`:54`/`:61`), registered `seamlessportals-ip-client.mixins.json:56`.
+  Deleting it makes straddling entities draw unclipped (re-opens the Verifier-1 P1 CASE-2 defect).
+- **`ClientWorldLoader.registerCoreOwnedFeatureBuffers`** — not B's; the FIRST registrant is
+  `SecondaryWorldRenderCore:2281` (the S15 same-dim pipeline). Deleting re-opens the
+  `gpu-buffer-leak-endframe` stall class.
+- **`PerEntityClipBracket.DISABLED_CLIP`** (`:116`) + the `:226-236` null-plane substitution read as
+  B-fed but feed A at `:247`.
+- **`onClientCleanup`** (`:499-514`) mixes both: strip ONLY `:509-513`; `:507 phaseRegistry.clear()`
+  and `:508 passStates.clear()` must survive or A leaks stale clips across world sessions.
+
+Plus a **shipped-user migration hazard**, proven from gson 2.14.0 **bytecode**: a stale
+`"ISOLATED_STORAGE_BRACKET"` in an existing user config deserializes to **NULL**
+(`EnumTypeAdapter.read` offsets 21-56) and is written into the field
+(`ReflectiveTypeAdapterFactory$2.readIntoField` offsets 9-17 → 83-89), **overwriting the
+`SUBMIT_ORDER_UNIFORM` initializer**. Therefore `IPConfig:179-182`'s null guard must be deleted
+**together with** the field (`:41-52`) — never before it, never without it.
+
+Also corrected: the selectability chain is NOT ModMenu-gated — **ModMenu is not a dependency at all**
+(`fabric/build.gradle:40-42`, absent from `fabric.mod.json` depends). The live route is
+`ClientDebugCommand:431-442` (`/imm_ptl_client_debug config`, in-source comment "works without
+modmenu", registered `IPModMainClient:105-107`). So B is runtime-selectable by every user, and its
+removal is a deliberate feature removal — atomic with the enum constant, the field, the guard, both
+`en_us.json` keys and the config-load log line.
+
+### G.4 NEW BUILD-BREAKERS the plan did not name (each one would have turned a gate RED)
+
+1. `mixin/ChunkMapResendSuppressMixin:3/:43` hard-references `PortalChunkTracker.consumeVanillaResendSuppression`
+   from an UNGATED, REGISTERED mixin that is **not on the kill list**.
+2. `SeamlessPortalsModNeoForge:74` calls `BlockUpdateMirrorBuffer.flush(...)` **outside** the
+   `!isEntityPortals()` gate (deliberately, per its own `:66-67`), and `NeoForgePlatformHelper:240-246`
+   calls `RemoteBlockUpdater.applyBatch` from an unconditional handler.
+3. `network/ModPayloads` TYPE registration is UNCONDITIONAL in **both** loaders
+   (`SeamlessPortalsModFabric:46/:48`, `NeoForgePlatformHelper:167`) — i.e. ABOVE the flag gate at
+   `:113`. `PlatformHelper` itself MUST SURVIVE (4 ported `qouteall` importers).
+4. `chunk/RedirectedPacketApplier.clearPending()` is called from two UNGATED mixin bodies that run
+   in BOTH states: `ClientLevelMixin:148`, `MinecraftMixin:38`.
+5. `GameRendererObliqueClipMixin:4` hard-imports `render/PortalSlicing`. The mixin is UNREGISTERED so
+   it never weaves — **but an unresolvable import is still a javac error.** Same trap class as the
+   `fabricStubs` scalp: "dead at runtime" ≠ "dead at compile".
+6. `SectionCompilerMixin` imports THREE kill-list types (`:3`, `:4`, `:5`) and is registered at
+   `mixins.json:8`. Its own `:44-48` records that the B11 ledger **already misclassified this exact
+   file as dormant once**.
+7. `LevelRendererBlockOutlineMixin:4/:69` → `StencilPortalRenderer.anyPortalNearCamera()` (see G.2).
+8. `SeamlessPortalsModNeoForge:4/:7` and `NeoForgePlatformHelper:4` import three block-era classes
+   that increments 3/4 delete → `:neoforge:compileJava` RED with no plan entry.
+9. `ClientLevelMixin:51` reads `PortalWorldManager.spawningDestParticles` from an UNGATED `@Redirect`.
+
+**Deregistration is itself a boot-crash risk:** `seamlessportals-common.mixins.json` is
+`"required": true` with `injectors.defaultRequire: 1`, so a dangling entry for a deleted class is a
+**BOOT CRASH, not dead config**. Every class deletion must remove its json line in the same commit.
+
+### G.5 A THIRD booby-trap comment, and a corrected justification
+
+- `qouteall/dimlib/mixin/common/MixinMappedRegistry:7` says *"Deleted with the scaffolding at S20"* but
+  it is the SOLE provider of the `IMappedRegistry` duck that surviving alt-dim registration casts to
+  (`DimensionImpl:56/:57/:67` ← `DimensionAPI:124` ← `AlternateDimensions:144-176`). Third of three.
+- `PortalWorldManager`'s flag-ON no-op argument was **right in conclusion, wrong in justification**:
+  `endSecondaryRenderFrames` never reads `levels` at all (it reads `mc.levelRenderer` + the
+  `renderers` map). The no-op holds only because `LevelRenderer.renderBuffers` IS
+  `gameRenderer.renderBuffers()` (javap: `LevelRenderer.<init>` offset 152
+  `invokevirtual GameRenderer.renderBuffers()`), so identity-dedup catches it. The write-set was also
+  incomplete — `initializeIfNeeded()` (`:165-166`) is a **third** writer. Conclusion stands; the
+  reason on record must be the correct one.
+
+### G.6 A stale label that S20 itself creates
+
+`ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's
+`PortalWorldManager.evictUnboundedStores`"*. That label becomes FALSE the instant S20 lands. It must
+be corrected in the same increment, not inherited — this is the exact failure mode that produced the
+three booby traps above, caught while it is still cheap.

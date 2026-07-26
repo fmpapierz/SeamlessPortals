@@ -123,7 +123,34 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         }
         // Gate 2 (ours): the entity-portal master switch. Flag-OFF (or any non-Fabric loader, where
         // the flag is force-false) skips every compat class — today's block-era behavior is intact.
-        return EntityPortalsFlag.isOn();
+        //
+        // S20 INCREMENT 1 — THE LOADER GATE IS NOW EXPLICIT (do not remove it with the flag). This
+        // is the SECOND flag-driven weave gate in the tree; the migration notes named only
+        // SeamlessMixinConfigPlugin, and this one is the sole reason the 15-mixin Sodium/Iris compat
+        // set stays unwoven on plain NeoForge (neoforge.mods.toml:47-53 states exactly that in
+        // prose, and ip-compat is a SEVENTH qouteall config the "six IP blocks" framing misses).
+        // S20 deletes the flag, collapsing gate 2 to always-true, so the loader half is hoisted out
+        // here first. NO-OP today (isOn() already implies the loader), load-bearing after the flag
+        // dies. See port-note S20-block-era-deletion.md §E.2/§G and
+        // SeamlessMixinConfigPlugin.isFabricLoaderPresent's javadoc for the ledgered non-blockers.
+        return isFabricLoaderPresent() && EntityPortalsFlag.isOn();
+    }
+
+    /**
+     * Whether FabricLoader is on the runtime classpath. Second copy of the predicate (the original
+     * is {@code private static} on the dying {@code EntityPortalsFlag:147}; the sibling copy lives
+     * on {@code SeamlessMixinConfigPlugin}, which carries the full rationale). Duplicated rather
+     * than shared because a mixin config plugin runs at bootstrap, before any shared utility class
+     * of ours is safe to touch, and because the two plugins must not be able to drift apart by one
+     * of them losing a dependency.
+     */
+    private static boolean isFabricLoaderPresent() {
+        try {
+            Class.forName("net.fabricmc.loader.api.FabricLoader");
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     @Override

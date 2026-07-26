@@ -169,9 +169,26 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
             // UNCONDITIONALLY-registered item DataComponentTypes. The flag defaults ON since S17,
             // but explicit flag-OFF stays a supported two-way switch until S20, and a flag-OFF
             // legacy-world load must still convert the item data (see that set's javadoc).
+            //
+            // S20 INCREMENT 1 — THE LOADER GATE IS NOW EXPLICIT HERE (do not remove it with the
+            // flag). Today `EntityPortalsFlag.isOn()` force-falses off Fabric at TWO internal sites
+            // (EntityPortalsFlag:98-100 in readFromDisk, :89 in seedIfUnset), and that force-false
+            // is the ONLY thing keeping the whole IP mixin set unwoven on plain NeoForge. S20
+            // deletes the flag, which collapses this term to always-true — so the loader half is
+            // hoisted out to its own predicate BEFORE the flag dies. Adding it is a NO-OP today
+            // (`isFabricLoaderPresent() && isOn()` == `isOn()`, since isOn() already implies it)
+            // and becomes the load-bearing guard the moment `isOn()` is replaced by `true`.
+            //
+            // WHY IT MATTERS (S20 adversarial audit; port-note S20-block-era-deletion.md §E.2 +
+            // §G): without it the collapse weaves MixinPlayerChunkSender on NeoForge, which
+            // @Overwrites vanilla chunk sending and reroutes it to ImmPtlChunkTracking — a driver
+            // whose init() is only ever reached from IPModMain.init, never called on NeoForge. The
+            // result is a world that sends ZERO chunks with no exception and no log line. A green
+            // NeoForge boot does NOT detect it (weave and boot both succeed; the failures are all
+            // first-use), so this guard cannot be validated away by testing.
             if (!D3_UNCONDITIONAL_WORLDGEN_ACCESSORS.contains(mixinClassName)
                 && !D3_UNCONDITIONAL_ITEM_DATAFIX.contains(mixinClassName)
-                && !EntityPortalsFlag.isOn()) {
+                && !(isFabricLoaderPresent() && EntityPortalsFlag.isOn())) {
                 return false;
             }
         }
@@ -188,6 +205,37 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Whether FabricLoader is on the runtime classpath — i.e. we are running under Fabric (or a
+     * Fabric-API-bridging environment like Sinytra Connector, where the {@code net.fabricmc.*} types
+     * the IP set needs ARE actually present). {@code false} on plain NeoForge, where those types
+     * exist only as compileOnly shells (see {@code common/build.gradle}'s {@code fabricStubs} set).
+     *
+     * <p><b>S20 INCREMENT 1.</b> Body copied verbatim from {@code EntityPortalsFlag}'s private
+     * method of the same name (it is {@code private static} there — {@code EntityPortalsFlag:147} —
+     * so it could not be called across, and the class itself dies at S20). Copied rather than
+     * re-invented because this exact reflective shape is already PROVEN to work at mixin-bootstrap
+     * time, which is when this plugin runs; anything cleverer here risks the whole Fabric weave.
+     *
+     * <p>Ledgered non-blockers, both behaviour-preserving versus today (S20 audit §E.2):
+     * (1) this is a loader PROXY, not a capability test — under Sinytra Connector the
+     * {@code Class.forName} succeeds and the IP set weaves, which is correct there and is exactly
+     * what happens today; (2) after the flag dies nothing couples the WEAVE to
+     * {@code IPModMain.init} having actually run — today the flag couples them incidentally. A
+     * future loader that satisfies this predicate WITHOUT running the Fabric {@code main}
+     * entrypoint would reproduce the landmine, so if one ever appears, tighten this to a
+     * capability test (e.g. {@code net.fabricmc.fabric.api.event.EventFactory}, whose absence is
+     * the actual cause of the {@code IPGlobal.<clinit>} failure).
+     */
+    private static boolean isFabricLoaderPresent() {
+        try {
+            Class.forName("net.fabricmc.loader.api.FabricLoader");
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     @Override
