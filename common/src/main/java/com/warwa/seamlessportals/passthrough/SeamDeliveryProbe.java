@@ -102,6 +102,8 @@ public final class SeamDeliveryProbe {
         String client = "NOT-REACHED";
         // stage 6 — the remesh request, the only stage downstream of the client having the data
         String remesh = "NOT-REACHED";
+        // stage 7 — was that request ever CONSUMED, i.e. did a rebuild actually get scheduled
+        String rebuild = "NOT-REACHED";
 
         Trace(String dim, BlockPos pos, long tick, long serial) {
             this.dim = dim;
@@ -341,6 +343,25 @@ public final class SeamDeliveryProbe {
         }
     }
 
+    /**
+     * Stage 7. Called from {@code SectionDirtyState.setNotDirty}, which
+     * {@code LevelExtractor.java:167} invokes if and only if it has just scheduled a rebuild for
+     * that section. An exact instrument: silence here is evidence that no rebuild was scheduled,
+     * not merely absence of evidence.
+     */
+    public static void noteRebuildScheduled(int sectionX, int sectionY, int sectionZ) {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_PROBE || LIVE.isEmpty()) {
+            return;
+        }
+        for (Trace t : LIVE.values()) {
+            if ((t.pos.getX() >> 4) == sectionX
+                && (t.pos.getY() >> 4) == sectionY
+                && (t.pos.getZ() >> 4) == sectionZ) {
+                t.rebuild = "SCHEDULED — the section was in visibleSections() and will be recompiled";
+            }
+        }
+    }
+
     // =============================================================================================
     // RETIREMENT — this is where coverage is asserted
     // =============================================================================================
@@ -376,9 +397,11 @@ public final class SeamDeliveryProbe {
                 + "    3b ACCEPT   : {}\n"
                 + "    4 BROADCAST : {}\n"
                 + "    5 CLIENT    : {}\n"
-                + "    6 REMESH    : {}",
+                + "    6 REMESH    : {}\n"
+                + "    7 REBUILD   : {}",
             t.serial, t.pos, t.dim, verdict,
-            t.write, t.notify, t.holderLookup, t.holderAccept, t.broadcast, t.client, t.remesh);
+            t.write, t.notify, t.holderLookup, t.holderAccept, t.broadcast, t.client, t.remesh,
+            t.rebuild);
     }
 
     /**
@@ -403,16 +426,21 @@ public final class SeamDeliveryProbe {
         if (!clientOk) missing.append(" 5");
         if (t.remesh.startsWith("NOT-REACHED")) missing.append(" 6");
         if (t.remesh.startsWith("★"))           missing.append(" 6(out-of-window)");
+        boolean rebuilt = t.rebuild.startsWith("SCHEDULED");
+        if (!rebuilt) missing.append(" 7(no-rebuild)");
         String head;
         if (!clientOk) {
             head = "★ NEVER REACHED THE CLIENT";
         }
+        else if (rebuilt) {
+            head = "DELIVERED AND REBUILT";
+        }
         else if (t.remesh.startsWith("ACCEPTED")) {
-            head = "DELIVERED AND QUEUED FOR REMESH";
+            // Marked dirty, never consumed. LevelExtractor:152 only walks visibleSections(), so a
+            // section visible ONLY through a same-dimension portal is flagged and then ignored.
+            head = "★ MARKED DIRTY BUT NEVER REBUILT — flagged, then never scheduled";
         }
         else {
-            // The distinction the first five stages cannot make, and the one the user's report is
-            // actually about: correct data, stale picture.
             head = "★ DATA DELIVERED BUT NO REMESH — the client holds the block and will not redraw it";
         }
         return missing.isEmpty()
