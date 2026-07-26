@@ -328,6 +328,73 @@ public final class SeamMirror {
     }
 
     // =============================================================================================
+    // FRAME MIRRORING
+    // =============================================================================================
+
+    private static long frameMirrored = 0L;
+
+    /**
+     * Mirror an obsidian (frame) change to its partner cell — the user's frame rule: breaking one
+     * side breaks the other, repairing one side repairs the other.
+     *
+     * <p><b>Driven by the persisted {@link SeamFrameLink}, deliberately NOT by live portal
+     * geometry.</b> The interesting case is precisely the one where no portal exists: both were torn
+     * down when the frame broke, and the player is now repairing. Live bindings are gone by then; the
+     * dormant link is the only thing that still knows which obsidian belongs to which.
+     *
+     * <p>Once both frames are whole again, re-lighting either side is ordinary portal generation: the
+     * frame-match search finds the intact partner and links to it. No special re-ignition path is
+     * needed — repairing the frames is what makes the pair findable again.
+     */
+    public static void onFrameCellChanged(ServerLevel level, BlockPos pos, BlockState newState) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_FRAME_MIRROR) {
+            return;
+        }
+        if (applying) {
+            return;
+        }
+        SeamFrameLink.Link link = SeamFrameLink.lookup(level, pos);
+        if (link == null) {
+            return;
+        }
+        MinecraftServer server = level.getServer();
+        if (server == null) {
+            return;
+        }
+        ServerLevel far = server.getLevel(link.toDim());
+        if (far == null) {
+            return;
+        }
+
+        applying = true;
+        try {
+            far.getChunk(link.to().getX() >> 4, link.to().getZ() >> 4);
+            BlockState farState = far.getBlockState(link.to());
+            boolean nowAir = newState.isAir();
+
+            // Only act when the two sides actually differ, so a mirrored write cannot ping-pong and
+            // an unrelated edit that already matches costs nothing.
+            if (nowAir && !farState.isAir()) {
+                far.setBlockAndUpdate(link.to(), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                frameMirrored++;
+                probe("frame break mirrored to", link.to(), far, pos, level);
+            }
+            else if (!nowAir && farState.isAir()) {
+                far.setBlockAndUpdate(link.to(), newState);
+                frameMirrored++;
+                probe("frame repair mirrored to", link.to(), far, pos, level);
+            }
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-SEAM-MIRROR] frame mirror failed at {} -> {} in {}",
+                pos, link.to(), link.toDim().identifier(), t);
+        }
+        finally {
+            applying = false;
+        }
+    }
+
+    // =============================================================================================
     // STEP 7 — THE FRAME-BREAK RULE
     // =============================================================================================
 

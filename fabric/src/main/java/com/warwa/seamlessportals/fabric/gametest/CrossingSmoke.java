@@ -1462,6 +1462,106 @@ public class CrossingSmoke implements FabricClientGameTest {
             LOG + "RS-A step-7 FRAME-BREAK GATE PASS — player-placed half survived at {}, mirrored"
                 + " half cleared at {} | counters: {}",
             sourceCell, destRef.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+
+        // ---- FRAME MIRRORING GATE ----
+        // Runs HERE, immediately after the frame-break gate, because the state it needs is exactly
+        // the one that gate leaves behind: a broken frame with BOTH portals dead. That is the case
+        // frame mirroring exists for, and the case live portal bindings cannot serve.
+        rsFrameMirrorGate(context, fx, py, fz);
+    }
+
+    /**
+     * FRAME MIRRORING GATE — proves the user's frame rule works with NO PORTAL ALIVE.
+     *
+     * <p>The rule: breaking obsidian on one side breaks the corresponding obsidian on the other, and
+     * repairing one side repairs the other. The difficulty is never the mirroring — it is that
+     * {@link com.warwa.seamlessportals.passthrough.SeamRegistry} bindings are DERIVED from live
+     * portals, so once both are torn down nothing knows which obsidian pairs with which. That is what
+     * the persisted {@code SeamFrameLink} is for, and this gate is the only thing that proves it.
+     *
+     * <p><b>Precondition, asserted rather than assumed:</b> both portals must already be dead. If a
+     * portal were still alive the test could pass on live bindings and prove nothing about the
+     * dormant path — the same self-consistency trap that let the mirror off-by-one survive.
+     *
+     * <p>Two assertions: the break already mirrored (the frame-break gate broke ONE obsidian on the
+     * source side; its partner must be gone too), and a REPAIR mirrors back.
+     */
+    private static void rsFrameMirrorGate(ClientGameTestContext context, int fx, int py, int fz) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        final BlockPos brokenFrame = new BlockPos(fx - 1, py + 2, fz);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+        AtomicReference<BlockPos> partnerRef = new AtomicReference<>(null);
+        AtomicReference<net.minecraft.resources.ResourceKey<Level>> partnerDim = new AtomicReference<>(null);
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+
+            // PRECONDITION: no portal may be alive at this frame, or the test proves nothing.
+            boolean anyAlive = !ow.getEntitiesOfClass(
+                qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                new net.minecraft.world.phys.AABB(fx - 8, py - 8, fz - 8, fx + 8, py + 8, fz + 8),
+                p -> true).isEmpty();
+            if (anyAlive) {
+                failure.set("a portal is still alive at the test frame — frame mirroring would be"
+                    + " exercised through LIVE bindings, proving nothing about the dormant link");
+                return;
+            }
+
+            var link = com.warwa.seamlessportals.passthrough.SeamFrameLink.lookup(ow, brokenFrame);
+            if (link == null) {
+                failure.set("NO DORMANT FRAME LINK at " + brokenFrame + " — the pairing was not"
+                    + " recorded while the portals were alive, so a repair has nothing to mirror"
+                    + " through. This is the whole mechanism failing.");
+                return;
+            }
+            partnerRef.set(link.to());
+            partnerDim.set(link.toDim());
+            ServerLevel far = server.getLevel(link.toDim());
+            far.getChunk(link.to().getX() >> 4, link.to().getZ() >> 4);
+
+            // (1) the break mirrored: the frame-break gate broke this obsidian; its partner must be gone
+            net.minecraft.world.level.block.state.BlockState partnerState = far.getBlockState(link.to());
+            detail.set("broken=" + brokenFrame + " partner=" + link.to() + " in "
+                + link.toDim().identifier() + " partnerState=" + partnerState.getBlock());
+            if (!partnerState.isAir()) {
+                failure.set("FRAME BREAK DID NOT MIRROR — " + brokenFrame + " was broken but its"
+                    + " partner " + link.to() + " in " + link.toDim().identifier() + " still holds "
+                    + partnerState.getBlock());
+                return;
+            }
+
+            // (2) a REPAIR mirrors back — the half that needs the dormant link
+            ow.setBlockAndUpdate(brokenFrame, net.minecraft.world.level.block.Blocks.OBSIDIAN.defaultBlockState());
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(LOG + "RS-A FRAME MIRROR GATE FAILED: " + failure.get());
+        }
+        context.waitTicks(20);
+
+        runOnServer(context, server -> {
+            ServerLevel far = server.getLevel(partnerDim.get());
+            far.getChunk(partnerRef.get().getX() >> 4, partnerRef.get().getZ() >> 4);
+            net.minecraft.world.level.block.state.BlockState s = far.getBlockState(partnerRef.get());
+            if (!s.is(net.minecraft.world.level.block.Blocks.OBSIDIAN)) {
+                failure.set("FRAME REPAIR DID NOT MIRROR — obsidian was replaced at " + brokenFrame
+                    + " but the partner " + partnerRef.get() + " holds " + s.getBlock()
+                    + ", expected obsidian. With both portals dead this is the dormant-link path,"
+                    + " which is the only path that matters for repair.");
+            }
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS-A FRAME MIRROR GATE FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS-A FRAME MIRROR GATE PASS — break and repair both mirrored with NO portal alive"
+                + " (dormant link working). {} | counters: {}",
+            detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
     }
 
     /**
