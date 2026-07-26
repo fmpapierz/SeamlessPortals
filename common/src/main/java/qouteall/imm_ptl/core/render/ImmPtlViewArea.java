@@ -492,7 +492,35 @@ public class ImmPtlViewArea extends ViewArea {
         }
     }
 
-    // NOTE it may be accessed from another thread
+    /**
+     * NOTE it may be accessed from another thread — and that is not a formality. Vanilla's
+     * {@code SectionOcclusionGraph.runUpdates} calls this from
+     * {@code CompletableFuture.runAsync(Util.backgroundExecutor())}
+     * ({@code 26.2:SectionOcclusionGraph.java:162-172, :330-331}), so this body must touch ONLY
+     * the fixed-length {@code sections} array. An off-thread read there can see a stale array or a
+     * stale element, but the length is invariant across preset swaps, so it can never throw and
+     * never observe a torn container.
+     *
+     * <p><b>S20 CLOSE-OUT (§R.1b): the wrap hazard is REAL here, and is deliberately NOT fixed in
+     * this method.</b> {@link #getRenderSection(long)}'s §2.6 note flags it: an out-of-window query
+     * wraps to a congruent-mod-W section and the caller reads that stranger's state. Two attempts
+     * to fix it here were rejected under verification, and the reasons are worth keeping:
+     * <ul>
+     *   <li>transplanting the sibling's bare null-guard turns an intermittently-wrong answer into a
+     *       uniformly wrong one for {@code LevelRendererEntityVisibilityMixin}, which maps
+     *       {@code null} to "cull";</li>
+     *   <li>resolving out-of-window queries through the coord-exact {@code columnMap} introduces the
+     *       FIRST off-thread read of a {@code Long2ObjectOpenHashMap} that the render thread
+     *       mutates in bursts (every {@code repositionCamera} runs W&sup2; {@code provideColumn}
+     *       inserts). fastutil's {@code get} snapshots {@code key} but re-reads {@code mask}/
+     *       {@code value} from fields, so a concurrent rehash can throw AIOOBE — swallowed inside
+     *       the future, freezing the occlusion graph silently — or return a Column for DIFFERENT
+     *       coordinates, i.e. the very aliasing the change was meant to remove.</li>
+     * </ul>
+     * The mod's own consumer gets coord-exact resolution through
+     * {@link #immPtl_getRenderSectionExact(BlockPos)} instead, which is render-thread-only by
+     * contract. Vanilla's callers keep vanilla's answer.
+     */
     @Nullable
     @Override
     public RenderSection getRenderSectionAt(BlockPos pos) {
@@ -516,6 +544,40 @@ public class ImmPtlViewArea extends ViewArea {
         else {
             return null;
         }
+    }
+
+    /**
+     * S20 CLOSE-OUT (§R.1b): coord-EXACT section lookup for the mod's own consumers — no
+     * {@code positiveModulo} wrap, so it can never return a congruent-mod-W stranger. Returns
+     * {@code null} when that column genuinely is not loaded.
+     *
+     * <p><b>RENDER THREAD ONLY.</b> This reads {@code columnMap} (via {@link #rawGet}), which is a
+     * plain {@code Long2ObjectOpenHashMap} the render thread structurally mutates; calling it
+     * off-thread is the AIOOBE / torn-probe hazard described on {@link #getRenderSectionAt}. Every
+     * current caller runs inside the render thread's extract.
+     *
+     * <p><b>Why this exists.</b> The same-dim portal pass deliberately does NOT reposition this
+     * grid to the destination camera ({@code SecondaryWorldRenderCore}: "moving it would corrupt
+     * the main frame"), so every lookup for a DISTANT same-dim destination is out-of-window by
+     * construction and {@link #getRenderSectionAt} answers it with an unrelated near-camera
+     * section. Terrain already avoids that trap — {@code VisibleSectionDiscovery} resolves through
+     * this same coord-exact store — which is why distant same-dim terrain renders correctly while
+     * entity visibility, which went through the wrap, did not.
+     *
+     * <p><b>UNPROVEN AS A FIX, deliberately stated.</b> It is NOT established that the wrap is what
+     * makes distant same-dim entities flicker: the aliased section is usually an in-window,
+     * compiled one, which would bias the old behaviour toward showing entities, and the rival
+     * explanation on record is that those destination sections are never remeshed at all. This
+     * method makes the answer HONEST; whether it makes the picture better is a live question, and
+     * it is scoped to exactly one consumer so it can be judged on its own.
+     */
+    @Nullable
+    public RenderSection immPtl_getRenderSectionExact(BlockPos pos) {
+        return rawGet(
+            Mth.floorDiv(pos.getX(), 16),
+            Mth.floorDiv(pos.getY(), 16),
+            Mth.floorDiv(pos.getZ(), 16)
+        );
     }
 
     /**

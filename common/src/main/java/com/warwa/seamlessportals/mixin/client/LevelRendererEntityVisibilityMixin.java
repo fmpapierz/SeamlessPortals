@@ -97,8 +97,18 @@ public class LevelRendererEntityVisibilityMixin {
                 cir.setReturnValue(false);
                 return;
             }
+            // S20 CLOSE-OUT (§R.1b): resolve COORD-EXACTLY when we own the ViewArea. The same-dim
+            // portal pass deliberately leaves the grid positioned at the MAIN camera, so for a
+            // DISTANT same-dim destination every getRenderSectionAt query is out-of-window and its
+            // positiveModulo wrap answers with an unrelated near-camera section — this gate then
+            // reports that stranger's compiled state as the entity's. Terrain never had the problem
+            // because VisibleSectionDiscovery resolves through the coord-exact store; this puts the
+            // entity gate on the same footing. Render thread only (we are inside the extract), which
+            // is that method's contract. Non-ImmPtl ViewAreas keep the vanilla call.
             net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section =
-                viewArea.getRenderSectionAt(blockPos);
+                viewArea instanceof qouteall.imm_ptl.core.render.ImmPtlViewArea immPtlViewArea
+                    ? immPtlViewArea.immPtl_getRenderSectionExact(blockPos)
+                    : viewArea.getRenderSectionAt(blockPos);
             cir.setReturnValue(section != null
                 && section.getSectionMesh()
                     != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
