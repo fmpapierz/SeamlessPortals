@@ -1143,8 +1143,20 @@ public class CrossingSmoke implements FabricClientGameTest {
             // Runs on this same isolated portal, whose opening now holds the rail placed above.
             // Asserts the three things the mirror must do, in order, and FAILS on each — a mirror
             // that silently does nothing is the whole feature silently not existing.
-            if (!AperturePassthroughLever.DISABLED && after == before) {
+            if (!AperturePassthroughLever.DISABLED && after == before && destSeen != null) {
+                // The reverse-direction assertion needs the FAR portal ALIVE AND TICKING, not merely
+                // its chunk readable. Bindings are seeded from SERVER_PORTAL_TICK_SIGNAL, so a portal
+                // in a non-ticking chunk never binds and a block broken there has no seam to act on.
+                // Force-load the counterpart region and give it ticks to bind before asserting.
+                int dxc = (int) Math.floor(destSeen.x), dzc = (int) Math.floor(destSeen.z);
+                runCommands(context, List.of(inDim("minecraft:the_nether",
+                    "forceload add " + (dxc - 16) + " " + (dzc - 16) + " "
+                        + (dxc + 16) + " " + (dzc + 16))));
+                context.waitTicks(60);
                 rsMirrorGate(context, cell);
+                runCommands(context, List.of(inDim("minecraft:the_nether",
+                    "forceload remove " + (dxc - 16) + " " + (dzc - 16) + " "
+                        + (dxc + 16) + " " + (dzc + 16))));
             }
         } catch (AssertionError gateFailure) {
             // A GATE assertion must never be swallowed by this leg's fail-soft handler. Observed:
@@ -1245,6 +1257,25 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (!afterBreak.isAir()) {
                 failure.set("PROVENANCE CLEAR FAILED — source half was broken but destination "
                     + destPos + " still holds " + afterBreak.getBlock());
+                return;
+            }
+
+            // (2b) THE REVERSE DIRECTION — breaking the MIRRORED half must clear the SOURCE half.
+            // The user found this by hand because the original gate only ever broke the source: with
+            // the clear gated on provenance, breaking the mirrored side left the source standing and
+            // the player could not replace their own block ("places and instantly disappears").
+            // Symmetric behaviour is not optional — a seam has no privileged side.
+            ow.setBlockAndUpdate(sourceCell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
+            if (!dest.getBlockState(destPos).is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                failure.set("re-place did not re-mirror; cannot test the reverse direction");
+                return;
+            }
+            dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            net.minecraft.world.level.block.state.BlockState sourceAfterReverse = ow.getBlockState(sourceCell);
+            if (!sourceAfterReverse.isAir()) {
+                failure.set("REVERSE CLEAR FAILED — the MIRRORED half was broken but the source half "
+                    + sourceCell + " still holds " + sourceAfterReverse.getBlock()
+                    + "; the player cannot replace their own block because the seam stays occupied");
                 return;
             }
 
