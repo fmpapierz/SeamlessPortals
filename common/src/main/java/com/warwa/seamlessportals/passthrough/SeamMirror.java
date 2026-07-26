@@ -300,7 +300,7 @@ public final class SeamMirror {
             BlockState existing = dest.getBlockState(destPos);
             if (!existing.isAir()) {
                 dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
-                forceClientSync(dest, destPos);
+                forceClientSync(sourceLevel, dest, destPos);
                 clearedMirrors++;
                 probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
             }
@@ -328,7 +328,7 @@ public final class SeamMirror {
         dest.setBlock(destPos, rotated,
             net.minecraft.world.level.block.Block.UPDATE_ALL
                 | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
-        forceClientSync(dest, destPos);
+        forceClientSync(sourceLevel, dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
         holder.seamlessportals$mirrorCreatedCells().add(destKey);
@@ -358,7 +358,20 @@ public final class SeamMirror {
      * route into per-player tracking, so a mirrored write is broadcast on the same terms as any other
      * block change regardless of which filters the write itself passed.
      */
-    private static void forceClientSync(ServerLevel dest, BlockPos pos) {
+    private static void forceClientSync(Level sourceLevel, ServerLevel dest, BlockPos pos) {
+        // ★ CROSS-DIMENSION ONLY. User-reported regression, and the discriminator was exact:
+        // obsidian portals fine, man-made CROSS-dim fine, man-made SAME-dim broken ("sometimes only
+        // works 1 way"). That maps precisely onto this push.
+        //
+        // When the destination is the SAME level the player is standing in, vanilla already
+        // broadcasts the change by the ordinary route. The push is then redundant AND harmful: it
+        // forces a second entry into the same ChunkHolder's per-tick change set for a write that is
+        // usually in the SAME CHUNK as the source write, because same-dimension portals sit close
+        // together. Cross-dimension is the only case that needs it — there the player is not in the
+        // destination level at all, which is exactly the case that was invisible before.
+        if (sourceLevel == dest) {
+            return;
+        }
         try {
             dest.getChunkSource().blockChanged(pos);
         }
@@ -451,7 +464,7 @@ public final class SeamMirror {
                     dest.setBlock(destPos, srcState.rotate(binding.stateRotation()),
                         net.minecraft.world.level.block.Block.UPDATE_ALL
                             | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
-                    forceClientSync(dest, destPos);
+                    forceClientSync(serverLevel, dest, destPos);
                     ((SeamIndexHolder) dest).seamlessportals$mirrorCreatedCells().add(destPos.asLong());
                     reconciled++;
                     done++;
@@ -526,7 +539,7 @@ public final class SeamMirror {
             // that is when the far side is brought up to match — see repairFarFrameOnIgnition.
             if (nowAir && !farState.isAir()) {
                 far.setBlockAndUpdate(link.to(), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
-                forceClientSync(far, link.to());
+                forceClientSync(level, far, link.to());
                 frameMirrored++;
                 probe("frame break mirrored to", link.to(), far, pos, level);
             }
@@ -590,7 +603,7 @@ public final class SeamMirror {
                     continue;   // this side is not repaired either — nothing to copy
                 }
                 far.setBlockAndUpdate(link.to(), nearState);
-                forceClientSync(far, link.to());
+                forceClientSync(level, far, link.to());
                 frameMirrored++;
                 repaired++;
             }
