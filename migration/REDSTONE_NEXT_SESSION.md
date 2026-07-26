@@ -142,6 +142,45 @@ all three open paths together, rather than patching each.
 Note this also means the (b) spec was written against an (a) that had defects 1–3, so any part of it
 reasoning about mirrored-state behaviour may be reasoning about the broken version.
 
+## ★ OPEN BUG — SAME-DIM MAN-MADE PORTALS DO NOT SHOW MIRRORED WRITES LIVE
+
+**Status: UNSOLVED. Three attempts, three different wrong models. Do not guess a fourth — instrument.**
+
+Observed states, in order, all user-reported from live play:
+
+| build | behaviour |
+|---|---|
+| no client-sync push | source→dest invisible until teleport; dest→source instant; blocks always PERSIST |
+| push on all writes (`3a85cf7`) | "worse — sometimes only works 1 way", same-dim only |
+| push cross-dim only (`8620c9c`) | **fails BOTH ways** on same-dim |
+
+Constant across all three: **obsidian portals fine, man-made CROSS-dim fine, man-made SAME-dim broken.**
+The server state is always correct — blocks persist once seen, and the log shows mirror writes firing
+with zero failures and zero warnings (28–154 ops per session depending on how much was placed).
+
+**So this is a DELIVERY/RENDER problem, not a mirror-logic problem**, and the three attempts show the
+cause is NOT simply "the block update doesn't reach the client".
+
+Hypotheses NOT yet tested, in rough order of promise:
+
+1. **The portal VIEW's mesh is not invalidated.** A same-dim portal shows a region of the *same*
+   level through its window. The ordinary block update refreshes the main-world mesh (look directly
+   at the region and it is right) while the portal view renders from separate cached state that
+   nothing invalidates. This would explain why looking THROUGH the portal is stale while the world
+   itself is correct. The block-era precedent for exactly this class is `RemoteBlockUpdater` +
+   `rebuildSectionAsync` (see `session_2026_04_26_fluid_flow` in memory) — dead under entity portals,
+   but the shape of the fix is the reference.
+2. **The `applying` guard is a single STATIC boolean.** Same-dimension is the only configuration where
+   both halves of a mirror live in one level and one tick, so a same-dim mirror write can be
+   re-observed by the driver as an ordinary write once the flag clears. Would need a per-level or
+   per-position guard.
+3. **`UPDATE_SKIP_ON_PLACE` interacting with same-level broadcast** in a way not yet traced.
+
+**Do this first, before any more code:** add a probe that logs, for each mirrored write, whether
+`sendBlockUpdated` was actually reached and whether the client received a change for that position.
+Every attempt so far has reasoned from symptom to mechanism and been wrong; nothing has yet measured
+where the update is lost. Three wrong models is the signal to stop reasoning and instrument.
+
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
 
 - **`ApertureOccupancy.areaPredicate()` is load-bearing in THREE systems at once**: flood-fill
