@@ -589,6 +589,46 @@ reset), so it reduces to **one narrow live observation**: walk and sprint throug
 the hand and the FOV. That single check discharges (i) and empirically re-confirms (ii), and unblocks
 the entire remaining deletion.
 
+### G.9 ★ THE CONSTRAINT-5 RECORD — BOTH (verify) SUB-ITEMS DISCHARGED (live, 2026-07-26)
+
+**This section IS the record that `EXECUTION_PLAN.md` §S20(a) and `S08-teleportation.md` §10 require
+before `SeamlessClientTeleport` may be deleted.** S08 §536: *"`SeamlessClientTeleport` MAY NOT be
+deleted at S20 until BOTH are on record."* Both are now on record.
+
+**Round:** narrow targeted live round on the flag-ON (shipping default) ported path, tree at
+`cec517c` — compile green ×3, 8-leg suite ALL LEGS PASS, all workflows idle. Config:
+`:fabric:runClient` (plain — no sodium, no shaderpack; correct because the rotation/bob path is
+graphics-mode independent). User-observed, per the standing rule that the user's live observation
+outranks any reading of mine.
+
+**Script executed:** walk through a portal forward / backward / strafing, watching the hand and held
+item at the crossing instant; then sprint through, watching for speed loss and an FOV pulse.
+
+**USER VERDICT (verbatim): "hand steady, sprint preserved, no FOV pulse".**
+
+| Sub-item | Status | Evidence |
+|---|---|---|
+| (i) lagged-rotation-field shift (`yRotO`/`xRotO`/`yBob`…) | **DISCHARGED** | Live: hand steady across forward/backward/strafing crossings. The rotation half (`yRotO`/`xRotO`, still load-bearing on 26.2 as previous-tick interpolation state) is confirmed correct in behaviour. The bob half's 26.2 API shift identified in §G.8 (writes to `player.yBob`/`xBob`/`yBobO`/`xBobO` no longer reach `GameRenderer.bobView`, which reads `cameraState.entityRenderState.bob`) is therefore **faithful-but-inert with no observable consequence** — the port is IP-faithful and 26.2 simply sources camera bob elsewhere. No fix required. |
+| (ii) sprint-modifier keeper | **DISCHARGED (twice)** | Structurally at §G.8 (`ClientTeleportationManager.changePlayerDimension:460` carries the same `LocalPlayer` and its `AttributeMap`; zero `new LocalPlayer`/`assignAllValues`/`replaceFrom`/`createPlayer`/attribute transfer — the wipe's precondition is absent by construction), and now empirically: sprint preserved, no FOV pulse. |
+
+**Consequence: the constraint-5 interlock is CLEAR.** `SeamlessClientTeleport` may now be deleted,
+which unblocks the core deletion it was mutually exclusive with (§G.8). Its deletion is no longer a
+constraint-5 violation.
+
+**Ledgered as a genuine finding, not a non-event:** §G.8's API-level gap is real and worth keeping on
+record even though it is benign — the six-field write at `TransformationManager:198-203` is a
+1:1 IP port whose bob half addresses fields 26.2 no longer routes camera bob through. A future
+session seeing those writes should not assume they drive the camera, and should not "fix" them toward
+`ClientAvatarState` without evidence: this round is the evidence that no artifact exists.
+
+Also noted for §G.7 increment 3 (unchanged by this round): `CrossingTracer`'s per-frame ring is
+**dark on the flag-ON path** — `recordFrame()` is fed only from `StencilPortalRenderer:300` and
+`armDump()` only from `SeamlessClientTeleport:249` / `LocalPlayerMixin:96`, all block-era. Its
+existing bob-drop detector (`:214`, `prevBob - bobAmp[i] > 0.015f`) and its `bobAmp` channel
+(`:112`, `avatarState().getInterpolatedBob`) therefore never run today. The re-home stays an
+increment-3 task; it was deliberately NOT done before this round, to keep the live check on a tree
+whose gates were green.
+
 ### G.6 A stale label that S20 itself creates
 
 `ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's
