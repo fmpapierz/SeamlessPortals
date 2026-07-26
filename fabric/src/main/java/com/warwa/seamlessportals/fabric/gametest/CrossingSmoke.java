@@ -1297,6 +1297,30 @@ public class CrossingSmoke implements FabricClientGameTest {
                 return;
             }
 
+            // ASSERT THE SHAPE, NOT JUST THE BLOCK. Checking is(Blocks.RAIL) alone hid a real defect:
+            // LevelChunk.setBlockState runs onPlace INSIDE its body, so a rail resolves its shape via
+            // a NESTED setBlock, and the OUTER inject then re-mirrored its own pre-resolution
+            // parameter — the far rail was a rail, but with the wrong shape. A block-identity
+            // assertion cannot see that.
+            net.minecraft.world.level.block.state.BlockState localState = ow.getBlockState(sourceCell);
+            var shapeProp = net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE;
+            if (localState.hasProperty(shapeProp) && mirrored.hasProperty(shapeProp)) {
+                var localShape = localState.getValue(shapeProp);
+                var farShape = mirrored.getValue(shapeProp);
+                var expected = localShape;   // identity rotation for an unrotated pair
+                if (binding.stateRotation() != net.minecraft.world.level.block.Rotation.NONE) {
+                    expected = localState.rotate(binding.stateRotation()).getValue(shapeProp);
+                }
+                if (farShape != expected) {
+                    failure.set("MIRRORED SHAPE MISMATCH — source " + sourceCell + " is " + localShape
+                        + " but destination " + destPos + " is " + farShape + " (expected " + expected
+                        + " under rotation " + binding.stateRotation() + "). The far rail is a rail"
+                        + " but the WRONG rail: shape resolution happens in a NESTED setBlock and the"
+                        + " outer mirror must not overwrite it with its pre-resolution parameter.");
+                    return;
+                }
+            }
+
             // (2) breaking the source clears the mirrored counterpart (provenance)
             ow.setBlockAndUpdate(sourceCell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
             net.minecraft.world.level.block.state.BlockState afterBreak = dest.getBlockState(destPos);

@@ -109,8 +109,21 @@ public abstract class LevelChunkSetBlockStateMixin {
         if (server == null || !server.isSameThread()) return;
 
         // APERTURE mirroring — gated on the section index, which is the hot-path fold.
+        //
+        // MIRROR THE LIVE STATE, NOT THE newState PARAMETER. LevelChunk.setBlockState calls
+        // state.onPlace(...) INSIDE its own body (REF LevelChunk.java:326-327), and for a rail that
+        // runs BaseRailBlock.onPlace -> updateState -> updateDir -> RailState.place, which at
+        // REF RailState.java:333 issues a NESTED level.setBlock(pos, resolvedShape, 3) to the SAME
+        // position. So the inner invocation's inject fires with the RESOLVED shape and mirrors it
+        // correctly, then the stack unwinds and THIS inject fires with its own parameter — the
+        // PRE-RESOLUTION shape — and overwrites the far side with it. Last write wins, and it is
+        // wrong. Reading the live state instead makes both invocations agree on the final state, so
+        // the redundant outer write is harmless.
+        //
+        // Found by the (b) design panel as a PRE-EXISTING (a) defect. It hid because the mirror gate
+        // asserted is(Blocks.RAIL) — the BLOCK — and never the SHAPE.
         if (SeamRegistry.sectionHasSeam(serverLevel, pos)) {
-            SeamMirror.onSeamCellChanged(serverLevel, pos, newState);
+            SeamMirror.onSeamCellChanged(serverLevel, pos, serverLevel.getBlockState(pos));
         }
 
         // FRAME mirroring — deliberately NOT behind sectionHasSeam. That index is derived from LIVE
