@@ -91,8 +91,15 @@ public class IntrinsicNetherPortalForm extends NetherPortalLikeForm {
     }
 
     @Override
+    // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
+    // -Dseamlessportals.disableAperturePassthrough=true. IP-core edit 5 of REDSTONE_A_SPEC.md §3.1.
+    // IP demands a bare-air opening to find a frame at all. That makes a frame containing a
+    // surviving rail line permanently un-relightable, which contradicts the user's break rule
+    // (REDSTONE_RECON.md §0.4). Widened to the passthrough/support union here; the real
+    // position-aware rule is applied by ApertureOccupancy.ignitionAreaAcceptable, because this
+    // predicate has no coordinates to express "a support cube, but only under a rail".
     public Predicate<BlockState> getAreaPredicate() {
-        return BlockBehaviour.BlockStateBase::isAir;
+        return com.warwa.seamlessportals.passthrough.ApertureOccupancy.areaPredicate();
     }
 
     @Override

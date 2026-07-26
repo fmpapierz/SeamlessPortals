@@ -49,8 +49,11 @@ public class DiligentNetherPortalForm extends AbstractDiligentForm {
     }
 
     @Override
+    // RECORDED IP DEVIATION — RS PASSTHROUGH (a); IP-core edit 6, the sibling of edit 5 in
+    // IntrinsicNetherPortalForm. Both forms must widen or a frame containing a rail is findable by
+    // one ignition path and not the other.
     public Predicate<BlockState> getAreaPredicate() {
-        return BlockBehaviour.BlockStateBase::isAir;
+        return com.warwa.seamlessportals.passthrough.ApertureOccupancy.areaPredicate();
     }
 
     @Override
