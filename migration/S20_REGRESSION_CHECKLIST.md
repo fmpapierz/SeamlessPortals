@@ -235,6 +235,87 @@ them separately rather than assuming one cause.
 **Ownership: a named post-S20 work item, not an S20 blocker.** Recorded here rather than fixed
 inside a deletion stage, per `EXECUTION_PLAN` §S20(a)'s deletion-only scope.
 
+### §R.1a THE INVESTIGATION — 6 traces + 6 adversarial verifiers (12 agents, 2.5M tokens)
+
+**Headline, and it SURVIVED adversarial verification: S20 caused none of (a)–(f), nor the arrow
+seam.** The load-bearing argument is structural rather than per-symptom: every S20 deletion sat
+inside the `else` arm of `if (isEntityPortals()) { IP } else { block era }`, and the shipping default
+has taken the `if` arm since the S17 flip (2026-07-18). Code the default never executed cannot have
+regressed the default. Verified independently per lane against `git log 20e1670..HEAD`.
+
+**The one claim that had to be killed first**, because the port-note itself raised it: that increment
+3 broke entity visibility by stripping `PortalContextSwitch.isRenderingPortal ||` from
+`LevelRendererEntityVisibilityMixin`. **Refuted twice over, and re-derived by hand:**
+1. The same-dim pipeline **arms the surviving disjunct itself** — `SecondaryWorldRenderCore:2337-2345`
+   sets `isDestExtracting = true` around its extract in a `try/finally`. Same-dim never lost the
+   condition.
+2. The stripped disjunct was **already dead on the default**. `isRenderingPortal` had exactly two
+   writers pre-S20 (`PortalContextSwitch:1531/:2035`), both inside the block-era FBO render, reachable
+   only from `StencilPortalRenderer.renderPortals()`, registered at
+   `SeamlessPortalsClientFabric:178` — inside the `} else {` at `:163`, the **flag-OFF arm**.
+
+**Per-symptom verdicts after refutation:**
+
+| | Verdict | Basis |
+|---|---|---|
+| (a) fire | **PRE-EXISTING GAP**, but see §R.1b — S20 wrote a same-dim skip whose stated premise the live round refutes | `ServerLevelFireSpreadMixin` |
+| (b) fluids | **NOT S20**; exact break-link unresolved | block-update chain is dimension-agnostic at every link inspected |
+| (c) particles | **INHERITED IP** (provisional) — `ClientWorldLoader.tick()` runs the remote `animateTick` pump only `if (CLIENT.level != world)`, so a same-dim destination structurally cannot get ambient particles; vanilla `sendParticles` filters at 32 blocks and IP redirects no particle packet at all. This *predicts* the cross-dim/same-dim split with no extra cause | `ClientWorldLoader:169-173`, `:266-294` |
+| (d) invisible entities | **NOT S20 (high confidence). CAUSE UNRESOLVED — two live candidates** | see below |
+| (e) straddling cut off | **UNCERTAIN, cause unknown.** No S20-attributable change on the default | the projection path never consults `isEntityVisible`, so (d)'s mechanism does not explain it |
+| (f) flash | **NOT S20**; the known same-dim flash fix (`ca6e93b`) is sodium-specific and the observation was plain Fabric | |
+| arrow seam (§R.3) | **INHERITED IP** — `git log 20e1670..HEAD` empty for all ten files in the projectile/collision chain | |
+
+**(d)'s two surviving candidates — the verifier downgraded the first from "cause" to "hypothesis":**
+1. **The `getRenderSectionAt` preset-wrap alias.** Same-dim deliberately does NOT reposition the dest
+   ViewArea grid (`SecondaryWorldRenderCore:656-666` — "moving it would corrupt the main frame"), so
+   the preset stays pinned to the player. `ImmPtlViewArea.getRenderSectionAt(BlockPos)` wraps via
+   `positiveModulo` into that preset **with no occupant guard**, so a query for a far destination
+   returns an unrelated near-player section and the mixin reports *its* compiled state.
+   ★ **This hazard was already known and explicitly deferred to us**: `ImmPtlViewArea:553-555`
+   carries, in code, *"NOTE: getRenderSectionAt (BlockPos-keyed) shares the wrap hazard — ledgered
+   for the S20 audit, not changed here."* The node-keyed sibling got the vanilla-parity guard at
+   IS §2.6; this one did not. **Verifier's caveat, which stands:** the aliased slot is normally an
+   in-window, compiled chunk, so the alias usually returns TRUE — it can fire, but it does not
+   self-evidently produce dropouts, and there is no runtime evidence yet.
+2. **The more parsimonious family the trace did not exclude:** the distant same-dim destination's
+   entities simply are not reaching or persisting on the client (`MixinTrackedEntity:182-271`,
+   `EntitySync:47-70`). This one would also cover (a)/(b)/(c) with a single cause.
+
+**Residual closed by hand:** a verifier flagged that if the user had `crossPortalEntityClipMechanism
+= ISOLATED_STORAGE_BRACKET` selected pre-S20, S20's removal of Mechanism B could itself explain (e).
+It cannot: their run-dir config read `"crossPortalEntityClipMechanism": "SUBMIT_ORDER_UNIFORM"`
+before this round touched it (the value only became `ISOLATED_STORAGE_BRACKET` because B.12 armed it
+deliberately, on a build where the field no longer exists). They were on Mechanism A both sides of
+S20.
+
+**THE THREE CHEAP DISCRIMINATING PROBES** (verifier-recommended; each settles one open question):
+- **(b) vs the whole family:** at a far same-dim portal, **place or break one ordinary block** at the
+  destination. If a plain block change *does* appear, the break is fluid/fire-specific; if it does
+  not, one transport-level cause covers (a)/(b)/(c).
+- **(d) candidate 1:** log when `getRenderSectionAt` returns a section whose node ≠ the queried node.
+  One armed session proves or kills the alias outright.
+- **(e):** put a mob straddling the aperture of a **SHORT-distance same-dim** portal. If it is cut
+  off there too, distance is irrelevant and (e) is a same-dim projection defect, not a §R.1 member.
+
+### §R.1b ★ A DEFECT IN S20's OWN CODE — the fire-spread same-dim skip rests on a false premise
+
+Not a regression (the pre-S20 body was flag-OFF-only, so same-dim distant fire never worked on the
+default either) — but this is a line **S20 wrote**, and the live round refutes its justification:
+
+```java
+// Same dim → vanilla's own player-proximity check already covers it.
+if (player.level().dimension().equals(thisDim)) continue;
+```
+
+`ServerLevelFireSpreadMixin`'s javadoc states it outright: *"The same-dimension case is still
+skipped: vanilla's own player-proximity check already covers it, and re-answering it here would
+widen the gamerule."* That premise holds for a portal a few blocks away and **fails for a destination
+hundreds of blocks away**, which is precisely the case the user tested. The narrow fix is to skip
+only when the player is genuinely within vanilla's proximity, rather than skipping on
+same-dimension-ness — with the gamerule-widening concern answered by the existing
+`isPlayerWatchingChunkWithinRadius` filter, which is the same guard the cross-dim arm already trusts.
+
 ## §E HOW TO REPORT
 
 For each row: **PASS**, **FAIL + what you saw**, or **NOT TESTED**. "Not tested" is a valid and
