@@ -835,6 +835,109 @@ but not broken).
 `VisibleSectionDiscovery` (survives at `qouteall/imm_ptl/core/render/`). Every hit on those names in
 `:common` refers to the SURVIVING class.
 
+### G.12 ★★ INCREMENT 4 (the flag's death) — SPEC'D, AND ONE BLOCKER FOUND THAT INVALIDATES THE OBVIOUS PLAN
+
+Round: 4 specs + 4 adversarial verifies + a high-effort completeness critic (9 agents, 0 errors,
+~1.47M tokens). **All four specs returned `spec-has-defects`.** Increment 4 is NOT yet applied — this
+section is its verified plan.
+
+#### ★★ THE BLOCKER: `isOn()`'s loader force-false applies at ALL EIGHT gates, not just the two weave gates
+
+This is the most consequential finding of the whole engagement, and it refutes the plan I had been
+carrying since increment 1 (including §F and §G.7 as written above — treat this section as
+superseding them on this point).
+
+**The reasoning I got wrong.** I established at increment 1 that the two mixin-WEAVE gates must
+collapse to `isFabricLoaderPresent()`, never `true`, because `EntityPortalsFlag.isOn()` carries a
+loader force-false. I then treated the remaining RUNTIME gates as ordinary flag gates to collapse to
+unconditional. **But the force-false lives INSIDE `isOn()`** (`EntityPortalsFlag:98-100` in
+`readFromDisk`, `:89` in `seedIfUnset`), so it applies at **every** call site. On plain NeoForge all
+eight gates evaluate FALSE today. Collapsing the six runtime ones to unconditional silently flips
+each from its flag-OFF branch to its flag-ON branch **on a shipping loader**.
+
+**The worst instance is a boot crash, not a subtle regression.** `MinecraftFramePumpMixin` injects
+into `Minecraft.renderFrame(Z)V` — every frame. Collapsed, the first NeoForge client frame reaches
+`:64 IPGlobal.PRE_TOTAL_RENDER_TASK_LIST.processTasks()`, which triggers `IPGlobal`'s static
+initialiser — which this project's own ledger documents as a hard `NoClassDefFoundError` on NeoForge
+(Fabric's `EventFactory`). Result: `ExceptionInInitializerError` on the render thread at startup —
+**a NeoForge client that no longer boots.**
+
+**Why these mixins reach NeoForge at all:** `neoforge.mods.toml:9-10` loads
+`seamlessportals-common.mixins.json`, and `SeamlessMixinConfigPlugin:156` filters **only**
+`mixinClassName.startsWith("qouteall.")`. All six runtime gates live in
+`com.warwa.seamlessportals.mixin.client.*`, so they fall straight through to `return true` at `:207`
+and ARE woven there. The module boots today *precisely because* the flag is false and `:64` is never
+reached — exactly as `SeamlessPortalsModNeoForge:22-27` states.
+
+**No gate catches this.** `compileJava` is green either way; the 8-leg suite is Fabric-only.
+
+**DECISION (recorded): do NOT collapse the runtime gates to unconditional.** Apply the weave-gate
+rule to them too, via the mechanism that already exists — a `FABRIC_ONLY_IP_DRIVERS` set in
+`SeamlessMixinConfigPlugin.shouldApplyMixin`, skipped when `!isFabricLoaderPresent()`, reusing the
+predicate already added at increment 1. One edit instead of four inline guards, and it keeps the
+cross-loader contract in one auditable place. This belongs in the **same isolated review** as the two
+weave-gate lines, because it is the same hazard class with the same total absence of a gate.
+
+#### The two weave-gate collapses (the entire NeoForge weave contract, two lines)
+
+- `SeamlessMixinConfigPlugin:191` — `&& !(isFabricLoaderPresent() && EntityPortalsFlag.isOn())`
+  → **`&& !isFabricLoaderPresent()`**
+- `IPCompatMixinPlugin:136` — `return isFabricLoaderPresent() && EntityPortalsFlag.isOn();`
+  → **`return isFabricLoaderPresent();`**
+
+Land these as an **isolated diff** and eyeball them against the literal text before anything else.
+
+#### KEEP — the D3 carve-out sets are NOT redundant after the collapse (a second near-miss)
+
+`D3_UNCONDITIONAL_WORLDGEN_ACCESSORS` (`:61-71`) and `D3_UNCONDITIONAL_ITEM_DATAFIX` (`:73-95`) and
+both `!…contains(…)` terms **must stay unchanged**. The tempting simplification is wrong:
+on Fabric the collapsed gate is `!isFabricLoaderPresent()` = false, so the carve-outs short-circuit a
+branch never taken — redundant *there*. **On NeoForge the collapsed gate is TRUE, so the carve-outs
+are the only reason those four classes weave — and they weave there TODAY.** Removing them would
+silently sweep legacy `command_stick`/`portal_wand` item data into `minecraft:custom_data` on a
+NeoForge open of a pre-1.20.5 world (permanent loss on a later move to Fabric), and cost an alt-dim
+world its generation accessors. Invisible to compile, suite, and a green boot alike.
+
+#### Two dead sets that are invisible to BOTH javac and the mixin-config sweep
+
+Each holds exactly one string literal naming a file that **no longer exists**:
+- `ENTITY_PORTALS_SUPERSEDED_MIXINS` (`:46-59`) → `ClientPacketListenerLocalPlayerFallbackMixin`.
+  Delete the import `:3`, the set, and its consuming `if` (`:195-201`). Provably dead ⇒
+  behaviour-identical.
+- `SODIUM_INCOMPATIBLE_MIXINS` (`:32-44`) → `LevelRendererCullTerrainMixin`. With it dead, the whole
+  sodium-detection machinery (`sodiumLoaded`, `isSodiumPresent()`, `detect()`, `:97-135`, the `if` at
+  `:202-206`, the javadoc at `:20-28`) is unused. **Separate commit after the flag increment is
+  green** — it is block-era collateral, not flag collateral, and must not muddy the isolated `:191`
+  review. Do **not** touch `isFabricLoaderPresent()` (`:232-239`) — different method, now load-bearing.
+
+#### An intentional NeoForge behaviour CHANGE to put in the release notes
+
+`MainProjectionBobMixin`: the flag-ON identity proof is correct, but "behaviour-preserving" is true
+only on Fabric. On NeoForge the flag is false today, so both redirects take the flag-OFF **no-op**
+path and world-projection walk-bob / hurt-tilt are currently **suppressed** there. Deleting the
+no-op path returns vanilla view-bob to NeoForge. Keep the deletion; record it as an intentional
+change, not a no-op.
+
+#### Verifier corrections to the other three specs (each would have broken something)
+
+- **`multiloader-loader.gradle`: the spec's delete range `22-28` destroys the load-bearing
+  `compileOnly project(path: ':common', configuration: 'ipStubsClasspath')` at `:28`** — which its own
+  mustSurvive list says must survive. Correct range is **21-27**. The line is UNGATED (unlike the
+  `fabricStubs` one at `:39-41`, wrapped in `if (project.name != 'fabric')`), so deleting it reds
+  BOTH `:fabric` and `:neoforge`. Companion off-by-N: the `fabricStubsClasspath` comment is `:30-38`,
+  and **`:39-41` is load-bearing code** (`:neoforge`'s only source for the 31 `net.fabricmc` types).
+- **`fabric/build.gradle` `270-280` is a NON-CONTIGUOUS deletion** — delete `:270-275` (the stale
+  comment, which begins at 270) and `:280` only; leave `:276-279` and `:281-287`, which include the
+  `initialScreenShown` seed the client-gametest framework needs.
+- **A proposed `EXECUTION_PLAN` replacement would have written two now-false facts into the governing
+  plan** — the exact booby-trap class this audit exists to remove. Only the weave-gate clause survives.
+- **`TitleCardCapture` and `CrossingSmoke` share ONE `fabric-client-gametest` entrypoint list**, so
+  deleting a class without its `fabric.mod.json` row lands on **the 8-leg GATE**, not the title card —
+  and `compileJava` cannot see it (`fabric.mod.json` is a resource).
+- The title-card reshape additionally has a **pre-existing aiming bug** worth fixing while there: the
+  camera is positioned and aimed from FEET, not EYE, mis-framing the aperture in the one artefact
+  whose entire purpose is composition.
+
 ### G.6 A stale label that S20 itself creates
 
 `ImmPtlClientChunkMap:71-74`, `:417-419`, `:432-435` assert *"the live driver REMAINS the mod's
