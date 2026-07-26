@@ -1,12 +1,24 @@
 # REDSTONE / RAIL / MINECART PASSTHROUGH — NEXT-SESSION HANDOFF
 
-**Branch `redstone/passthrough`, tip `a83f0c8`**, worktree
+**Branch `redstone/passthrough`**, worktree
 `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\redstone`. Tree is clean and green.
+The per-step commit table below carries the tips; this header no longer names one, because it was
+stale by four commits the last time it was read.
 
 ## READ FIRST, in order
 1. `migration/REDSTONE_RECON.md` **§0** — every user decision, pinned, with the reasoning.
 2. `migration/REDSTONE_A_SPEC.md` — the (a) spec. **Its top banner overrides the body** where they differ.
 3. This file.
+
+## WHERE THINGS STAND (2026-07-26, latest session)
+
+- Sub-feature **(a)** complete and user-verified.
+- Sub-feature **(b) step 1** done — the cross-seam neighbour primitive exists.
+- **(b) step 2 — rails CONNECTING across the plane — NOT STARTED.** Nothing consumes the primitive
+  yet. This is the next feature work; see `REDSTONE_B_SPEC.md` and the re-check notes on it.
+- **The same-dim live-update bug is DIAGNOSED but NOT FIXED** — see the section below. The cause is
+  measured and reproduced headlessly; the fix is a client render-path change that has not been
+  written. It is NOT a mirror defect and NOT a blocker for (b).
 
 ## ★ SUB-FEATURE (a) IS COMPLETE — 2026-07-26, tip `7070101`
 
@@ -142,9 +154,101 @@ all three open paths together, rather than patching each.
 Note this also means the (b) spec was written against an (a) that had defects 1–3, so any part of it
 reasoning about mirrored-state behaviour may be reasoning about the broken version.
 
-## ★ OPEN BUG — SAME-DIM MAN-MADE PORTALS DO NOT SHOW MIRRORED WRITES LIVE
+## ★ SOLVED (DIAGNOSED, NOT YET FIXED) — SAME-DIM MAN-MADE PORTALS DO NOT SHOW MIRRORED WRITES LIVE
 
-**Status: UNSOLVED. Three attempts, three different wrong models. Do not guess a fourth — instrument.**
+**2026-07-26. Cause FOUND BY MEASUREMENT, reproduced headlessly, and it is none of the three
+things that were guessed.** The fix is not yet written; the diagnosis below is exact and the
+reproduction is in the suite.
+
+### The measured answer
+
+**The block reaches the client perfectly. The client just never redraws it.**
+
+`SectionUpdateTracker.setDirty` (REF `SectionUpdateTracker.java:26-31`) is:
+```java
+SectionDirtyState section = this.storage.getValue(sectionX, sectionY, sectionZ);
+if (section != null) { section.setDirty(playerChanged); }
+```
+`storage` is a `RotatingSectionStorage` sized by RENDER DISTANCE and re-centred on the CAMERA. A
+section outside that window returns `null` and **the remesh request is discarded** — no log, no
+exception, no return value. The `ClientLevel` holds the new block; its mesh is never rebuilt.
+
+**Why this is dimension-asymmetric, which is the entire shape of the bug.** Each `ClientLevel` has
+its own `LevelExtractor` and therefore its own tracker:
+- **CROSS-dim destination** → the destination dimension's tracker, centred on that dimension's
+  portal-view camera → the mark lands. *(Measured: nether tracker `71c7ff68`, 2704 sections.)*
+- **SAME-dim destination** → shares the ONE tracker the player's own view uses, centred on the
+  PLAYER → a destination further than render distance away is outside the window and is dropped.
+  *(Measured: overworld tracker `267828b4`, 4056 sections = 13×13×24, i.e. render distance 6.)*
+
+This accounts for every observation, including the ones that made the earlier models look plausible:
+obsidian fine (cross-dim); man-made cross-dim fine (cross-dim); man-made same-dim broken; *"invisible
+until teleport"* — arriving re-centres the tracker and the section is meshed fresh; *"dest→source
+instant"* — the source is next to the player, inside the window; *"sometimes only works 1 way"* —
+whichever end happens to be inside the player's window works.
+
+It also explains why the client-sync push (`3a85cf7`, `8620c9c`) could not have helped and why
+narrowing it was not the regression it appeared to be: **the data always arrived.** The push was
+operating on a stage that was never failing.
+
+### The evidence, verbatim
+
+`-PseamDeliveryTest=true -PseamDeliveryProbe=true`, arm 3 (wand-shaped same-dim cluster, destination
+600 blocks away):
+```
+trace #4 BlockPos{x=3199, y=90, z=2600} in minecraft:overworld
+  — ★ DATA DELIVERED BUT NO REMESH — the client holds the block and will not redraw it
+  1 WRITE     : setBlock=true wanted=air readBack=air destChunkFullStatus=ENTITY_TICKING sameLevel=true
+  2 NOTIFY    : sendBlockUpdated REACHED (flags=3)
+  3a HOLDER   : ServerChunkCache.blockChanged REACHED
+  3b ACCEPT   : ChunkHolder.blockChanged accepted (getTickingChunk non-null)
+  5 CLIENT    : ClientboundBlockUpdatePacket state=air applied to ClientLevel minecraft:overworld
+  6 REMESH    : ★ DROPPED — section is OUTSIDE the tracker's rotating window ... windowSections=4056
+```
+Arms 1 (same-dim one-way, dest 100 blocks) and 2 (cross-dim) both read `6 REMESH: ACCEPTED`.
+
+### What the fix has to be, and what it must NOT be
+
+**Not in `SeamMirror`.** This is not a mirror defect. ANY block change in a same-dimension portal's
+remote region has it — a fluid flowing, a piston, a second player building. The mirror is only how
+it was noticed. A fix inside `SeamMirror` would paper over one caller of a general defect.
+
+**The asymmetry to close:** this port's `ImmPtlViewArea` is UNBOUNDED (the C3 rebuild; that is what
+lets a >71-chunk same-dim dest render at all — leg 7), while the vanilla `SectionUpdateTracker`
+window it is paired with is still render-distance bounded. An unbounded view area with a bounded
+dirty tracker is the defect stated in one line.
+
+**Shape of the fix** — the block-era precedent is `RemoteBlockUpdater.java:86-124`: do not go through
+the tracker, take the `RenderSection` straight out of the (unbounded) `ViewArea` and schedule its
+compile. Note `extractor.setSectionDirtyWithNeighbors` is NOT enough — it routes through the same
+window and is dropped identically. That block-era code is dead under entity portals and needs its
+entity-portal equivalent; `LevelRendererAccessorMixin.seamlessportals$getViewArea` and
+`ViewAreaInvokerMixin` already exist.
+
+Drive it from the CLIENT's block-update application (where stage 5 lands), not from the server.
+
+### The instruments, and one warning about them
+
+- `SeamDeliveryProbe` + 5 mixins, `-PseamDeliveryProbe=true` (default OFF). Six stages, retired on a
+  timer and printed in full so a stage that never ran says `NOT-REACHED`.
+- `RS-DELIVERY-TEST` leg, `-PseamDeliveryTest=true` (default OFF). Three arms in one run; arm 3
+  builds the wand's real four-entity cluster (`createFlippedPortal`/`createReversePortal`, same
+  calls in the same order as `PortalWandInteraction.java:271-283`) with the player moved to stand in
+  front of it, destination deliberately beyond render distance.
+
+⚠ **The probe's own first build was wrong and it is worth knowing how**, because the same mistake is
+easy to repeat: it opened each trace AFTER `setBlock` returned, but stages 2/3a/3b all run INSIDE
+`setBlock`, so it reported them `NOT-REACHED` while the client plainly had the block. An impossible
+reading is the instrument confessing — do not rationalise one. Two more false-positive routes were
+closed with it: stage 4 was chunk-granular for a cell-granular question, and the verdict assumed a
+strictly linear chain that `forceClientSync` deliberately violates by entering at stage 3a.
+
+⚠ **A near fixture hides this bug.** Arm 3 originally used a 60-block destination and passed. Any
+same-dim reproduction must put the destination beyond render distance.
+
+### Superseded — the three wrong models, kept as a record
+
+**Three attempts, three different wrong models, none of which measured anything.**
 
 Observed states, in order, all user-reported from live play:
 
@@ -161,25 +265,20 @@ with zero failures and zero warnings (28–154 ops per session depending on how 
 **So this is a DELIVERY/RENDER problem, not a mirror-logic problem**, and the three attempts show the
 cause is NOT simply "the block update doesn't reach the client".
 
-Hypotheses NOT yet tested, in rough order of promise:
+Hypotheses as they stood before the measurement, with their verdicts:
 
-1. **The portal VIEW's mesh is not invalidated.** A same-dim portal shows a region of the *same*
-   level through its window. The ordinary block update refreshes the main-world mesh (look directly
-   at the region and it is right) while the portal view renders from separate cached state that
-   nothing invalidates. This would explain why looking THROUGH the portal is stale while the world
-   itself is correct. The block-era precedent for exactly this class is `RemoteBlockUpdater` +
-   `rebuildSectionAsync` (see `session_2026_04_26_fluid_flow` in memory) — dead under entity portals,
-   but the shape of the fix is the reference.
-2. **The `applying` guard is a single STATIC boolean.** Same-dimension is the only configuration where
-   both halves of a mirror live in one level and one tick, so a same-dim mirror write can be
-   re-observed by the driver as an ordinary write once the flag clears. Would need a per-level or
-   per-position guard.
-3. **`UPDATE_SKIP_ON_PLACE` interacting with same-level broadcast** in a way not yet traced.
+1. **The portal VIEW's mesh is not invalidated.** ✅ **RIGHT IN KIND** — and the closest of the
+   three. Wrong in one detail that matters: there is no "separate cached state" for a same-dim view.
+   There is ONE `ClientLevel`, ONE `LevelExtractor` and ONE mesh, and the invalidation REQUEST is
+   what gets discarded, in `SectionUpdateTracker.setDirty`, for being out of window. The named
+   precedent (`RemoteBlockUpdater` + `rebuildSectionAsync`) is indeed the right shape of fix.
+2. **The `applying` guard is a single STATIC boolean.** ❌ Refuted. Stages 1–5 all fire and the
+   server state was never wrong; the guard is not involved.
+3. **`UPDATE_SKIP_ON_PLACE` interacting with same-level broadcast.** ❌ Refuted. Stage 2 fires with
+   `flags=515` and the client applies the correct state.
 
-**Do this first, before any more code:** add a probe that logs, for each mirrored write, whether
-`sendBlockUpdated` was actually reached and whether the client received a change for that position.
-Every attempt so far has reasoned from symptom to mechanism and been wrong; nothing has yet measured
-where the update is lost. Three wrong models is the signal to stop reasoning and instrument.
+**The lesson stands and is now paid for:** every one of the three shipped fixes reasoned from symptom
+to mechanism. One probe run, on a fixture that put the destination beyond render distance, settled it.
 
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
 
@@ -191,6 +290,17 @@ where the update is lost. Three wrong models is the signal to stop reasoning and
   Never add a frame material to `aperture_support`. Never admit the placeholder.
 - **STAGING FLAW in the spec:** IP-core edit 10 (re-ignition guard) is scheduled at step 7 but guards a
   hazard created at step 4. Root fix is already in; keep edit 10 as defence in depth.
+- **AN INSTRUMENT'S ORDERING IS PART OF ITS CORRECTNESS.** The delivery probe's first build opened
+  each trace AFTER `Level.setBlock` returned — but three of the six stages it measures run INSIDE
+  `setBlock` (`sendBlockUpdated` is called from that method's own body, REF `Level.java:244-248`).
+  It reported all three `NOT-REACHED` while the client demonstrably had the block. **An impossible
+  reading is the instrument confessing; never rationalise one.** Same family as hazard 5 below (the
+  aim probe measuring the path the fix replaced) and it will recur wherever a probe brackets a call
+  that does its interesting work internally.
+- **A FIXTURE THAT IS TOO CONVENIENT HIDES THE BUG.** The same-dim delivery reproduction passed with
+  a 60-block destination and failed with a 600-block one, because the defect is a render-distance
+  window. "The test passes" was true and meaningless. When a fixture is built to reproduce a
+  reported failure and does not, suspect the fixture before concluding the report was wrong.
 - **Instruments must assert their own COVERAGE, not just their result. FIVE false readings this
   engagement, every one of which looked like evidence:**
   1. the teardown probe that only ever logged `intact=true`, so the failure path was never exercised;
@@ -229,10 +339,19 @@ where the update is lost. Three wrong models is the signal to stop reasoning and
 ## GATES
 
 ```
-.\gradlew.bat :fabric:runCrossingGametest -PapertureTeardownTest=true
+.\gradlew.bat :fabric:runCrossingGametest -PapertureTeardownTest=true -PseamMirrorProbe=true
 .\gradlew.bat :fabric:runCrossingGametest -PapertureTeardownTest=true -PdisableAperturePassthrough=true
 ```
-Both must reach `ALL LEGS PASS`. The RS-TEARDOWN-TEST verdict **inverts** on the master lever
+Both must reach `ALL LEGS PASS`.
+
+The same-dim delivery reproduction is a THIRD command, default-off so it costs the two gates nothing:
+```
+.\gradlew.bat :fabric:runCrossingGametest -PapertureTeardownTest=true -PseamDeliveryTest=true -PseamDeliveryProbe=true
+```
+Read the three `RS-DELIVERY-TEST` arm reports and the `6 REMESH` line of each retired trace. Today
+arms 1 and 2 report `ACCEPTED` and arm 3 reports `★ DROPPED`. **When the fix lands, arm 3 must report
+`ACCEPTED` too, and must go back to `★ DROPPED` under the fix's disable lever** — the RS-TEARDOWN-TEST
+inversion discipline, which is what makes it a proof rather than a hope. The RS-TEARDOWN-TEST verdict **inverts** on the master lever
 (enabled → `NO TEARDOWN`; disabled → `TEARDOWN CONFIRMED`) and reports a REGRESSION either way round —
 that is the end-to-end proof (a) works and that the lever cleanly restores stock IP.
 

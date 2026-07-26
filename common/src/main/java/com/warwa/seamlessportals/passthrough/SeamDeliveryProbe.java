@@ -100,6 +100,8 @@ public final class SeamDeliveryProbe {
         String broadcast = "NOT-REACHED";
         // stage 5 — the client
         String client = "NOT-REACHED";
+        // stage 6 — the remesh request, the only stage downstream of the client having the data
+        String remesh = "NOT-REACHED";
 
         Trace(String dim, BlockPos pos, long tick, long serial) {
             this.dim = dim;
@@ -287,6 +289,59 @@ public final class SeamDeliveryProbe {
     }
 
     // =============================================================================================
+    // STAGE 6 — the remesh request
+    // =============================================================================================
+
+    /**
+     * Whether any live trace sits in this section. {@code setBlockDirty} fans out over a 3×3×3 block
+     * neighbourhood (REF {@code LevelExtractor.java:427-435}), so the tracker is hit several times
+     * per change and this must stay a cheap test.
+     */
+    public static boolean isWatchedSection(int sectionX, int sectionY, int sectionZ) {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_PROBE || LIVE.isEmpty()) {
+            return false;
+        }
+        for (Trace t : LIVE.values()) {
+            if ((t.pos.getX() >> 4) == sectionX
+                && (t.pos.getY() >> 4) == sectionY
+                && (t.pos.getZ() >> 4) == sectionZ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Record the remesh request for the section a traced cell lives in.
+     *
+     * <p>An ACCEPT overwrites a previous DROP and not the other way round: {@code setBlockDirty}
+     * fans out over neighbouring sections and the tracker is called repeatedly, so one accepted
+     * request for the cell's own section is the meaningful answer. Recording last-write-wins would
+     * let a neighbouring section's drop mask it.
+     */
+    public static void noteRemeshRequest(
+        int sectionX, int sectionY, int sectionZ, boolean accepted, String detail
+    ) {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_PROBE) {
+            return;
+        }
+        for (Trace t : LIVE.values()) {
+            if ((t.pos.getX() >> 4) != sectionX
+                || (t.pos.getY() >> 4) != sectionY
+                || (t.pos.getZ() >> 4) != sectionZ) {
+                continue;
+            }
+            if (accepted) {
+                t.remesh = "ACCEPTED — the section will be rebuilt " + detail;
+            }
+            else if (t.remesh.startsWith("NOT-REACHED")) {
+                t.remesh = "★ DROPPED — section is OUTSIDE the tracker's rotating window, so the"
+                    + " client holds the new block and never rebuilds its mesh " + detail;
+            }
+        }
+    }
+
+    // =============================================================================================
     // RETIREMENT — this is where coverage is asserted
     // =============================================================================================
 
@@ -320,9 +375,10 @@ public final class SeamDeliveryProbe {
                 + "    3a HOLDER   : {}\n"
                 + "    3b ACCEPT   : {}\n"
                 + "    4 BROADCAST : {}\n"
-                + "    5 CLIENT    : {}",
+                + "    5 CLIENT    : {}\n"
+                + "    6 REMESH    : {}",
             t.serial, t.pos, t.dim, verdict,
-            t.write, t.notify, t.holderLookup, t.holderAccept, t.broadcast, t.client);
+            t.write, t.notify, t.holderLookup, t.holderAccept, t.broadcast, t.client, t.remesh);
     }
 
     /**
@@ -345,9 +401,20 @@ public final class SeamDeliveryProbe {
         if (t.broadcast.startsWith("★"))              missing.append(" 4(no-recipients)");
         boolean clientOk = !t.client.startsWith("NOT-REACHED");
         if (!clientOk) missing.append(" 5");
-        String head = clientOk
-            ? "REACHED THE CLIENT"
-            : "★ NEVER REACHED THE CLIENT";
+        if (t.remesh.startsWith("NOT-REACHED")) missing.append(" 6");
+        if (t.remesh.startsWith("★"))           missing.append(" 6(out-of-window)");
+        String head;
+        if (!clientOk) {
+            head = "★ NEVER REACHED THE CLIENT";
+        }
+        else if (t.remesh.startsWith("ACCEPTED")) {
+            head = "DELIVERED AND QUEUED FOR REMESH";
+        }
+        else {
+            // The distinction the first five stages cannot make, and the one the user's report is
+            // actually about: correct data, stale picture.
+            head = "★ DATA DELIVERED BUT NO REMESH — the client holds the block and will not redraw it";
+        }
         return missing.isEmpty()
             ? head + " (every stage fired)"
             : head + " — stages not reached:" + missing;

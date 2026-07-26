@@ -1457,13 +1457,25 @@ public class CrossingSmoke implements FabricClientGameTest {
         // break them exactly the way a leftover staged block already broke the ender-pearl leg once.
         Vec3 playerHome = context.computeOnClient(mc -> mc.player.position());
         final int wx = 2600, wy = 90, wz = 2600;      // source side
-        final int wdx = 2660;                          // dest side, same dimension, 60 blocks east
+        // 600 blocks east: DELIBERATELY beyond the client's render distance (6 chunks = 96 blocks),
+        // because that is where stage 6 predicts the loss. SectionUpdateTracker.setDirty
+        // (REF :26-31) discards a remesh request whose section is outside its rotating window, and
+        // that window is render-distance-sized and centred on the camera. A same-dimension
+        // destination therefore shares the PLAYER's window; a cross-dimension one gets its own,
+        // centred on the portal-view camera. A 60-block destination would sit inside the window and
+        // pass, which is exactly the kind of fixture that makes a bug look absent.
+        final int wdx = 3200;
         runCommands(context, List.of(
-            "forceload add " + (wx - 16) + " " + (wz - 16) + " " + (wdx + 16) + " " + (wz + 16),
+            "forceload add " + (wx - 16) + " " + (wz - 16) + " " + (wx + 16) + " " + (wz + 16),
+            "forceload add " + (wdx - 16) + " " + (wz - 16) + " " + (wdx + 16) + " " + (wz + 16),
             "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
+                + (wx + 3) + " " + (wy - 1) + " " + (wz + 3) + " minecraft:stone",
+            "fill " + (wx - 3) + " " + wy + " " + (wz - 3) + " "
+                + (wx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
+            "fill " + (wdx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
                 + (wdx + 3) + " " + (wy - 1) + " " + (wz + 3) + " minecraft:stone",
-            "fill " + wx + " " + wy + " " + (wz - 3) + " "
-                + (wdx) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air"
+            "fill " + (wdx - 3) + " " + wy + " " + (wz - 3) + " "
+                + (wdx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air"
         ));
         context.waitTicks(20);
         runOnServer(context, server -> {
@@ -1635,8 +1647,12 @@ public class CrossingSmoke implements FabricClientGameTest {
             });
             runCommands(context, List.of(
                 "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
+                    + (wx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
+                "fill " + (wdx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
                     + (wdx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",
                 "forceload remove " + (wx - 16) + " " + (wz - 16) + " "
+                    + (wx + 16) + " " + (wz + 16),
+                "forceload remove " + (wdx - 16) + " " + (wz - 16) + " "
                     + (wdx + 16) + " " + (wz + 16)));
             seamStand(context, playerHome.x, playerHome.y, playerHome.z);
             context.waitTicks(20);
