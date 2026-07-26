@@ -1066,6 +1066,15 @@ public class CrossingSmoke implements FabricClientGameTest {
         if (f != null) {
             throw new AssertionError(LOG + "RS-A step-1 SEAM MAP GATE FAILED: " + f);
         }
+        // ---- TOPOLOGY B COVERAGE: a BOUNDARY-PHASE fixture ----
+        // Every portal the suite builds is an obsidian frame, whose plane is always mid-block, so
+        // without this the DISJOINT branch of continuationCell() is written, asserted and NEVER
+        // REACHED — an assertion nothing reaches, which is the trap that produced five false
+        // instrument readings this engagement. A plain spawned Portal takes an arbitrary origin, so
+        // putting its plane on an INTEGER coordinate rather than a .5 gives the boundary phase the
+        // user requires: cells distinct, face-to-face, unmirrored.
+        rsDisjointPhaseGate(context);
+
         // COVERAGE ASSERTION. The involution is the gate's whole reason to exist — it is what makes
         // "break one half breaks the other" and "refuse on conflict" decidable. A run in which no
         // bi-way pair was examined proves nothing about it, so passing silently would be a lie. This
@@ -1079,6 +1088,103 @@ public class CrossingSmoke implements FabricClientGameTest {
                 + " gate. Check leg 6a/6b ran before this and that the search box covers them.");
         }
         SeamlessPortalsConstants.LOGGER.info(LOG + "RS-A step-1 SEAM MAP GATE PASS — {}", report.get());
+    }
+
+    /**
+     * TOPOLOGY B GATE — the boundary-phase case, which no obsidian portal can produce.
+     *
+     * <p>An obsidian frame's plane is always mid-block, so the whole suite exercises only
+     * COINCIDENT seams. This spawns a plain {@code Portal} whose plane sits on an INTEGER coordinate,
+     * giving the geometry the user actually asked for: source and destination cells DISTINCT,
+     * face-to-face across the plane, and NOT mirrored. Asserts the phase is classified DISJOINT and
+     * that {@code continuationCell()} lands ON the destination cell rather than stepping past it.
+     *
+     * <p>Fail-soft on setup, hard on the assertion: if the fixture cannot be built the gate says so
+     * rather than passing quietly, because a silently-skipped topology-B check is worth nothing.
+     */
+    private static void rsDisjointPhaseGate(ClientGameTestContext context) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("(not run)");
+        final int bx = 2000, by = 100, bz = 2000;   // far from every other fixture
+
+        // FORCE-LOAD FIRST. A portal binds only while it TICKS (documented on SeamRegistry), and a
+        // fixture 2000 blocks from any player does not tick, so it never binds and the gate has
+        // nothing to examine. getChunk alone loads blocks, not entity ticking. This gate's own
+        // coverage assertion caught that on the first run.
+        runCommands(context, List.of(
+            "forceload add " + (bx - 16) + " " + (bz - 16) + " " + (bx + 16) + " " + (bz + 16)));
+        context.waitTicks(20);
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+            ow.getChunk(bx >> 4, bz >> 4);
+            // Plane on an INTEGER z — the boundary phase. (An obsidian frame would give z+0.5.)
+            qouteall.imm_ptl.core.portal.Portal portal =
+                qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(
+                    ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+            if (portal == null) { failure.set("portal create returned null"); return; }
+            portal.setOriginPos(new Vec3(bx + 0.5, by + 0.5, bz));
+            portal.setDestinationDimension(Level.OVERWORLD);
+            portal.setDestination(new Vec3(bx + 60.5, by + 0.5, bz));
+            portal.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 1, 1);
+            qouteall.imm_ptl.core.McHelper.spawnServerEntity(portal);
+            detail.set("spawned boundary-phase portal id=" + portal.getId() + " at z=" + bz);
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(LOG + "RS-B DISJOINT GATE SETUP FAILED: " + failure.get());
+        }
+        // Long enough for the portal to tick and bind (bind runs off SERVER_PORTAL_TICK_SIGNAL).
+        context.waitTicks(60);
+
+        AtomicReference<Integer> checks = new AtomicReference<>(0);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            for (var p : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                new net.minecraft.world.phys.AABB(bx - 4, by - 4, bz - 4, bx + 4, by + 4, bz + 4),
+                q -> true)) {
+                if (!com.warwa.seamlessportals.passthrough.SeamMap.isMirrorable(p)) continue;
+                for (Vec3 col : com.warwa.seamlessportals.passthrough.SeamMap.enumerateColumns(p)) {
+                    BlockPos src = com.warwa.seamlessportals.passthrough.SeamMap.seamCell(p, col);
+                    double dPlane = Math.abs(p.getDistanceToPlane(Vec3.atCenterOf(src)));
+                    var phase = com.warwa.seamlessportals.passthrough.SeamMap.phaseOf(p, src);
+                    if (phase != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.DISJOINT) {
+                        failure.set("FIXTURE IS NOT BOUNDARY-PHASE — cell " + src + " is " + dPlane
+                            + " from the plane and classified " + phase
+                            + "; the topology-B branch is still unreached and this gate proves nothing");
+                        return;
+                    }
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, src);
+                    if (cell == null) { failure.set("no binding at boundary-phase cell " + src); return; }
+                    for (var b : cell.bindings()) {
+                        if (!b.isMirrorable()) continue;
+                        if (!b.continuationCell().equals(b.destPos())) {
+                            failure.set("DISJOINT continuation WRONG at " + src + ": returned "
+                                + b.continuationCell() + " but in this topology the destination cell "
+                                + b.destPos() + " IS the neighbour — stepping past it skips a real cell");
+                            return;
+                        }
+                        checks.set(checks.get() + 1);
+                    }
+                }
+            }
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS-B DISJOINT GATE FAILED: " + f);
+        }
+        if (checks.get() == 0) {
+            throw new AssertionError(LOG + "RS-B DISJOINT GATE FAILED: zero checks ran — the"
+                + " boundary-phase fixture produced no mirrorable binding, so the topology-B branch"
+                + " is STILL unreached. A gate that cannot reach its subject proves nothing.");
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS-B DISJOINT GATE PASS — {} boundary-phase check(s); destination cell IS the"
+                + " continuation, cells distinct and unmirrored. {}", checks.get(), detail.get());
     }
 
     /** Component of a vector along a signed unit axis. */
