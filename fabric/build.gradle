@@ -259,6 +259,12 @@ loom {
             // the DEST pipeline. Pass this to restore the old, poisoning resolution for A/B —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHealRetarget=true
             if (project.findProperty('disableHealRetarget') == 'true') { vmArg('-Dseamlessportals.disableHealRetarget=true') }
+            // IS5-MB dest-composite GATE PROBE (2026-07-26) — LOG-ONLY, default OFF. Reads
+            // ProgramUniforms.lastFrame vs SystemTimeUniforms.COUNTER plus the REAL
+            // cameraPosition/previousCameraPosition uniform storage at the composite4 (motion-blur)
+            // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
+            if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
             // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
             // (attribution both directions) —
@@ -411,6 +417,12 @@ loom {
             // the DEST pipeline. Pass this to restore the old, poisoning resolution for A/B —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHealRetarget=true
             if (project.findProperty('disableHealRetarget') == 'true') { vmArg('-Dseamlessportals.disableHealRetarget=true') }
+            // IS5-MB dest-composite GATE PROBE (2026-07-26) — LOG-ONLY, default OFF. Reads
+            // ProgramUniforms.lastFrame vs SystemTimeUniforms.COUNTER plus the REAL
+            // cameraPosition/previousCameraPosition uniform storage at the composite4 (motion-blur)
+            // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
+            if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
             // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
             // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
             if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }

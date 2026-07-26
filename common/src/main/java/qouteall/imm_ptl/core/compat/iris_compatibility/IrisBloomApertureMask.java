@@ -310,6 +310,11 @@ public final class IrisBloomApertureMask {
      * BEGIN/PREPARE/DEFERRED invocations. Never throws.
      */
     public static void onCompositePassBoundary(CompositeRenderer renderer, int i) {
+        // IS5-MB gate probe — DELIBERATELY ABOVE the armed-window early return below, so the MAIN
+        // composite chain is sampled too. Without a MAIN control row the DEST row is uninterpretable;
+        // that control is what caught every wrong conclusion in this engagement. Default-OFF, log-only.
+        com.warwa.seamlessportals.render.MbGateProbe.onPass(renderer, i);
+
         Armed a = armed;
         if (a == null) {
             return; // ~10-15 static null checks/frame across the 4 stage instances — byte-inert
