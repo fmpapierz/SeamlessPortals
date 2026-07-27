@@ -253,5 +253,21 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_SEAM_EXACT_ONLY =
         Boolean.getBoolean("seamlessportals.disableSeamExactOnly");
 
+    /**
+     * Disables SAME-FRAME MIRRORING — {@code -Dseamlessportals.disableSeamPrediction=true}.
+     *
+     * <p>With the fix ON (default), the mirrored half of a player's placement is predicted on the
+     * client so both halves appear in the same frame, like vanilla placement. With it OFF, only the
+     * player's own block is predicted and the mirrored half waits for the server's block-update
+     * packet — the visible "first side places, other side follows a split second later" the user
+     * reported.
+     *
+     * <p>Separate from {@link #DISABLE_SEAM_MIRROR} on purpose: this turns off the PREDICTION only.
+     * The server still mirrors, so the lever isolates "does the mirror happen" from "does it happen
+     * in time", which are different failures with different causes.
+     */
+    public static final boolean DISABLE_SEAM_PREDICTION =
+        Boolean.getBoolean("seamlessportals.disableSeamPrediction");
+
     private AperturePassthroughLever() {}
 }

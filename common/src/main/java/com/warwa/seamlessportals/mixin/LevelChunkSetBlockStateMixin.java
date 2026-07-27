@@ -100,6 +100,20 @@ public abstract class LevelChunkSetBlockStateMixin {
             CallbackInfoReturnable<BlockState> cir) {
         if (!SeamlessPortalsConfig.isEntityPortals()) return;
         if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_MIRROR) return;
+        // CLIENT BRANCH — same-frame mirroring. The player's own block is predicted locally by
+        // MultiPlayerGameMode; without this the mirrored half cannot appear until the server's
+        // block-update packet arrives, which is the visible lag. SeamMirrorClient predicts it into
+        // the destination ClientLevel and files it with the prediction handler so the server's ack
+        // resolves it either way. Everything below is server-only, so this returns rather than
+        // falling through.
+        if (this.level instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
+            BlockState settledClient = cir.getReturnValue();
+            if (settledClient != null && SeamRegistry.sectionHasSeam(clientLevel, pos)) {
+                com.warwa.seamlessportals.passthrough.SeamMirrorClient.onSeamCellChanged(
+                    clientLevel, pos, clientLevel.getBlockState(pos));
+            }
+            return;
+        }
         if (!(this.level instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
         // Fast path first: one field read plus a contains() on a usually-empty set. This runs for
         // EVERY block change in the game, so anything heavier here is a global tax.

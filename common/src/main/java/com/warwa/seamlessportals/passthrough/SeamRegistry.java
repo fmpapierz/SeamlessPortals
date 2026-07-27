@@ -352,10 +352,20 @@ public final class SeamRegistry {
      */
     @Nullable
     private static Portal findDestinationPortal(Portal portal) {
-        if (portal.level() == null || portal.level().getServer() == null) {
+        if (portal.level() == null) {
             return null;
         }
-        Level destLevel = portal.level().getServer().getLevel(portal.getDestDim());
+        // ★ BOTH SIDES. This used to bail on `getServer() == null`, which is unconditionally true on
+        // any ClientLevel (REF Level.java:168-170 — ClientLevel does not override it), so the whole
+        // method was dead client-side even in single-player. resolveDestCell then fell back to
+        // SeamMap.mirrorCell — the exact pure-arithmetic path whose live half-block drift is
+        // documented below, and which produced a mirror one cell off from what the far portal
+        // claimed. Any client-side consumer built on that would place blocks in the wrong cell.
+        //
+        // Portal.getDestinationWorld() (REF Portal.java:1367-1377) is IP's own accessor and already
+        // answers on both sides — CHelper.getClientWorld on the client, server.getLevel otherwise.
+        // Using it rather than a hand-rolled branch keeps this matching IP instead of forking from it.
+        Level destLevel = portal.getDestinationWorld();
         if (destLevel == null) {
             return null;
         }
