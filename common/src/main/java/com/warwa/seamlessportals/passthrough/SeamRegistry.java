@@ -65,38 +65,73 @@ public final class SeamRegistry {
         @Nullable BlockPos destPos,
         Rotation stateRotation,
         UUID portalUuid,
-        SeamMap.SeamPhase phase
+        SeamMap.SeamPhase phase,
+        boolean seamContinuous
     ) {
         public boolean isMirrorable() {
             return destDim != null && destPos != null;
         }
 
         /**
-         * ★ THE (b) PRIMITIVE — the cell a track continues into when it crosses this seam.
+         * The direction a track travels when it crosses THIS binding's seam: into the portal's front
+         * face, i.e. against the normal. {@code srcFacing} is the normal direction — the side the
+         * portal's viewers (and its aperture cell) are on — so the crossing is its opposite.
+         */
+        public Direction crossDir() {
+            return srcFacing.getOpposite();
+        }
+
+        /**
+         * ★ THE (b) PRIMITIVE — the far cell a probe leaving this cell in {@code dir} arrives at, or
+         * null when that direction does not reach across this binding's seam.
          *
-         * <p>The two topologies answer differently, and the difference is exactly one cell:
+         * <p>The two topologies answer differently, and getting either wrong is silently off by one
+         * cell:
          * <ul>
-         *   <li>{@link SeamMap.SeamPhase#DISJOINT} — source and destination cells are DISTINCT,
-         *       face-to-face across the plane. The destination aperture cell IS the neighbour.</li>
-         *   <li>{@link SeamMap.SeamPhase#COINCIDENT} — the two cells are one slot, already mirrored.
-         *       The destination aperture cell IS this cell, so continuing into it would connect a
-         *       rail to itself. The real next cell is the one BEYOND it, stepping in the destination's
-         *       own outward direction.</li>
+         *   <li>{@link SeamMap.SeamPhase#DISJOINT} — the plane is flush with this cell's face on the
+         *       {@link #crossDir()} side. Exactly ONE direction crosses, and the destination aperture
+         *       cell IS the neighbour. Any other direction is ordinary in-world terrain.</li>
+         *   <li>{@link SeamMap.SeamPhase#COINCIDENT} — the plane BISECTS this cell, and this cell and
+         *       {@code destPos} are one physical slot kept byte-identical by the mirror. BOTH
+         *       directions along the seam axis lead to a far counterpart: the next cell is the one
+         *       BEYOND the shared slot, stepping the query direction carried through the portal's
+         *       rotation. (For {@code dir == crossDir()} that is the crossing proper — the cell the
+         *       portal's content direction points at; for {@code dir == srcFacing} it is the far
+         *       world's cell CO-LOCATED with this side's approach cell, the fallback a resolver
+         *       consults when the local approach is empty.)</li>
          * </ul>
-         * Returning the wrong one produces a track that is silently off by a cell — connected to
-         * nothing in topology A, or skipping a real rail in topology B.
+         *
+         * <p><b>Direction convention, pinned by the step-1 gate against the portal's own transform:</b>
+         * for the crossing direction the continuation step in the destination equals
+         * {@code Direction.getApproximateNearest(portal.getContentDirection())}. The first build of
+         * this method stepped {@code stateRotation.rotate(srcFacing)} for the canonical crossing —
+         * the co-located FALLBACK cell, pointing behind the far plane — and the gate could not tell,
+         * because it only asserted the result differed from {@code destPos}. Self-consistent tests
+         * prove nothing; the gate now derives the direction from the portal itself.
          */
         @Nullable
-        public BlockPos continuationCell() {
+        public BlockPos continuationToward(Direction dir) {
             if (destPos == null) {
                 return null;
             }
             if (phase == SeamMap.SeamPhase.DISJOINT) {
-                return destPos;
+                return dir == crossDir() ? destPos : null;
             }
-            // COINCIDENT: step past the shared slot, in the destination's outward direction — which
-            // is the source facing carried through the portal's own rotation.
-            return destPos.relative(stateRotation.rotate(srcFacing));
+            // COINCIDENT: both directions along the seam axis cross; laterals never do.
+            if (dir.getAxis() != srcFacing.getAxis()) {
+                return null;
+            }
+            return destPos.relative(stateRotation.rotate(dir));
+        }
+
+        /**
+         * The continuation for the canonical crossing — a track entering the portal's front face and
+         * travelling {@link #crossDir()}. Kept for callers that do not care about direction; anything
+         * resolving a specific probe must use {@link #continuationToward}.
+         */
+        @Nullable
+        public BlockPos continuationCell() {
+            return continuationToward(crossDir());
         }
     }
 
@@ -149,15 +184,11 @@ public final class SeamRegistry {
     /**
      * THE (b)/(c)/(d) CONTRACT: what lies across the seam from this cell in this direction, or null
      * when the direction does not cross a seam here.
-     *
-     * <p>A binding faces one way. Asking for the neighbour in the binding's own facing direction is
-     * asking to cross; asking for any other direction is an ordinary in-world neighbour and returns
-     * null so the caller falls through to vanilla.
      */
     @Nullable
     public static GlobalPos lookupAcross(Level level, BlockPos pos, Direction dir) {
         SeamBinding b = bindingAcross(level, pos, dir);
-        return b == null ? null : GlobalPos.of(b.destDim(), b.continuationCell());
+        return b == null ? null : GlobalPos.of(b.destDim(), b.continuationToward(dir));
     }
 
     /**
@@ -168,6 +199,15 @@ public final class SeamRegistry {
      * than the cell: (b) needs {@link SeamBinding#stateRotation()} to reorient a rail shape, (c) needs
      * {@link #mapDir} to carry a signal's direction across, and (d) needs both to steer a minecart.
      * Returning a bare {@code GlobalPos} would force each of them to re-look-up what this already knows.
+     *
+     * <p><b>The match is by {@link SeamBinding#continuationToward}, not by facing.</b> An earlier
+     * build matched {@code b.srcFacing() == dir}, which happened to give the right cells on an
+     * obsidian frame — every aperture cell there carries BOTH facings, and the flipped twin's own
+     * facing points along the query — and was silently inverted for any single-binding cell: a
+     * boundary-phase (topology B) seam's one binding faces AWAY from the plane, so the query that
+     * actually crosses ({@code crossDir()}) found nothing, and the query pointing back into the
+     * approach returned the far cell as if it were the near neighbour. Zero consumers existed, so
+     * nothing broke; the first consumer is (b), which is why this is fixed now.
      */
     @Nullable
     public static SeamBinding bindingAcross(Level level, BlockPos pos, Direction dir) {
@@ -176,9 +216,7 @@ public final class SeamRegistry {
             return null;
         }
         for (SeamBinding b : cell.bindings()) {
-            // A binding faces ONE way. Asking for its own facing is asking to cross; any other
-            // direction is an ordinary in-world neighbour and must fall through to vanilla.
-            if (b.srcFacing() == dir && b.isMirrorable() && b.continuationCell() != null) {
+            if (b.isMirrorable() && b.continuationToward(dir) != null) {
                 return b;
             }
         }
@@ -199,7 +237,7 @@ public final class SeamRegistry {
             return null;
         }
         net.minecraft.server.level.ServerLevel dest = level.getServer().getLevel(b.destDim());
-        BlockPos target = b.continuationCell();
+        BlockPos target = b.continuationToward(dir);
         if (dest == null || target == null || !dest.hasChunkAt(target)) {
             return null;
         }
@@ -258,6 +296,19 @@ public final class SeamRegistry {
         Direction facing = Direction.getApproximateNearest(normal.x, normal.y, normal.z);
         ResourceKey<Level> destDim = mirrorable ? portal.getDestDim() : null;
 
+        // ★ (b) TRAVERSABILITY — whether oriented block logic (rails today; (c) wire and (d) carts
+        // later) may treat this seam as a horizontal continuation of the world. Stricter than
+        // mirrorable, on purpose:
+        //   - HORIZONTAL crossing only. A floor/ceiling portal's crossing direction is vertical,
+        //     which would alias RailState.getRail's own three-Y-level probe onto the seam axis —
+        //     and rails cannot run vertically anyway. Such a portal keeps mirroring under (a)
+        //     exactly as today; only traversal declines.
+        //   - UP must survive the transform. isMirrorable admits any signed-axis rotation, including
+        //     ones that turn +Y over (a roll); a rail shape carried through those has no meaning.
+        boolean continuous = mirrorable
+            && Math.abs(normal.y) < 1.0e-6
+            && upPreserved(portal);
+
         SeamIndexHolder holder = (SeamIndexHolder) level;
         int bound = 0;
         // Resolve the destination portal ONCE, so every column's mirror cell can be defined as the
@@ -270,7 +321,7 @@ public final class SeamRegistry {
 
             SeamBinding binding = new SeamBinding(
                 facing, destDim, dst, rotation == null ? Rotation.NONE : rotation, portal.getUUID(),
-                SeamMap.phaseOf(portal, src));
+                SeamMap.phaseOf(portal, src), continuous);
 
             long key = src.asLong();
             SeamCell existing = holder.seamlessportals$seamCells().get(key);
@@ -370,14 +421,46 @@ public final class SeamRegistry {
             return null;
         }
         Vec3 destPos = portal.getDestPos();
+        Portal positional = null;
         for (Portal candidate : destLevel.getEntitiesOfClass(Portal.class,
             new net.minecraft.world.phys.AABB(destPos.subtract(2, 2, 2), destPos.add(2, 2, 2)),
             p -> p != portal)) {
-            if (candidate.getOriginPos().distanceToSqr(destPos) < 0.25) {
-                return candidate;
+            if (candidate.getOriginPos().distanceToSqr(destPos) >= 0.25) {
+                continue;
             }
+            // ★ DISAMBIGUATE BY CONTENT DIRECTION — IP's own reverse-portal test
+            // (Portal.isReversePortal:1402: normal(P) · contentDirection(Q) > 0.9). A bi-faced pair
+            // (completeBiWayBiFacedPortal, public API and used live) puts TWO coincident
+            // opposite-normal candidates at destPos; position alone picks whichever iterates first.
+            // On a mid-block (COINCIDENT) plane both faces claim the same seam cell so the wrong
+            // pick is harmless, but on a boundary-phase plane their seam cells sit on OPPOSITE
+            // sides — first-match writes destPos one cell off, corrupting (a)'s mirror target,
+            // not just (b). The true reverse is the face whose content direction is this portal's
+            // normal. Lever: -Dseamlessportals.disableSeamReverseDisambig restores first-match.
+            if (!AperturePassthroughLever.DISABLE_SEAM_REVERSE_DISAMBIG) {
+                if (Portal.isReversePortal(portal, candidate)) {
+                    return candidate;
+                }
+                if (positional == null) {
+                    positional = candidate;   // remembered only as the no-dot-match fallback
+                }
+                continue;
+            }
+            return candidate;
         }
-        return null;
+        // No candidate passed the dot test (e.g. an asymmetric hand-built link whose reverse is not
+        // an exact inverse). Fall back to the positional match rather than losing the authority
+        // anchor entirely — that is stock pre-disambiguation behaviour.
+        return positional;
+    }
+
+    /** Whether the portal's transform carries world +Y to +Y — required to carry rail shapes. */
+    private static boolean upPreserved(Portal portal) {
+        if (portal.getRotation() == null) {
+            return true;
+        }
+        Vec3 up = portal.transformLocalVecNonScale(new Vec3(0, 1, 0));
+        return up.y > 0.999;
     }
 
     /**

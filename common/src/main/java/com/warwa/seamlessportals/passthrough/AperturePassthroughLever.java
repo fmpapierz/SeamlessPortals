@@ -269,5 +269,106 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_SEAM_PREDICTION =
         Boolean.getBoolean("seamlessportals.disableSeamPrediction");
 
+    // =============================================================================================
+    // SUB-FEATURE (b) — RAILS CONNECTING ACROSS THE SEAM. Fix levers DEFAULT-ON, probes DEFAULT-OFF,
+    // every one with a -P row in BOTH fabric/build.gradle blocks.
+    // =============================================================================================
+
+    /**
+     * MASTER OFF-SWITCH for sub-feature (b) — {@code -Dseamlessportals.disableSeamShadow=true}.
+     * With this set no {@code SeamShadow} is ever created: rails resolve exactly as stock (a) —
+     * blocks that mirror but never join, connect or carry across the plane. The single A/B
+     * attribution lever for the whole of (b).
+     */
+    public static final boolean DISABLE_SEAM_SHADOW =
+        Boolean.getBoolean("seamlessportals.disableSeamShadow");
+
+    /**
+     * Disables cross-seam rail WRITES while leaving cross-seam READS working —
+     * {@code -Dseamlessportals.disableSeamRailWrite=true}. "Is the far rail seen" and "is it
+     * rewritten to meet ours" are independent halves of (b) that fail for different reasons; this
+     * lever separates them for attribution.
+     */
+    public static final boolean DISABLE_SEAM_RAIL_WRITE =
+        Boolean.getBoolean("seamlessportals.disableSeamRailWrite");
+
+    /**
+     * Disables the cross-seam SLOPE SUPPORT bridge — {@code -Dseamlessportals.disableSeamRailSlope=true}.
+     * With it set, a rail ascending into the seam reverts to vanilla support rules and pops, because
+     * its supporting cube lives on the far side.
+     */
+    public static final boolean DISABLE_SEAM_RAIL_SLOPE =
+        Boolean.getBoolean("seamlessportals.disableSeamRailSlope");
+
+    /**
+     * Disables the RESEED on portal bind — {@code -Dseamlessportals.disableSeamRailReseed=true}.
+     * With it set, lighting a portal over an existing track no longer re-resolves the track's shape,
+     * so rails laid before the portal existed keep their pre-portal shapes until touched.
+     */
+    public static final boolean DISABLE_SEAM_RAIL_RESEED =
+        Boolean.getBoolean("seamlessportals.disableSeamRailReseed");
+
+    /**
+     * Disables the DISJOINT-phase mirror gate — {@code -Dseamlessportals.disableSeamPhaseGate=true}.
+     *
+     * <p>With the gate ON (default), a positively-classified boundary-phase (DISJOINT) seam is NOT
+     * mirrored: its two aperture cells are distinct face-to-face blocks in two worlds, so mirroring
+     * duplicates whole blocks, refuse-on-conflict blocks the player from laying track toward the far
+     * side's own rail, and (b)'s far shape write mirrors back onto the source in a loop. COINCIDENT
+     * (every obsidian frame — the geometry (a) was user-verified on) is untouched.
+     *
+     * <p>⚠ FLAGGED AS A USER DECISION, taken provisionally: the (b) spec §3.6 recommends the gate
+     * and records the user's own phrasing that topology B is unmirrored, but no explicit sign-off
+     * exists. This lever restores unconditional mirroring exactly, so the decision is reversible in
+     * one flag.
+     */
+    public static final boolean DISABLE_SEAM_PHASE_GATE =
+        Boolean.getBoolean("seamlessportals.disableSeamPhaseGate");
+
+    /**
+     * Reverts {@code SeamRegistry.findDestinationPortal} to first-positional-match —
+     * {@code -Dseamlessportals.disableSeamReverseDisambig=true}. Demonstrates the bi-faced fail-open:
+     * two coincident opposite-normal faces both qualify by position, and on a boundary-phase pair the
+     * wrong face resolves the mirror target one cell off.
+     */
+    public static final boolean DISABLE_SEAM_REVERSE_DISAMBIG =
+        Boolean.getBoolean("seamlessportals.disableSeamReverseDisambig");
+
+    /**
+     * Disables SHAPE SYNC — {@code -Dseamlessportals.disableSeamShapeSync=true}.
+     *
+     * <p>With the fix ON (default), a same-block STATE refinement of a seam cell re-mirrors even
+     * when its write carries no player bracket, provided the counterpart already holds the same
+     * block. Vanilla rail resolution rewrites neighbours directly ({@code RailState.connectTo:205}
+     * runs inside the OTHER cell's placement), so without this the second rail laid next to a seam
+     * rail re-shapes it un-bracketed, the player-only policy declines the re-mirror, and the two
+     * halves of the pair diverge — a straight half and a curved half on one visual block. Creation
+     * and removal still obey the player-only policy in full; only refinements of an existing pair
+     * pass. ⚠ Flagged as a widening of the 2026-07-26 player-only decision, taken provisionally —
+     * this lever restores the strict reading.
+     */
+    public static final boolean DISABLE_SEAM_SHAPE_SYNC =
+        Boolean.getBoolean("seamlessportals.disableSeamShapeSync");
+
+    /**
+     * Per-resolution rail probe ({@code -Dseamlessportals.seamRailProbe=true}, DEFAULT-OFF): shadow
+     * creation, per-slot local/cross reads, cross writes, reseeds, declines and the budget counters —
+     * {@code SeamRailContinuity.counters()} printed by the gametest legs and on demand.
+     */
+    public static final boolean SEAM_RAIL_PROBE =
+        Boolean.getBoolean("seamlessportals.seamRailProbe");
+
+    /**
+     * RS-ONLY SUITE MODE ({@code -Dseamlessportals.rsOnly=true}, DEFAULT-OFF) — the recorded
+     * proposal from 2026-07-26: the user has flagged the suite as slow, and the RS gates are a small
+     * fraction of each run. With this set the crossing/teleport legs (thrown items, hurt cow, ender
+     * pearl, far-dest leg 7, and leg 5's world close-and-reopen) are SKIPPED; portal staging, legs
+     * 6a/6b (which produce the bi-way pairs the seam-map gate's involution coverage requires), every
+     * RS gate and the rail legs still run, and the run still ends with the same ALL LEGS PASS line.
+     * A full run remains the default and is required before a commit.
+     */
+    public static final boolean RS_ONLY =
+        Boolean.getBoolean("seamlessportals.rsOnly");
+
     private AperturePassthroughLever() {}
 }
