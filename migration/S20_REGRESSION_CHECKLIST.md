@@ -298,6 +298,37 @@ S20.
 - **(e):** put a mob straddling the aperture of a **SHORT-distance same-dim** portal. If it is cut
   off there too, distance is irrelevant and (e) is a same-dim projection defect, not a §R.1 member.
 
+### §R.5 §D GLOBAL PORTALS + RELOG — PASS (2026-07-26), with two findings from the same log
+
+**The row:** *"create one; relog and confirm it persists (empty-on-return is the swallowed-NPE
+signature)"*. User created one by command and relogged: **good**. The log carries the pass condition
+explicitly — and note that what proves it is a line AFTER the rejoin, not before:
+
+| Time | Line |
+|---|---|
+| 21:55:18 | `(GlobalPortalStorage) Global Portals Updated minecraft:overworld` — created + synced |
+| 21:56:19 | `Stopping singleplayer server as player logged out` — quit to title |
+| 21:56:21 | `Starting integrated minecraft server` — rejoin |
+| **21:56:22** | **`(GlobalPortalStorage) Global Portals Updated minecraft:overworld`** — survived and re-synced |
+
+Empty-on-return would have shown as that second line simply never arriving, with no exception —
+which is exactly why this row was written to require a relog rather than a look.
+
+**Finding 1 — an alarming log line that is COSMETIC, classified so nobody chases it later.**
+`portal: [!!!qouteall.imm_ptl.core.portal.Portal@…=>java.lang.IllegalStateException:Tried to access
+entity ID before ID assignment!!!]` appears 3× in this window. It is NOT an error and nothing is
+swallowed: it is a continuation line of IP's INFO-level `ClientTeleportationManager: Client
+Teleported Statically` block (which prints `portal:` then `eye pos:`), and the `[!!!…!!!]` wrapper is
+vanilla `Entity.toString()`'s own safe-print guard. It fires for GLOBAL portals specifically because
+a global portal is not a spawned entity and therefore never receives an entity ID. The adjacent
+teleport 2 seconds later prints normally: `Portal{7597,south,(minecraft:overworld -14.4 117.8 21.5)
+->(minecraft:overworld -9.2 117.5 28.0),scale:0.8631906158060837}`.
+
+**Finding 2 — the SCALED-portal row is substantially exercised by the same session.** That portal
+carries `scale:0.8631906158060837` and the log shows two successful `Client Teleported Statically`
+crossings through it with no errors. Recorded as evidence, NOT as a closed row: whether the scaled
+view *looked* right is a visual judgement and only the user can make it.
+
 ### §R.4 B.10 NEOFORGE — PASS (2026-07-26), and the increment-4 weave gate confirmed behaviourally
 
 The row no gate in this repo can see, run on a real ~60s session with a world loaded (21:57:41 →
