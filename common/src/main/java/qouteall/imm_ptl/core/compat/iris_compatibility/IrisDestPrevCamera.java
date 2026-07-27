@@ -311,6 +311,18 @@ public final class IrisDestPrevCamera {
                         seamHitCount, seamFireCount);
                 }
             }
+            // INVALIDATE THE UNIFORM-LOCATION CACHE EVERY FRAME. It is keyed on the program id alone,
+            // and GL RECYCLES PROGRAM NAMES after glDeleteProgram — so when the pack's Motion Blur
+            // toggle makes iris recompile, the NEW composite4 can be handed the SAME numeric id as the
+            // one just deleted, the cache reports a hit, and every write goes to uniform locations that
+            // belonged to a dead program. The correction then does nothing at all, silently.
+            // LIVE-REPORTED: "disabling was good, re-enabling was broke, blurry again... when I
+            // teleport, huge lag/freeze then it looks like shaders reloaded and then it was not blurry
+            // again" — the teleport switches renderers, which calls teardown(), which is the only other
+            // place that clears this cache. Clearing per frame bounds the staleness to one frame and
+            // costs six glGetUniformLocation lookups per program per frame, which is nothing beside the
+            // uniform READS this class already does per bind.
+            locCachePid = -1;
             Map<Integer, List<ChainState>> completed = camsCur;
             camsCur = camsPrev;
             camsCur.clear();
@@ -393,17 +405,31 @@ public final class IrisDestPrevCamera {
                     // previous matrix, which is a far worse artifact than the blur being fixed. The
                     // check is the same quantity the census reports as idMV: round-trip the product
                     // back to the identity and require it.
-                    boolean ok = invertChecked(TMP16, cur.mv);
-                    if (ok) {
-                        GL20.glGetUniformfv(pid, locProjInv, TMP16);
-                        ok = invertChecked(TMP16, cur.proj);
+                    // AN ALL-ZERO MATRIX IS NOT A FAILURE, it is iris not having uploaded yet — the
+                    // same startup state the previousCameraPosition zero-guard handles. A zero matrix
+                    // is singular, so inverting it fails, and counting that as a defect produced a
+                    // scary once-only warning on a perfectly healthy launch.
+                    boolean ok;
+                    if (isAllZero(TMP16)) {
+                        ok = false;
+                        matricesUninit++;
+                    }
+                    else {
+                        ok = invertChecked(TMP16, cur.mv);
+                        if (ok) {
+                            GL20.glGetUniformfv(pid, locProjInv, TMP16);
+                            ok = isAllZero(TMP16) ? false : invertChecked(TMP16, cur.proj);
+                            if (!ok) {
+                                matricesUninit++;
+                            }
+                        }
+                        else {
+                            matricesBad++;
+                        }
                     }
                     cur.matricesValid = ok;
-                    if (!ok) {
-                        warnOnce("noninv", P + "matrix half idle (once-only): inverting the pass's"
-                            + " gbufferModelViewInverse/gbufferProjectionInverse did not round-trip to"
-                            + " the identity, so the reconstructed forward matrix cannot be trusted."
-                            + " The camera half still applies; the matrix half neutralizes.", null);
+                    if (ok) {
+                        matricesOk++;
                     }
                 }
                 catch (Throwable t) {
@@ -661,6 +687,22 @@ public final class IrisDestPrevCamera {
      * (every comparison against NaN is false, so the {@code > TOL} test rejects it — deliberately
      * written so NaN takes the failure branch rather than sliding through).
      */
+    /** Matrix-half health, reported at 1 Hz by the probe rather than as a once-only warning. A
+     *  once-only line about a STARTUP transient says nothing about the steady state — that mistake has
+     *  now cost this engagement several rounds, so these are counters. */
+    private static int matricesOk = 0;
+    private static int matricesUninit = 0;
+    private static int matricesBad = 0;
+
+    private static boolean isAllZero(float[] m) {
+        for (float v : m) {
+            if (v != 0f) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean invertChecked(float[] src, float[] dst) {
         MAT.set(src).invert().get(dst);
         for (int col = 0; col < 4; col++) {
@@ -755,9 +797,13 @@ public final class IrisDestPrevCamera {
             return;
         }
         lastProbeNanos = now;
-        LOGGER.info("[IS5-MB] writes={} neutralize={} unmatched={} programsTracked={} seamProven={}",
+        LOGGER.info("[IS5-MB] writes={} neutralize={} unmatched={} programsTracked={} seamProven={}"
+                + " | matrix half: ok={} uninit={} nonInvertible={} — a steadily climbing ok is driver B"
+                + " being corrected; uninit is only expected on the first frames after a pipeline"
+                + " (re)load; a climbing nonInvertible means the matrix half is silently inert.",
             IPGlobal.irisDestPrevWriteCount, IPGlobal.irisDestPrevNeutralizeCount,
-            IPGlobal.irisDestPrevUnmatchedCount, camsPrev.size(), restoreSeamProven);
+            IPGlobal.irisDestPrevUnmatchedCount, camsPrev.size(), restoreSeamProven,
+            matricesOk, matricesUninit, matricesBad);
     }
 
     private static boolean ensureReflection() {
