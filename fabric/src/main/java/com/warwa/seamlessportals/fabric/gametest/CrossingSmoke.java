@@ -1527,6 +1527,48 @@ public class CrossingSmoke implements FabricClientGameTest {
         AtomicReference<BlockPos[]> wandDim = new AtomicReference<>(null);
         AtomicReference<String> scanned = new AtomicReference<>("");
 
+        // ---- ARM 4: the FAR same-dimension portal, i.e. DEFECT B ----
+        //
+        // Arm 3 is NEAR and occluded, which is defect A. Defect B is a different wall entirely: at
+        // this range ImmPtlViewArea.getRenderSection wraps the node into the main-camera preset and
+        // its occupant guard rejects it, so the ONLY way to the section is the coord-pinned
+        // provideBuiltChunkByChunkPos fallback — IP's own accessor. Without an arm here that fallback
+        // is protected by nothing, and it is precisely the code a future refactor would delete as
+        // dead. User-confirmed live on 2026-07-26; this exists so it stays true.
+        final int fx = 2600, fy = 90, fz = 2800;   // source, well clear of the arm-3 cluster
+        final int fdz = 8000;                       // destination: ~5200 blocks away, far past any RD
+        runCommands(context, List.of(
+            "forceload add " + (fx - 16) + " " + (fz - 16) + " " + (fx + 16) + " " + (fz + 16),
+            "forceload add " + (fx - 16) + " " + (fdz - 16) + " " + (fx + 16) + " " + (fdz + 16),
+            "fill " + (fx - 3) + " " + (fy - 1) + " " + (fz - 3) + " "
+                + (fx + 3) + " " + (fy - 1) + " " + (fz + 3) + " minecraft:stone",
+            "fill " + (fx - 3) + " " + fy + " " + (fz - 3) + " "
+                + (fx + 3) + " " + (fy + 5) + " " + (fz + 3) + " minecraft:air",
+            "fill " + (fx - 6) + " " + (fy - 4) + " " + (fdz - 6) + " "
+                + (fx + 6) + " " + (fy + 8) + " " + (fdz + 6) + " minecraft:stone",
+            "fill " + (fx - 2) + " " + fy + " " + (fdz - 2) + " "
+                + (fx + 2) + " " + (fy + 4) + " " + (fdz + 2) + " minecraft:air"
+        ));
+        context.waitTicks(20);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) throw new AssertionError(LOG + "[RS-DELIVERY-TEST] no overworld");
+            qouteall.imm_ptl.core.portal.Portal p =
+                qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(ow, EntitySpawnReason.COMMAND);
+            if (p == null) throw new AssertionError(LOG + "[RS-DELIVERY-TEST] far portal create null");
+            p.setOriginPos(new Vec3(fx + 0.5, fy + 1.5, fz + 0.5));
+            p.setDestinationDimension(Level.OVERWORLD);
+            p.setDestination(new Vec3(fx + 0.5, fy + 1.5, fdz + 0.5));
+            p.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 3, 3);
+            McHelper.spawnServerEntity(p);
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "[RS-DELIVERY-TEST] FAR same-dim portal spawned: ({},{},{}) -> ({},{},{})",
+                fx, fy, fz, fx, fy, fdz);
+        });
+        context.waitTicks(40);
+
+        AtomicReference<BlockPos[]> farDim = new AtomicReference<>(null);
+
         runOnServer(context, server -> {
             ServerLevel ow = server.getLevel(Level.OVERWORLD);
             if (ow == null) return;
@@ -1540,6 +1582,22 @@ public class CrossingSmoke implements FabricClientGameTest {
                             if (b.isMirrorable() && Level.OVERWORLD.equals(b.destDim())
                                 && b.destPos().getX() > wx + 10) {
                                 wandDim.set(new BlockPos[]{cell, b.destPos()});
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            for (int y = fy; y <= fy + 3 && farDim.get() == null; y++) {
+                for (int x = fx - 2; x <= fx + 2 && farDim.get() == null; x++) {
+                    for (int z = fz - 1; z <= fz + 1 && farDim.get() == null; z++) {
+                        BlockPos cell = new BlockPos(x, y, z);
+                        var sc = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+                        if (sc == null) continue;
+                        for (var b : sc.bindings()) {
+                            if (b.isMirrorable() && Level.OVERWORLD.equals(b.destDim())
+                                && b.destPos().getZ() > fz + 100) {
+                                farDim.set(new BlockPos[]{cell, b.destPos()});
                                 break;
                             }
                         }
@@ -1619,6 +1677,20 @@ public class CrossingSmoke implements FabricClientGameTest {
                 Level.OVERWORLD, wandDim.get()[0], Level.OVERWORLD, wandDim.get()[1]);
             context.waitTicks(20);
             sameDimRemeshVerdict(context, wandDim.get()[1]);
+
+            // ---- ARM 4: DEFECT B. Same assertion, a destination no preset can ever cover. ----
+            if (farDim.get() == null) {
+                throw new AssertionError(LOG + "[RS-DELIVERY-TEST] the FAR portal at (" + fx + ","
+                    + fy + "," + fz + ") bound no mirrorable cell with a destination past z="
+                    + (fz + 100) + " — arm 4, the ONLY cover for the coord-pinned fallback, would"
+                    + " silently not run.");
+            }
+            seamStand(context, fx + 0.5, fy, fz + 4.5);
+            context.waitTicks(60);
+            deliveryArm(context, "SAME-DIM FAR (defect B — beyond any render distance)",
+                Level.OVERWORLD, farDim.get()[0], Level.OVERWORLD, farDim.get()[1]);
+            context.waitTicks(20);
+            sameDimRemeshVerdict(context, farDim.get()[1]);
         } finally {
             // Cleanup in a finally, per the hazard that an evidence leg must never perturb a
             // functional one: legs 3 and 4 both use the nether around (0,129,0), which is exactly
@@ -1659,6 +1731,27 @@ public class CrossingSmoke implements FabricClientGameTest {
                     LOG + "[RS-DELIVERY-TEST] wand cluster cleanup: {} portal entities discarded",
                     removed);
             });
+            // Arm 4's portal and terrain go too — a live portal left standing keeps force-loading
+            // chunks and can be found by a later leg's frame-match search (the hazard that already
+            // made leg 6a link to a leftover frame once).
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow == null) return;
+                for (qouteall.imm_ptl.core.portal.Portal p : ow.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(
+                        fx - 40, fy - 40, fz - 40, fx + 40, fy + 40, fz + 40),
+                    p -> true)) {
+                    p.discard();
+                }
+            });
+            runCommands(context, List.of(
+                "fill " + (fx - 3) + " " + (fy - 1) + " " + (fz - 3) + " "
+                    + (fx + 3) + " " + (fy + 5) + " " + (fz + 3) + " minecraft:air",
+                "forceload remove " + (fx - 16) + " " + (fz - 16) + " "
+                    + (fx + 16) + " " + (fz + 16),
+                "forceload remove " + (fx - 16) + " " + (fdz - 16) + " "
+                    + (fx + 16) + " " + (fdz + 16)));
             runCommands(context, List.of(
                 "fill " + (wx - 3) + " " + (wy - 1) + " " + (wz - 3) + " "
                     + (wx + 3) + " " + (wy + 5) + " " + (wz + 3) + " minecraft:air",

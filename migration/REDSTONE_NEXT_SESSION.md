@@ -14,11 +14,11 @@ stale by four commits the last time it was read.
 
 - Sub-feature **(a)** complete and user-verified.
 - Sub-feature **(b) step 1** done — the cross-seam neighbour primitive exists.
-- **(b) step 2 — rails CONNECTING across the plane — NOT STARTED.** Nothing consumes the primitive
-  yet. This is the next feature work; see `REDSTONE_B_SPEC.md` and the re-check notes on it.
-- **The same-dim live-update bug is DIAGNOSED but NOT FIXED** — see the section below. The cause is
-  measured and reproduced headlessly; the fix is a client render-path change that has not been
-  written. It is NOT a mirror defect and NOT a blocker for (b).
+- **(b) step 2 — rails CONNECTING across the plane — NOT STARTED. THIS IS THE NEXT FEATURE WORK.**
+  Nothing consumes the primitive yet. See `REDSTONE_B_SPEC.md` and the re-check notes on it.
+- **The same-dim live-update bug is FIXED and user-confirmed** — see the CLOSED section below. It was
+  never a mirror defect; it was a client render-path defect that any block change behind a same-dim
+  portal hit, and the mirror was only how it was noticed.
 
 ## ★ SUB-FEATURE (a) IS COMPLETE — 2026-07-26, tip `7070101`
 
@@ -160,7 +160,29 @@ reasoning about mirrored-state behaviour may be reasoning about the broken versi
 things that were guessed.** The fix is not yet written; the diagnosis below is exact and the
 reproduction is in the suite.
 
-### ★ THERE ARE **TWO** DEFECTS, AND THE PRIMARY ONE IS VISIBILITY, NOT DISTANCE
+### ✅ CLOSED — BOTH DEFECTS FIXED AND USER-CONFIRMED LIVE (2026-07-26)
+
+Same-dimension portals now update live at any distance. **User's words: "WORKS, SAME DIM DISTANCE
+PORTALS ARE AUTO UPDATING!"** Fix lives in `com.warwa.seamlessportals.render.SameDimRemesh`, lever
+`-PdisableSameDimRemesh`, four gate configurations green with both arms inverting.
+
+**Defect A** (near/occluded — the dirty mark is never consumed): per-tick sweep of sections behind
+same-dim portals; anything still dirty at end of tick is by definition unconsumed, so it is compiled
+directly via `RenderSection.compileAsync`.
+
+**Defect B** (far — the mark is refused, and `getRenderSection` cannot even find the section): fall
+back to `provideBuiltChunkByChunkPos`. **This is IP's own answer** — IP's `ImmPtlViewArea.setDirty`
+is an override of vanilla's, and its whole body routes through that accessor, so every dirty mark at
+any distance hit the unbounded coord-pinned store. 26.2 moved dirty tracking out of `ViewArea` into
+the bounded `SectionUpdateTracker`, leaving that override nothing to attach to: the port kept
+unbounded LOOKUP and lost unbounded DIRTYING. Restored at the one place 26.2 leaves available.
+
+**Read the section below anyway.** It is the record of how four attempts went wrong, and every one
+failed in a way a future change can repeat.
+
+---
+
+## ★ THERE ARE **TWO** DEFECTS, AND THE PRIMARY ONE IS VISIBILITY, NOT DISTANCE
 
 **Corrected 2026-07-26 by a live round, after the first diagnosis below got the subsystem right and
 the gate wrong.** Both defects are confirmed live and fixing either alone leaves the other.
