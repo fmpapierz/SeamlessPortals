@@ -298,6 +298,38 @@ S20.
 - **(e):** put a mob straddling the aperture of a **SHORT-distance same-dim** portal. If it is cut
   off there too, distance is irrelevant and (e) is a same-dim projection defect, not a §R.1 member.
 
+### §R.6 ★★ §C SODIUM ROW — PASS, and it hands `redstone` a CONTROL EXPERIMENT for the update gap
+
+Run: `:fabric:runClientSodium -PsodiumRuntime=true` (own run dir, plain config untouched).
+
+| Check | Result |
+|---|---|
+| main world renders (the row's signature failure — the D11 feed had to be RE-HOMED out of a branch S20 deleted; without it `SodiumInterface` documents the main world drawing BLANK) | **PASS — "world not blank"** |
+| dest entities visible in the portal view (independent path: the mixin short-circuits to "visible" under active sodium, because sodium's `IgnoringViewArea.getRenderSectionAt` returns null unconditionally) | **PASS — "dest entities visible"** |
+| **same-dim distant portal auto-update** | ★ **WORKS UNDER SODIUM** — the exact case that is FROZEN on plain Fabric |
+
+That last row is the important one, and it is a genuine control: same server, same portal, same data,
+**only the renderer differs**. Two consequences, both narrowing what is left to fix:
+
+1. **The server and the transport are EXONERATED.** The updates demonstrably arrive — sodium draws
+   them. So the plain-Fabric freeze is purely a CLIENT-SIDE REMESH failure in the vanilla renderer
+   path, not a chunk-tracking, packet-redirect or watch-record problem. This retires the rival
+   hypothesis §R.1a left open ("entities/updates never reach or persist on the client") for the
+   (a)/(b)/(c) family, and confirms the remaining one: `compileSections` resolves dirty nodes through
+   `getRenderSection(long)`, whose out-of-window null-guard drops distant same-dim sections, so they
+   are never rebuilt. Sodium replaces that machinery wholesale and therefore never hits it.
+2. **It predicts §R.1b's fire fix is VISIBLE under sodium.** The server half already grants the
+   spread (logged live). If the remesh works on this renderer, fire at a far same-dim destination
+   should actually spread on screen here — a cheap way to prove BOTH halves at once, and worth doing
+   before anyone concludes the fire fix did nothing.
+
+**Ownership unchanged** — the vanilla-renderer remesh gap belongs to the `redstone` worktree. This is
+recorded as intelligence for it, not as work claimed here: it tells that fix exactly where NOT to
+look (server, tracking, transport) and gives it a known-good reference implementation to compare
+against.
+
+Per the §C rule, nothing here is an S20 regression: every sodium row PASSED.
+
 ### §R.5 §D GLOBAL PORTALS + RELOG — PASS (2026-07-26), with two findings from the same log
 
 **The row:** *"create one; relog and confirm it persists (empty-on-return is the swallowed-NPE
