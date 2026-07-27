@@ -270,7 +270,10 @@ loom {
             // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
             // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
             // Pass this to force it OFF and reproduce the smear (attribution both directions) —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
+            // ** DEFAULT OFF again as of the second live round: it did not fix the smear and it made
+            // the same-dim dest bind WORSE (PRE |cam-prev|=152 -> POST 515.679). Arm it for the A/B: **
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PenableIrisDestPrevCamera=true
+            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
             // NOTE the old -PirisDestPrevCameraNoMatrices lever is GONE. The correction is now
             // position-only by design: IS5-CEN measured idMV=idP=0.00000 on every steady-state bind, so
@@ -466,7 +469,10 @@ loom {
             // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
             // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
             // Pass this to force it OFF and reproduce the smear (attribution both directions) —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
+            // ** DEFAULT OFF again as of the second live round: it did not fix the smear and it made
+            // the same-dim dest bind WORSE (PRE |cam-prev|=152 -> POST 515.679). Arm it for the A/B: **
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PenableIrisDestPrevCamera=true
+            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
             // NOTE the old -PirisDestPrevCameraNoMatrices lever is GONE. The correction is now
             // position-only by design: IS5-CEN measured idMV=idP=0.00000 on every steady-state bind, so
