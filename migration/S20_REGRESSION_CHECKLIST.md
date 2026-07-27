@@ -298,6 +298,34 @@ S20.
 - **(e):** put a mob straddling the aperture of a **SHORT-distance same-dim** portal. If it is cut
   off there too, distance is irrelevant and (e) is a same-dim projection defect, not a §R.1 member.
 
+### §R.1c ★★ THE FIXES, LIVE-TESTED (2026-07-26, build `8f51bad`) — (d)+(e) FIXED, and the rest resolves to ONE cause owned elsewhere
+
+| Symptom | Result | Owner |
+|---|---|---|
+| **(d) entities intermittently invisible** | ★ **FIXED** — user: *"entities good now"* | this branch, `immPtl_getRenderSectionExact` |
+| **(e) straddling entity cut off** | ★ **FIXED** — user: *"mob straddling aperture is good"* | same fix |
+| hostile mobs still despawn at the far dest | NOT ours — vanilla's 128-block despawn rule; fixed on `iris-on/is5-shadow` | merge-forward |
+| **(a) fire / (b) fluids / (c) particles / block placement** | **NOT FIXED here, and correctly so** — one cause: *"far same dim dest stuff doesn't auto update"*; a block change is invisible **until you actually teleport to the destination** | **being fixed on the `redstone` worktree — leave it alone here** |
+| regression watch (main world, cross-dim) | **PASS** — user "all good"; logs confirm 0 mod errors, **0 AIOOBE**, 0 stalls, `endSecondaryFrames` 14.2ms/545 per 5s | |
+
+**Two things this settles.**
+
+1. **The coord-exact entity gate was the right call, and the critic's counter-argument did not
+   materialise.** Verification warned the fix could make (d) WORSE (the aliased section is usually
+   compiled, so the old wrap may have biased toward SHOWING entities). Live result: strictly better,
+   and it also cleared (e) — which the trace agent had explicitly failed to explain. The caveat was
+   worth stating and the fix was worth shipping scoped to one consumer; both halves of that judgement
+   held up.
+2. **The remesh hypothesis is CONFIRMED, from the user's own framing.** *"Doesn't auto update … until
+   you actually teleport"* is exactly the critic's third point: distant same-dim destination sections
+   are never remeshed client-side, so fire, fluids, particles and ordinary block placement all freeze
+   together. It follows that **§R.1b's fire fix is correct but not sufficient on its own** — the
+   server now grants the spread (`[SEAMLESS FIRE] allow portal-watched fire spread … in
+   minecraft:overworld (watcher … in minecraft:overworld)`, logged live, same dimension both sides),
+   and the client simply does not redraw it. KEEP the fix: it is the server half of a two-half
+   problem, and the client half is landing on `redstone`. Without it, that work would fix the redraw
+   and the fire would still be frozen by the gamerule.
+
 ### §R.1b ★ A DEFECT IN S20's OWN CODE — the fire-spread same-dim skip rests on a false premise
 
 Not a regression (the pre-S20 body was flag-OFF-only, so same-dim distant fire never worked on the
