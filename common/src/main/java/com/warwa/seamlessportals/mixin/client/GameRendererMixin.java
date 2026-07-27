@@ -76,6 +76,10 @@ public abstract class GameRendererMixin {
         // census row and corrupt the per-frame bind COUNT that is the whole point of the measurement.
         // Byte-inert without -Dseamlessportals.compositeCensus.
         com.warwa.seamlessportals.render.IrisCompositeCensus.onFrameEnd();
+        // IS5-MB: promote this frame's per-slot composite cameras to "last frame". Same anchor and same
+        // reasoning as the census boundary above — RenderStates.frameIndex is skipped on mid-packet
+        // mismatch frames, and a merged frame here would hand a slot the camera from two frames ago.
+        qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera.onFrameEnd();
         // IS5-RC: run self-identification watchdog. Always on, once per session — if no portal has
         // been rendered by then it emits the config block anyway, so a run that measured nothing still
         // says so IN THE LOG rather than looking deceptively healthy.

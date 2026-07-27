@@ -338,14 +338,16 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             );
         }
 
-        // IS5-MB: arm the per-dest previous-camera state on the SAME (wider) bracket C3-BLOOM uses —
-        // pre-push through post-pop. MEASURED why: the narrower invokeWorldRendering bracket saw only a
-        // CLEAN composite4 (|cam-prev|=0.000 on 22/22 samples), while the MAIN-chain control row caught
-        // the smearing invocation OUTSIDE it — cameraPosition=DEST vs previousCameraPosition=MAIN,
-        // |cam-prev|=204.175 on 21/21 samples with the player stationary. The dest composite chain runs
-        // past the end of renderWorldFullPipeline, so it must be enclosed here.
-        // SAME-DIM ONLY: cross-dim runs its own per-dimension pipeline with its own tracker and is
-        // already correct — arm() excludes it mod-side, with zero iris symbols.
+        // IS5-MB: RETAINED CALL, NOW A NO-OP. The correction is keyed on the camera each composite
+        // chain carries, not on any portal bracket, so it needs no arm point — and that is the whole
+        // reason it works: the IS5-CEN census measured the smearing chain running OUTSIDE this bracket
+        // (labelled win=MAIN layer=0 while holding the DEST camera), which is exactly why the previous
+        // bracket-keyed implementation recorded the wrong camera and never fired on the guilty bind.
+        // The call stays as the documented hook point should a future mechanism need portal context.
+        // NOTE the old "SAME-DIM ONLY, arm() excludes cross-dim" contract is GONE: the correction now
+        // applies to every guarded composite bind. Cross-dim was measured already clean
+        // (|cam-prev|=0.000 on its own per-dimension pipeline), so there it matches its own camera and
+        // writes back what iris already had.
         IrisDestPrevCamera.arm(portal);
 
         // IS5-RC: the run self-identification block, at the first portal dest render — the moment that

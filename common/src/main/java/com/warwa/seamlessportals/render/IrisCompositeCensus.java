@@ -166,6 +166,12 @@ public final class IrisCompositeCensus {
         double idProj;
         boolean haveCurrentMatrices;
         double centreSpanPx;
+        // The POST-WRITE sample, taken between the IS5-MB write and the draw.
+        boolean postSampled;
+        final float[] postCam = new float[4];
+        final float[] postPrev = new float[4];
+        double postCamDelta;
+        double postMaxSpanPx;
         double maxSpanPx;
         double maxU;
         double maxV;
@@ -198,6 +204,10 @@ public final class IrisCompositeCensus {
     private static double secondMaxSpanPx = 0.0;
     private static String secondMaxSpanWhere = "n/a";
     private static int secondTruncated = 0;
+    private static double secondMaxPostSpanPx = 0.0;
+    /** The row awaiting its post-write sample at the draw, and the program it belongs to. */
+    private static Row pendingRow = null;
+    private static int pendingRowPid = -1;
     private static final Set<String> SECOND_PIDS = new LinkedHashSet<>();
 
     private static boolean broken = false;
@@ -355,12 +365,54 @@ public final class IrisCompositeCensus {
                 secondMaxSpanPx = r.maxSpanPx;
                 secondMaxSpanWhere = "bind#" + r.seq + " " + r.name + "#" + pid + " " + r.window;
             }
+            // The cap removes a row from the PRINTED list only. The row object still gets its
+            // post-write sample, because secondMaxPostSpanPx is the headline that adjudicates the fix
+            // and a capped bind hiding from it would be the same "guilty pass hides behind 64 innocent
+            // ones" failure the PRE side already guards against.
+            pendingRow = r;
+            pendingRowPid = pid;
             if (rows.size() >= MAX_ROWS) {
                 frameTruncated++;
                 secondTruncated++;
                 return;
             }
             rows.add(r);
+        }
+        catch (Throwable t) {
+            disarm(t);
+        }
+    }
+
+    /**
+     * THE POST-WRITE VERIFICATION SAMPLE — hooked immediately before {@code _drawElements}.
+     *
+     * <p>{@link #onProgramUsed} reads at {@code Program.use()} TAIL, which in {@code renderAll} is
+     * bytecode offset 422. The IS5-MB correction writes at that same offset via the caller-side
+     * {@code shift = AFTER} injection, and the draw is at 455. A sample taken only at 422 therefore
+     * reads <b>iris's</b> values and can say nothing about whether a correction landed — it would report
+     * the uncorrected 511-block offset even on a perfectly working fix, and be read as a failure.
+     *
+     * <p>This sample sits at 455, after any write and before the draw, so it is the state the fragment
+     * shader actually executes with. Comparing the two lines is the whole verification: the PRE line
+     * shows what iris supplied, the POST line shows what the shader used.
+     *
+     * <p>Straight-line code between 422 and 455 (no branch, verified by javap), so the program bound at
+     * the pre-sample is still bound here — which is why this needs no pass lookup of its own.
+     */
+    public static void onPreDraw() {
+        if (!ENABLED || broken) {
+            return;
+        }
+        Row r = pendingRow;
+        pendingRow = null; // consume FIRST: a throw must not attach this sample to a later pass
+        if (r == null) {
+            return;
+        }
+        try {
+            measurePost(r, pendingRowPid);
+            if (Double.isNaN(r.postMaxSpanPx) || r.postMaxSpanPx > secondMaxPostSpanPx) {
+                secondMaxPostSpanPx = r.postMaxSpanPx;
+            }
         }
         catch (Throwable t) {
             disarm(t);
@@ -542,6 +594,47 @@ public final class IrisCompositeCensus {
     }
 
     /**
+     * Re-read only what a correction can have changed — {@code cameraPosition} and
+     * {@code previousCameraPosition} — and re-run the replay. The six matrices are NOT re-read: nothing
+     * writes them (IS5-MB is position-only by design, because the census measured idMV=idP=0.00000, so
+     * the matrix chain already cancels), and the scratch arrays still hold this bind's values from the
+     * pre-sample microseconds earlier.
+     */
+    private static void measurePost(Row r, int pid) {
+        if (!r.uniformsReadable || pid <= 0) {
+            return;
+        }
+        int lCam = GL20.glGetUniformLocation(pid, "cameraPosition");
+        int lPrevCam = GL20.glGetUniformLocation(pid, "previousCameraPosition");
+        if (lCam < 0 || lPrevCam < 0) {
+            return;
+        }
+        GL20.glGetUniformfv(pid, lCam, r.postCam);
+        GL20.glGetUniformfv(pid, lPrevCam, r.postPrev);
+        r.postSampled = true;
+        double dx = r.postCam[0] - r.postPrev[0];
+        double dy = r.postCam[1] - r.postPrev[1];
+        double dz = r.postCam[2] - r.postPrev[2];
+        r.postCamDelta = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        int width = r.viewWidth > 0 ? r.viewWidth : 1920;
+        r.postMaxSpanPx = 0.0;
+        for (double u : GRID_U) {
+            for (double v : GRID_V) {
+                for (double z : GRID_Z) {
+                    double span = spanPixels(u, v, z, dx, dy, dz, width);
+                    if (Double.isNaN(span)) {
+                        r.postMaxSpanPx = Double.NaN;
+                        return;
+                    }
+                    if (span > r.postMaxSpanPx) {
+                        r.postMaxSpanPx = span;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * The pack's own arithmetic, verbatim, for one screen sample — returning the blur span in PIXELS
      * at {@code MOTION_BLURRING_STRENGTH = 1.0}.
      *
@@ -686,6 +779,8 @@ public final class IrisCompositeCensus {
                 secondMaxDeep = frameDeepBinds;
             }
 
+            // A row that never reached its draw must not collect a later pass's post-sample.
+            pendingRow = null;
             frameDeepBinds = 0;
             frameCompositeBinds = 0;
             frameAllProgramBinds = 0;
@@ -709,9 +804,12 @@ public final class IrisCompositeCensus {
             .append(" | deep-pass binds per frame: min=")
             .append(secondMinDeep == Integer.MAX_VALUE ? 0 : secondMinDeep)
             .append(" max=").append(secondMaxDeep)
-            .append(" | worst blur span over the second = ")
+            .append(" | worst blur span over the second: PRE-write = ")
             .append(String.format("%.3f", secondMaxSpanPx)).append(" px @ ")
             .append(secondMaxSpanWhere)
+            .append(" , POST-write = ").append(String.format("%.3f", secondMaxPostSpanPx))
+            .append(" px (POST is what the shader executed; a large PRE with a ~0 POST is the IS5-MB"
+                + " correction working)")
             .append(" | distinct deep programs seen: ").append(SECOND_PIDS);
         if (secondTruncated > 0) {
             // The cap drops rows from the PRINTED list only — every bind is still measured and still
@@ -768,6 +866,17 @@ public final class IrisCompositeCensus {
             sb.append("\n         BLUR SPAN @STRENGTH=1: centre=").append(f(r.centreSpanPx))
                 .append(" px, MAX=").append(f(r.maxSpanPx)).append(" px at (u=").append(r.maxU)
                 .append(",v=").append(r.maxV).append(",z=").append(r.maxZ).append(')');
+            if (r.postSampled) {
+                sb.append("\n         POST-WRITE (sampled between the IS5-MB write and the draw — this"
+                        + " is what the shader ACTUALLY executed with): prev=(")
+                    .append(f(r.postPrev[0])).append(',').append(f(r.postPrev[1])).append(',')
+                    .append(f(r.postPrev[2])).append(") |cam-prev|=").append(f(r.postCamDelta))
+                    .append(" BLUR SPAN MAX=").append(f(r.postMaxSpanPx)).append(" px  [")
+                    .append(verdict(r)).append(']');
+            }
+            else {
+                sb.append("\n         POST-WRITE: not sampled (no draw followed this bind)");
+            }
             if (!r.note.isEmpty()) {
                 sb.append("\n         !! ").append(r.note);
             }
@@ -778,6 +887,7 @@ public final class IrisCompositeCensus {
         secondMinDeep = Integer.MAX_VALUE;
         secondMaxDeep = 0;
         secondMaxSpanPx = 0.0;
+        secondMaxPostSpanPx = 0.0;
         secondMaxSpanWhere = "n/a";
         secondTruncated = 0;
         SECOND_PIDS.clear();
@@ -865,6 +975,46 @@ public final class IrisCompositeCensus {
         catch (Throwable t) {
             return "?";
         }
+    }
+
+    /**
+     * The one-word adjudication of a bind, from the PRE/POST pair. Written out so a log reader does not
+     * have to hold the decision rule in their head — the whole point of the post-write sample is that
+     * "pre says 511, post says 0" and "pre says 511, post says 511" look nearly identical at a glance
+     * and mean opposite things.
+     */
+    private static String verdict(Row r) {
+        if (Double.isNaN(r.maxSpanPx) || Double.isNaN(r.postMaxSpanPx)) {
+            return "DEGENERATE — a reprojection produced a non-finite result; read the row, not this"
+                + " label";
+        }
+        boolean preBad = r.maxSpanPx > 1.0;
+        boolean postBad = r.postMaxSpanPx > 1.0;
+        if (!preBad && !postBad) {
+            return "CLEAN — this bind was never blurring";
+        }
+        if (preBad && !postBad) {
+            return "CORRECTED — iris supplied a smearing pair and the IS5-MB write neutralised it";
+        }
+        if (!preBad) {
+            return "!! REGRESSION — this bind was clean before the write and is smearing after it";
+        }
+        // BOTH exceed the threshold. That is NOT automatically a failure, and an earlier version of
+        // this method wrongly called it one. The correction is not dest-only — it applies to every
+        // guarded bind — so whenever the PLAYER IS MOVING the main view's chain legitimately carries
+        // real motion blur before AND after the write. Judging on the PRE→POST ratio separates
+        // "the write did nothing" from "this bind is supposed to be blurring".
+        double ratio = r.postMaxSpanPx / Math.max(r.maxSpanPx, 1e-9);
+        if (ratio < 0.5) {
+            return "REDUCED — the write cut the span to " + String.format("%.0f%%", ratio * 100)
+                + " of what iris supplied; residual blur here is expected if the camera is moving";
+        }
+        if (ratio > 1.5) {
+            return "!! WORSENED — the write INCREASED the span; suspect a wrong chain match";
+        }
+        return "UNCHANGED — PRE and POST agree, so the write did not alter this bind. Expected on a"
+            + " moving camera (real blur, correctly preserved); a finding only if the camera is"
+            + " STATIONARY and the span is large, which would mean the correction did not take";
     }
 
     private static String f(double d) {

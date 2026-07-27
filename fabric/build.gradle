@@ -265,17 +265,21 @@ loom {
             // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
             if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
-            // IS5-MB per-dest previous-frame camera state (2026-07-26) — DEFAULT **OFF** (user ruling):
-            // it corrects a real measured 204-264 block previousCameraPosition error but changes
-            // nothing observable, so it does not ship on. Pass the ENABLE lever to turn it on for an
-            // A/B leg; the DISABLE lever still wins if both are set —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PenableIrisDestPrevCamera=true
-            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
+            // IS5-MB per-chain previous-frame camera correction — **DEFAULT ON**. Fixes the measured
+            // same-dim portal-window smear: with a portal in view the dest content's composite4 reads
+            // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
+            // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
+            // Pass this to force it OFF and reproduce the smear (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
-            // A/B: force camera-position-only, dropping the previous-MATRIX half — expected loss of
-            // rotational blur, and wrong on a rotated portal. Proves the matrices are load-bearing —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraNoMatrices=true
-            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // NOTE the old -PirisDestPrevCameraNoMatrices lever is GONE. The correction is now
+            // position-only by design: IS5-CEN measured idMV=idP=0.00000 on every steady-state bind, so
+            // composite4's four-matrix chain already cancels exactly and writing the previous matrices
+            // could only break it. A lever that no longer does anything is worse than no lever.
+            // Slot-shift guard in blocks (default 16.0) — below this a slot's remembered camera is
+            // trusted, above it the bind neutralizes. Raise only with a measured reason —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=16.0
+            if (project.hasProperty('irisDestPrevCameraMaxDelta')) { vmArg("-Dseamlessportals.irisDestPrevCameraMaxDelta=${project.property('irisDestPrevCameraMaxDelta')}") }
             // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
             // names every pass actually seen, so this is never guesswork —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraPass=composite4
@@ -457,17 +461,21 @@ loom {
             // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
             if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
-            // IS5-MB per-dest previous-frame camera state (2026-07-26) — DEFAULT **OFF** (user ruling):
-            // it corrects a real measured 204-264 block previousCameraPosition error but changes
-            // nothing observable, so it does not ship on. Pass the ENABLE lever to turn it on for an
-            // A/B leg; the DISABLE lever still wins if both are set —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PenableIrisDestPrevCamera=true
-            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
+            // IS5-MB per-chain previous-frame camera correction — **DEFAULT ON**. Fixes the measured
+            // same-dim portal-window smear: with a portal in view the dest content's composite4 reads
+            // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
+            // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
+            // Pass this to force it OFF and reproduce the smear (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestPrevCamera=true
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
-            // A/B: force camera-position-only, dropping the previous-MATRIX half — expected loss of
-            // rotational blur, and wrong on a rotated portal. Proves the matrices are load-bearing —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraNoMatrices=true
-            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // NOTE the old -PirisDestPrevCameraNoMatrices lever is GONE. The correction is now
+            // position-only by design: IS5-CEN measured idMV=idP=0.00000 on every steady-state bind, so
+            // composite4's four-matrix chain already cancels exactly and writing the previous matrices
+            // could only break it. A lever that no longer does anything is worse than no lever.
+            // Slot-shift guard in blocks (default 16.0) — below this a slot's remembered camera is
+            // trusted, above it the bind neutralizes. Raise only with a measured reason —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=16.0
+            if (project.hasProperty('irisDestPrevCameraMaxDelta')) { vmArg("-Dseamlessportals.irisDestPrevCameraMaxDelta=${project.property('irisDestPrevCameraMaxDelta')}") }
             // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
             // names every pass actually seen, so this is never guesswork —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraPass=composite4
