@@ -78,6 +78,12 @@ public final class AperturePassthroughInit {
         qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
             () -> com.warwa.seamlessportals.render.SameDimRemesh.onEndClientTick(
                 net.minecraft.client.Minecraft.getInstance()));
+        // SEAM CLIP recompile flush — same ordering guarantee, SEPARATE accounting from
+        // SameDimRemesh by design (SEAM_CLIP_DESIGN.md §2: sharing its COMPILED set would have
+        // masked the RS-DELIVERY arm-3 verdict).
+        qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
+            () -> com.warwa.seamlessportals.render.SeamClipRenderer.onEndClientTick(
+                net.minecraft.client.Minecraft.getInstance()));
 
         // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
         // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was
@@ -120,6 +126,11 @@ public final class AperturePassthroughInit {
             }
             SeamRegistry.bind(portal);
             fingerprints.put(portal.getUUID(), fingerprint);
+            // SEAM CLIP: a client-side (re)bind changes which cells are mesh-excluded — queue the
+            // covering sections for a direct recompile (flushed at POST_CLIENT_TICK below).
+            if (portal.level().isClientSide()) {
+                com.warwa.seamlessportals.render.SeamClipRenderer.onClientPortalIndexChanged(portal);
+            }
             // Carry across anything ALREADY sitting in the aperture. Mirroring is change-driven, so a
             // block that predates the portal is never written and therefore never mirrored — the
             // user's "relight with a rail on the portal floor and half the rail gets cut off". Must
@@ -144,6 +155,11 @@ public final class AperturePassthroughInit {
     private static void onPortalDispose(Portal portal) {
         try {
             SeamRegistry.unbind(portal);
+            // SEAM CLIP: cells just stopped being seam cells — their blocks must come back into
+            // the section meshes. Dispose fires with geometry intact, so enumeration still works.
+            if (portal.level() != null && portal.level().isClientSide()) {
+                com.warwa.seamlessportals.render.SeamClipRenderer.onClientPortalIndexChanged(portal);
+            }
         }
         catch (Throwable t) {
             LOGGER.warn("[RS-SEAM-REGISTRY] unbind failed for portal {}", portal.getUUID(), t);

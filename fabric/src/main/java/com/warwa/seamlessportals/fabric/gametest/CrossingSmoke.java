@@ -527,6 +527,11 @@ public class CrossingSmoke implements FabricClientGameTest {
             rsRailLegTopologyB(context);
             rsRailLegTopologyA(context, py);
 
+            // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate: the seam block's far
+            // half must stop drawing from an out-of-window side view (fix ON) and must reappear
+            // under -PdisableSeamClip (inversion). After the rail legs: it moves the player.
+            rsSeamClipGate(context, px, py, pz);
+
             if (AperturePassthroughLever.RS_ONLY) {
                 SeamlessPortalsConstants.LOGGER.info(LOG + "RS-ONLY MODE — crossing/teleport legs"
                     + " (1, 2, 3, 4, 7) and the leg-5 datapack reopen were SKIPPED"
@@ -2784,6 +2789,340 @@ public class CrossingSmoke implements FabricClientGameTest {
      * {@link #rsPlayerPlaceBracketGate}, so the two together cover both "the bracket arms" and "the
      * mirror acts on an armed write" without either standing in for the other.
      */
+    /**
+     * RS SEAM-CLIP GATE — the suite's first gate asserting FRAMEBUFFER PIXELS, the last object
+     * before the user's eyes ({@code migration/SEAM_CLIP_DESIGN.md} §5; the assert-the-outcome
+     * rule applied one step beyond {@code setSectionMesh}).
+     *
+     * <p><b>Fixture</b> (panel-corrected — the v1 framed/in-window fixture could not invert): a
+     * FRAMELESS, EXACT-aligned same-dim portal (integral dest offset ⇒ COINCIDENT, mirror-admitted
+     * — asserted, not assumed), a GOLD block in the aperture's +X EDGE cell, a blue backdrop wall
+     * behind the plane. The camera stands east of the window edge, so its sight line to the far
+     * half crosses the plane OUTSIDE the window quad (crossing x ≈ qx+7.3 &gt; window edge qx+6) —
+     * in-window crossings are repainted by the dest pass in BOTH lever states and prove nothing.
+     *
+     * <p><b>Sampling:</b> the crosshair is aimed at a WORLD POINT (client-computed eye→target
+     * angles), so the sampled patch is the image CENTER — no projection math, no fixed screen
+     * fractions. Far point {@code (qx+6, qy+1.5, plane−0.4)} sits 0.4 blocks past the cut on the
+     * block's east face (≈30+ px of margin at any test resolution); near point mirrors it on the
+     * kept side as the leg's own calibration: near must read GOLD in BOTH lever states (block
+     * rendered, camera aimed — and with the fix ON it can only come from the DYNAMIC draw, since
+     * the mesh no longer contains the block).
+     *
+     * <p><b>Verdicts:</b> fix ON — far NOT-gold + near gold + {@code cellsDrawn/cellsExcluded > 0};
+     * {@code -PdisableSeamClip} — far GOLD (the defect reproduced on demand) + near gold +
+     * counters 0. Full-suite note: the player is in the nether by this point — the leg records
+     * their whereabouts and restores them in the {@code finally}, along with the staging, the
+     * mirrored far half, the portal and {@code hideGui}.
+     */
+    private static void rsSeamClipGate(ClientGameTestContext context, int px, int py, int pz) {
+        final String tag = LOG + "[RS-SEAM-CLIP] ";
+        // Master lever: with the whole passthrough stack disabled there is no seam registry, no
+        // binding and nothing for a clip to gate — the fixture-validity check would (correctly)
+        // refuse to run. The master-lever row proves stock-IP restoration; this leg's own
+        // inversion row is -PdisableSeamClip, which keeps the stack alive.
+        if (AperturePassthroughLever.DISABLED) {
+            SeamlessPortalsConstants.LOGGER.info(tag + "SKIPPED — master lever"
+                + " (-PdisableAperturePassthrough) disables the seam stack this gate rides on;"
+                + " the clip's own inversion row is -PdisableSeamClip");
+            return;
+        }
+        final boolean clipOn = !AperturePassthroughLever.DISABLE_SEAM_CLIP;
+
+        // Fixture site: 40 blocks east of the main staging, own platform, clear of every other
+        // leg's fixtures (portals A/B at px±5; disjoint-gate portal at 2000,100,2000).
+        final int qx = px + 40, qy = py, qz = pz;
+        final double planeZ = qz - 5.5;          // bisects cell layer z = qz-6 → COINCIDENT
+        final int apertureZ = qz - 6;
+        final BlockPos goldCell = new BlockPos(qx + 5, qy + 1, apertureZ);
+        final BlockPos mirrorCell = new BlockPos(qx + 5, qy + 1, apertureZ - 50);
+        final Vec3 portalOrigin = new Vec3(qx + 4.5, qy + 1.5, planeZ);
+        final Vec3 portalDest = new Vec3(qx + 4.5, qy + 1.5, planeZ - 50.0);  // integral ⇒ EXACT
+        // Camera + the two sample points on the gold block's EAST face (x = qx+6):
+        final double camX = qx + 10.5, camY = qy, camZ = qz - 4.5;
+        // Aim slightly above mid-face; the sample patch sits BELOW the crosshair (26.2 has no
+        // Options.hideGui field), landing ~mid-face on the SAME side of the cut at any resolution.
+        final double faceX = qx + 6.0, sampleY = qy + 1.7;
+        final double farZ = planeZ - 0.4;    // 0.4 past the cut — removed half
+        final double nearZ = planeZ + 0.25;  // kept half — the calibration point
+
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+
+        try {
+            // ---- Stage (all in the overworld regardless of where the player is) ----
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run fill " + (qx - 14) + " " + (qy - 1) + " "
+                    + (qz - 12) + " " + (qx + 10) + " " + (qy - 1) + " " + (qz + 4)
+                    + " minecraft:obsidian",
+                "execute in minecraft:overworld run fill " + (qx - 14) + " " + qy + " "
+                    + (qz - 12) + " " + (qx + 10) + " " + (qy + 8) + " " + (qz + 4)
+                    + " minecraft:air",
+                // backdrop AFTER the clear; wide, so the fix-ON through-ray (which exits the open
+                // block heading west-north) still lands on blue rather than escaping to terrain
+                "execute in minecraft:overworld run fill " + (qx - 14) + " " + (qy - 1) + " "
+                    + (qz - 9) + " " + (qx + 10) + " " + (qy + 6) + " " + (qz - 9)
+                    + " minecraft:blue_concrete"
+            ));
+            // Player to the camera spot FIRST (cross-dim in the full suite), so the section is in
+            // view and the placement recompile is consumed by the normal extract path.
+            seamClipStand(context, camX, camY, camZ);
+            boolean inOverworld = Boolean.TRUE.equals(context.computeOnClient(mc ->
+                mc.level != null && mc.level.dimension().equals(Level.OVERWORLD)));
+            if (!inOverworld) {
+                throw new AssertionError(tag + "FIXTURE INVALID — player did not arrive in the"
+                    + " overworld; the screenshot would show the wrong dimension");
+            }
+            // Deterministic light: the world is a fresh random seed each run, so the site's
+            // natural light varies — a dark fixture would fail the colour vote for the wrong
+            // reason. Glowstone lights the sampled face's neighbour cell; night vision flattens
+            // the lightmap for the shots (cleared in the finally).
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run setblock " + (qx + 8) + " " + qy + " "
+                    + (qz - 6) + " minecraft:glowstone",
+                "execute in minecraft:overworld run effect give @p minecraft:night_vision"
+                    + " 3600 0 true"
+            ));
+
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                spawnTestPortal(ow, portalOrigin, Level.OVERWORLD, portalDest);
+            });
+            context.waitTicks(20);
+
+            // ---- Fixture-validity gate: COINCIDENT + mirror-admitted, or the leg says so ----
+            AtomicReference<String> bindErr = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, goldCell);
+                if (cell == null) {
+                    bindErr.set("no seam binding at " + goldCell);
+                    return;
+                }
+                boolean ok = false;
+                for (var b : cell.bindings()) {
+                    if (b.phase() == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
+                        && b.isMirrorable()) {
+                        ok = true;
+                    }
+                }
+                if (!ok) {
+                    bindErr.set("binding is not COINCIDENT+mirror-admitted (query-only fixture"
+                        + " proves nothing): " + cell);
+                }
+            });
+            if (bindErr.get() != null) {
+                throw new AssertionError(tag + "FIXTURE INVALID — " + bindErr.get());
+            }
+
+            // ---- Place the gold, then wait for the section's mesh to actually be REPLACED ----
+            com.warwa.seamlessportals.render.SeamClipRenderer.resetMeshTracking();
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, goldCell,
+                    net.minecraft.world.level.block.Blocks.GOLD_BLOCK.defaultBlockState());
+            });
+            boolean recompiled = false;
+            for (int i = 0; i < 40 && !recompiled; i++) {
+                context.waitTicks(5);
+                recompiled = com.warwa.seamlessportals.render.SeamClipRenderer.meshReplacedAt(
+                    goldCell.getX(), goldCell.getY(), goldCell.getZ());
+            }
+            if (!recompiled) {
+                throw new AssertionError(tag + "the gold cell's section never recompiled after"
+                    + " placement (200 ticks) — a screenshot now would show a stale mesh and prove"
+                    + " nothing. counters: "
+                    + com.warwa.seamlessportals.render.SeamClipRenderer.counters());
+            }
+
+            // ---- The two shots, crosshair-aimed at world points, sampled just below centre ----
+            aimAt(context, faceX, sampleY, farZ);
+            context.waitTicks(10);
+            double farGold = goldFractionAtCenter(context,
+                "rs-seam-clip-far-" + (clipOn ? "on" : "off"), tag);
+            aimAt(context, faceX, sampleY, nearZ);
+            context.waitTicks(10);
+            double nearGold = goldFractionAtCenter(context,
+                "rs-seam-clip-near-" + (clipOn ? "on" : "off"), tag);
+
+            long cellsDrawn = com.warwa.seamlessportals.render.SeamClipRenderer.cellsDrawnCount();
+            long cellsExcluded =
+                com.warwa.seamlessportals.render.SeamClipRenderer.cellsExcludedCount();
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "clipOn={} farGold={} nearGold={} counters: {}",
+                clipOn, String.format("%.2f", farGold), String.format("%.2f", nearGold),
+                com.warwa.seamlessportals.render.SeamClipRenderer.counters());
+
+            // ---- Verdicts ----
+            if (nearGold < 0.5) {
+                throw new AssertionError(tag + "CALIBRATION FAILED — the NEAR (kept-half) sample"
+                    + " is not gold (" + nearGold + "); the block did not render or the camera is"
+                    + " mis-aimed, so the far-half verdict below would be meaningless."
+                    + (clipOn ? " With the fix ON this also means the DYNAMIC draw did not draw"
+                        + " the excluded block — the exact hole the lever must never leave." : ""));
+            }
+            if (clipOn) {
+                if (farGold > 0.2) {
+                    throw new AssertionError(tag + "SEAM CLIP FAILED — the far half is still"
+                        + " drawn from the side (farGold=" + farGold + "): the pixels the user"
+                        + " sees did not change");
+                }
+                if (cellsDrawn == 0 || cellsExcluded == 0) {
+                    throw new AssertionError(tag + "COVERAGE FAILED — pixels pass but the"
+                        + " mechanism never ran (cellsDrawn=" + cellsDrawn + " cellsExcluded="
+                        + cellsExcluded + "); the verdict would be passing for the wrong reason");
+                }
+                SeamlessPortalsConstants.LOGGER.info(tag + "PASS — far half GONE from the side"
+                    + " view, near half present via the dynamic draw, coverage confirmed");
+            } else {
+                if (farGold < 0.5) {
+                    throw new AssertionError(tag + "INVERSION FAILED (REGRESSION) — with the clip"
+                        + " disabled the far half must be visible from the side again (farGold="
+                        + farGold + "); either the lever does not restore the old path or the"
+                        + " fixture stopped reproducing the defect");
+                }
+                if (cellsDrawn != 0 || cellsExcluded != 0) {
+                    throw new AssertionError(tag + "INVERSION FAILED — the lever is set but the"
+                        + " mechanism still ran (cellsDrawn=" + cellsDrawn + " cellsExcluded="
+                        + cellsExcluded + ")");
+                }
+                SeamlessPortalsConstants.LOGGER.info(tag + "INVERSION PASS — whole cube visible"
+                    + " from the side under -PdisableSeamClip, mechanism fully idle");
+            }
+        } finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (ow != null) {
+                        for (var portal : ow.getEntitiesOfClass(
+                            qouteall.imm_ptl.core.portal.Portal.class,
+                            new net.minecraft.world.phys.AABB(qx - 6, qy - 8, qz - 12,
+                                qx + 12, qy + 10, qz + 6), p -> true)) {
+                            portal.discard();
+                        }
+                    }
+                });
+                runCommands(context, List.of(
+                    "execute in minecraft:overworld run fill " + (qx - 14) + " " + (qy - 1) + " "
+                        + (qz - 12) + " " + (qx + 10) + " " + (qy + 8) + " " + (qz + 4)
+                        + " minecraft:air",
+                    // the mirrored far half (player-only policy declines the COMMAND clear above,
+                    // so the mirror at the dest cell must be removed explicitly)
+                    "execute in minecraft:overworld run setblock " + mirrorCell.getX() + " "
+                        + mirrorCell.getY() + " " + mirrorCell.getZ() + " minecraft:air"
+                ));
+                runCommands(context, List.of("effect clear @p minecraft:night_vision"));
+                if (prevDim != null) {
+                    runCommands(context, List.of(
+                        "execute in " + prevDim + " run tp @p " + prevPos.x + " " + prevPos.y
+                            + " " + prevPos.z));
+                    context.waitTicks(10);
+                }
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(tag + "CLEANUP FAILED — later legs may see"
+                    + " leftover staging at x=" + qx, t);
+            }
+        }
+    }
+
+    /** Cross-dim-safe stand: force the overworld, pin the client copy (anti rubber-band). */
+    private static void seamClipStand(
+        ClientGameTestContext context, double x, double y, double z
+    ) {
+        runOnServer(context, server -> {
+            CommandSourceStack src = server.createCommandSourceStack().withSuppressedOutput();
+            server.getCommands().performPrefixedCommand(src,
+                "execute in minecraft:overworld run tp @p " + x + " " + y + " " + z + " 90 0");
+        });
+        context.waitTicks(20);   // cross-dim arrival is packet-driven; give it real time
+        context.runOnClient(mc -> {
+            if (mc.player != null) {
+                mc.player.setPos(x, y, z);
+                mc.player.xo = x;
+                mc.player.yo = y;
+                mc.player.zo = z;
+                mc.player.setDeltaMovement(Vec3.ZERO);
+            }
+        });
+        context.waitTicks(5);
+    }
+
+    /**
+     * Aim the crosshair at an exact WORLD point, from the player's ACTUAL eye position (client
+     * side — no eye-height estimate), so the sampled patch is always the image centre.
+     */
+    private static void aimAt(ClientGameTestContext context, double tx, double ty, double tz) {
+        context.runOnClient(mc -> {
+            if (mc.player == null) {
+                return;
+            }
+            Vec3 eye = mc.player.getEyePosition();
+            double dx = tx - eye.x, dy = ty - eye.y, dz = tz - eye.z;
+            double horiz = Math.sqrt(dx * dx + dz * dz);
+            float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+            float pitch = (float) Math.toDegrees(-Math.atan2(dy, horiz));
+            mc.player.setYRot(yaw);
+            mc.player.setXRot(pitch);
+            mc.player.yRotO = yaw;
+            mc.player.xRotO = pitch;
+        });
+        context.waitTicks(3);
+    }
+
+    /**
+     * Screenshot → read back → fraction of gold-ish pixels in the 9×9 centre patch. Gold-ish is a
+     * hue test (strongly red-over-blue, green-over-blue) that survives vanilla face shading and
+     * AO; the blue backdrop and nether/terrain backgrounds all fail it. Throws if the PNG never
+     * becomes readable — an unreadable shot must fail the gate, not pass it vacuously.
+     */
+    private static double goldFractionAtCenter(
+        ClientGameTestContext context, String name, String tag
+    ) {
+        java.nio.file.Path shot;
+        try {
+            shot = context.takeScreenshot(name);
+        } catch (Throwable t) {
+            throw new AssertionError(tag + "takeScreenshot('" + name + "') failed", t);
+        }
+        java.awt.image.BufferedImage img = null;
+        for (int i = 0; i < 10 && img == null; i++) {
+            try {
+                img = javax.imageio.ImageIO.read(shot.toFile());
+            } catch (Throwable ignored) {
+                img = null;
+            }
+            if (img == null) {
+                context.waitTicks(2);
+            }
+        }
+        if (img == null) {
+            throw new AssertionError(tag + "screenshot unreadable after retries: " + shot);
+        }
+        // Patch centre sits BELOW the crosshair (which is not hidden — 26.2 dropped the
+        // Options.hideGui field): max(20, h/24) px ≈ 0.15-0.38 blocks below the aim point at any
+        // test resolution/gui scale — still on the sampled face, same side of the cut.
+        int cx = img.getWidth() / 2;
+        int cy = img.getHeight() / 2 + Math.max(20, img.getHeight() / 24);
+        int r = 4;
+        int gold = 0, total = 0;
+        for (int y = cy - r; y <= cy + r; y++) {
+            for (int x = cx - r; x <= cx + r; x++) {
+                int rgb = img.getRGB(x, y);
+                int rr = (rgb >> 16) & 0xFF, gg = (rgb >> 8) & 0xFF, bb = rgb & 0xFF;
+                total++;
+                if (rr > 100 && rr > bb + 40 && gg > bb + 20) {
+                    gold++;
+                }
+            }
+        }
+        double fraction = total == 0 ? 0 : gold / (double) total;
+        SeamlessPortalsConstants.LOGGER.info(tag + "shot {} centre {}x{} goldFraction={} ({})",
+            name, img.getWidth(), img.getHeight(), String.format("%.2f", fraction), shot);
+        return fraction;
+    }
+
     private static void writeAsPlayer(
         net.minecraft.server.level.ServerLevel level, BlockPos pos,
         net.minecraft.world.level.block.state.BlockState state

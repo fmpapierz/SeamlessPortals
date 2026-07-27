@@ -157,6 +157,16 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
                 qouteall.imm_ptl.core.render.PerEntityClipBracket.onMainPassBeforeTranslucentTerrain());
 
+            // ===== SEAM CLIP main-pass draw site (SEAM_CLIP_DESIGN.md §3) =====
+            // Same slot: after opaque terrain + entity phases, before translucent terrain and the
+            // portal driver — near halves are depth-buffered before the stencil pass computes
+            // window visibility. The handler carries the MANDATORY PortalRendering.isRendering()
+            // guard (this class-woven event DOES fire inside the full-pipeline twin's nested
+            // render with mc.level swapped — panel finding). Thin timing driver; logic is
+            // common-side in SeamClipRenderer.
+            LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
+                com.warwa.seamlessportals.render.SeamClipRenderer.onMainPassBeforeTranslucentTerrain());
+
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (client); "
                     + "flag-ON render dispatch registered (AFTER_TRANSLUCENT_TERRAIN)");

@@ -1125,6 +1125,16 @@ public class SecondaryWorldRenderCore {
                         destChunks.renderGroup(ChunkSectionLayerGroup.OPAQUE, mainChunkSampler);
                     }
 
+                    // 10.6b SEAM CLIP dest arm (SEAM_CLIP_DESIGN.md §3): dest-level seam cells are
+                    // excluded from the section meshes and re-drawn here, inside the Step-10.5
+                    // armed inner clip (-ADJUSTMENT) and the live stencil. ONE line by design —
+                    // logic lives in SeamClipRenderer; it ASSUMES the current arming semantics
+                    // above. Deliberately NO twin call in renderDestWorldFullPipeline (M4 +
+                    // FullPipelineClipState defeat own-plane brackets there; the feature
+                    // self-gates OFF under sodium/iris anyway).
+                    com.warwa.seamlessportals.render.SeamClipRenderer
+                        .onDestPassAfterOpaqueTerrain(destViewMatrix);
+
                     // 10.7/10.8 dest lighting + entities. Cross-dim: the extracted dest LRS via the
                     // renderer's own submitFeatures/dispatcher (unchanged S14 path).
                     // S14.28 lever: debug_skip_portal_entities — the ONE in-bracket full-color-write
