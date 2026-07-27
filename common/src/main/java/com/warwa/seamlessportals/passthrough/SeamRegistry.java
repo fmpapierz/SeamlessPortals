@@ -230,6 +230,29 @@ public final class SeamRegistry {
         if (mirrorable && rotation == null) {
             mirrorable = false;   // states cannot be carried; index it query-only
         }
+        // ★ ALIGNMENT GATE (user decision 2026-07-26: exact lattice only, offset deferred).
+        //
+        // Applied HERE, at binding construction, and deliberately not at each consumer. The binding's
+        // own isMirrorable() is what the veto, the mirror driver, the break/clear path, bind-time
+        // reconciliation and frame mirroring all read, so gating once here makes every one of them
+        // agree by construction. Gating them individually is how a cell ends up mirrored by the
+        // driver but unclearable by the break path — a far-side block nothing can remove.
+        //
+        // The alignment is a property of the PORTAL's transform, not of an individual cell (the
+        // translation term is shared), so any aperture cell answers for all of them.
+        if (mirrorable) {
+            java.util.List<Vec3> probeColumns = SeamMap.enumerateColumns(portal);
+            BlockPos probeCell = SeamMap.seamCell(portal,
+                probeColumns.isEmpty() ? portal.getOriginPos() : probeColumns.get(0));
+            SeamAlignment alignment = SeamMap.alignmentOf(portal, probeCell);
+            if (!SeamMirrorPolicy.mirrors(alignment)) {
+                mirrorable = false;   // still indexed for (b)/(c)/(d) queries; simply never mirrored
+                if (AperturePassthroughLever.SEAM_MAP_PROBE) {
+                    LOGGER.info("[RS-SEAM-REGISTRY] portal {} alignment={} — indexed QUERY-ONLY,"
+                        + " mirroring declined by policy", portal.getUUID(), alignment);
+                }
+            }
+        }
 
         Vec3 normal = portal.getNormal();
         Direction facing = Direction.getApproximateNearest(normal.x, normal.y, normal.z);

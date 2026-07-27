@@ -223,5 +223,35 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_SAME_DIM_REMESH =
         Boolean.getBoolean("seamlessportals.disableSameDimRemesh");
 
+    /**
+     * Restores mirroring for NON-PLAYER writes — {@code -Dseamlessportals.disableSeamPlayerOnly=true}.
+     *
+     * <p>With the fix ON (default), only a player placing or breaking mirrors; pistons, dispensers,
+     * gravity, fluid spread, {@code /setblock} and {@code /fill} are classified and declined
+     * ({@link SeamWriteSource}). With it OFF, every write mirrors regardless of origin — the
+     * pre-2026-07-26 behaviour that {@code REDSTONE_RECON.md} §0.8 pinned as "accept best-effort".
+     *
+     * <p>User decision 2026-07-26. The lever exists because this NARROWS a previously pinned rule,
+     * and a narrowing that cannot be reversed in one flag is a decision nobody can re-examine.
+     */
+    public static final boolean DISABLE_SEAM_PLAYER_ONLY =
+        Boolean.getBoolean("seamlessportals.disableSeamPlayerOnly");
+
+    /**
+     * Restores mirroring for OFFSET (non-lattice-aligned) seams —
+     * {@code -Dseamlessportals.disableSeamExactOnly=true}.
+     *
+     * <p>With the fix ON (default), a block mirrors only where the two sides line up exactly on the
+     * block lattice ({@link SeamAlignment#EXACT}). With it OFF, offset seams mirror again through the
+     * greatest-overlap cell {@code resolveDestCell} already produces.
+     *
+     * <p>User decision 2026-07-26 ("save offset support for future work"). ⚠ This REVERSES
+     * {@code REDSTONE_RECON.md} §0.7, and commit {@code 7766010} exists because a design panel once
+     * made the same change without the user's word. The lever is how the eventual offset
+     * implementation gets A/B'd against today's behaviour.
+     */
+    public static final boolean DISABLE_SEAM_EXACT_ONLY =
+        Boolean.getBoolean("seamlessportals.disableSeamExactOnly");
+
     private AperturePassthroughLever() {}
 }
