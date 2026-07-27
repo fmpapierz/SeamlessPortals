@@ -16,8 +16,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * IS5-MB — PER-CHAIN PREVIOUS-FRAME CAMERA CORRECTION for the same-dim portal-window motion-blur
- * smear. DEFAULT ON; A/B off via {@code -Dseamlessportals.disableIrisDestPrevCamera}.
+ * IS5-MB — PER-CHAIN PREVIOUS-FRAME STATE CORRECTION for the same-dim portal-window motion-blur smear.
+ *
+ * <p><b>DEFAULT OFF, pending live proof.</b> Arm it with
+ * {@code -Dseamlessportals.enableIrisDestPrevCamera}; {@code -Dseamlessportals.disableIrisDestPrevCamera}
+ * always wins. It is off because three successive rounds shipped a version that did not work — the
+ * first keyed the history on the wrong thing, the second had its write silently clobbered before the
+ * draw, and both were adjudicated with a census that was itself defective. It goes default-ON only
+ * after a live run shows the window sharp.
  *
  * <h2>THE MEASURED DEFECT (IS5-CEN census, 2026-07-26, two runs, 22 consecutive stationary seconds)</h2>
  * With the pack's Motion Blur on and a SAME-DIM portal in view there are exactly <b>two</b>
@@ -37,10 +43,24 @@ import java.util.Set;
  * stays sharp. Cross-dim is clean because it runs on its own per-dimension pipeline (a different program
  * id, measured) whose camera pair is self-consistent.
  *
- * <p>{@code idMV = idP = 0.00000} on every steady-state block: the four matrices in composite4's
- * reprojection cancel <b>exactly</b>. The velocity is 100 % {@code cameraOffset}. <b>The previous
- * MATRICES must therefore not be touched</b> — writing them would break a cancellation that is already
- * correct. This class writes {@code previousCameraPosition} and nothing else.
+ * <h2>TWO drivers, both corrected</h2>
+ * An earlier round of this class concluded from one run's {@code idMV = idP = 0.00000} that the four
+ * matrices always cancel and that only the camera needed correcting. <b>That generalised from a single
+ * sample and was wrong.</b> A later 56-row census found:
+ * <ul>
+ *   <li>32 rows with {@code idMV = 0} — all of them with a LARGE camera offset (34–505), blurring
+ *       166–273 px. <b>Driver A</b>, the camera pair.</li>
+ *   <li>every row whose camera offset was ~zero had {@code idMV} between 0.131 and 0.246 and still
+ *       blurred 57–102 px. <b>Driver B</b>, the matrix pair: {@code gbufferPreviousModelView} is not
+ *       the inverse of {@code gbufferModelViewInverse}, so the chain does not cancel and velocity is
+ *       nonzero per pixel with the camera offset at zero.</li>
+ * </ul>
+ * So this class writes {@code previousCameraPosition} <b>and</b> the two previous matrices, always from
+ * the same record. {@code composite4} holds the INVERSE matrices but not the forward ones (both
+ * measured inactive, {@code loc -1}), so the current modelview/projection are reconstructed by
+ * inverting the inverses — and the inversion is verified against the identity rather than assumed,
+ * because JOML's {@code invert()} returns NaN rather than throwing on a degenerate input.
+ * {@code -Dseamlessportals.irisDestPrevCameraNoMatrices} writes the camera half only, isolating A from B.
  *
  * <h2>Why the key is the SLOT, not the portal</h2>
  * The previous implementation keyed the history on the {@code Portal} and recorded the dest camera from
@@ -70,9 +90,14 @@ import java.util.Set;
  *
  * <h2>Seams</h2>
  * <ul>
- *   <li><b>S1 write</b> — {@code @Inject} at {@code INVOKE Program.use()V shift=AFTER} in
- *       {@code CompositeRenderer.renderAll} (offset 422): the program is bound and iris has finished
- *       every upload for it, so the write cannot be clobbered by {@code update()}.</li>
+ *   <li><b>S1 write</b> — {@code @Inject} at {@code INVOKE GlStateManager._glBindBuffer(II)V}
+ *       {@code shift = AFTER} in {@code CompositeRenderer.renderAll} (offset 447). It was at
+ *       {@code Program.use()V shift=AFTER} (422) on the reasoning that iris had finished uploading by
+ *       then; <b>live measurement disproved that</b> — the correction wrote
+ *       {@code prev=(66.700,75.620,0.254)} and a sample taken just before the draw read
+ *       {@code 0.263}, a value we never wrote. Something between 422 and 455 overwrote it every time.
+ *       447 sits past all of it with nothing between it and {@code _drawElements} (455), and
+ *       {@code _glBindBuffer} is javap-unique in the method so no {@code ordinal} is needed.</li>
  *   <li><b>S4 restore</b> — {@code @Inject} at {@code INVOKE BlendModeOverride.restore()V} (offset 458),
  *       just past the draw at 455. Straight-line code, so write and restore pair 1:1.</li>
  *   <li><b>frame boundary</b> — {@code GameRenderer.render} TAIL promotes this frame's slot cameras to
@@ -104,14 +129,36 @@ public final class IrisDestPrevCamera {
     /** The write pending a restore at S4. Cleared FIRST on consumption so a throw cannot wedge it. */
     private static final class Pending {
         int locPrevCam;
+        int locPrevMv;
+        int locPrevProj;
         final float[] savePrevCam = new float[4];
+        final float[] savePrevMv = new float[16];
+        final float[] savePrevProj = new float[16];
+        boolean wroteMatrices;
         boolean probeOnly;
     }
 
-    /** programId -> every cameraPosition that program's guarded binds held LAST frame. */
-    private static Map<Integer, List<float[]>> camsPrev = new HashMap<>();
-    /** programId -> the cameras seen THIS frame. Becomes {@link #camsPrev} at the frame boundary. */
-    private static Map<Integer, List<float[]>> camsCur = new HashMap<>();
+    /**
+     * One composite chain's state for one frame: the camera it drew from, plus the CURRENT modelview
+     * and projection that go with it.
+     *
+     * <p>The matrices are stored because the camera pair is only <b>one</b> of the two things that make
+     * this pass smear. Measured over 56 census rows: every row whose camera offset was ~zero still had
+     * {@code idMV = max|MVprev·MVinv − I|} between 0.13 and 0.25 and a blur span of 57–102 px, while the
+     * 32 rows with {@code idMV = 0} were exactly the ones with a large camera offset. Two independent
+     * drivers, and correcting only the camera leaves the other one painting the window.
+     */
+    private static final class ChainState {
+        final float[] cam = new float[3];
+        final float[] mv = new float[16];
+        final float[] proj = new float[16];
+        boolean matricesValid;
+    }
+
+    /** programId -> every chain state that program's guarded binds held LAST frame. */
+    private static Map<Integer, List<ChainState>> camsPrev = new HashMap<>();
+    /** programId -> the chain states seen THIS frame. Becomes {@link #camsPrev} at the boundary. */
+    private static Map<Integer, List<ChainState>> camsCur = new HashMap<>();
 
     private static Pending pending = null;
     private static boolean broken = false;
@@ -132,6 +179,15 @@ public final class IrisDestPrevCamera {
     private static int locPrevCam = -1;
     private static int locPrevMv = -1;
     private static int locPrevProj = -1;
+    private static int locMvInv = -1;
+    private static int locProjInv = -1;
+
+    private static final float[] TMP16 = new float[16];
+    private static final org.joml.Matrix4f MAT = new org.joml.Matrix4f();
+
+    private static boolean writeMatrices() {
+        return !IPGlobal.IRIS_DEST_PREV_NO_MATRICES;
+    }
 
     private static final List<String> TARGET_PASSES = new ArrayList<>();
 
@@ -156,6 +212,11 @@ public final class IrisDestPrevCamera {
     private static String laHow = "nothing yet";
     private static int laCandidates = 0;
     private static double laMatchDist = -1.0;
+
+    /** Guarded binds seen. Drives the injection watchdog below. */
+    private static int seamFireCount = 0;
+    private static int framesActive = 0;
+    private static boolean seamWatchdogFired = false;
 
     public static String describeLastAction() {
         if (laPid < 0) {
@@ -207,7 +268,28 @@ public final class IrisDestPrevCamera {
             return;
         }
         try {
-            Map<Integer, List<float[]>> completed = camsCur;
+            // INJECTION WATCHDOG. The write seam targets GlStateManager._glBindBuffer from a
+            // remap = false mixin with require = 0 — the sibling restore mixin's javadoc rejects
+            // exactly that construct as unresolvable under remapped names. It resolves here because
+            // 26.2 ships UNOBFUSCATED (the census's own _drawElements hook proves it live), but
+            // require = 0 means a future failure would be SILENT: the feature would report itself
+            // active and simply never run. This session has lost three live rounds to levers that did
+            // not self-report, so the seam reports its own liveness.
+            if (IPGlobal.isIrisDestPrevCameraActive() && !seamWatchdogFired && ++framesActive > 300) {
+                seamWatchdogFired = true;
+                if (seamFireCount == 0) {
+                    warnOnce("seamdead", P + "THE WRITE SEAM NEVER FIRED in 300 active frames. The"
+                        + " feature reports itself ACTIVE but its @Inject on"
+                        + " GlStateManager._glBindBuffer did not resolve (require = 0 makes that"
+                        + " silent). Nothing has been corrected — treat this run as VOID for IS5-MB.",
+                        null);
+                }
+                else {
+                    LOGGER.info(P + "write seam live: {} guarded binds in the first 300 active frames.",
+                        seamFireCount);
+                }
+            }
+            Map<Integer, List<ChainState>> completed = camsCur;
             camsCur = camsPrev;
             camsCur.clear();
             camsPrev = completed;
@@ -269,11 +351,48 @@ public final class IrisDestPrevCamera {
             GL20.glGetUniformfv(pid, locCam, TMP3);
 
             // Record for next frame FIRST, so an early return below cannot leave a hole in the history.
-            camsCur.computeIfAbsent(pid, k -> new ArrayList<>())
-                .add(new float[] {TMP3[0], TMP3[1], TMP3[2]});
+            // The CURRENT matrices are derived by inverting the inverse uniforms the pass actually
+            // holds: composite4 has gbufferModelViewInverse / gbufferProjectionInverse but NOT
+            // gbufferModelView / gbufferProjection (both measured inactive, loc -1), so the forward
+            // matrices are not readable and must be reconstructed. JOML reads and writes column-major,
+            // which is exactly glGetUniformfv's layout, so no transpose is involved.
+            ChainState cur = new ChainState();
+            cur.cam[0] = TMP3[0];
+            cur.cam[1] = TMP3[1];
+            cur.cam[2] = TMP3[2];
+            cur.matricesValid = false;
+            if (writeMatrices() && locMvInv >= 0 && locProjInv >= 0) {
+                try {
+                    GL20.glGetUniformfv(pid, locMvInv, TMP16);
+                    // VERIFY THE INVERSION, do not assume it. JOML's invert() does NOT throw on a
+                    // singular or degenerate input — it returns a matrix full of NaN/Inf — so a
+                    // try/catch alone would happily store garbage and then upload it as the shader's
+                    // previous matrix, which is a far worse artifact than the blur being fixed. The
+                    // check is the same quantity the census reports as idMV: round-trip the product
+                    // back to the identity and require it.
+                    boolean ok = invertChecked(TMP16, cur.mv);
+                    if (ok) {
+                        GL20.glGetUniformfv(pid, locProjInv, TMP16);
+                        ok = invertChecked(TMP16, cur.proj);
+                    }
+                    cur.matricesValid = ok;
+                    if (!ok) {
+                        warnOnce("noninv", P + "matrix half idle (once-only): inverting the pass's"
+                            + " gbufferModelViewInverse/gbufferProjectionInverse did not round-trip to"
+                            + " the identity, so the reconstructed forward matrix cannot be trusted."
+                            + " The camera half still applies; the matrix half neutralizes.", null);
+                    }
+                }
+                catch (Throwable t) {
+                    cur.matricesValid = false; // never disarm the whole feature over one bad matrix
+                }
+            }
+            camsCur.computeIfAbsent(pid, k -> new ArrayList<>()).add(cur);
 
             Pending q = new Pending();
             q.locPrevCam = locPrevCam;
+            q.locPrevMv = locPrevMv;
+            q.locPrevProj = locPrevProj;
             GL20.glGetUniformfv(pid, locPrevCam, q.savePrevCam);
             // DO NOT TOUCH A PASS IRIS HAS NOT INITIALISED YET. If previousCameraPosition is still
             // exactly (0,0,0) then iris has not uploaded it — its Vector3Uniform cache and the GL
@@ -291,7 +410,21 @@ public final class IrisDestPrevCamera {
                     + " yet. Writing now would make our paired restore put that zero back permanently,"
                     + " because iris's uniform cache would then never differ from what it wants to"
                     + " upload. Waiting until iris initialises the uniform.");
+                // Mark the record, do not leave the PREVIOUS bind's action in it — the census attaches
+                // this slot to the bind it is describing, so a stale value would attribute another
+                // bind's write to a bind that deliberately did nothing.
+                laPid = pid;
+                laCam[0] = TMP3[0];
+                laCam[1] = TMP3[1];
+                laCam[2] = TMP3[2];
+                laWrote[0] = 0f;
+                laWrote[1] = 0f;
+                laWrote[2] = 0f;
+                laCandidates = 0;
+                laMatchDist = -1.0;
+                laHow = "NOTHING (iris has not initialised previousCameraPosition yet)";
                 pending = null;
+                seamFireCount++;
                 return;
             }
             // The FIRST guarded pass of a session writes nothing — it exists only to prove the restore
@@ -301,37 +434,76 @@ public final class IrisDestPrevCamera {
 
             // THE MATCH: the NEAREST camera this program held last frame, accepted only if it is within
             // one frame's plausible camera travel. See #nearest for why this replaced ordinal keying.
-            List<float[]> candidates = camsPrev.get(pid);
-            float[] history = nearest(candidates, TMP3, maxDelta());
+            List<ChainState> candidates = camsPrev.get(pid);
+            ChainState history = nearest(candidates, TMP3, maxDelta());
             laPid = pid;
             laCam[0] = TMP3[0];
             laCam[1] = TMP3[1];
             laCam[2] = TMP3[2];
             laCandidates = candidates == null ? 0 : candidates.size();
-            laMatchDist = history == null ? -1.0 : dist3(history, TMP3);
-            if (q.probeOnly) {
-                laHow = "NOTHING (seam-proving frame)";
+            laMatchDist = history == null ? -1.0 : dist3(history.cam, TMP3);
+
+            // BOTH HALVES OR NEITHER — enforced, not merely intended. The camera pair and the matrix
+            // pair are separate blur drivers (measured: rows with a zero camera offset still blurred
+            // 57-102 px on a nonzero idMV). Writing a previous CAMERA from one frame while leaving a
+            // previous MATRIX from another produces a third combination that is nobody's actual state.
+            // So if the matrices are in play but unusable, this bind writes NOTHING and leaves iris
+            // alone — an earlier draft wrote the camera anyway, which is exactly that forbidden case.
+            boolean doMatrices = writeMatrices() && locPrevMv >= 0 && locPrevProj >= 0;
+            boolean useHistory = history != null && (!doMatrices || history.matricesValid);
+            boolean canNeutralize = !doMatrices || cur.matricesValid;
+            if (!useHistory && !canNeutralize) {
+                laHow = "NOTHING (matrices unusable — refusing a camera-only write)";
+                laWrote[0] = q.savePrevCam[0];
+                laWrote[1] = q.savePrevCam[1];
+                laWrote[2] = q.savePrevCam[2];
+                pending = null;
+                return;
             }
-            else {
-                laHow = history != null ? "nearest-camera match" : "NEUTRALIZE (no candidate in range)";
-            }
-            float[] written = history != null ? history : TMP3;
+
+            // The action record must describe the branch ACTUALLY taken. Deriving it from
+            // `history != null` was wrong: the branch is gated on useHistory, so a bind with a valid
+            // camera match but unusable matrices would have reported a match it never performed.
+            float[] written = useHistory ? history.cam : TMP3;
             laWrote[0] = written[0];
             laWrote[1] = written[1];
             laWrote[2] = written[2];
+            laHow = q.probeOnly ? "NOTHING (seam-proving frame)"
+                : useHistory ? "nearest-camera match" + (doMatrices ? " + matrices" : " (camera only)")
+                    : "NEUTRALIZE (no usable candidate in range)";
+
+            if (doMatrices) {
+                GL20.glGetUniformfv(pid, locPrevMv, q.savePrevMv);
+                GL20.glGetUniformfv(pid, locPrevProj, q.savePrevProj);
+            }
+            // PUBLISH THE PENDING BEFORE THE FIRST GL WRITE. The catch block below restores from the
+            // `pending` FIELD; assigning it only after the writes meant a throw mid-write left the
+            // uniform overwritten with nothing to restore it from.
+            pending = q;
             if (!q.probeOnly) {
-                if (history != null) {
-                    GL20.glUniform3f(locPrevCam, history[0], history[1], history[2]);
+                if (useHistory) {
+                    GL20.glUniform3f(locPrevCam, history.cam[0], history.cam[1], history.cam[2]);
+                    if (doMatrices) {
+                        q.wroteMatrices = true;
+                        GL20.glUniformMatrix4fv(locPrevMv, false, history.mv);
+                        GL20.glUniformMatrix4fv(locPrevProj, false, history.proj);
+                    }
                     IPGlobal.irisDestPrevWriteCount++;
                 }
                 else {
-                    // Neutralize: prev := cur => velocity 0 => one blur-free frame. Strictly better than
-                    // the defect (which saturates), so the fallback can never regress.
+                    // Neutralize: previous := current, for the camera AND the matrices. The shader's
+                    // chain then telescopes exactly (velocity 0 for every depth) => one blur-free
+                    // frame. Strictly better than either defect, so the fallback can never regress.
                     GL20.glUniform3f(locPrevCam, TMP3[0], TMP3[1], TMP3[2]);
+                    if (doMatrices) {
+                        q.wroteMatrices = true;
+                        GL20.glUniformMatrix4fv(locPrevMv, false, cur.mv);
+                        GL20.glUniformMatrix4fv(locPrevProj, false, cur.proj);
+                    }
                     IPGlobal.irisDestPrevNeutralizeCount++;
                 }
             }
-            pending = q;
+            seamFireCount++;
 
             if (!liveLogged && !q.probeOnly) {
                 liveLogged = true;
@@ -342,9 +514,9 @@ public final class IrisDestPrevCamera {
                         + " chain being corrected; ~0 means this chain was already clean.",
                     name, pid, f(TMP3[0]), f(TMP3[1]), f(TMP3[2]),
                     f(q.savePrevCam[0]), f(q.savePrevCam[1]), f(q.savePrevCam[2]), f(was),
-                    f(history != null ? history[0] : TMP3[0]),
-                    f(history != null ? history[1] : TMP3[1]),
-                    f(history != null ? history[2] : TMP3[2]),
+                    f(history != null ? history.cam[0] : TMP3[0]),
+                    f(history != null ? history.cam[1] : TMP3[1]),
+                    f(history != null ? history.cam[2] : TMP3[2]),
                     history != null ? "nearest-camera match against last frame"
                         : "NEUTRALIZE (no last-frame camera within the match limit)");
             }
@@ -394,6 +566,10 @@ public final class IrisDestPrevCamera {
             return;
         }
         GL20.glUniform3f(q.locPrevCam, q.savePrevCam[0], q.savePrevCam[1], q.savePrevCam[2]);
+        if (q.wroteMatrices) {
+            GL20.glUniformMatrix4fv(q.locPrevMv, false, q.savePrevMv);
+            GL20.glUniformMatrix4fv(q.locPrevProj, false, q.savePrevProj);
+        }
     }
 
     // =============================================================================================
@@ -427,16 +603,17 @@ public final class IrisDestPrevCamera {
      * saturation, and it self-heals on the next frame.
      */
     @Nullable
-    private static float[] nearest(@Nullable List<float[]> candidates, float[] cam, double limit) {
+    private static ChainState nearest(@Nullable List<ChainState> candidates, float[] cam,
+                                      double limit) {
         if (candidates == null) {
             return null;
         }
-        float[] best = null;
+        ChainState best = null;
         double bestD = Double.MAX_VALUE;
-        for (float[] c : candidates) {
-            double dx = c[0] - cam[0];
-            double dy = c[1] - cam[1];
-            double dz = c[2] - cam[2];
+        for (ChainState c : candidates) {
+            double dx = c.cam[0] - cam[0];
+            double dy = c.cam[1] - cam[1];
+            double dz = c.cam[2] - cam[2];
             double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (d < bestD) {
                 bestD = d;
@@ -450,6 +627,32 @@ public final class IrisDestPrevCamera {
             return null;
         }
         return best;
+    }
+
+    /**
+     * Invert {@code src} (column-major, as {@code glGetUniformfv} returns and JOML consumes) into
+     * {@code dst}, and return false unless {@code src · dst} really is the identity.
+     *
+     * <p>Tolerance 1e-3: these are float uniforms round-tripped through a float inverse, so exact
+     * equality is unreachable, while a genuinely failed inversion misses by whole units or by NaN
+     * (every comparison against NaN is false, so the {@code > TOL} test rejects it — deliberately
+     * written so NaN takes the failure branch rather than sliding through).
+     */
+    private static boolean invertChecked(float[] src, float[] dst) {
+        MAT.set(src).invert().get(dst);
+        for (int col = 0; col < 4; col++) {
+            for (int row = 0; row < 4; row++) {
+                float s = 0f;
+                for (int k = 0; k < 4; k++) {
+                    s += src[k * 4 + row] * dst[col * 4 + k];
+                }
+                float expected = col == row ? 1f : 0f;
+                if (!(Math.abs(s - expected) <= 1.0e-3f)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static double dist3(float[] a, float[] b) {
@@ -473,6 +676,8 @@ public final class IrisDestPrevCamera {
             locPrevCam = GL20.glGetUniformLocation(pid, "previousCameraPosition");
             locPrevMv = GL20.glGetUniformLocation(pid, "gbufferPreviousModelView");
             locPrevProj = GL20.glGetUniformLocation(pid, "gbufferPreviousProjection");
+            locMvInv = GL20.glGetUniformLocation(pid, "gbufferModelViewInverse");
+            locProjInv = GL20.glGetUniformLocation(pid, "gbufferProjectionInverse");
         }
         // THE MOTION-BLUR DISCRIMINATOR, and the MB-off byte-identity proof by construction rather than
         // by a flag: with Motion Blur OFF the pack's composite4 references none of the previous-frame

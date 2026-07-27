@@ -10,9 +10,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera;
 
 /**
- * IS5-MB (S1) — the WRITE seam for the per-chain previous-frame camera correction. <b>DEFAULT ON</b>;
- * A/B off with {@code -Dseamlessportals.disableIrisDestPrevCamera}. See {@link IrisDestPrevCamera} for
- * the measured defect (a 511-block camera offset producing a 265.8 px blur span) and the mechanism.
+ * IS5-MB (S1) — the WRITE seam for the per-chain previous-frame state correction. The feature is
+ * <b>DEFAULT OFF</b> pending live proof; arm it with
+ * {@code -Dseamlessportals.enableIrisDestPrevCamera} ({@code -Dseamlessportals.disableIrisDestPrevCamera}
+ * always wins). See {@link IrisDestPrevCamera} for the measured defect — a 511-block camera offset
+ * producing a 265.8 px blur span, plus a second matrix-driven driver worth 57–102 px — and the
+ * mechanism.
  *
  * <p><b>Why this exact target.</b> {@code Lnet/irisshaders/iris/gl/program/Program;use()V} occurs
  * <b>exactly once</b> in the whole of {@code CompositeRenderer} (bytecode offset 419 in
@@ -48,11 +51,27 @@ import qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera;
 @Mixin(value = CompositeRenderer.class, remap = false)
 public abstract class MixinIrisCompositeRenderer_DestPrevWrite {
 
+    /**
+     * MOVED (2026-07-26, round 4) from {@code INVOKE Program.use()V shift=AFTER} (offset 422) to here,
+     * offset 447. <b>The write was being clobbered before the draw.</b> Measured: IS5-MB wrote
+     * {@code prev=(66.700,75.620,0.254)} and the sample taken immediately before {@code _drawElements}
+     * read {@code prev=(66.700,75.620,0.263)} — a value we never wrote. Between 422 and 455 sit
+     * {@code CustomUniforms.push} (431) and the index-buffer bind (444), and the pack declares 29
+     * custom uniforms, three of which read the camera pair. Rather than identify the exact culprit,
+     * this moves the write PAST all of them: nothing at all executes between {@code _glBindBuffer} and
+     * {@code _drawElements}, so the value written here is necessarily the value the shader draws with.
+     *
+     * <p>{@code GlStateManager._glBindBuffer(II)V} occurs <b>exactly once</b> in {@code renderAll}
+     * (javap-counted), so no {@code ordinal} is needed — unlike {@code CustomUniforms.push}, which
+     * occurs twice (the compute-side call at 178 and the graphics one at 431) and would have required a
+     * drift-fragile ordinal. {@code @Local(ordinal = 0) int i} still resolves: the LVT entry for slot 4
+     * spans 76..470, which covers 447.
+     */
     @Inject(
         method = "renderAll",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/irisshaders/iris/gl/program/Program;use()V",
+            target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_glBindBuffer(II)V",
             shift = At.Shift.AFTER
         ),
         remap = false,

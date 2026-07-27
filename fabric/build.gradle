@@ -275,13 +275,17 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PenableIrisDestPrevCamera=true
             if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
-            // NOTE the old -PirisDestPrevCameraNoMatrices lever is GONE. The correction is now
-            // position-only by design: IS5-CEN measured idMV=idP=0.00000 on every steady-state bind, so
-            // composite4's four-matrix chain already cancels exactly and writing the previous matrices
-            // could only break it. A lever that no longer does anything is worse than no lever.
-            // Slot-shift guard in blocks (default 16.0) — below this a slot's remembered camera is
-            // trusted, above it the bind neutralizes. Raise only with a measured reason —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=16.0
+            // MATRIX-HALF A/B, re-added and now meaningful: the correction writes BOTH the previous
+            // camera and the previous matrices, because they are two independent blur drivers (rows
+            // with a zero camera offset still blurred 57-102 px on a nonzero idMV). Pass this to write
+            // the CAMERA half only and isolate driver A from driver B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PirisDestPrevCameraNoMatrices=true
+            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // Chain-match limit in blocks, DEFAULT 4.0 — the furthest a composite chain's camera may
+            // plausibly travel in one frame. It is the definition of "same chain", NOT a safety margin:
+            // 16.0 was tried and is DANGEROUS (wider than an ordinary doorway portal's offset, so it
+            // would adopt the destination camera as the main view's history). Lower it to tighten —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=2.0
             if (project.hasProperty('irisDestPrevCameraMaxDelta')) { vmArg("-Dseamlessportals.irisDestPrevCameraMaxDelta=${project.property('irisDestPrevCameraMaxDelta')}") }
             // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
             // names every pass actually seen, so this is never guesswork —
@@ -474,13 +478,17 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PenableIrisDestPrevCamera=true
             if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
-            // NOTE the old -PirisDestPrevCameraNoMatrices lever is GONE. The correction is now
-            // position-only by design: IS5-CEN measured idMV=idP=0.00000 on every steady-state bind, so
-            // composite4's four-matrix chain already cancels exactly and writing the previous matrices
-            // could only break it. A lever that no longer does anything is worse than no lever.
-            // Slot-shift guard in blocks (default 16.0) — below this a slot's remembered camera is
-            // trusted, above it the bind neutralizes. Raise only with a measured reason —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=16.0
+            // MATRIX-HALF A/B, re-added and now meaningful: the correction writes BOTH the previous
+            // camera and the previous matrices, because they are two independent blur drivers (rows
+            // with a zero camera offset still blurred 57-102 px on a nonzero idMV). Pass this to write
+            // the CAMERA half only and isolate driver A from driver B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PirisDestPrevCameraNoMatrices=true
+            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // Chain-match limit in blocks, DEFAULT 4.0 — the furthest a composite chain's camera may
+            // plausibly travel in one frame. It is the definition of "same chain", NOT a safety margin:
+            // 16.0 was tried and is DANGEROUS (wider than an ordinary doorway portal's offset, so it
+            // would adopt the destination camera as the main view's history). Lower it to tighten —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=2.0
             if (project.hasProperty('irisDestPrevCameraMaxDelta')) { vmArg("-Dseamlessportals.irisDestPrevCameraMaxDelta=${project.property('irisDestPrevCameraMaxDelta')}") }
             // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
             // names every pass actually seen, so this is never guesswork —
