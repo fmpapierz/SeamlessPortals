@@ -176,6 +176,9 @@ public final class SeamMirror {
 
     private static long mirroredWrites = 0L;
     private static long clearedMirrors = 0L;
+    /** Writes that reached a bound seam cell but were declined by policy — see {@link SeamMirrorPolicy}. */
+    private static long declinedBySource = 0L;
+    private static long declinedByAlignment = 0L;
 
     public static boolean isApplying() {
         return applying;
@@ -202,6 +205,16 @@ public final class SeamMirror {
         }
         if (applying) {
             return;   // our own write, observed. Not an error — this is the guard doing its job.
+        }
+        // ★ WHO WROTE THIS? (user decision 2026-07-26 — players only.)
+        //
+        // Asked here rather than in the mixin because this is the one place that already knows the
+        // write is seam-relevant, and because the classification must be visible to the counters: a
+        // declined machine write is a decision, not an absence, and reads as one in the probe.
+        SeamWriteSource source = SeamWriteContext.sourceFor(pos);
+        if (!SeamMirrorPolicy.mirrors(source)) {
+            declinedBySource++;
+            return;
         }
         SeamRegistry.SeamCell cell = SeamRegistry.lookup(level, pos);
         if (cell == null) {
@@ -765,6 +778,8 @@ public final class SeamMirror {
         return "allowed=" + allowed + " refusedConflict=" + refusedConflict
             + " refusedBlockEntity=" + refusedBlockEntity + " refusedMultiCell=" + refusedMultiCell
             + " mirroredWrites=" + mirroredWrites + " clearedMirrors=" + clearedMirrors
-            + " frameBreakCleared=" + frameBreakCleared;
+            + " frameBreakCleared=" + frameBreakCleared
+            + " declinedBySource=" + declinedBySource
+            + " declinedByAlignment=" + declinedByAlignment;
     }
 }

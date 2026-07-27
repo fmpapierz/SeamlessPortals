@@ -1317,8 +1317,15 @@ public class CrossingSmoke implements FabricClientGameTest {
                     + " (must be the portal placeholder, else the test is mis-aimed)",
                 before, fx, cellY, fz, cellBefore);
 
-            runCommands(context, List.of(
-                "setblock " + fx + " " + cellY + " " + fz + " minecraft:rail"));
+            // Attributed to a player: since 2026-07-26 a /setblock is classified COMMAND and
+            // declined by SeamMirrorPolicy, so a plain setblock here would leave the mirror gate
+            // below asserting against a mirror that was never allowed to run.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow != null) {
+                    writeAsPlayer(ow, cell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
+                }
+            });
             context.waitTicks(5);
             String cellAfterSet = serverBlockAt(context, cell);
             SeamlessPortalsConstants.LOGGER.info(
@@ -1352,6 +1359,13 @@ public class CrossingSmoke implements FabricClientGameTest {
                         + (dxc + 16) + " " + (dzc + 16))));
                 context.waitTicks(60);
                 rsMirrorGate(context, cell);
+                // The bracket itself. Runs on the BOTTOM opening row, not the mid-height cell the
+                // mirror gate uses: this gate drives the REAL BlockItem.place, which enforces
+                // canSurvive, and a rail at mid-height has nothing under it but the noCollision
+                // placeholder — vanilla refuses the placement and the gate would blame the policy for
+                // a fixture fault. The bottom row rests on the obsidian sill. (Same reasoning, and
+                // the same hazard, as rsFrameBreakGate's own comment below.)
+                rsPlayerPlaceBracketGate(context, new BlockPos(fx, py + 1, fz));
                 // BOTTOM OPENING ROW, not the mid-height cell the mirror gate uses. Support is
                 // vanilla (user clarification §0.2): a rail at mid-height sits on another aperture
                 // cell holding the noCollision placeholder, so when teardown wipes those cells with
@@ -1837,8 +1851,14 @@ public class CrossingSmoke implements FabricClientGameTest {
         String clientBefore = clientBlockAt(context, destDim, destCell);
         String serverBefore = serverBlockAt(context, destDim, destCell);
 
-        runCommands(context, List.of("setblock " + sourceCell.getX() + " " + sourceCell.getY()
-            + " " + sourceCell.getZ() + " minecraft:glass"));
+        // Player-attributed: /setblock is COMMAND and declined since 2026-07-26, and this arm's whole
+        // job is to observe a mirrored write travel to the client.
+        runOnServer(context, server -> {
+            ServerLevel src = server.getLevel(sourceDim);
+            if (src != null) {
+                writeAsPlayer(src, sourceCell, net.minecraft.world.level.block.Blocks.GLASS.defaultBlockState());
+            }
+        });
         context.waitTicks(30);
 
         String serverAfter = serverBlockAt(context, destDim, destCell);
@@ -1911,6 +1931,148 @@ public class CrossingSmoke implements FabricClientGameTest {
                 return "(client read failed: " + t + ")";
             }
         });
+    }
+
+    /**
+     * RS PLAYER-PLACE BRACKET GATE — proves the real {@code BlockItem.place} bracket arms, and that a
+     * command write does NOT.
+     *
+     * <p>{@link #writeAsPlayer} declares provenance rather than producing it, which is right for the
+     * mirror gates but would let the bracket itself rot undetected. This drives the actual vanilla
+     * path — a {@code BlockPlaceContext} built from the live {@code ServerPlayer}, through
+     * {@code BlockItem.place} — and asserts BOTH directions in one run:
+     * <ul>
+     *   <li>a real player placement into a bound seam cell MIRRORS;</li>
+     *   <li>the same write issued by {@code /setblock} at the same cell does NOT.</li>
+     * </ul>
+     * One without the other proves nothing: "it mirrored" is satisfied by a policy that mirrors
+     * everything, and "it did not mirror" is satisfied by a mirror that is simply broken.
+     */
+    private static void rsPlayerPlaceBracketGate(ClientGameTestContext context, BlockPos cell) {
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+            var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+            if (seam == null) { failure.set("no seam binding at " + cell); return; }
+            var binding = seam.bindings().stream()
+                .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                .findFirst().orElse(null);
+            if (binding == null) { failure.set("no mirrorable binding at " + cell); return; }
+            ServerLevel dest = server.getLevel(binding.destDim());
+            if (dest == null) { failure.set("destination level missing"); return; }
+            BlockPos destPos = binding.destPos();
+            dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+
+            net.minecraft.server.level.ServerPlayer player =
+                server.getPlayerList().getPlayers().isEmpty()
+                    ? null : server.getPlayerList().getPlayers().get(0);
+            if (player == null) { failure.set("no server player to place as"); return; }
+
+            // ---- (1) COMMAND write must NOT mirror ----
+            ow.setBlockAndUpdate(cell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            writeAsPlayer(dest, destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            ow.setBlockAndUpdate(cell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
+            // The verdict INVERTS on the lever, in the RS-TEARDOWN-TEST discipline: with player-only
+            // OFF the policy mirrors every write, so a command write mirroring is then the CORRECT
+            // result and its absence is the regression. A fixed expectation here would be actively
+            // wrong in whichever configuration it was not written for.
+            boolean playerOnlyDisabled = AperturePassthroughLever.DISABLE_SEAM_PLAYER_ONLY;
+            var afterCommand = dest.getBlockState(destPos);
+            boolean commandMirrored = afterCommand.is(net.minecraft.world.level.block.Blocks.RAIL);
+            if (!playerOnlyDisabled && commandMirrored) {
+                failure.set("A COMMAND WRITE MIRRORED. /setblock at " + cell + " produced a rail at "
+                    + destPos + ", but SeamMirrorPolicy declines non-player writes. Either the write"
+                    + " source is misclassified or the policy is not being consulted.");
+                return;
+            }
+            if (playerOnlyDisabled && !commandMirrored) {
+                failure.set("*** REGRESSION *** player-only is DISABLED, so a /setblock at " + cell
+                    + " should have mirrored to " + destPos + " (pre-2026-07-26 behaviour), but it"
+                    + " did not. The disable lever is not restoring the old policy.");
+                return;
+            }
+
+            // ---- (2) REAL player placement through BlockItem.place MUST mirror ----
+            ow.setBlockAndUpdate(cell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            writeAsPlayer(dest, destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+
+            player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
+                new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.RAIL));
+            // Clicking the (air) cell itself: air is replaceable, so BlockPlaceContext.getClickedPos()
+            // resolves to this very cell rather than the neighbour (REF BlockPlaceContext.java:47-49).
+            net.minecraft.world.phys.BlockHitResult hit = new net.minecraft.world.phys.BlockHitResult(
+                Vec3.atCenterOf(cell), net.minecraft.core.Direction.UP, cell, false);
+            var useCtx = new net.minecraft.world.item.context.UseOnContext(
+                player, net.minecraft.world.InteractionHand.MAIN_HAND, hit);
+            ((net.minecraft.world.item.BlockItem) net.minecraft.world.item.Items.RAIL)
+                .place(new net.minecraft.world.item.context.BlockPlaceContext(useCtx));
+
+            var placed = ow.getBlockState(cell);
+            var mirrored = dest.getBlockState(destPos);
+            detail.set("cell=" + cell + " placed=" + placed.getBlock()
+                + " dest=" + destPos + " mirrored=" + mirrored.getBlock());
+            if (!placed.is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                failure.set("the player placement did not land at all (" + placed.getBlock()
+                    + " at " + cell + ") — the fixture is wrong, not the policy");
+                return;
+            }
+            if (!mirrored.is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                failure.set("A REAL PLAYER PLACEMENT DID NOT MIRROR. " + cell + " holds a rail but "
+                    + destPos + " holds " + mirrored.getBlock() + ". The BlockItem.place bracket"
+                    + " (MixinBlockItemPlaceSource) is not arming SeamWriteContext.");
+                return;
+            }
+            // Leave both sides AIR: the frame-break gate runs next on this same bottom-row cell and
+            // stages its own state. An evidence leg must never hand the next one a dirty fixture.
+            writeAsPlayer(ow, cell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            writeAsPlayer(dest, destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS PLAYER-PLACE BRACKET GATE FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS PLAYER-PLACE BRACKET GATE PASS — {}. {} | counters: {}",
+            AperturePassthroughLever.DISABLE_SEAM_PLAYER_ONLY
+                ? "player-only DISABLED, so a /setblock mirrored too — the old policy is restored"
+                : "a real BlockItem.place mirrored and a /setblock at the same cell did not",
+            detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+    }
+
+    /**
+     * A world write ATTRIBUTED TO A PLAYER, for the RS gates.
+     *
+     * <p>Needed since 2026-07-26, when mirroring was narrowed to player actions
+     * ({@code SeamMirrorPolicy}). Every RS gate used to write with {@code /setblock}, which is now
+     * correctly classified {@code COMMAND} and declined — so without this the gates would go on
+     * passing while testing a mirror that never fires. That is the exact failure this suite has
+     * already been bitten by three times, so it is worth being explicit: <b>a gate that stops
+     * exercising its subject must fail, not adapt silently.</b>
+     *
+     * <p>This declares the write's provenance rather than faking a player. The REAL bracket
+     * ({@code BlockItem.place} → {@code MixinBlockItemPlaceSource}) is covered separately by
+     * {@link #rsPlayerPlaceBracketGate}, so the two together cover both "the bracket arms" and "the
+     * mirror acts on an armed write" without either standing in for the other.
+     */
+    private static void writeAsPlayer(
+        net.minecraft.server.level.ServerLevel level, BlockPos pos,
+        net.minecraft.world.level.block.state.BlockState state
+    ) {
+        Object[] saved = com.warwa.seamlessportals.passthrough.SeamWriteContext.push(
+            state.isAir()
+                ? com.warwa.seamlessportals.passthrough.SeamWriteSource.PLAYER_BREAK
+                : com.warwa.seamlessportals.passthrough.SeamWriteSource.PLAYER_PLACE,
+            pos);
+        try {
+            level.setBlockAndUpdate(pos, state);
+        }
+        finally {
+            com.warwa.seamlessportals.passthrough.SeamWriteContext.pop(saved);
+        }
     }
 
     /**
@@ -1990,7 +2152,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
 
             // (2) breaking the source clears the mirrored counterpart (provenance)
-            ow.setBlockAndUpdate(sourceCell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            writeAsPlayer(ow, sourceCell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
             net.minecraft.world.level.block.state.BlockState afterBreak = dest.getBlockState(destPos);
             if (!afterBreak.isAir()) {
                 failure.set("PROVENANCE CLEAR FAILED — source half was broken but destination "
@@ -2003,12 +2165,12 @@ public class CrossingSmoke implements FabricClientGameTest {
             // the clear gated on provenance, breaking the mirrored side left the source standing and
             // the player could not replace their own block ("places and instantly disappears").
             // Symmetric behaviour is not optional — a seam has no privileged side.
-            ow.setBlockAndUpdate(sourceCell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
+            writeAsPlayer(ow, sourceCell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
             if (!dest.getBlockState(destPos).is(net.minecraft.world.level.block.Blocks.RAIL)) {
                 failure.set("re-place did not re-mirror; cannot test the reverse direction");
                 return;
             }
-            dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            writeAsPlayer(dest, destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
             net.minecraft.world.level.block.state.BlockState sourceAfterReverse = ow.getBlockState(sourceCell);
             if (!sourceAfterReverse.isAir()) {
                 failure.set("REVERSE CLEAR FAILED — the MIRRORED half was broken but the source half "
@@ -2027,7 +2189,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                     + " that produces exactly the source-only half the user's rule forbids");
                 return;
             }
-            dest.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            writeAsPlayer(dest, destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
         });
 
         String f = failure.get();
@@ -2065,9 +2227,14 @@ public class CrossingSmoke implements FabricClientGameTest {
         AtomicReference<net.minecraft.resources.ResourceKey<Level>> destDimRef = new AtomicReference<>(null);
 
         // Place a rail: it mirrors, and the destination copy is recorded as mirror-created.
-        runCommands(context, List.of(
-            "setblock " + sourceCell.getX() + " " + sourceCell.getY() + " " + sourceCell.getZ()
-                + " minecraft:rail"));
+        // Player-attributed — a /setblock is classified COMMAND and declined since 2026-07-26, which
+        // would leave this gate's setup silently unmirrored and its verdict meaningless.
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow != null) {
+                writeAsPlayer(ow, sourceCell, net.minecraft.world.level.block.Blocks.RAIL.defaultBlockState());
+            }
+        });
         context.waitTicks(10);
 
         runOnServer(context, server -> {

@@ -291,6 +291,30 @@ public final class SeamMap {
         return Math.abs(v - Math.round(v)) < 1.0e-4;
     }
 
+    /**
+     * CLASSIFY the seam's geometry, rather than answering yes/no to mirroring.
+     *
+     * <p>This is the seam the user asked for when they said offset support should be "saved for
+     * future work" but the design should generalise to it easily. {@link #isMirrorable} answers "does
+     * a destination cell exist at all" and deliberately accepts offset pairs — see its own block
+     * comment for why refusing them once silently disabled a user-approved feature. This method
+     * answers the finer question the policy actually needs, and {@link SeamMirrorPolicy} decides what
+     * to do with each answer.
+     *
+     * <p>Splitting classification from decision is what makes offset support a policy change later:
+     * {@link SeamAlignment#OFFSET} is already produced and already named here, so adding it means
+     * implementing its target resolution and admitting it in one predicate — not re-deriving which
+     * geometries exist.
+     */
+    public static SeamAlignment alignmentOf(Portal portal, BlockPos anyLocalCell) {
+        if (!isMirrorable(portal)) {
+            return SeamAlignment.UNMAPPABLE;
+        }
+        return latticeAligned(portal, anyLocalCell)
+            ? SeamAlignment.EXACT
+            : SeamAlignment.OFFSET;
+    }
+
     /** True when the vector is (±1,0,0), (0,±1,0) or (0,0,±1) to within rounding. */
     public static boolean isSignedUnitAxis(Vec3 v) {
         double ax = Math.abs(v.x), ay = Math.abs(v.y), az = Math.abs(v.z);

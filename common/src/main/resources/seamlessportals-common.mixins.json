@@ -70,6 +70,8 @@
     "passthrough.SeamIndexHolderMixin",
     "passthrough.MixinBlockItemCanPlace",
     "passthrough.MixinBaseRailBlockMirrorAuthority",
+    "passthrough.MixinBlockItemPlaceSource",
+    "passthrough.MixinServerPlayerGameModeBreakSource",
     "passthrough.ServerLevelDeliveryProbeMixin",
     "passthrough.ServerChunkCacheDeliveryProbeMixin",
     "passthrough.ChunkHolderDeliveryProbeMixin",
