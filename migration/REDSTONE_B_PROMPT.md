@@ -1,4 +1,4 @@
-# FRESH-SESSION STARTER — (b) RAILS THROUGH A PORTAL, then (c) REDSTONE, (d) MINECARTS
+# FRESH-SESSION STARTER — SEAM CLIP + (b) RAILS THROUGH A PORTAL, then (c) REDSTONE, (d) MINECARTS
 
 *Paste this verbatim into a new session.*
 
@@ -33,7 +33,36 @@ Another session may be running in this repository on the iris shaders-ON work, i
   must stay that way** — copy it in from the main checkout. A `git add -A` will sweep it in; use
   explicit file lists. (This was done by accident on 2026-07-26 and reverted in `3f29e08`.)
 
-## §1 THE JOB
+## §1 THE JOB — TWO INDEPENDENT PIECES
+
+There are two, they do not depend on each other, and they are in different subsystems. Either can go
+first; they can also go to different sessions.
+
+**A. SEAM CLIP (renderer).** A mirrored block still renders as a WHOLE cube in the source world —
+nothing clips source terrain at the plane. Through the portal it only looks right because the
+stencil+depth OVERWRITE paints the destination over that region; stand to the side and the far half
+is simply drawn. The user wants it cut at the plane, with everything beyond coming from the mirrored
+copy. **The design is done and adversarially verified — read `REDSTONE_NEXT_SESSION.md` OPEN ITEM 1
+before touching this.** Its two headlines:
+
+* **Compile-time quad clamping is the obvious route and it is PERMANENTLY WRONG for same-dimension
+  portals** (one dimension = one `ViewArea`, drawn in the same frame by two cameras on opposite sides
+  of the plane), and it no-ops silently under Sodium. Draw-time `gl_ClipDistance` is correct in every
+  view and already has a Sodium path here.
+* **`FrontClipping.setupOuterClipping` — javadoc "clips source-dim geometry PAST the portal plane …
+  used on the main camera pass" — is NEVER INVOKED on the live path.** The intended mechanism is
+  already written and dead. Start there.
+
+Per-block half-models were considered and REJECTED: an offset seam needs an arbitrary cut fraction,
+not a fixed half, so real-time clipping is what generalises to the deferred offset work. Fluids and
+block entities will not clip either way.
+
+⚠ This is renderer work, adjacent to what the `is5-shadow` session touches. Coordinate before large
+changes to the main-pass clip path.
+
+**B. RAILS THROUGH A PORTAL (block logic).** The rest of this prompt.
+
+## §1B THE RAIL JOB
 
 **(b) step 2 — make rails CONNECT across the plane.** Step 1 built the cross-seam neighbour
 primitive (`SeamBinding.continuationCell`, `SeamRegistry.bindingAcross` / `stateAcross`,
