@@ -43,6 +43,43 @@ suppressing motion blur in the window, so the effect still works where it should
 
 Rounds 1–3 were all adjudicated with a census that was itself defective (see §00b).
 
+### §00a LIVE TEST RESULTS (user, 2026-07-27) — 5/5 pass, plus one regression found and fixed
+
+| # | test | result |
+|---|---|---|
+| 1 | stand still at a same-dim window | **sharp** |
+| 2 | walk past / into the portal | **real motion blur in BOTH dims** — preserved, not suppressed |
+| 3 | cross-dim window | **clean** |
+| 4 | doorway portal (dest within a few blocks) | **clean** — no full-screen flash |
+| 5 | toggle MB off → on | **was BROKEN, now fixed** (`4e57c77`) |
+
+**Item 5 was a real regression, mine.** `resolveLocations` cached the six uniform locations keyed on the
+program id ALONE, and **GL recycles program names after `glDeleteProgram`** — so when the MB toggle made
+iris recompile, the new `composite4` could be handed the SAME id, the cache reported a hit, and every
+write landed on locations belonging to a dead program. Silently inert. The user's own recovery step was
+the diagnosis: a teleport switches renderers → `onSwitchedAway` → `teardown()` → the only other place
+that clears the cache. Now cleared every frame. *Same "GL recycles program names" hazard the round-3
+panel raised against the census ROSTER — fixed there, not carried across.*
+
+### §00c ★ NEW OPEN ITEM — black flash at the portal seam (NOT ours, pre-existing)
+
+**Symptom:** crossing the portal plane slowly shows solid black/darkness right at the seam; crossing
+quickly it reads as a brief flash.
+
+**Attribution, measured both ways — do not re-litigate:**
+- with `-PdisableIrisDestPrevCamera=true` (**verified in the log**: `isIrisDestPrevCameraActive() =
+  INACTIVE`, zero writes) ⇒ **still present** ⇒ not the camera correction;
+- the worktree checked out at **`082d533`**, the pre-session commit (**verified**: zero `IS5-RC` lines,
+  that class did not exist yet) ⇒ **still present** ⇒ not introduced by any of this session's work.
+
+**It was masked by the smear.** User: *"i guess i didnt notice it with the blur before."* A full-strength
+uniform blur over the window hid a one-frame dark flash at the seam; fixing the smear exposed it. Expect
+more of this — the polish queue was written against a blurred window.
+
+**Note for whoever picks it up:** the first A/B was run against the WRONG configuration (the client had
+been launched with the probe lever, not the disable lever) and would have produced a false "not ours"
+verdict. The `RUN CONFIG` block caught it. Check the block before believing any A/B here.
+
 ### §00b The instrument was wrong three times too
 - required all eight uniform locations, two of which are inactive in `composite4` ⇒ would have printed a
   clean acquittal from an instrument that measured nothing;
