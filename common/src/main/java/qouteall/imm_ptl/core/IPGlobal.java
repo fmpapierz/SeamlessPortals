@@ -340,6 +340,17 @@ public class IPGlobal {
     public static final boolean STAMP_DEPTH_WRITE_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableStampDepthWrite");
 
+    // IS5-SEAM ATTRIBUTION LEVER (2026-07-27, DIAGNOSTIC ONLY — never ship it on).
+    // The black flash at the portal seam is measured to be a stamp COVERAGE gap: -PdebugTintStamp
+    // turns the whole window magenta EXCEPT that band, and the IS5-SEAM census shows the aperture
+    // mesh is never null (meshNull=false 23/23) and never fully dropped (dropped=0 23/23) but IS
+    // partially clipped on the approach (clipped=2 on 13/23 rows from ~1.2 blocks in). This lever
+    // passes every aperture triangle through UNCLIPPED, so one look settles whether the removed area
+    // is the band. COST while set: re-opens the S14.36 sky-wedge artifact the clip exists to prevent
+    // — and seeing those wedges is itself proof the lever took effect.
+    public static final boolean APERTURE_PLANE_CLIP_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableAperturePlaneClip");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
