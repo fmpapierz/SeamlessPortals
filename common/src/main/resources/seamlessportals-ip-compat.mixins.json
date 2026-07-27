@@ -28,6 +28,7 @@
     "iris.MixinIrisComputeProgram_ActDispatch",
     "iris.MixinIrisShadowCompositeRenderer_ActRenderAll",
     "iris.MixinIrisCompositeRenderer_Census",
+    "iris.MixinIrisCompositeRenderer_CensusPostWrite",
     "iris.MixinIrisProgram_Census"
   ],
   "injectors": {

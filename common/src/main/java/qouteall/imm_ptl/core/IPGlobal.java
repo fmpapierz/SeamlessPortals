@@ -225,36 +225,68 @@ public class IPGlobal {
     // the dest pass reads prev=main_N/cur=dest_N. Cross-dim is clean (own pipeline, own tracker) and is
     // EXCLUDED by construction. Fix = write the dest's own previous trio into the guarded composite
     // program between its Program.use() and its draw, then RESTORE iris's values before the next pass.
-    // DEFAULT **FALSE** as of 2026-07-26 — USER RULING. The mechanism works and the defect it corrects
-    // is real and measured (writes=1243/run, a 204-264 block previousCameraPosition error), but it
-    // changes NOTHING observable: the portal-window smear is byte-for-byte identical with it on and
-    // off. Shipping an unproven render-path change for zero visible benefit is the wrong trade, and
-    // the correction is not free — correctIfDestChain runs on EVERY guarded composite bind whenever the
-    // per-dest map is non-empty (outside every portal bracket), issuing glGetUniformfv reads and
-    // glUniform3f writes into iris's own uniform storage whose correctness rests on a paired restore
-    // injection firing. It also confounds any measurement of the smear, since it mutates the very state
-    // being measured. The class, both mixins and every lever are KEPT: the corrected state is one flag
-    // away if the ping-pong-parity line of attack turns out to need it.
-    // Turn ON for an A/B leg with -Dseamlessportals.enableIrisDestPrevCamera; the disable lever still
-    // wins over the enable lever, so a script that sets both is unambiguous.
+    // BACK TO DEFAULT-ON 2026-07-26, on a REWRITTEN mechanism. The bracket-keyed predecessor was
+    // switched off because it measurably fixed nothing (writes=1243/run, symptom unchanged); the
+    // IS5-CEN census then showed WHY: it recorded the dest camera from inside the armed portal bracket,
+    // but the bind inside that bracket is the one carrying the MAIN camera, so it "corrected" the
+    // already-innocent pass 1243 times and never touched the guilty one. The correction is now keyed on
+    // the SLOT (programId, bind ordinal within the frame) and needs no portal context at all.
+    // MEASURED defect it fixes: same-dim, stationary, 22 consecutive seconds — the dest content's
+    // composite4 reads cam=DEST prev=PLAYER, |cam-prev|=511.088, a 265.8 PIXEL blur span.
+    // A/B OFF via -Dseamlessportals.disableIrisDestPrevCamera. NOTE the enable lever that existed while
+    // this was briefly default-OFF has been REMOVED: with the field defaulting true it could never
+    // change the outcome ((true || x) is true), so it was a lever that silently did nothing — the exact
+    // trap that has voided live runs on this project before.
     public static final boolean IRIS_DEST_PREV_CAMERA_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableIrisDestPrevCamera");
-    public static final boolean IRIS_DEST_PREV_CAMERA_ENABLED_LEVER =
-        Boolean.getBoolean("seamlessportals.enableIrisDestPrevCamera");
-    public static boolean irisDestPrevCamera = false;
+    public static boolean irisDestPrevCamera = true;
 
-    /** True when the same-dim dest composite should receive its OWN previous-frame camera state.
-     *  Default OFF (see above); the enable lever arms it, and the disable lever always wins. */
+    /** True when the guarded composite pass should receive its own chain's previous-frame camera. */
     public static boolean isIrisDestPrevCameraActive() {
-        return (irisDestPrevCamera || IRIS_DEST_PREV_CAMERA_ENABLED_LEVER)
-            && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
+        return irisDestPrevCamera && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
     }
 
-    /** IS5-MB matrix half. Set to force camera-position-only — the A/B leg proving the previous
-     *  MATRICES are load-bearing (expected: rotational blur is lost, and a rotated portal is wrong):
-     *  -Dseamlessportals.irisDestPrevCameraNoMatrices */
-    public static final boolean IRIS_DEST_PREV_NO_MATRICES =
-        Boolean.getBoolean("seamlessportals.irisDestPrevCameraNoMatrices");
+    /** IS5-MB CHAIN-MATCH LIMIT, in blocks: the furthest a composite chain's camera may plausibly
+     *  travel in ONE frame. A bind adopts the nearest camera its program held last frame only within
+     *  this radius; beyond it the bind neutralizes (velocity 0, one blur-free frame).
+     *  SIZED TO CAMERA MOTION, NOT TO THE DEFECT. 4 blocks/frame is already generous — elytra at
+     *  30 m/s is ~1.5 blocks/frame at 20 fps. An earlier 16-block value was chosen merely to be "well
+     *  below 511" and was DANGEROUS: it is wider than an ordinary doorway portal's source→destination
+     *  offset, so it would have accepted the destination camera as history for the main view's chain
+     *  and flashed a full-screen blur on every visibility flap. The limit must stay below the smallest
+     *  portal offset worth correcting; it is not a safety margin against the bug, it is the definition
+     *  of "same chain". Tune with -Dseamlessportals.irisDestPrevCameraMaxDelta. */
+    public static final double IRIS_DEST_PREV_MAX_DELTA = parseMaxDelta();
+
+    private static double parseMaxDelta() {
+        String raw = System.getProperty("seamlessportals.irisDestPrevCameraMaxDelta");
+        if (raw == null) {
+            return 4.0;
+        }
+        try {
+            double v = Double.parseDouble(raw.trim());
+            // A non-positive or absurd limit would silently disable the match or make it match
+            // anything; refuse both rather than ship a lever that quietly breaks the correction.
+            if (v > 0.0 && v <= 64.0) {
+                return v;
+            }
+        }
+        catch (NumberFormatException ignored) {
+            // fall through to the warning below
+        }
+        // Must not throw: this runs in IPGlobal's static initializer, and an exception there takes the
+        // whole class down at class-load time — a malformed -P value would crash the game at startup.
+        System.err.println("[Seamless Portals] IS5-MB: ignoring malformed"
+            + " -Dseamlessportals.irisDestPrevCameraMaxDelta=\"" + raw + "\" (want a number in"
+            + " (0, 64]); using the default 4.0.");
+        return 4.0;
+    }
+
+    /** Confirm-counter: binds whose nearest last-frame camera was outside the match limit (a portal
+     *  coming into view, a teleport, an iris position-shift epoch). These NEUTRALIZE. A steadily
+     *  climbing value flag-ON means chains are not being matched and the correction is mostly
+     *  neutralizing rather than restoring real motion blur. */
+    public static int irisDestPrevUnmatchedCount = 0;
 
     /** IS5-MB guarded-pass names, comma-separated. Default "composite4" (Complementary's sole
      *  MOTION_BLURRING_STRENGTH consumer). Override only if a pack renames the pass — the once-only
@@ -289,7 +321,6 @@ public class IPGlobal {
 
     public static int irisDestPrevWriteCount = 0;
     public static int irisDestPrevNeutralizeCount = 0;
-    public static int irisDestPrevMissCount = 0;
 
     /** Confirm-counter: incremented once per healed frame. Render-thread int. */
     public static int prevUniformHealCount = 0;

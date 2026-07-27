@@ -10,9 +10,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera;
 
 /**
- * IS5-MB (S1) — the WRITE seam for per-dest previous-frame camera state. The feature is <b>DEFAULT OFF</b>
- * as of 2026-07-26 (arm it with {@code -Dseamlessportals.enableIrisDestPrevCamera}); see
- * {@link IrisDestPrevCamera} for the measured defect, the full mechanism, and why it does not ship on.
+ * IS5-MB (S1) — the WRITE seam for the per-chain previous-frame camera correction. <b>DEFAULT ON</b>;
+ * A/B off with {@code -Dseamlessportals.disableIrisDestPrevCamera}. See {@link IrisDestPrevCamera} for
+ * the measured defect (a 511-block camera offset producing a 265.8 px blur span) and the mechanism.
  *
  * <p><b>Why this exact target.</b> {@code Lnet/irisshaders/iris/gl/program/Program;use()V} occurs
  * <b>exactly once</b> in the whole of {@code CompositeRenderer} (bytecode offset 419 in
@@ -36,8 +36,10 @@ import qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera;
  * starts at 483, out of range). This is the same resolution the shipped C3-BLOOM mixin already relies on
  * at offset 213 in this method.
  *
- * <p>Behaviour-neutral when idle: the handler's first statement is a static null check on the armed
- * portal, so every non-portal composite pass costs one static read. {@code require = 0} because the
+ * <p>Behaviour-neutral when idle: the handler's first statement tests the feature lever, and the pass is
+ * then filtered by NAME, so a non-guarded composite pass costs one static read and one list check. With
+ * the pack's Motion Blur OFF the guarded pass declares no previous-frame trio, every uniform location
+ * comes back -1, and not one GL write is issued — inertness by construction rather than by a flag. {@code require = 0} because the
  * mixin config sets {@code defaultRequire = 1} and this target exists only when iris is present; the
  * 8-leg gametest suite runs iris-ABSENT, where {@code IPCompatMixinPlugin} declines the class outright.
  * Simple name contains "Iris" per that plugin's gating rule.
