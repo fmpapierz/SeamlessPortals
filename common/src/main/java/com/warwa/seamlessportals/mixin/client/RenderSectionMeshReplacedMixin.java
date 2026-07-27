@@ -37,11 +37,17 @@ public abstract class RenderSectionMeshReplacedMixin {
     private void seamlessportals$noteMeshReplaced(
         SectionMesh sectionMesh, CallbackInfoReturnable<SectionMesh> cir
     ) {
-        if (AperturePassthroughLever.DISABLE_SAME_DIM_REMESH) {
-            return;
-        }
         try {
-            SameDimRemesh.notifyMeshReplaced(this.getSectionNode());
+            if (!AperturePassthroughLever.DISABLE_SAME_DIM_REMESH) {
+                SameDimRemesh.notifyMeshReplaced(this.getSectionNode());
+            }
+            // SEAM CLIP's outcome record (gate wait: "the staged cell's section recompiled AFTER
+            // the placement tick"). SEPARATE accounting from SameDimRemesh by design, and
+            // deliberately NOT lever-gated: the rsSeamClipGate's inversion arm (-PdisableSeamClip)
+            // waits on the same record, so it must fire in both lever states. Bookkeeping only —
+            // one synchronized set-add per finished compile, no behavioral delta.
+            com.warwa.seamlessportals.render.SeamClipRenderer
+                .noteMeshReplaced(this.getSectionNode());
         }
         catch (Throwable ignored) {
             // Never let bookkeeping take down section compilation.

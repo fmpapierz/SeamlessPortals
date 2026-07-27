@@ -358,6 +358,31 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.seamRailProbe");
 
     /**
+     * Disables the SEAM CLIP — {@code -Dseamlessportals.disableSeamClip=true}.
+     *
+     * <p>With the fix ON (default), a seam block is cut at its portal plane in EVERY view: its
+     * qualifying cells are excluded from compiled section meshes (reported as AIR during compile,
+     * which also un-culls neighbour faces) and re-drawn dynamically each pass with a per-cell
+     * {@code gl_ClipDistance} plane keeping the CAMERA-side half, so the far half never draws in
+     * the dimension that does not own it — from the side as well as through the window. The
+     * mirrored copy supplies the far half through the stencil window exactly as before. OFF
+     * restores the pre-clip behaviour (whole cube drawn from the section mesh; the far half
+     * visible from the side). Design + adversarial-panel record:
+     * {@code migration/SEAM_CLIP_DESIGN.md}. Self-gates OFF under sodium regardless of this lever
+     * (no meshing hook — the exclusion arm cannot apply there).
+     */
+    public static final boolean DISABLE_SEAM_CLIP =
+        Boolean.getBoolean("seamlessportals.disableSeamClip");
+
+    /**
+     * Per-frame seam-clip probe ({@code -Dseamlessportals.seamClipProbe=true}, DEFAULT-OFF):
+     * 1 Hz-latched {@code [SEAM CLIP]} counter line — cells excluded/drawn, draws issued,
+     * own-plane dest draws, recompiles scheduled ({@code SeamClipRenderer.counters()}).
+     */
+    public static final boolean SEAM_CLIP_PROBE =
+        Boolean.getBoolean("seamlessportals.seamClipProbe");
+
+    /**
      * RS-ONLY SUITE MODE ({@code -Dseamlessportals.rsOnly=true}, DEFAULT-OFF) — the recorded
      * proposal from 2026-07-26: the user has flagged the suite as slow, and the RS gates are a small
      * fraction of each run. With this set the crossing/teleport legs (thrown items, hurt cow, ender

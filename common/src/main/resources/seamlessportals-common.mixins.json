@@ -37,6 +37,8 @@
     "client.SectionUpdateTrackerRemeshMixin",
     "client.MixinMultiPlayerGameModeBreakSource",
     "client.RenderSectionMeshReplacedMixin",
+    "client.RenderRegionCacheSeamClipMixin",
+    "client.RenderSectionRegionSeamClipMixin",
     "client.SectionDirtyStateAccessor",
     "client.SectionOcclusionGraphAccessorMixin",
     "client.SectionOcclusionGraphPartialUpdateSkipMixin",

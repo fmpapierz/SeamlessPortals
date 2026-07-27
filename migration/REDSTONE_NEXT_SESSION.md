@@ -37,6 +37,11 @@ generalise "to everything else easily, including offset mirroring" — that is w
 
 ## WHERE THINGS STAND (2026-07-27, latest session)
 
+- **★ THE SEAM CLIP IS LANDED AND GATED (2026-07-27, this session)** — see the ★ SEAM CLIP
+  section below. OPEN ITEM 1 is CLOSED. Lever `-PdisableSeamClip`; the suite gained its first
+  PIXEL gate (`rsSeamClipGate`), green in both lever directions. **Needs the user's live look**
+  — especially the frameless-portal side view, where "the far half ends at the plane" is now the
+  rendered behaviour and is INTENDED (design §1a).
 - Sub-feature **(a)** complete and user-verified.
 - **(b) step 2 — RAILS CONNECT ACROSS THE PLANE — LANDED AND GATED** (2026-07-27, this session).
   See the ★ (b) STEP 2 section below for what works, the levers, the two user decisions (BOTH
@@ -157,9 +162,63 @@ design pass.
 - **Offset (non-integral) seams stay fully declined** for rails exactly as for mirroring — same
   user decision, same future work.
 
+## ★ THE SEAM CLIP (landed 2026-07-27, this session) — closes OPEN ITEM 1
+
+**Full design + adversarial-panel record: `migration/SEAM_CLIP_DESIGN.md` (v2).** Read that file
+before touching this feature; every choice below has a panel finding behind it.
+
+**What shipped** (`com.warwa.seamlessportals.render.SeamClipRenderer` + two mixins):
+
+1. **Mesh exclusion** — qualifying seam cells (COINCIDENT phase AND mirror-admitted
+   `destPos != null` AND real non-placeholder MODEL block AND no block entity) read as AIR during
+   section compile. Snapshot at `RenderRegionCache.createRegion` RETURN (main thread, full 3×3×3
+   region bounds) onto a region duck; `RenderSectionRegion.getBlockState` HEAD answers AIR. The
+   AIR report UN-CULLS neighbour faces — that is what makes the FRAMELESS side view correct
+   (rays land on real faces instead of tunnelling through culled-face gaps).
+2. **Dynamic draw** — those cells re-tessellate against the live level each pass
+   (`tesselateBlock` → `putBlockBakedQuad`, camera-relative floats, BLOCK format) and draw via
+   `PortalRenderTypes.drawMesh` with `RenderTypes.*MovingBlock()` — a first-in-tree combination,
+   now pixel-proven. MAIN pass at `BEFORE_TRANSLUCENT_TERRAIN` (with the MANDATORY
+   `PortalRendering.isRendering()` guard — the event fires inside the full-pipeline twin's nested
+   render); DEST pass via ONE line in `SecondaryWorldRenderCore.renderDestWorld` after the 10.6
+   opaque draw (⚠ HOT FILE of the is5-shadow session; the line assumes the CURRENT 10.5 inner-clip
+   arming semantics, −ADJUSTMENT). Kept half = CAMERA side + 0.01 overlap (mirror of the inner
+   clip's −0.01). NO hook in `renderDestWorldFullPipeline` — M4 + FullPipelineClipState defeat
+   own-plane brackets there, and the feature self-gates OFF under sodium/iris anyway (no meshing
+   hook in the compat layer).
+3. **Lifecycle dirtying** — client-side bind/unbind queues covering sections + block-neighbour
+   sections; POST_CLIENT_TICK flush direct-`compileAsync`s them (SameDimRemesh's coord-pinned
+   RECIPE but SeamClip-OWN accounting — sharing its COMPILED set would have made the RS-DELIVERY
+   arm-3 verdict un-failable, a panel finding).
+
+**The gate** (`rsSeamClipGate`, runs in RS-only too): frameless EXACT same-dim portal, gold block
+in the aperture edge cell, blue backdrop, camera east of the window edge so sight lines cross the
+plane OUTSIDE the quad; crosshair aimed at world points; 9×9 patch sampled just below centre
+(26.2 has no `Options.hideGui`); glowstone + night vision pin the lighting (fresh random seed per
+run). Fix ON: far NOT-gold + near gold + `cellsDrawn/cellsExcluded > 0`. Lever: far GOLD
+(defect reproduced) + counters 0. First run of each direction passed exactly so
+(farGold 0.00→1.00 on the lever).
+
+**Residuals** (all recorded in design §6): fluids/BE blocks never clip; sodium/iris self-gate;
+translucent ordering; single-plane limit for unrelated cells through a window (bounded to an
+uncut far half, never foreground junk); portal-not-rendered shows behind-content; 1-frame
+transients around place/bind; moved-portal old cells recompile on natural dirtying only; large
+filled apertures re-tessellate per frame (escape hatch documented); floor-portal coplanar dither
+(pre-existing); crumbling/outline stay full-cube.
+
+**For (c) redstone:** the clip predicate deliberately equals the mirror's admission predicate.
+If (c) widens what mirrors (e.g. machine writes someday), the clip follows automatically through
+`SeamRegistry` — no clip-side edit needed.
+
 ## ★ OPEN ITEMS, in the order they were raised
 
-### 1. CLIP A MIRRORED BLOCK AT THE SEAM (user feature, design done, NOT implemented)
+### 1. CLIP A MIRRORED BLOCK AT THE SEAM — ✅ LANDED 2026-07-27, see the ★ SEAM CLIP section.
+The design analysis below is kept as the record the implementation started from; where they
+differ, the shipped code + `SEAM_CLIP_DESIGN.md` override (notably: seam-CELL granularity, not
+seam-SECTION; exclusion-by-AIR-report, not a tesselateBlock skip; and the frameless side view is
+the FEATURE, not an artifact).
+
+### (original OPEN ITEM 1 record follows)
 
 Today a mirrored aperture block renders as a **whole cube** in the source world. Nothing clips source
 terrain at the plane — through the portal it looks right only because the stencil+depth **overwrite**
@@ -237,6 +296,7 @@ red). The full matrix remains mandatory before a commit.
 | `… -PdisableSeamPlayerOnly` | player-only inversion |
 | `… -PdisableSeamExactOnly` | exact-only inversion |
 | `… -PdisableSeamPrediction` | same-frame inversion |
+| `-PapertureTeardownTest -PseamMirrorProbe -PrsOnly -PdisableSeamClip` | seam-clip inversion — far half visible from the side again, mechanism idle |
 
 Iteration tip: add `-PrsOnly` to any RS-focused configuration (~3.5 min instead of ~6+). The five
 configurations run green on 2026-07-27 before commit were: rows 1–5 of this table (rows 1–2 as full
@@ -645,6 +705,15 @@ to mechanism. One probe run, on a fixture that put the destination beyond render
 - **`-P` property names must not start with lowercase letters that read as part of the flag** —
   `-ProsOnly=true` sets property `rosOnly`, silently. It cost one full misattributed run. Use
   `-PrsOnly=true` and check the leg banner actually says RS-ONLY MODE.
+- **26.2 has no `Options.hideGui`** — the field is gone (only `ScreenEffectRenderer` carries the
+  name as a parameter). A pixel-sampling gate must sample AROUND the crosshair (the seam-clip
+  gate samples `max(20, h/24)` px below centre) rather than hiding the GUI.
+- **A gametest world is a FRESH RANDOM SEED every run.** Anything colour- or light-sensitive must
+  pin its own lighting (the seam-clip gate stages glowstone + night vision) or it flakes per-seed.
+- **`ClientGameTestContext` commands run in the OVERWORLD context, and in the full suite the
+  player is in the NETHER by the RS legs** — prefix world-touching commands with
+  `execute in minecraft:overworld run`, tp the player explicitly, ASSERT the arrival dimension,
+  and restore their whereabouts in the `finally` (the seam-clip gate's recipe).
 
 - **★ ASSERT THE OUTCOME THE USER CAN SEE, NOT THE REQUEST YOUR CODE ISSUED.** Three gates in a row
   passed on a fix that did nothing:
