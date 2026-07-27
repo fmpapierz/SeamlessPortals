@@ -317,10 +317,8 @@ public final class AperturePassthroughLever {
      * side's own rail, and (b)'s far shape write mirrors back onto the source in a loop. COINCIDENT
      * (every obsidian frame — the geometry (a) was user-verified on) is untouched.
      *
-     * <p>⚠ FLAGGED AS A USER DECISION, taken provisionally: the (b) spec §3.6 recommends the gate
-     * and records the user's own phrasing that topology B is unmirrored, but no explicit sign-off
-     * exists. This lever restores unconditional mirroring exactly, so the decision is reversible in
-     * one flag.
+     * <p>✅ USER-CONFIRMED 2026-07-27 (live round after the (b) landing): the gate stays. This
+     * lever restores unconditional mirroring exactly, kept for A/B attribution.
      */
     public static final boolean DISABLE_SEAM_PHASE_GATE =
         Boolean.getBoolean("seamlessportals.disableSeamPhaseGate");
@@ -344,8 +342,9 @@ public final class AperturePassthroughLever {
      * rail re-shapes it un-bracketed, the player-only policy declines the re-mirror, and the two
      * halves of the pair diverge — a straight half and a curved half on one visual block. Creation
      * and removal still obey the player-only policy in full; only refinements of an existing pair
-     * pass. ⚠ Flagged as a widening of the 2026-07-26 player-only decision, taken provisionally —
-     * this lever restores the strict reading.
+     * pass. ✅ USER-CONFIRMED 2026-07-27 (live round after the (b) landing) as a deliberate
+     * widening of the 2026-07-26 player-only decision — this lever restores the strict reading,
+     * kept for A/B attribution.
      */
     public static final boolean DISABLE_SEAM_SHAPE_SYNC =
         Boolean.getBoolean("seamlessportals.disableSeamShapeSync");

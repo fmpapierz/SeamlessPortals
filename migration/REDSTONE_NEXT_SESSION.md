@@ -39,9 +39,11 @@ generalise "to everything else easily, including offset mirroring" — that is w
 
 - Sub-feature **(a)** complete and user-verified.
 - **(b) step 2 — RAILS CONNECT ACROSS THE PLANE — LANDED AND GATED** (2026-07-27, this session).
-  See the ★ (b) STEP 2 section below for what works, the levers, the TWO PROVISIONAL USER DECISIONS
-  awaiting sign-off, and the deferred items. `REDSTONE_B_SPEC.md` now carries a top banner listing
-  where the shipped code deviates from its body — the code and this handoff override the spec.
+  See the ★ (b) STEP 2 section below for what works, the levers, the two user decisions (BOTH
+  CONFIRMED live 2026-07-27), and the deferred items. `REDSTONE_B_SPEC.md` now carries a top banner
+  listing where the shipped code deviates from its body — the code and this handoff override the
+  spec. **The user chose the SEAM CLIP (renderer) as the next session's work** — starter prompt at
+  `migration/REDSTONE_CLIP_PROMPT.md`; (c) redstone and (d) minecarts queue behind it.
 - **The suite has an RS-ONLY mode now** (`-PrsOnly`, default OFF) — open item 5 is closed. It skips
   the crossing/teleport legs and leg 5's world reopen; every RS gate, portal staging and 6a/6b still
   run. ~3.5 min instead of ~6+. Full matrix still mandatory before a commit.
@@ -83,7 +85,16 @@ formula fails it. New surface: `SeamBinding.crossDir()`, `continuationToward(Dir
 `seamContinuous`; `findDestinationPortal` disambiguates bi-faced pairs by IP's own
 `isReversePortal` dot test (`disableSeamReverseDisambig`).
 
-### ⚠ TWO PROVISIONAL USER DECISIONS — taken this session, need the user's word
+### ✅ TWO USER DECISIONS — taken provisionally at landing, CONFIRMED BY THE USER 2026-07-27
+
+**Sign-off obtained in the live round after the landing.** The user tested rails live ("WORKS,
+rails connect through the portal!"), the probe log confirmed 131 genuine cross-seam neighbour
+resolutions in both directions, both policies were put to the user explicitly, and both were
+KEPT. They now stand on the same footing as player-only and exact-only. The same round settled a
+third point: the powered-rail observation (mirrored half shows powered, no propagation past the
+seam) is the DESIGNED boundary of (b) — `PoweredRailBlock.findPoweredRailSignal` walks raw
+positions in one level and never touches `RailState`; power across the seam is (c), and the
+powered-rail chain is its first concrete target. The table below is the original decision record:
 
 | # | decision | why (b) needs it | lever restoring the old rule |
 |---|---|---|---|
