@@ -14,7 +14,6 @@ import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.chunk.RenderRegionCache;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.extract.LevelExtractor;
-import net.minecraft.client.renderer.state.level.SectionUpdateRenderState;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -73,12 +72,33 @@ import java.util.List;
  *       distance), so this queue does not see the load-noise flood that drowned the first cut.</li>
  * </ul>
  *
- * <p><b>No IP-core render file is edited and no render state is mutated mid-frame.</b> Sections are
- * handed to vanilla the way vanilla hands them to itself: a {@link SectionUpdateRenderState}
- * appended to the main {@code LevelRenderState}, drained by the main frame's own
- * {@code compileSections} (REF {@code LevelRenderer.java:608}). Nothing here repositions a camera,
- * touches a {@code ViewArea}, or re-flips a delta window — the three things the render core skipped
- * the same-dim extract to avoid.
+ * <h2>★ AND THE COMPILE MUST BE CALLED DIRECTLY — the second thing that was wrong</h2>
+ * The second cut appended a {@code SectionUpdateRenderState} to the main {@code LevelRenderState},
+ * expecting the frame's own {@code compileSections} to drain it. That was <b>structurally inert</b>
+ * and the user saw no change whatsoever. Per frame the order is
+ * {@code extract()} → {@code levelRenderState.reset()} (which CLEARS
+ * {@code sectionUpdateRenderStates}, REF {@code LevelRenderState.java:34-35} via
+ * {@code LevelExtractor.java:110}) → fill from {@code visibleSections} → {@code render()} →
+ * {@code compileSections} drains (REF {@code LevelRenderer.java:255}). This pass runs from
+ * {@code POST_CLIENT_TICK}, between frames, so every entry it appended was wiped by the next
+ * {@code reset()} before anything compiled it.
+ *
+ * <p>So {@link SectionRenderDispatcher.RenderSection#compileAsync} is called directly — the exact
+ * primitive {@code compileSections} itself ends at (REF {@code LevelRenderer.java:626-640}), and the
+ * one that owes nothing to {@code visibleSections} or the tracker. That is also, in shape, what
+ * Sodium does: a rebuild queue that is not keyed to the main camera's visible set, which is why the
+ * same-dim staleness does not occur under Sodium at all.
+ *
+ * <p><b>No IP-core render file is edited and no render state is mutated mid-frame.</b> Nothing here
+ * repositions a camera, touches a {@code ViewArea}, or re-flips a delta window — the three things
+ * the render core skipped the same-dim extract to avoid.
+ *
+ * <h2>Why the outcome is instrumented and not the request</h2>
+ * Both failed cuts passed a gate. The first asserted "some rebuilds were scheduled" while dropping
+ * the write under test; the second asserted "this section was scheduled" while the schedule was
+ * being thrown away unread. Each assertion sat one step short of reality. So the gate now asserts
+ * {@link #didCompileSectionAt} — driven by {@code RenderSection.setSectionMesh}, the point at which
+ * a finished compile actually replaces the mesh. There is no step left between that and the pixels.
  */
 public final class SameDimRemesh {
 
@@ -232,10 +252,7 @@ public final class SameDimRemesh {
         if (viewArea == null) {
             return;   // Sodium owns terrain (IgnoringViewArea); its own builder does the meshing
         }
-        var renderState = ea.seamlessportals$getLevelRenderState();
-        if (renderState == null) {
-            return;
-        }
+        // NOTE: deliberately no LevelRenderState here — see the compile call in schedule().
 
         RenderRegionCache cache = new RenderRegionCache();
         int budget = MAX_REGIONS_PER_TICK;
@@ -252,7 +269,7 @@ public final class SameDimRemesh {
             }
         }
         for (long node : refusedBatch) {
-            if (schedule(node, viewArea, tracker, level, renderState, cache)) {
+            if (schedule(node, viewArea, tracker, level, cache)) {
                 budget--;
             }
         }
@@ -275,7 +292,7 @@ public final class SameDimRemesh {
                             continue;
                         }
                         sweptDirty++;
-                        if (schedule(node, viewArea, tracker, level, renderState, cache)) {
+                        if (schedule(node, viewArea, tracker, level, cache)) {
                             budget--;
                         }
                     }
@@ -287,7 +304,6 @@ public final class SameDimRemesh {
     /** @return true when a rebuild was actually queued (so the caller can spend its budget). */
     private static boolean schedule(
         long node, ViewArea viewArea, SectionUpdateTracker tracker, ClientLevel level,
-        net.minecraft.client.renderer.state.level.LevelRenderState renderState,
         RenderRegionCache cache
     ) {
         SectionRenderDispatcher.RenderSection section =
@@ -303,8 +319,28 @@ public final class SameDimRemesh {
         if (!alreadyCompiled && (tracker == null || !tracker.hasAllNeighbors(level, node))) {
             return false;   // not ready; the sweep will find it again next tick
         }
-        renderState.sectionUpdateRenderStates.add(
-            new SectionUpdateRenderState(node, false, cache.createRegion(level, node)));
+        // ★ COMPILE DIRECTLY. Do NOT append to levelRenderState.sectionUpdateRenderStates.
+        //
+        // The first version of this method did exactly that, and it was STRUCTURALLY INERT. Per
+        // frame the order is: extract() -> levelRenderState.reset() (which CLEARS
+        // sectionUpdateRenderStates, REF LevelRenderState.java:34-35, called from
+        // LevelExtractor.java:110) -> fill from visibleSections -> render() -> compileSections
+        // drains it (REF LevelRenderer.java:255). This pass runs from POST_CLIENT_TICK, between
+        // frames, so everything it appended was wiped by the next reset() before anything compiled
+        // it. The user saw no change at all, which was exactly right.
+        //
+        // These three lines are what compileSections itself does per entry (REF
+        // LevelRenderer.java:626-640), minus the sync/async preference: fade 0 so a re-mesh does not
+        // fade in like a newly loaded section, and the previously-empty flag cleared the same way.
+        section.setFadeDuration(0L);
+        section.setWasPreviouslyEmpty(false);
+        synchronized (AWAITING) {
+            if (AWAITING.size() >= MAX_RECENT) {
+                AWAITING.clear();
+            }
+            AWAITING.add(node);
+        }
+        section.compileAsync(cache.createRegion(level, node));
         // Clear the tracker's own flag when it HAS one, so the main extract does not schedule the
         // same section a second time. A refused mark (defect B) has no state to clear — which is
         // exactly why those are tracked outside the tracker.
@@ -333,9 +369,60 @@ public final class SameDimRemesh {
     // Test/probe accounting
     // =============================================================================================
 
-    /** Rebuilds this fix has scheduled. */
+    /**
+     * Sections this fix asked to compile and is still waiting on, and those whose mesh has actually
+     * been replaced since. {@link #AWAITING} keeps the outcome hook cheap and exact: it fires for
+     * every section in the game, and only the ones we asked for are of interest.
+     */
+    private static final LongOpenHashSet AWAITING = new LongOpenHashSet();
+    private static final LongOpenHashSet COMPILED = new LongOpenHashSet();
+    private static long compiled = 0L;
+
+    /**
+     * Called from {@code RenderSection.setSectionMesh} — the point at which a finished compile
+     * replaces a section's mesh. This is the END of the chain: past here the new geometry is what
+     * gets drawn, so an assertion on it cannot pass while the picture stays stale.
+     */
+    public static void notifyMeshReplaced(long sectionNode) {
+        if (AperturePassthroughLever.DISABLE_SAME_DIM_REMESH) {
+            return;
+        }
+        synchronized (AWAITING) {
+            if (!AWAITING.remove(sectionNode)) {
+                return;   // not one of ours
+            }
+        }
+        synchronized (COMPILED) {
+            if (COMPILED.size() >= MAX_RECENT) {
+                COMPILED.clear();
+            }
+            COMPILED.add(sectionNode);
+        }
+        compiled++;
+    }
+
+    /** Rebuilds this fix has requested. */
     public static long scheduledCount() {
         return scheduled;
+    }
+
+    /** Rebuilds this fix requested that have actually produced a new mesh. */
+    public static long compiledCount() {
+        return compiled;
+    }
+
+    /**
+     * Whether a rebuild this fix requested for the section containing {@code (x,y,z)} has COMPLETED.
+     *
+     * <p>This is what the gate asserts. {@code didScheduleSectionAt} is deliberately not enough —
+     * the second cut of this class satisfied exactly that while its scheduling was being discarded
+     * unread, and the gate passed on it.
+     */
+    public static boolean didCompileSectionAt(int x, int y, int z) {
+        long node = SectionPos.asLong(x >> 4, y >> 4, z >> 4);
+        synchronized (COMPILED) {
+            return COMPILED.contains(node);
+        }
     }
 
     /**
@@ -353,7 +440,7 @@ public final class SameDimRemesh {
     }
 
     public static String counters() {
-        return "scheduled=" + scheduled + " sweptDirty=" + sweptDirty
+        return "scheduled=" + scheduled + " COMPILED=" + compiled + " sweptDirty=" + sweptDirty
             + " refusedSeen=" + refusedSeen + " refusedDropped=" + refusedDropped
             + " refusedPending=" + REFUSED.size() + " sameDimPortalRegions=" + DEST_REGIONS.size();
     }
