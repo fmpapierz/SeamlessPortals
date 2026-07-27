@@ -274,7 +274,41 @@ public class IrisCompatPaste {
                 CHelper.getCurrentCameraPos(), RenderStates.getPartialTick(),
                 modelView, byteBuffer
             );
+            // IS5-SEAM: the aperture mesh can come back null because EVERY triangle failed the
+            // S14.36 near-plane clip (ViewAreaRenderer:313 keeps only viewZ < -EPS). Skipping the
+            // stamp then leaves the window region holding whatever the deferred buffer had — pure
+            // black — which is the flash the user sees when crossing the seam slowly. Attributed
+            // live: -PdebugTintStamp turned the whole window magenta EXCEPT that band, i.e. the
+            // stamp does not cover it; and it reproduces at pre-session 082d533, so it predates the
+            // motion-blur work and was simply masked by the smear.
+            //
+            // THE GUARD IS LOAD-BEARING. A null mesh ALSO occurs whenever the portal is behind the
+            // camera or off to the side, and full-screen stamping there would paint the destination
+            // world over the entire screen with no portal in sight — far worse than the flash. So
+            // the fallback fires only when the camera is genuinely inside the aperture footprint:
+            // getDistanceToNearestPointInPortal measures to the portal SHAPE, not its plane, so a
+            // portal behind you reads large while a camera in the doorway reads ~0.
+            // IS5-SEAM CENSUS. Report EVERY outcome, near the aperture, at 1 Hz — not just the branch
+            // a hypothesis predicts. The previous round logged only "mesh came back null while inside
+            // the footprint"; that never fired, the black flash persisted, and the log could not say
+            // whether the mesh was null-but-outside or non-null-and-partially-clipped, which need
+            // DIFFERENT fixes. Logging only the expected branch is how a refutation ends up carrying
+            // no information.
+            double distToAperture = Double.MAX_VALUE;
+            try {
+                distToAperture =
+                    portal.getDistanceToNearestPointInPortal(CHelper.getCurrentCameraPos());
+            }
+            catch (Throwable ignored) {
+                // treated as "not inside" — the safe direction
+            }
+            seamCensus(distToAperture, mesh == null);
+
             if (mesh == null) {
+                // MEASURED NEVER TO HAPPEN on the frames that show the seam flash: meshNull=false on
+                // 41/41 census rows across two runs. A full-screen fallback was built here on the
+                // hypothesis that it did, and removed again when the census refuted it — do not
+                // rebuild it without evidence that this branch actually fires.
                 return; // every triangle near-plane-clipped away — nothing to stamp
             }
             try (mesh) {
@@ -364,6 +398,84 @@ public class IrisCompatPaste {
                 }
             }
         }
+    }
+
+    /** IS5-SEAM: how close to the aperture SHAPE the camera must be for the degenerate-frame
+     *  full-screen fallback to fire. Sized to "the camera is in the doorway", not "the portal is
+     *  nearby": at 0.5 blocks a portal you have walked past reads far larger and is left alone. */
+    private static final double DEGENERATE_APERTURE_DIST = 0.5;
+
+    private static int seamNullMeshCount = 0;
+    private static int seamNullOutsideCount = 0;
+    private static int seamFullScreenCount = 0;
+    private static boolean seamReported = false;
+
+    /**
+     * THE MEASUREMENT THIS FIX OWES. Everything above is consistent with the magenta A/B and with
+     * ViewAreaRenderer's clip, but "the mesh comes back NULL on crossing frames" was inferred, not
+     * observed — and the alternative (the mesh survives but is partially clipped, leaving a band) has
+     * a different fix. This line settles it on the next run: if it appears while crossing, the null
+     * case is real and the full-screen fallback is the right answer. If the black band persists and
+     * this line NEVER appears, the mesh was non-null and partially clipped, and the fix must instead
+     * extend coverage rather than replace it.
+     */
+    private static long seamCensusNanos = 0L;
+
+    /**
+     * One line per second whenever the camera is within {@link #SEAM_CENSUS_DIST} of the aperture —
+     * i.e. exactly the frames that show the black flash — naming what the near-plane clip did.
+     *
+     * <p>Read it like this. {@code null=true} means every triangle was dropped and the stamp is
+     * skipped: the full-screen fallback is then the right fix and its own line will follow.
+     * {@code null=false} with {@code clipped>0} means the mesh SURVIVED but was cut, so the stamp is
+     * covering only part of the aperture and the black band is the remainder — a different defect,
+     * fixed by extending coverage, not by replacing it. {@code null=false, clipped=0, dropped=0} means
+     * the clip is innocent entirely and the black comes from somewhere else, at which point the
+     * magenta A/B needs re-reading.
+     */
+    private static void seamCensus(double distToAperture, boolean meshNull) {
+        if (distToAperture > SEAM_CENSUS_DIST) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (now - seamCensusNanos < 1_000_000_000L) {
+            return;
+        }
+        seamCensusNanos = now;
+        Helper.LOGGER.info(
+            "[Seamless Portals] IS5-SEAM census (1Hz, camera within {} of the aperture):"
+                + " distToAperture={} meshNull={} | near-plane clip: kept={} clipped={} dropped={}"
+                + " — meshNull=true => the stamp is SKIPPED (full-screen fallback applies);"
+                + " meshNull=false with clipped>0 => the stamp covers only PART of the aperture and"
+                + " the black band is the rest; kept>0 clipped=0 dropped=0 => the clip is innocent.",
+            SEAM_CENSUS_DIST, String.format("%.4f", distToAperture), meshNull,
+            ViewAreaRenderer.clipTrisKept, ViewAreaRenderer.clipTrisClipped,
+            ViewAreaRenderer.clipTrisDropped);
+    }
+
+    /** How near the aperture the camera must be for the census to speak. Wide enough to cover the
+     *  approach and the crossing, narrow enough that ordinary play does not log. */
+    private static final double SEAM_CENSUS_DIST = 3.0;
+
+    private static void reportSeamOnce(double dist) {
+        if (seamReported) {
+            return;
+        }
+        seamReported = true;
+        Helper.LOGGER.info(
+            "[Seamless Portals] IS5-SEAM (once-only): the aperture mesh came back NULL while the"
+                + " camera was INSIDE the portal footprint (distance {} < {}). Every triangle failed"
+                + " the S14.36 near-plane clip, so without this fallback the stamp would be skipped"
+                + " and the window region would show the cleared buffer — the pure-black seam flash."
+                + " Stamping FULL-SCREEN instead. If you are reading this while the seam flash is"
+                + " GONE, the null-mesh hypothesis is confirmed.",
+            String.format("%.4f", dist), DEGENERATE_APERTURE_DIST);
+    }
+
+    /** IS5-SEAM counters, read by the 1 Hz probe so the fallback's frequency is visible. */
+    public static String seamCounters() {
+        return "nullMesh=" + seamNullMeshCount + " (inside=" + seamFullScreenCount
+            + " outside=" + seamNullOutsideCount + ")";
     }
 
     private IrisCompatPaste() {}

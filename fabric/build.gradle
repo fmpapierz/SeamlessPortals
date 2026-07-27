@@ -316,6 +316,11 @@ loom {
             // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
             if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
+            // to settle whether the near-plane clip's removed area is the black seam band. Expect the
+            // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableAperturePlaneClip=true
+            if (project.findProperty('disableAperturePlaneClip') == 'true') { vmArg('-Dseamlessportals.disableAperturePlaneClip=true') }
             // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF).
             // Counts EVERY Program.use() in the process and, for the motion-blur pass, logs all six
             // gbuffer matrices, both camera vectors, the two never-before-measured inverse-consistency
@@ -528,6 +533,11 @@ loom {
             // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
             if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
+            // to settle whether the near-plane clip's removed area is the black seam band. Expect the
+            // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableAperturePlaneClip=true
+            if (project.findProperty('disableAperturePlaneClip') == 'true') { vmArg('-Dseamlessportals.disableAperturePlaneClip=true') }
             // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF).
             // Counts EVERY Program.use() in the process and, for the motion-blur pass, logs all six
             // gbuffer matrices, both camera vectors, the two never-before-measured inverse-consistency
