@@ -2425,6 +2425,30 @@ public class CrossingSmoke implements FabricClientGameTest {
                     new BlockPos(fx, py + 1, fz), null));
         context.waitTicks(80);
 
+        // WAIT FOR THE PRECONDITION, NOT A TICK COUNT. The re-bind happens on the portal TICK
+        // signal, so the fixed 80 ticks above is a hope, not a guarantee: this gate failed once with
+        // "no seam binding at the surviving rail after relight" and passed on an identical re-run.
+        // A gate that fails intermittently teaches people to re-run it, which is how a real
+        // regression eventually gets waved through. Poll for the binding and let the assertion below
+        // speak only once it is genuinely absent.
+        {
+            AtomicReference<Boolean> bound = new AtomicReference<>(false);
+            BlockPos survivorProbe = new BlockPos(fx, py + 1, fz);
+            for (int attempt = 0; attempt < 20 && !bound.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow3 = server.getLevel(Level.OVERWORLD);
+                    bound.set(ow3 != null
+                        && com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow3, survivorProbe) != null);
+                });
+                if (!bound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "RS-A FRAME MIRROR GATE: re-bind after relight observed={} at {}",
+                bound.get(), survivorProbe);
+        }
+
         runOnServer(context, server -> {
             ServerLevel far = server.getLevel(partnerDim.get());
             far.getChunk(partnerRef.get().getX() >> 4, partnerRef.get().getZ() >> 4);

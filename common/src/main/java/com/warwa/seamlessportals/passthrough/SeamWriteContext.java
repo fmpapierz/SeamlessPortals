@@ -25,27 +25,33 @@ import org.jetbrains.annotations.Nullable;
  * bracket disarmed for the rest of its own placement. {@link #push} returns the previous value and
  * {@link #pop} puts it back, so the callers form a stack.
  *
- * <p><b>Server-thread confined, deliberately not a ThreadLocal.</b> Every consumer already proves
- * {@code server.isSameThread()} before reading (see the driver's guard in
- * {@code LevelChunkSetBlockStateMixin}), and a plain static is cheaper on a path that runs for every
- * block change in the game. {@link #reset} exists so a thrown exception mid-placement cannot leave a
- * stale source armed for the next unrelated write.
+ * <p><b>3. PER THREAD.</b> This started as a plain static, documented as server-thread confined —
+ * which was true while only the server had brackets. Same-frame mirroring added CLIENT brackets
+ * ({@code MixinBlockItemPlaceSource} runs on both sides, and the client break bracket is
+ * {@code MixinMultiPlayerGameModeBreakSource}), and in single-player the client and the integrated
+ * server are DIFFERENT THREADS sharing one JVM. Two threads pushing and popping one static interleave
+ * their save/restore and corrupt each other's stack. The position test bounds the damage — a stale
+ * arm can only mis-attribute a write at the same position, which for two concurrent player actions
+ * would usually be the same answer anyway — but "usually the right answer by luck" is not a property
+ * worth keeping. A {@link ThreadLocal} costs one lookup on a path that was already doing a map
+ * probe, and removes the race outright.
  */
 public final class SeamWriteContext {
 
     private SeamWriteContext() {}
 
-    private static SeamWriteSource currentSource = SeamWriteSource.UNKNOWN;
-    private static @Nullable BlockPos currentPos = null;
+    private static final ThreadLocal<SeamWriteSource> CURRENT_SOURCE =
+        ThreadLocal.withInitial(() -> SeamWriteSource.UNKNOWN);
+    private static final ThreadLocal<@Nullable BlockPos> CURRENT_POS = new ThreadLocal<>();
 
     /**
      * Arm a source for one position. Returns the previous state so the caller can restore it — always
      * pair with {@link #pop} in a {@code finally}.
      */
     public static Object[] push(SeamWriteSource source, BlockPos pos) {
-        Object[] previous = new Object[]{currentSource, currentPos};
-        currentSource = source;
-        currentPos = pos == null ? null : pos.immutable();
+        Object[] previous = new Object[]{CURRENT_SOURCE.get(), CURRENT_POS.get()};
+        CURRENT_SOURCE.set(source);
+        CURRENT_POS.set(pos == null ? null : pos.immutable());
         return previous;
     }
 
@@ -55,8 +61,8 @@ public final class SeamWriteContext {
             reset();
             return;
         }
-        currentSource = (SeamWriteSource) previous[0];
-        currentPos = (BlockPos) previous[1];
+        CURRENT_SOURCE.set((SeamWriteSource) previous[0]);
+        CURRENT_POS.set((BlockPos) previous[1]);
     }
 
     /**
@@ -66,15 +72,16 @@ public final class SeamWriteContext {
      * other position during a bracketed action is not the bracketed action.
      */
     public static SeamWriteSource sourceFor(BlockPos pos) {
-        if (currentPos == null || pos == null || !currentPos.equals(pos)) {
+        BlockPos armed = CURRENT_POS.get();
+        if (armed == null || pos == null || !armed.equals(pos)) {
             return SeamWriteSource.UNKNOWN;
         }
-        return currentSource;
+        return CURRENT_SOURCE.get();
     }
 
     /** Belt and braces: clear any armed source. Called if a bracket unwinds abnormally. */
     public static void reset() {
-        currentSource = SeamWriteSource.UNKNOWN;
-        currentPos = null;
+        CURRENT_SOURCE.set(SeamWriteSource.UNKNOWN);
+        CURRENT_POS.set(null);
     }
 }
