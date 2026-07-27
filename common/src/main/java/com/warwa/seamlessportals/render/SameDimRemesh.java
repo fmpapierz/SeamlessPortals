@@ -120,7 +120,10 @@ public final class SameDimRemesh {
      * Out-of-window refusals only (defect B). Small on purpose — if this ever fills, something is
      * refusing marks in bulk, which is a different bug and should be visible rather than absorbed.
      */
-    private static final int MAX_REFUSED = 256;
+    // Raised from 256 after a live run showed refusedDropped=73156: a radius-3 region is 343
+    // sections, and chunk loading at a far destination dirties them faster than the per-tick drain
+    // clears them. A dropped entry is a lost update, so the set must comfortably exceed the region.
+    private static final int MAX_REFUSED = 2048;
     private static final LongOpenHashSet REFUSED = new LongOpenHashSet();
 
     /** Destination section positions of same-dimension portals, rebuilt each client tick. */
@@ -218,6 +221,122 @@ public final class SameDimRemesh {
     // The per-tick pass
     // =============================================================================================
 
+    /**
+     * SELF-DOCUMENTING LIVE RUNS. Without this a live session produces NO evidence at all about this
+     * class — it logs only on failure — so "the fix did nothing" and "the fix never ran" are
+     * indistinguishable from the log. That gap already cost one round: a live test was reported as
+     * inconclusive because the only instrument was the default-off delivery probe.
+     *
+     * <p>1 Hz, and gated on {@code seamDeliveryProbe} so the default run stays silent. Prints the
+     * portal-region count too, because zero regions means this class is inert for a reason that has
+     * nothing to do with meshing — the portal was never classified same-dimension.
+     */
+    private static long lastReportMs = 0L;
+
+    private static void report() {
+        if (!AperturePassthroughLever.SEAM_DELIVERY_PROBE) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastReportMs < 1000L) {
+            return;
+        }
+        lastReportMs = now;
+        LOGGER.info("[RS-REMESH] {}", counters());
+        farWindowReport();
+    }
+
+    /**
+     * ★ WHAT DOES THE FAR WINDOW ACTUALLY DRAW? — the one question blocking a fix for defect B.
+     *
+     * <p>A same-dimension portal with a FAR destination shows correct terrain, and keeps showing it
+     * after the player has been there and come back. But {@code getRenderSection(node)} returns null
+     * for that destination, so the fix has nothing to compile. Both are true at once, and until it is
+     * known WHICH object holds the geometry being drawn there, any repair is a guess.
+     *
+     * <p>{@code ImmPtlViewArea.getRenderSection(long)} wraps the node into the CURRENT PRESET array
+     * via {@code positiveModulo} and then rejects a non-matching occupant (its §2.6 guard). The
+     * preset is centred on the MAIN camera, so a far node always misses. But the columns themselves
+     * are coord-PINNED and live in {@code columnMap}, reachable through the public
+     * {@code provideBuiltChunkByChunkPos} — which does not consult the preset at all.
+     *
+     * <p>So this prints the three facts that discriminate, per same-dim portal region:
+     * <ul>
+     *   <li><b>preset</b> — what {@code getRenderSection} says (expected: null, far away).</li>
+     *   <li><b>pinned</b> — what the coord-pinned column says, and <b>whether it already holds a
+     *       COMPILED mesh</b>. A compiled mesh here would explain the whole observation: the geometry
+     *       was built while the player was at the destination, it is coord-pinned so it survives the
+     *       preset moving away, and nothing ever recompiles it because every lookup that would has
+     *       to go through the preset. It would also make {@code provideBuiltChunkByChunkPos} the
+     *       correct accessor for the fix.</li>
+     *   <li><b>visible</b> — how many entries of {@code visibleSections()} lie near the destination.
+     *       If this is 0 while terrain is on screen, then drawing does not come from
+     *       {@code visibleSections}, and compiling alone would not be enough.</li>
+     * </ul>
+     */
+    private static void farWindowReport() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null || mc.levelExtractor == null || DEST_REGIONS.isEmpty()) {
+            return;
+        }
+        try {
+            LevelExtractorAccessor ea = (LevelExtractorAccessor) (Object) mc.levelExtractor;
+            LevelRenderer renderer = ea.seamlessportals$getLevelRenderer();
+            if (renderer == null) {
+                return;
+            }
+            ViewArea viewArea = ((LevelRendererAccessorMixin) renderer).seamlessportals$getViewArea();
+            if (viewArea == null) {
+                LOGGER.info("[RS-FARWIN] viewArea is null (Sodium owns terrain) — nothing to report");
+                return;
+            }
+            var visible = renderer.visibleSections();
+
+            // EVERY region, not just the first. The whole question is a NEAR-vs-FAR comparison and
+            // the user has both kinds of portal standing; reporting one of them at random would make
+            // the two indistinguishable in the log. Capped so a portal cluster cannot spam.
+            int reported = 0;
+            for (long[] r : DEST_REGIONS) {
+                if (reported++ >= 6) break;
+                int sx = (int) r[0], sy = (int) r[1], sz = (int) r[2];
+                long node = SectionPos.asLong(sx, sy, sz);
+
+                SectionRenderDispatcher.RenderSection viaPreset =
+                    ((ViewAreaInvokerMixin) (Object) viewArea).seamlessportals$invokeGetRenderSection(node);
+
+                String pinned = "(not an ImmPtlViewArea)";
+                if (viewArea instanceof qouteall.imm_ptl.core.render.ImmPtlViewArea immPtl) {
+                    SectionRenderDispatcher.RenderSection p =
+                        immPtl.provideBuiltChunkByChunkPos(sx, sy, sz);
+                    pinned = p == null ? "NULL"
+                        : "node=" + p.getSectionNode() + " nodeMatches=" + (p.getSectionNode() == node)
+                          + " COMPILED=" + (p.getSectionMesh()
+                              != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
+                }
+
+                int near = 0;
+                for (int i = 0; i < visible.size(); i++) {
+                    long vn = visible.get(i).getSectionNode();
+                    if (Math.abs(SectionPos.x(vn) - sx) <= DEST_RADIUS_SECTIONS
+                        && Math.abs(SectionPos.z(vn) - sz) <= DEST_RADIUS_SECTIONS) {
+                        near++;
+                    }
+                }
+
+                LOGGER.info("[RS-FARWIN] destSection={},{},{} | preset={} | pinned={}"
+                        + " | visibleSectionsNearDest={} of {} | playerSection={},{}",
+                    sx, sy, sz,
+                    viaPreset == null ? "NULL (wrapped+rejected)" : "present",
+                    pinned, near, visible.size(),
+                    SectionPos.blockToSectionCoord((int) mc.player.getX()),
+                    SectionPos.blockToSectionCoord((int) mc.player.getZ()));
+            }
+        }
+        catch (Throwable t) {
+            LOGGER.warn("[RS-FARWIN] report failed", t);
+        }
+    }
+
     /** Called once per client tick, after the world tick — never mid-extract, never mid-render. */
     public static void onEndClientTick(Minecraft mc) {
         // Swap in this tick's portal set FIRST: a portal removed since last tick must stop
@@ -225,6 +344,7 @@ public final class SameDimRemesh {
         DEST_REGIONS.clear();
         DEST_REGIONS.addAll(DEST_REGIONS_NEXT);
         DEST_REGIONS_NEXT.clear();
+        report();
 
         if (AperturePassthroughLever.DISABLE_SAME_DIM_REMESH
             || DEST_REGIONS.isEmpty()
@@ -308,6 +428,40 @@ public final class SameDimRemesh {
     ) {
         SectionRenderDispatcher.RenderSection section =
             ((ViewAreaInvokerMixin) (Object) viewArea).seamlessportals$invokeGetRenderSection(node);
+
+        // ★ DEFECT B — THE COORD-PINNED FALLBACK, and it is IP's own answer.
+        //
+        // ImmPtlViewArea.getRenderSection wraps the node into the CURRENT PRESET array via
+        // positiveModulo and then rejects a non-matching occupant (its §2.6 guard). The preset is
+        // centred on the MAIN camera, so a destination past render distance ALWAYS misses and
+        // returns null — measured live at 5000 blocks: "preset=NULL (wrapped+rejected)" on every
+        // sample.
+        //
+        // But the columns are coord-PINNED and live in columnMap, which provideBuiltChunkByChunkPos
+        // reads directly without consulting the preset. The same live run measured
+        // "pinned=nodeMatches=true COMPILED=true" for that destination: the section exists, its node
+        // matches exactly, and it ALREADY HOLDS THE MESH the window is drawing. That mesh was built
+        // while the player was at the destination and survives the preset moving away — which is why
+        // a far window keeps showing correct terrain but never updates.
+        //
+        // IP did exactly this. ImmPtlViewArea.setDirty in IP is an OVERRIDE of vanilla's
+        // ViewArea.setDirty, and its whole body is:
+        //     RenderSection builtChunk = provideBuiltChunkByChunkPos(cx, cy, cz);
+        //     builtChunk.setDirty(isImportant);
+        // so every dirty mark, at any distance, went through the unbounded store. 26.2 moved dirty
+        // tracking out of ViewArea into the bounded SectionUpdateTracker, leaving that override
+        // nothing to attach to: this port kept unbounded LOOKUP and lost unbounded DIRTYING. This
+        // restores it at the one place 26.2 left available.
+        if (section == null && viewArea instanceof qouteall.imm_ptl.core.render.ImmPtlViewArea immPtl) {
+            section = immPtl.provideBuiltChunkByChunkPos(
+                SectionPos.x(node), SectionPos.y(node), SectionPos.z(node));
+            // provideBuiltChunkByChunkPos CLAMPS its Y into the world's section range, so a node
+            // above or below the build height comes back as a different section. Compiling that
+            // would rebuild an unrelated part of the column.
+            if (section != null && section.getSectionNode() != node) {
+                return false;
+            }
+        }
         if (section == null) {
             return false;   // no render section there; nothing to rebuild
         }
@@ -442,6 +596,12 @@ public final class SameDimRemesh {
     public static String counters() {
         return "scheduled=" + scheduled + " COMPILED=" + compiled + " sweptDirty=" + sweptDirty
             + " refusedSeen=" + refusedSeen + " refusedDropped=" + refusedDropped
-            + " refusedPending=" + REFUSED.size() + " sameDimPortalRegions=" + DEST_REGIONS.size();
+            + " refusedPending=" + REFUSED.size() + " sameDimPortalRegions=" + DEST_REGIONS.size()
+            // The first region's SECTION coords, so a live line can be compared against the portal
+            // the player actually built. A wrong or absent region is a different failure from a
+            // meshing one, and without this they read identically.
+            + (DEST_REGIONS.isEmpty() ? "" : " firstRegionSection=" + DEST_REGIONS.get(0)[0]
+                + "," + DEST_REGIONS.get(0)[1] + "," + DEST_REGIONS.get(0)[2]
+                + " radiusSections=" + DEST_RADIUS_SECTIONS);
     }
 }
