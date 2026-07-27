@@ -91,6 +91,9 @@ public final class AperturePassthroughInit {
             for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
                 SeamJournal.drain(level);
             }
+            // (b) rail continuity: reset the per-tick cross-write budget and serve cold-far-chunk
+            // retries that have warmed up.
+            SeamRailContinuity.onServerTickEnd(server);
             // Retire and PRINT any delivery trace that has been open long enough for the client to
             // have answered. Retiring on a timer is what makes a stage that never ran report
             // NOT-REACHED rather than staying silent — see SeamDeliveryProbe's coverage note.
@@ -123,6 +126,11 @@ public final class AperturePassthroughInit {
             // run AFTER bind, since it consults the registry it just populated.
             if (!portal.level().isClientSide()) {
                 SeamMirror.reconcileApertureOnBind(portal);
+                // (b): a portal lit over an EXISTING track changes no block, so no rail resolution
+                // fires — re-run vanilla shape resolution at the bound cells and their cross
+                // counterparts. Must run after bind (it consults the registry) and after
+                // reconciliation (a carried-across mirror half is part of what the shapes read).
+                SeamRailContinuity.reseedOnBind(portal);
             }
         }
         catch (Throwable t) {

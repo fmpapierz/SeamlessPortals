@@ -71,6 +71,8 @@
     "passthrough.SeamIndexHolderMixin",
     "passthrough.MixinBlockItemCanPlace",
     "passthrough.MixinBaseRailBlockMirrorAuthority",
+    "passthrough.MixinRailStateSeam",
+    "passthrough.MixinBaseRailBlockSeamSlope",
     "passthrough.MixinBlockItemPlaceSource",
     "passthrough.MixinServerPlayerGameModeBreakSource",
     "passthrough.ServerLevelDeliveryProbeMixin",
