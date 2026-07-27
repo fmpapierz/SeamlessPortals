@@ -137,7 +137,12 @@ public abstract class LevelChunkSetBlockStateMixin {
         // Found by the (b) design panel as a PRE-EXISTING (a) defect. It hid because the mirror gate
         // asserted is(Blocks.RAIL) — the BLOCK — and never the SHAPE.
         if (SeamRegistry.sectionHasSeam(serverLevel, pos)) {
-            SeamMirror.onSeamCellChanged(serverLevel, pos, serverLevel.getBlockState(pos));
+            BlockState settled = serverLevel.getBlockState(pos);
+            // SAME-BLOCK REFINEMENT: the block did not change, only its state did (a rail re-shaped
+            // by a neighbour's resolution, most commonly). SeamMirror lets these re-mirror past the
+            // player-only source policy when the pair already exists — see the shape-sync note there.
+            boolean refinement = !settled.isAir() && oldState.is(settled.getBlock());
+            SeamMirror.onSeamCellChanged(serverLevel, pos, settled, refinement);
         }
 
         // FRAME mirroring — deliberately NOT behind sectionHasSeam. That index is derived from LIVE

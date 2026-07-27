@@ -102,6 +102,10 @@ public final class SeamMirror {
                 if (!binding.isMirrorable()) {
                     continue;   // query-only seam (scaled/rotated portal) — nothing to mirror into
                 }
+                if (isPhaseGated(binding)) {
+                    continue;   // DISJOINT: distinct cells, unmirrored — and this veto must not
+                                // refuse the player joining track to the far side's own rail.
+                }
                 if (!destinationIsFree(level, binding)) {
                     refusedConflict++;
                     logRefusal(pos, "destination cell " + binding.destPos() + " in "
@@ -119,6 +123,28 @@ public final class SeamMirror {
             LOGGER.warn("[RS-SEAM-MIRROR] mayPlace failed at {} — allowing the placement", pos, t);
             return true;
         }
+    }
+
+    /**
+     * ★ THE PHASE GATE — a positively-classified DISJOINT (boundary-phase) seam does not mirror.
+     *
+     * <p>On a COINCIDENT seam (every obsidian frame) the two aperture cells are ONE physical slot
+     * and the mirror is what makes the two clipped halves read as one block. On a DISJOINT seam the
+     * plane lies on the cell boundary: source and destination cells are distinct, face-to-face
+     * WHOLE blocks in two worlds. Mirroring there (1) duplicates every placement into a cell the
+     * player did not build, (2) makes refuse-on-conflict deny the exact gesture (b) exists for —
+     * laying track up to the plane that joins the far side's own track — and (3) turns (b)'s far
+     * shape write into a mirror-back loop, because the far aperture cell is itself a bound seam
+     * cell whose counterpart is this one.
+     *
+     * <p>Applied identically by the veto, the driver, bind-time reconciliation and the client
+     * prediction, so all four agree by construction. (a)'s user-verified behaviour is untouched:
+     * every obsidian binding is COINCIDENT. Flagged as a provisional user decision — see the lever's
+     * javadoc.
+     */
+    static boolean isPhaseGated(SeamRegistry.SeamBinding binding) {
+        return binding.phase() == SeamMap.SeamPhase.DISJOINT
+            && !AperturePassthroughLever.DISABLE_SEAM_PHASE_GATE;
     }
 
     /**
@@ -176,6 +202,10 @@ public final class SeamMirror {
 
     private static long mirroredWrites = 0L;
     private static long clearedMirrors = 0L;
+    /** Same-block refinements of an existing pair re-mirrored past the source policy (shape sync). */
+    private static long shapeSynced = 0L;
+    /** Mirror halves reverted to the player half's state after an un-bracketed rewrite. */
+    private static long shapeReverted = 0L;
     /** Writes that reached a bound seam cell but were declined by policy — see {@link SeamMirrorPolicy}. */
     private static long declinedBySource = 0L;
     private static long declinedByAlignment = 0L;
@@ -200,6 +230,12 @@ public final class SeamMirror {
      * @param newState the state now at {@code pos}
      */
     public static void onSeamCellChanged(Level level, BlockPos pos, BlockState newState) {
+        onSeamCellChanged(level, pos, newState, false);
+    }
+
+    public static void onSeamCellChanged(
+        Level level, BlockPos pos, BlockState newState, boolean sameBlockRefinement
+    ) {
         if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
             return;
         }
@@ -211,17 +247,51 @@ public final class SeamMirror {
         // Asked here rather than in the mixin because this is the one place that already knows the
         // write is seam-relevant, and because the classification must be visible to the counters: a
         // declined machine write is a decision, not an absence, and reads as one in the probe.
+        //
+        // ★ EXCEPTION — SAME-BLOCK REFINEMENTS SYNC REGARDLESS OF SOURCE (shape sync). Vanilla rail
+        // resolution rewrites NEIGHBOURS directly: laying a second rail beside a seam rail runs
+        // RailState.place -> neighbor.connectTo, whose setBlock at the seam cell carries no player
+        // bracket and classifies UNKNOWN. Declining it leaves the two halves of a mirrored pair
+        // holding different shapes — the residue of the user's "sometimes not curving" report, and
+        // a deterministic failure for (b), where every join re-derives the seam rail's shape. The
+        // policy's job is to keep MACHINES from creating or removing mirrored blocks; a same-block
+        // state refinement neither creates nor removes, and the pair's byte-identity is the (a)
+        // invariant. Lever: -Dseamlessportals.disableSeamShapeSync.
+        //
+        // ★★ THE AUTHORITY RULE (adversarial panel, 2026-07-27 — three lenses found the first
+        // build's defect independently). A refinement must decide WHICH HALF IS THE AUTHORITY, and
+        // must NEVER touch provenance:
+        //   - refinement at the PLAYER half  -> propagate to the mirror half (which must already be
+        //     provenance-marked; a cell whose counterpart is independently owned is NOT a mirror
+        //     pair and must not be clobbered — two players may each have built their own half, a
+        //     state bind-time reconciliation explicitly preserves);
+        //   - refinement at the MIRROR half  -> REVERT it from the player half. The derived-state
+        //     rule ("a mirrored cell's shape is the SOURCE cell's") makes the un-bracketed rewrite
+        //     illegitimate: propagating it would let any far-side machine write overwrite the
+        //     player's block, and the first build's fall-through additionally stamped
+        //     mirror-created provenance onto the PLAYER's half — after which a frame break deleted
+        //     the player's own rail (violating the pinned break rule) and mirror authority
+        //     suppressed its support pops.
         SeamWriteSource source = SeamWriteContext.sourceFor(pos);
-        if (!SeamMirrorPolicy.mirrors(source)) {
+        boolean sourceMirrors = SeamMirrorPolicy.mirrors(source);
+        boolean refinementSync = sameBlockRefinement
+            && !AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC;
+        if (!sourceMirrors && !refinementSync) {
             declinedBySource++;
             return;
         }
+        boolean refinementOnly = !sourceMirrors;
         SeamRegistry.SeamCell cell = SeamRegistry.lookup(level, pos);
         if (cell == null) {
             return;
         }
         MinecraftServer server = level.getServer();
         if (server == null) {
+            return;
+        }
+        if (refinementOnly
+            && ((SeamIndexHolder) level).seamlessportals$mirrorCreatedCells().contains(pos.asLong())) {
+            revertMirrorHalf(level, pos, cell, server);
             return;
         }
 
@@ -237,6 +307,9 @@ public final class SeamMirror {
                 if (!binding.isMirrorable()) {
                     continue;
                 }
+                if (isPhaseGated(binding)) {
+                    continue;   // DISJOINT: two distinct whole blocks; mirroring would duplicate
+                }
                 if (binding.destPos().equals(lastDest) && binding.destDim().equals(lastDim)) {
                     continue;   // same target as the other face of this frame
                 }
@@ -247,7 +320,7 @@ public final class SeamMirror {
                 if (dest == null) {
                     continue;
                 }
-                applyToDestination(dest, binding, newState, level, pos);
+                applyToDestination(dest, binding, newState, level, pos, refinementOnly);
             }
         }
         catch (Throwable t) {
@@ -261,6 +334,63 @@ public final class SeamMirror {
     private static void applyToDestination(
         ServerLevel dest, SeamRegistry.SeamBinding binding, BlockState newState,
         Level sourceLevel, BlockPos sourcePos
+    ) {
+        applyToDestination(dest, binding, newState, sourceLevel, sourcePos, false);
+    }
+
+    /**
+     * A MIRROR half was refined by an un-bracketed write (vanilla {@code connectTo} from a far-side
+     * placement, most commonly): re-assert the player half's state over it. The player half is the
+     * authority — see the AUTHORITY RULE note in {@code onSeamCellChanged}.
+     */
+    private static void revertMirrorHalf(
+        Level level, BlockPos pos, SeamRegistry.SeamCell cell, MinecraftServer server
+    ) {
+        applying = true;
+        try {
+            for (SeamRegistry.SeamBinding binding : cell.bindings()) {
+                if (!binding.isMirrorable() || isPhaseGated(binding)) {
+                    continue;
+                }
+                ServerLevel authority = server.getLevel(binding.destDim());
+                if (authority == null) {
+                    continue;
+                }
+                BlockPos authorityPos = binding.destPos();
+                if (!authority.hasChunkAt(authorityPos)) {
+                    continue;   // cannot read the authority; leave the refinement standing
+                }
+                BlockState authorityState = authority.getBlockState(authorityPos);
+                BlockState current = level.getBlockState(pos);
+                if (authorityState.getBlock() != current.getBlock()) {
+                    continue;   // not a live pair (orphaned mirror half); nothing to re-assert
+                }
+                // binding.stateRotation() carries THIS cell's frame into the authority's; the
+                // revert travels the other way.
+                BlockState reverted = authorityState.rotate(
+                    SeamShadowBridge.inverse(binding.stateRotation()));
+                if (reverted != current) {
+                    level.setBlock(pos, reverted,
+                        net.minecraft.world.level.block.Block.UPDATE_ALL
+                            | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+                    if (level instanceof ServerLevel serverLevel) {
+                        forceClientSync(authority, serverLevel, pos);
+                        probe("reverted refined mirror half at", pos, serverLevel,
+                            authorityPos, authority);
+                    }
+                    shapeReverted++;
+                }
+                return;   // one authority per pair; the cluster's second binding names the same one
+            }
+        }
+        finally {
+            applying = false;
+        }
+    }
+
+    private static void applyToDestination(
+        ServerLevel dest, SeamRegistry.SeamBinding binding, BlockState newState,
+        Level sourceLevel, BlockPos sourcePos, boolean refinementOnly
     ) {
         BlockPos destPos = binding.destPos();
         // LOAD THE DESTINATION, exactly as the veto does.
@@ -292,6 +422,23 @@ public final class SeamMirror {
 
         SeamIndexHolder holder = (SeamIndexHolder) dest;
         long destKey = destPos.asLong();
+
+        if (refinementOnly) {
+            // SHAPE SYNC ONLY: the destination must be a PROVENANCE-MARKED mirror half holding the
+            // same block. Same-block alone is not enough — two players may each have built their
+            // own half (bind-time reconciliation explicitly preserves that), and a refinement on
+            // one side must not clobber the other's independently-owned block. And a non-player
+            // write at a cell whose counterpart is empty is a plain declined write, not a
+            // refinement of a mirrored pair — without these tests a /setblock-placed block would
+            // gain a mirror the moment anything refined it, quietly widening the player-only
+            // decision. (Panel finding, 2026-07-27.)
+            BlockState existingDest = dest.getBlockState(destPos);
+            if (newState.isAir() || existingDest.getBlock() != newState.getBlock()
+                || !holder.seamlessportals$mirrorCreatedCells().contains(destKey)) {
+                return;
+            }
+            shapeSynced++;
+        }
 
         if (newState.isAir()) {
             // BREAKING EITHER HALF BREAKS BOTH — unconditionally, NOT gated on provenance.
@@ -349,7 +496,15 @@ public final class SeamMirror {
         forceClientSync(sourceLevel, dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
-        holder.seamlessportals$mirrorCreatedCells().add(destKey);
+        // PROVENANCE IS NEVER TOUCHED BY A REFINEMENT — a refinement neither creates nor removes,
+        // so it must not change which half owns the block. The first build's unconditional add here
+        // stamped mirror-created onto the PLAYER's half whenever a far-side rewrite synced back,
+        // after which a frame break deleted the player's own rail. (Panel finding, 2026-07-27;
+        // three lenses independently.) On this path the destination is already provenance-marked —
+        // the refinement guard above requires it — so skipping the add loses nothing.
+        if (!refinementOnly) {
+            holder.seamlessportals$mirrorCreatedCells().add(destKey);
+        }
         mirroredWrites++;
         probe("mirrored to", destPos, dest, sourcePos, sourceLevel);
     }
@@ -521,6 +676,9 @@ public final class SeamMirror {
                 for (SeamRegistry.SeamBinding binding : cell.bindings()) {
                     if (!binding.isMirrorable()) {
                         continue;
+                    }
+                    if (isPhaseGated(binding)) {
+                        continue;   // DISJOINT seams carry nothing across at bind either
                     }
                     ServerLevel dest = server.getLevel(binding.destDim());
                     if (dest == null) {
@@ -780,6 +938,8 @@ public final class SeamMirror {
             + " mirroredWrites=" + mirroredWrites + " clearedMirrors=" + clearedMirrors
             + " frameBreakCleared=" + frameBreakCleared
             + " declinedBySource=" + declinedBySource
-            + " declinedByAlignment=" + declinedByAlignment;
+            + " declinedByAlignment=" + declinedByAlignment
+            + " shapeSynced=" + shapeSynced
+            + " shapeReverted=" + shapeReverted;
     }
 }

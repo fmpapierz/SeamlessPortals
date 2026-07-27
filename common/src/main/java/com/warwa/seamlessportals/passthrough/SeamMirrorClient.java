@@ -120,6 +120,9 @@ public final class SeamMirrorClient {
                 if (!binding.isMirrorable()) {
                     continue;
                 }
+                if (SeamMirror.isPhaseGated(binding)) {
+                    continue;   // the server declines DISJOINT seams; predicting one is a ghost block
+                }
                 // CLUSTER DEDUPE, as on the server: an obsidian frame yields four portal entities and
                 // a cell can carry two bindings resolving to the same destination.
                 if (binding.destPos().equals(lastDest) && binding.destDim().equals(lastDim)) {
