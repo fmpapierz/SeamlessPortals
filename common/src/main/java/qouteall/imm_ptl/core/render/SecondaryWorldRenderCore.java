@@ -1786,6 +1786,17 @@ public class SecondaryWorldRenderCore {
             else {
                 com.warwa.seamlessportals.render.FullPipelineClipState.disarm();
             }
+            // IS5-SEAM-ARM census (2026-07-27; always-on, log-only, 1 Hz within 3 blocks of the
+            // plane). The front_clipping live A/B proved the inner clip CARRIES the black seam
+            // band, but static plane geometry cannot void aperture rays while the render eye is on
+            // the clipped side — an all-void aperture needs frames whose RENDER camera (partialTick
+            // + bob) sits ON/past the armed plane before the tick-keyed crossing fires. This
+            // measures exactly that (planeW = the eye's own clip distance; >=0 = fully-void frame)
+            // plus the feed-coherence residual, per ARMED FRAME with min/max accumulators — the
+            // suspect frames are sparse and a sampled census would miss them. Numbers before fix.
+            com.warwa.seamlessportals.render.SeamClipArmCensus.note(
+                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                armedClipPlane, destCameraPos);
             // §4.7 discriminator probe — arm a 1Hz capture window for this full-pipeline pass
             // (lever-gated -Dseamlessportals.clipProbe; byte-inert at the default). The vanilla
             // trySetup handler feeds it per-draw; endPass() dumps in the finally.
