@@ -11,11 +11,10 @@ import qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera;
 
 /**
  * IS5-MB (S1) — the WRITE seam for the per-chain previous-frame state correction. The feature is
- * <b>DEFAULT OFF</b> pending live proof; arm it with
- * {@code -Dseamlessportals.enableIrisDestPrevCamera} ({@code -Dseamlessportals.disableIrisDestPrevCamera}
- * always wins). See {@link IrisDestPrevCamera} for the measured defect — a 511-block camera offset
- * producing a 265.8 px blur span, plus a second matrix-driven driver worth 57–102 px — and the
- * mechanism.
+ * <b>DEFAULT ON</b>, user-confirmed live; A/B off with
+ * {@code -Dseamlessportals.disableIrisDestPrevCamera}. See {@link IrisDestPrevCamera} for the measured
+ * defect — a 511-block camera offset producing a 265.8 px blur span, plus a second matrix-driven driver
+ * worth 57–102 px — and the mechanism.
  *
  * <p><b>Why this exact target.</b> {@code Lnet/irisshaders/iris/gl/program/Program;use()V} occurs
  * <b>exactly once</b> in the whole of {@code CompositeRenderer} (bytecode offset 419 in

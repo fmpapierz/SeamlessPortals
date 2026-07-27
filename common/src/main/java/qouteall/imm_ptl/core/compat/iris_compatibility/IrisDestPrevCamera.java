@@ -18,12 +18,16 @@ import java.util.Set;
 /**
  * IS5-MB — PER-CHAIN PREVIOUS-FRAME STATE CORRECTION for the same-dim portal-window motion-blur smear.
  *
- * <p><b>DEFAULT OFF, pending live proof.</b> Arm it with
- * {@code -Dseamlessportals.enableIrisDestPrevCamera}; {@code -Dseamlessportals.disableIrisDestPrevCamera}
- * always wins. It is off because three successive rounds shipped a version that did not work — the
- * first keyed the history on the wrong thing, the second had its write silently clobbered before the
- * draw, and both were adjudicated with a census that was itself defective. It goes default-ON only
- * after a live run shows the window sharp.
+ * <p><b>DEFAULT ON — user-confirmed live 2026-07-26</b> ("FINALLY NOT BLURRY"). A/B off via
+ * {@code -Dseamlessportals.disableIrisDestPrevCamera}.
+ *
+ * <p>Three earlier rounds shipped a version that did NOT work, and the history is worth keeping because
+ * each failure was a different class: round 1 keyed the history on the portal bracket and so recorded
+ * the wrong camera entirely; round 2 keyed it on the bind ordinal, which a panel showed would flash the
+ * whole screen on any doorway portal; round 3 keyed it correctly but had its write silently clobbered
+ * between the seam and the draw. All three were adjudicated with a census that was itself defective in
+ * two ways. What finally worked was moving the write past every other writer AND correcting <b>both</b>
+ * blur drivers rather than only the camera.
  *
  * <h2>THE MEASURED DEFECT (IS5-CEN census, 2026-07-26, two runs, 22 consecutive stationary seconds)</h2>
  * With the pack's Motion Blur on and a SAME-DIM portal in view there are exactly <b>two</b>
@@ -213,7 +217,12 @@ public final class IrisDestPrevCamera {
     private static int laCandidates = 0;
     private static double laMatchDist = -1.0;
 
-    /** Guarded binds seen. Drives the injection watchdog below. */
+    /** Times the INJECTION fired at all — counted before any pass/uniform filtering, so it measures
+     *  the mixin resolving rather than the feature finding work to do. That distinction matters: with
+     *  the pack's Motion Blur OFF the injection fires constantly and writes nothing, and a watchdog
+     *  keyed on writes would call that a dead seam. */
+    private static int seamHitCount = 0;
+    /** Guarded binds that reached a write or a deliberate skip. */
     private static int seamFireCount = 0;
     private static int framesActive = 0;
     private static boolean seamWatchdogFired = false;
@@ -275,9 +284,21 @@ public final class IrisDestPrevCamera {
             // require = 0 means a future failure would be SILENT: the feature would report itself
             // active and simply never run. This session has lost three live rounds to levers that did
             // not self-report, so the seam reports its own liveness.
-            if (IPGlobal.isIrisDestPrevCameraActive() && !seamWatchdogFired && ++framesActive > 300) {
+            // COUNT ONLY IN-WORLD FRAMES. Counting every frame made this watchdog cry VOID on a run
+            // that was working perfectly: it burned its 300 frames on the title and loading screens,
+            // where no composite chain runs at all, and fired 22 seconds in while the very same run
+            // went on to make 3579 writes. That is the identical defect the IS5-RC watchdog had, and
+            // the lesson is the same — a watchdog must count only the frames in which the event it is
+            // waiting for is even possible.
+            boolean inWorld = net.minecraft.client.Minecraft.getInstance() != null
+                && net.minecraft.client.Minecraft.getInstance().level != null;
+            if (!inWorld) {
+                framesActive = 0;
+            }
+            else if (IPGlobal.isIrisDestPrevCameraActive() && !seamWatchdogFired
+                && ++framesActive > 300) {
                 seamWatchdogFired = true;
-                if (seamFireCount == 0) {
+                if (seamHitCount == 0) {
                     warnOnce("seamdead", P + "THE WRITE SEAM NEVER FIRED in 300 active frames. The"
                         + " feature reports itself ACTIVE but its @Inject on"
                         + " GlStateManager._glBindBuffer did not resolve (require = 0 makes that"
@@ -285,8 +306,9 @@ public final class IrisDestPrevCamera {
                         null);
                 }
                 else {
-                    LOGGER.info(P + "write seam live: {} guarded binds in the first 300 active frames.",
-                        seamFireCount);
+                    LOGGER.info(P + "write seam live: the injection fired {} times in the first 300"
+                        + " IN-WORLD frames ({} of them reached a write).",
+                        seamHitCount, seamFireCount);
                 }
             }
             Map<Integer, List<ChainState>> completed = camsCur;
@@ -326,6 +348,7 @@ public final class IrisDestPrevCamera {
             return;
         }
         try {
+            seamHitCount++; // the injection resolved and ran — counted before every other filter
             if (!ensureReflection()) {
                 return;
             }

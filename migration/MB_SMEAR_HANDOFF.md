@@ -1,4 +1,58 @@
-# IS5-MB HANDOFF — the Motion-Blur portal-window smear (**DIAGNOSED + FIX BUILT**) + the ACT engagement (CLOSED)
+# IS5-MB HANDOFF — the Motion-Blur portal-window smear (**★ CLOSED, USER-CONFIRMED**) + the ACT engagement (CLOSED)
+
+## §00 ★★★ CLOSED 2026-07-26 — *"FINALLY NOT BLURRY"* (user, live)
+
+Shipped **DEFAULT ON**, suite green, pushed. A/B off with `-PdisableIrisDestPrevCamera`.
+
+**Root cause — TWO independent drivers on the same pass.** Same-dim source and destination share a
+dimension, so iris hands both render chains ONE pipeline and therefore one `CameraPositionTracker` and
+one previous-matrix register. The dest content's `composite4` then draws with:
+- **Driver A, the camera pair** — `cameraPosition` = DEST, `previousCameraPosition` = PLAYER, a constant
+  offset (measured 511–1172 blocks) that saturates the pack's `velocity/(1+|velocity|)` clamp;
+- **Driver B, the matrix pair** — `gbufferPreviousModelView` not the inverse of
+  `gbufferModelViewInverse`, so the reprojection does not cancel and velocity is nonzero **per pixel**
+  even with the camera offset at exactly zero (measured: `idMV` 0.131–0.246, 57–102 px on its own).
+
+That saturated image is stamped into the window; the main chain has velocity 0, so the main view stays
+sharp. Cross-dim is clean because it runs its own per-dimension pipeline.
+
+**The fix.** Per composite chain, remember `cameraPosition` + the current modelview/projection for one
+frame; next frame adopt them from the **nearest** camera the same program held last frame, within
+`IRIS_DEST_PREV_MAX_DELTA` (4 blocks = one frame's plausible camera travel). No portal context at all.
+The forward matrices are reconstructed by inverting the inverses — `composite4` holds no forward
+matrices (`loc -1`) — and the inversion is **verified against the identity**, because JOML's `invert()`
+returns NaN rather than throwing. Write seam at `GlStateManager._glBindBuffer` (offset 447), past every
+other writer, with nothing between it and the draw.
+
+**Live evidence, same run as the user's verdict:**
+
+| | PRE | POST |
+|---|---|---|
+| `\|cam-prev\|` 721.852 | span 136.3 px | **0.001 → 1.7 px** |
+| `\|cam-prev\|` 1172.391 | span 108.4 px | **0.001 → 1.2 px** |
+| player genuinely moving | 0.047, span 35 | 0.048, span 35 — **real blur preserved** |
+
+That last row is the point: the correction restores each chain's OWN previous state rather than
+suppressing motion blur in the window, so the effect still works where it should.
+
+### Four rounds, four different failure classes — read before touching this
+1. keyed on the portal bracket ⇒ recorded the wrong camera entirely (`writes=1243`, symptom unchanged);
+2. keyed on bind ordinal ⇒ panel-rejected: would flash the WHOLE screen on any doorway portal;
+3. keyed correctly but the write was **silently clobbered** between the seam (422) and the draw (455);
+4. correct key + clobber-proof seam + **both** drivers ⇒ works.
+
+Rounds 1–3 were all adjudicated with a census that was itself defective (see §00b).
+
+### §00b The instrument was wrong three times too
+- required all eight uniform locations, two of which are inactive in `composite4` ⇒ would have printed a
+  clean acquittal from an instrument that measured nothing;
+- `measurePost` replayed through the PRE sample's stale matrices ⇒ would have reported a working matrix
+  fix as a failure;
+- `describeLastAction()` was one process-global slot read at emit time ⇒ every row of a multi-bind frame
+  stamped with the LAST bind's action.
+Both watchdogs (IS5-RC and the IS5-MB seam) also fired false VOIDs by counting frames in which the event
+they waited for was impossible. **Verify the probe before believing the probe.**
+
 
 ## §0 ★ THE ANSWER (2026-07-26) — read this before anything below
 

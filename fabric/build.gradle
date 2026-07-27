@@ -270,10 +270,11 @@ loom {
             // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
             // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
             // Pass this to force it OFF and reproduce the smear (attribution both directions) —
-            // ** DEFAULT OFF again as of the second live round: it did not fix the smear and it made
-            // the same-dim dest bind WORSE (PRE |cam-prev|=152 -> POST 515.679). Arm it for the A/B: **
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PenableIrisDestPrevCamera=true
-            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
+            // ** DEFAULT ON — USER-CONFIRMED LIVE 2026-07-26 ("FINALLY NOT BLURRY"). Corrects both blur
+            // drivers on the same-dim portal window: the camera pair (|cam-prev| 721.852 -> 0.001, blur
+            // span 136.3 -> 1.7 px) and the matrix pair, while preserving genuine motion blur when the
+            // player is actually moving. Pass this to force it OFF and reproduce the smear: **
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PdisableIrisDestPrevCamera=true
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
             // MATRIX-HALF A/B, re-added and now meaningful: the correction writes BOTH the previous
             // camera and the previous matrices, because they are two independent blur drivers (rows
@@ -473,10 +474,11 @@ loom {
             // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
             // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
             // Pass this to force it OFF and reproduce the smear (attribution both directions) —
-            // ** DEFAULT OFF again as of the second live round: it did not fix the smear and it made
-            // the same-dim dest bind WORSE (PRE |cam-prev|=152 -> POST 515.679). Arm it for the A/B: **
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PenableIrisDestPrevCamera=true
-            if (project.findProperty('enableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.enableIrisDestPrevCamera=true') }
+            // ** DEFAULT ON — USER-CONFIRMED LIVE 2026-07-26 ("FINALLY NOT BLURRY"). Corrects both blur
+            // drivers on the same-dim portal window: the camera pair (|cam-prev| 721.852 -> 0.001, blur
+            // span 136.3 -> 1.7 px) and the matrix pair, while preserving genuine motion blur when the
+            // player is actually moving. Pass this to force it OFF and reproduce the smear: **
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PdisableIrisDestPrevCamera=true
             if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
             // MATRIX-HALF A/B, re-added and now meaningful: the correction writes BOTH the previous
             // camera and the previous matrices, because they are two independent blur drivers (rows

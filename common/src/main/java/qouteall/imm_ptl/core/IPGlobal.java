@@ -247,20 +247,23 @@ public class IPGlobal {
     // the camera pair AND the matrix pair, and the matrix half had been deleted after generalising
     // from one run where idMV read zero everywhere. Both halves are now written, keyed per chain by
     // NEAREST CAMERA (not by bind ordinal, which was measured unstable).
-    // Still DEFAULT OFF: three rounds have shipped a version that did not work, so this one earns
-    // default-ON only from a live run. Arm with -Dseamlessportals.enableIrisDestPrevCamera;
-    // the disable lever always wins.
+    // ★ DEFAULT ON as of 2026-07-26, round 4 — USER-CONFIRMED LIVE: "FINALLY NOT BLURRY".
+    // Log evidence from that same run: |cam-prev| 721.852 -> 0.001 (blur span 136.3 -> 1.7 px) and
+    // 1172.391 -> 0.001 (108.4 -> 1.2 px), while rows where the player was genuinely moving kept their
+    // real blur (0.047 -> 0.048, span 35 -> 35) rather than being flattened. That last part is why the
+    // correction restores each chain's OWN previous state instead of just suppressing motion blur in
+    // the window.
+    // The enable lever is REMOVED rather than left in place: with the field defaulting true it could
+    // never change the outcome ((true || x) is true), and a lever that silently does nothing is the
+    // exact trap that has voided live rounds on this project. A/B OFF via
+    // -Dseamlessportals.disableIrisDestPrevCamera.
     public static final boolean IRIS_DEST_PREV_CAMERA_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableIrisDestPrevCamera");
-    public static final boolean IRIS_DEST_PREV_CAMERA_ENABLED_LEVER =
-        Boolean.getBoolean("seamlessportals.enableIrisDestPrevCamera");
-    public static boolean irisDestPrevCamera = false;
+    public static boolean irisDestPrevCamera = true;
 
-    /** True when the guarded composite pass should receive its own chain's previous-frame camera.
-     *  Default OFF pending diagnosis (see above); the enable lever arms it, the disable lever wins. */
+    /** True when the guarded composite pass should receive its own chain's previous-frame state. */
     public static boolean isIrisDestPrevCameraActive() {
-        return (irisDestPrevCamera || IRIS_DEST_PREV_CAMERA_ENABLED_LEVER)
-            && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
+        return irisDestPrevCamera && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
     }
 
     /** IS5-MB CHAIN-MATCH LIMIT, in blocks: the furthest a composite chain's camera may plausibly
