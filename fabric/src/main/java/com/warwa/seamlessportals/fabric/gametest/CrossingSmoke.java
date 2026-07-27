@@ -21,6 +21,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 import qouteall.imm_ptl.core.McHelper;
 import qouteall.imm_ptl.core.portal.Portal;
@@ -156,16 +157,22 @@ public class CrossingSmoke implements FabricClientGameTest {
             });
             context.waitTicks(20);
 
-            // ---- Leg 1: same-dim item ----
-            UUID itemA = spawnThrownItem(context, originA);
-            waitForArrival(context, "leg 1 (same-dim item)", Level.OVERWORLD, itemA, destA, 200);
-            SeamlessPortalsConstants.LOGGER.info(LOG + "leg 1 PASS — same-dim item arrived at {}", destA);
+            // RS-ONLY MODE (-ProsOnly): the crossing/teleport legs are skipped — the recorded
+            // 2026-07-26 proposal, because the RS gates are a small fraction of a slow run. Portal
+            // staging, legs 6a/6b (the seam gate's involution coverage needs their bi-way pairs)
+            // and every RS gate still run. A full run stays the default and precedes every commit.
+            if (!AperturePassthroughLever.RS_ONLY) {
+                // ---- Leg 1: same-dim item ----
+                UUID itemA = spawnThrownItem(context, originA);
+                waitForArrival(context, "leg 1 (same-dim item)", Level.OVERWORLD, itemA, destA, 200);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "leg 1 PASS — same-dim item arrived at {}", destA);
 
-            // ---- Leg 2: cross-dim item (recreate path) ----
-            UUID itemB = spawnThrownItem(context, originB);
-            waitForArrival(context, "leg 2 (cross-dim item)", Level.NETHER, itemB, destB, 300);
-            assertGoneFrom(context, "leg 2 (cross-dim item)", Level.OVERWORLD, itemB);
-            SeamlessPortalsConstants.LOGGER.info(LOG + "leg 2 PASS — cross-dim item recreated in nether at {}", destB);
+                // ---- Leg 2: cross-dim item (recreate path) ----
+                UUID itemB = spawnThrownItem(context, originB);
+                waitForArrival(context, "leg 2 (cross-dim item)", Level.NETHER, itemB, destB, 300);
+                assertGoneFrom(context, "leg 2 (cross-dim item)", Level.OVERWORLD, itemB);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "leg 2 PASS — cross-dim item recreated in nether at {}", destB);
+            }
 
             // ---- RS-DELIVERY-TEST: the headless reproduction of the same-dim mirror bug ----
             // Placed HERE and nowhere else: portals A (same-dim) and B (cross-dim) both exist and
@@ -174,6 +181,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             // the client holds and make the two arms incomparable.
             rsDeliveryTest(context, px, py, pz, planeZ);
 
+            if (!AperturePassthroughLever.RS_ONLY) {
             // ---- Leg 3: F3 hurt-state carry (cow, cross-dim) ----
             AtomicReference<UUID> cowId = new AtomicReference<>();
             runOnServer(context, server -> {
@@ -243,6 +251,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                 throw new AssertionError(LOG + "leg 3 (F3) FAILED: " + verdict.get());
             }
             SeamlessPortalsConstants.LOGGER.info(LOG + "leg 3 PASS — transient hurt state carried across the recreate");
+            }   // end !RS_ONLY (leg 3)
 
             // ---- Leg 4: ender pearl through the cross-dim portal (the S15 round-1 FREEZE
             // regression). The pearl crosses via the unified path, lands on the bedrock roof,
@@ -263,6 +272,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             // the rendered view for 150 ticks — the collision class corrupts/crashes the
             // client store; survival + coherence is the crash-class regression net (the
             // visual half stays eyeball-only, S17 round PASSED it live). ----
+            if (!AperturePassthroughLever.RS_ONLY) {
             runCommands(context, List.of(
                 "forceload add 1384 1384 1416 1416"
             ));
@@ -348,6 +358,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "leg 7 PASS — both far-dest same-dim portals rendered 150 ticks, client coherent");
+            }   // end !RS_ONLY (leg 7)
 
             // IS2 EM EVIDENCE LEGS (defects O + G; port-note IS-iris-shaders-on §3.1/§3.2):
             // outline-target shots + the post-portal creative-browse checkpoint. All
@@ -374,6 +385,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             // assert it SURVIVES the teleport — a relatives-dropping regression snaps the
             // client to the transition's yaw 0.0. (Rotation and velocity ride the same
             // relatives Set; yaw is the deterministic, physics-free assert of the pair.)
+            if (!AperturePassthroughLever.RS_ONLY) {
             final float pinnedYaw = 137.5f;
             context.runOnClient(mc -> {
                 mc.player.setYRot(pinnedYaw);
@@ -436,6 +448,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "leg 4 PASS — pearl owner teleported seamlessly, client coherent in the"
                     + " nether, yaw {} preserved (relatives intact)", postYaw);
+            }   // end !RS_ONLY (leg 4)
 
             // ---- Legs 6a/6b (S16.4): PORTAL GENERATION exactness — automated cover for
             // regression item 10 (negative-coordinate linking) and the nether-side
@@ -507,6 +520,22 @@ public class CrossingSmoke implements FabricClientGameTest {
             // reported PASS. The gate now also FAILS when its coverage is zero.
             rsSeamMapGate(context);
 
+            // RS (b) RAIL LEGS — rails CONNECTING across the seam (REDSTONE_B_SPEC.md §9, adapted).
+            // After the seam-map gate on purpose: these consume the primitive it just proved, so a
+            // failure here is a consumer bug, not seam arithmetic. Both are lever-aware: with (b) on
+            // they prove the connection; under -PdisableSeamShadow they must prove the INVERSION.
+            rsRailLegTopologyB(context);
+            rsRailLegTopologyA(context, py);
+
+            if (AperturePassthroughLever.RS_ONLY) {
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-ONLY MODE — crossing/teleport legs"
+                    + " (1, 2, 3, 4, 7) and the leg-5 datapack reopen were SKIPPED"
+                    + " (-Dseamlessportals.rsOnly). Not a full-suite verdict; run the full matrix"
+                    + " before a commit.");
+                SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
+            }
+
+            if (!AperturePassthroughLever.RS_ONLY) {
             // ---- Leg 5 setup (S16 commit 3): write a DEV-ONLY datapack into THIS
             // throwaway world's save dir (never shipped resources). FIRST-RUN LESSON
             // (log-proven): dynamic-registry entries load at WORLD OPEN only — /reload
@@ -552,6 +581,11 @@ public class CrossingSmoke implements FabricClientGameTest {
                 SeamlessPortalsConstants.LOGGER.info(LOG + "leg 5: dev datapack written; will"
                     + " assert after world reopen (dynamic registries load at open only)");
             });
+            }   // end !RS_ONLY (leg 5 setup)
+        }
+
+        if (AperturePassthroughLever.RS_ONLY) {
+            return;   // ALL LEGS PASS already printed inside the world block
         }
 
         // ---- Leg 5 assert: reopen the SAME save — the datapacks folder now contains the
@@ -943,6 +977,8 @@ public class CrossingSmoke implements FabricClientGameTest {
 
             int registryChecks = 0;
             int phaseChecks = 0;
+            int queryOnlyChecks = 0;
+            int strictChecks = 0;
             for (qouteall.imm_ptl.core.portal.Portal p : portals) {
                 if (!com.warwa.seamlessportals.passthrough.SeamMap.isMirrorable(p)) continue;
                 for (Vec3 col : com.warwa.seamlessportals.passthrough.SeamMap.enumerateColumns(p)) {
@@ -963,6 +999,39 @@ public class CrossingSmoke implements FabricClientGameTest {
                             + ") though SeamMap binds that column");
                         return;
                     }
+                    // ★ POLICY-DECLINED SEAMS BIND QUERY-ONLY, AND THE GATE MUST KNOW THE POLICY.
+                    // Since the 2026-07-26 exact-only decision, a portal whose translation is not
+                    // integral (portal A's dest hangs a half-block off in Y) is classified OFFSET
+                    // and bound with destPos == null. This check predates that policy and demanded
+                    // a destination from every arithmetically-mirrorable portal — a LATENT red
+                    // that never fired only because such portals happened to sit in chunks the
+                    // full suite had unloaded by gate time (the player is in the nether after leg
+                    // 4); RS-only mode keeps them loaded and exposed it. The gate now asserts the
+                    // policy BOTH ways: a declined seam must be query-only, an admitted seam must
+                    // carry the SeamMap destination — so under -PdisableSeamExactOnly the strict
+                    // path applies to offset seams again, symmetrically.
+                    boolean policyDeclined = !com.warwa.seamlessportals.passthrough.SeamMirrorPolicy
+                        .mirrors(com.warwa.seamlessportals.passthrough.SeamMap.alignmentOf(p, src));
+                    var ownBinding = cell.bindings().stream()
+                        .filter(b -> b.portalUuid().equals(p.getUUID()))
+                        .findFirst().orElse(null);
+                    if (ownBinding == null) {
+                        failure.set("registry cell at " + src + " carries no binding for portal "
+                            + p.getId() + "; bindings=" + cell.bindings());
+                        return;
+                    }
+                    if (policyDeclined) {
+                        if (ownBinding.isMirrorable()) {
+                            failure.set("alignment policy DECLINES portal " + p.getId() + " at "
+                                + src + " but its binding still carries destination "
+                                + ownBinding.destPos() + " — bind() is not applying the policy");
+                            return;
+                        }
+                        queryOnlyChecks++;
+                        registryChecks++;
+                        continue;   // no destination => the destPos/cross-side/phase checks below
+                                    // have no subject; the decline itself was the assertion
+                    }
                     boolean found = cell.bindings().stream()
                         .anyMatch(b -> b.portalUuid().equals(p.getUUID())
                             && expectedDst.equals(b.destPos()));
@@ -972,6 +1041,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                             + expectedDst + "); bindings=" + cell.bindings());
                         return;
                     }
+                    strictChecks++;
 
                     // THE CROSS-SIDE AGREEMENT CHECK — the assertion whose absence let a real bug
                     // through. The mirror gate only ever verified the binding against ITSELF, which
@@ -1052,6 +1122,26 @@ public class CrossingSmoke implements FabricClientGameTest {
                                 + " destination cell IS the next cell.");
                             return;
                         }
+                        // ★ DIRECTION PINNED AGAINST THE PORTAL'S OWN TRANSFORM. "Steps past the
+                        // shared slot" alone cannot tell the CROSSING from the co-located FALLBACK —
+                        // both differ from destPos — and the first build of continuationCell()
+                        // returned the fallback (one step BEHIND the far plane) while this gate
+                        // passed. Self-consistent tests prove nothing; the portal's content
+                        // direction is the independent authority: the crossing continues one step
+                        // from destPos along it.
+                        if (expectedPhase == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT) {
+                            Vec3 cd = p.getContentDirection();
+                            BlockPos viaContent = bForPhase.destPos().relative(
+                                net.minecraft.core.Direction.getApproximateNearest(cd.x, cd.y, cd.z));
+                            if (!cont.equals(viaContent)) {
+                                failure.set("COINCIDENT continuation DIRECTION WRONG at " + src
+                                    + ": continuationCell()=" + cont + " but the portal's own content"
+                                    + " direction puts the crossing continuation at " + viaContent
+                                    + " — the binding points at the co-located fallback cell behind"
+                                    + " the far plane, not at the crossing");
+                                return;
+                            }
+                        }
                         phaseChecks++;
                     }
 
@@ -1062,10 +1152,27 @@ public class CrossingSmoke implements FabricClientGameTest {
                 failure.set("zero registry cross-checks ran — the step-2 assertion never executed");
                 return;
             }
+            // Policy declines legitimately satisfy registryChecks, so they must not be allowed to
+            // satisfy the anti-vacuity guard on their own: the STRICT destination-consistency and
+            // phase batteries each need their own coverage floor, or a future policy tightening
+            // could silently turn the whole step-2 section into query-only passes. (Panel
+            // hardening, 2026-07-27.)
+            if (strictChecks == 0) {
+                failure.set("zero STRICT destination-consistency checks ran — every examined"
+                    + " binding was policy-declined query-only; the step-2 assertion never"
+                    + " executed on a real destination");
+                return;
+            }
+            if (phaseChecks == 0) {
+                failure.set("zero phase/continuation checks ran — no mirrorable binding with a"
+                    + " destination was examined");
+                return;
+            }
 
             report.set("examined " + examined + " mirrorable portal(s), "
                 + involutions.get() + " involution check(s), "
-                + registryChecks + " registry cross-check(s), "
+                + registryChecks + " registry cross-check(s) (" + queryOnlyChecks
+                + " policy-declined query-only), "
                 + phaseChecks + " phase/continuation check(s)" + sb);
         });
 
@@ -1192,6 +1299,625 @@ public class CrossingSmoke implements FabricClientGameTest {
         SeamlessPortalsConstants.LOGGER.info(
             LOG + "RS-B DISJOINT GATE PASS — {} boundary-phase check(s); destination cell IS the"
                 + " continuation, cells distinct and unmirrored. {}", checks.get(), detail.get());
+    }
+
+    /**
+     * RS (b) RAIL LEG, TOPOLOGY B — the decisive boundary-phase case: two distinct worlds
+     * face-to-face at the plane, nothing mirrored, and a rail laid at the near cell must CONNECT to
+     * the far side's own track.
+     *
+     * <p>Fixture: a same-dim bi-way pair whose plane sits on integer X, so the through axis is
+     * EAST_WEST — deliberately NOT the placement default (NORTH_SOUTH), so the connected shape can
+     * only come from the far rail. A Z-plane fixture would false-pass: its through shape IS the
+     * default. Every verdict logs its working (actual shapes), and the leg is LEVER-AWARE: under
+     * {@code -PdisableSeamShadow} the same fixture must produce the vanilla shapes, and a connected
+     * shape there is reported as a REGRESSION.
+     */
+    private static void rsRailLegTopologyB(ClientGameTestContext context) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        final boolean shadowOn = !AperturePassthroughLever.DISABLE_SEAM_SHADOW;
+        final boolean phaseGateOn = !AperturePassthroughLever.DISABLE_SEAM_PHASE_GATE;
+        final int bx = 3200, by = 100, bz = 3200;   // clear of every other fixture's 128-block radius
+        final BlockPos cellS = new BlockPos(bx - 1, by, bz);       // west of the plane at x=bx
+        final BlockPos cellD = new BlockPos(bx + 60, by, bz);      // east of the dest plane at x=bx+60
+        final BlockPos cellDE = new BlockPos(bx + 61, by, bz);     // far track continuing east
+        final BlockPos cellLat = new BlockPos(bx - 1, by, bz - 1); // S's NORTH lateral
+        AtomicReference<String> failure = new AtomicReference<>(null);
+
+        try {
+            runCommands(context, List.of(
+                "forceload add " + (bx - 16) + " " + (bz - 16) + " " + (bx + 76) + " " + (bz + 16),
+                "fill " + (bx - 6) + " " + (by - 1) + " " + (bz - 3) + " "
+                    + (bx + 66) + " " + (by - 1) + " " + (bz + 3) + " minecraft:stone",
+                "fill " + (bx - 6) + " " + by + " " + (bz - 3) + " "
+                    + (bx + 66) + " " + (by + 3) + " " + (bz + 3) + " minecraft:air"
+            ));
+            context.waitTicks(20);
+
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.getChunk(bx >> 4, bz >> 4);
+                ow.getChunk((bx + 60) >> 4, bz >> 4);
+                // Plane at integer x=bx, normal WEST (axisW=+Z, axisH=+Y): S is the cell WEST of
+                // the plane, the crossing direction is EAST, and the through axis is X.
+                qouteall.imm_ptl.core.portal.Portal p =
+                    qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(
+                        ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                if (p == null) {
+                    failure.set("portal create returned null");
+                    return;
+                }
+                p.setOriginPos(new Vec3(bx, by + 0.5, bz + 0.5));
+                p.setDestinationDimension(Level.OVERWORLD);
+                p.setDestination(new Vec3(bx + 60, by + 0.5, bz + 0.5));
+                p.setOrientationAndSize(new Vec3(0, 0, 1), new Vec3(0, 1, 0), 1, 1);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(p);
+                qouteall.imm_ptl.core.portal.Portal q =
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createReversePortal(
+                        p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(q);
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-B SETUP FAILED: " + failure.get());
+            }
+
+            // Bind runs off the portal tick signal — poll the precondition, never a tick count.
+            AtomicReference<Boolean> bound = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 20 && !bound.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    bound.set(com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS) != null
+                        && com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellD) != null);
+                });
+                if (!bound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!bound.get()) {
+                throw new AssertionError(LOG + "RS-RAIL-B FAILED: seam cells " + cellS + " / " + cellD
+                    + " never bound — the boundary-phase pair did not register, every assertion"
+                    + " below would be vacuous");
+            }
+
+            // ---- B0 COVERAGE PREAMBLE — aborts the leg if the fixture is not what it claims ----
+            AtomicReference<String> inversionNote = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                var b = cell.bindings().stream()
+                    .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                    .findFirst().orElse(null);
+                if (b == null) {
+                    failure.set("no mirrorable binding at S=" + cellS);
+                    return;
+                }
+                if (b.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.DISJOINT) {
+                    failure.set("TOPOLOGY B NOT CONSTRUCTED — phase " + b.phase()
+                        + " at S; every assertion below would be testing topology A");
+                    return;
+                }
+                if (!b.seamContinuous()) {
+                    failure.set("binding at S is not seamContinuous — (b) declines this seam and the"
+                        + " leg proves nothing");
+                    return;
+                }
+                BlockPos east = b.continuationToward(net.minecraft.core.Direction.EAST);
+                BlockPos west = b.continuationToward(net.minecraft.core.Direction.WEST);
+                if (!cellD.equals(east)) {
+                    failure.set("CROSSING DIRECTION WRONG: continuationToward(EAST)=" + east
+                        + " but the far aperture cell is " + cellD);
+                    return;
+                }
+                if (west != null) {
+                    failure.set("continuationToward(WEST)=" + west + " on a DISJOINT seam — WEST"
+                        + " leads back into the approach, not across the plane");
+                    return;
+                }
+                var farCell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellD);
+                var bD = farCell.bindings().stream()
+                    .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                    .findFirst().orElse(null);
+                BlockPos backWest = bD == null
+                    ? null : bD.continuationToward(net.minecraft.core.Direction.WEST);
+                if (!cellS.equals(backWest)) {
+                    failure.set("TOPOLOGY DOES NOT CLOSE: far cell D derives " + backWest
+                        + " as its westward continuation, not S=" + cellS);
+                    return;
+                }
+
+                // Far track first (plain writes: they are the far side's own scenery).
+                ow.setBlock(cellD, Blocks.RAIL.defaultBlockState(), 3);
+                ow.setBlock(cellDE, Blocks.RAIL.defaultBlockState(), 3);
+
+                // ---- PHASE GATE ON THE VETO. With the gate ON, laying rail at S while the far
+                // side's own rail occupies D must be ALLOWED — that is the exact gesture (b)
+                // exists for. Under -PdisableSeamPhaseGate the veto must REFUSE (stock (a)
+                // refuse-on-conflict), which reproduces the requirement-denied defect on demand. ----
+                boolean mayPlace = com.warwa.seamlessportals.passthrough.SeamMirror.mayPlace(
+                    ow, cellS, Blocks.RAIL.defaultBlockState());
+                if (phaseGateOn && !mayPlace) {
+                    failure.set("PHASE GATE NOT IN EFFECT: mayPlace refused a rail at S while D"
+                        + " holds the far side's own track — the requirement is denied");
+                    return;
+                }
+                if (!phaseGateOn) {
+                    if (mayPlace) {
+                        failure.set("PHASE-GATE INVERSION FAILED (the defect did not reproduce):"
+                            + " with -PdisableSeamPhaseGate the veto should refuse on the occupied"
+                            + " far cell, but it allowed the placement");
+                        return;
+                    }
+                    inversionNote.set("PHASE-GATE INVERSION PASS — veto refused with the gate"
+                        + " disabled, as stock (a) would");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-B FAILED: " + failure.get());
+            }
+            if (inversionNote.get() != null) {
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-RAIL-B {} — connection legs skipped"
+                    + " under -PdisableSeamPhaseGate (unconditional mirroring fights this fixture"
+                    + " by design)", inversionNote.get());
+                return;
+            }
+
+            // ---- B1: STRAIGHT THROUGH — the decisive sub-case. S's only possible EAST_WEST
+            // source is the far rail at D: the local east cell is cleared air. ----
+            final long hitsBefore =
+                com.warwa.seamlessportals.passthrough.SeamRailContinuity.crossHitsCount();
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cellS, Blocks.RAIL.defaultBlockState());
+            });
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var st = ow.getBlockState(cellS);
+                if (!st.is(Blocks.RAIL)) {
+                    failure.set("B1: the rail at S is gone (" + st.getBlock() + ")");
+                    return;
+                }
+                var shape = st.getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                long hitsAfter =
+                    com.warwa.seamlessportals.passthrough.SeamRailContinuity.crossHitsCount();
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-RAIL-B B1: S={} shape={} crossHits {} -> {}",
+                    cellS, shape, hitsBefore, hitsAfter);
+                if (shadowOn) {
+                    if (shape != net.minecraft.world.level.block.state.properties.RailShape.EAST_WEST) {
+                        failure.set("B1 FAILED: S resolved " + shape + ", expected EAST_WEST —"
+                            + " with the local east cell empty, only the far rail at D can produce"
+                            + " it. The bridge did not read across.");
+                    }
+                    else if (hitsAfter <= hitsBefore) {
+                        failure.set("B1 COVERAGE FAILED: S is EAST_WEST but crossHits did not move"
+                            + " — the shape came from something other than the bridge, and this leg"
+                            + " proves nothing");
+                    }
+                }
+                else {
+                    if (shape == net.minecraft.world.level.block.state.properties.RailShape.EAST_WEST) {
+                        failure.set("B1 INVERSION FAILED (REGRESSION): -PdisableSeamShadow is set"
+                            + " but the rail still connected across the seam");
+                    }
+                    else if (shape != net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH) {
+                        failure.set("B1 INVERSION: unexpected vanilla shape " + shape
+                            + " (expected the NORTH_SOUTH placement default)");
+                    }
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-B FAILED: " + failure.get());
+            }
+
+            // ---- B2: CURVE AT THE SEAM — a local lateral arm plus the cross arm. The lateral's
+            // own placement rewrites S through vanilla connectTo (an un-bracketed neighbour write:
+            // exactly the path shape sync exists for; here it must simply not corrupt anything —
+            // this seam is unmirrored). D must keep its own legitimate shape. ----
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cellLat, Blocks.RAIL.defaultBlockState());
+            });
+            context.waitTicks(5);
+            AtomicReference<Object> settledS = new AtomicReference<>(null);
+            AtomicReference<Object> settledD = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var sShape = ow.getBlockState(cellS).getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                var dShape = ow.getBlockState(cellD).getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                settledS.set(sShape);
+                settledD.set(dShape);
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "RS-RAIL-B B2: S={} D={} (lat placed north of S)", sShape, dShape);
+                var expectS = shadowOn
+                    ? net.minecraft.world.level.block.state.properties.RailShape.NORTH_EAST
+                    : net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH;
+                if (sShape != expectS) {
+                    failure.set("B2 " + (shadowOn ? "FAILED" : "INVERSION FAILED") + ": S resolved "
+                        + sShape + ", expected " + expectS
+                        + (shadowOn
+                            ? " (north arm local, east arm across the seam)"
+                            : " (north arm only — seeing a cross arm here is a REGRESSION)"));
+                    return;
+                }
+                if (dShape != net.minecraft.world.level.block.state.properties.RailShape.EAST_WEST) {
+                    failure.set("B2 FAILED: the far side's own rail at D was rewritten to " + dShape
+                        + " — (b) must never override the far world's legitimate shape");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-B FAILED: " + failure.get());
+            }
+
+            // ---- TERMINATION: shapes stable across 40 ticks; budgets untouched. A per-call depth
+            // cap cannot catch a cross-tick oscillation — this can. ----
+            context.waitTicks(40);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var sShape = ow.getBlockState(cellS).getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                var dShape = ow.getBlockState(cellD).getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                if (sShape != settledS.get() || dShape != settledD.get()) {
+                    failure.set("OSCILLATION: shapes moved across 40 idle ticks — S " + settledS.get()
+                        + " -> " + sShape + ", D " + settledD.get() + " -> " + dShape);
+                    return;
+                }
+                long depthTrips = com.warwa.seamlessportals.passthrough.SeamRailContinuity.depthCapTrips();
+                long budgetTrips = com.warwa.seamlessportals.passthrough.SeamRailContinuity.budgetTrips();
+                if (depthTrips != 0 || budgetTrips != 0) {
+                    // WHOLE-RUN invariant read from global monotonic counters: a trip here may have
+                    // been caused by ANY leg so far, not necessarily this fixture. The counters
+                    // string is what localises it.
+                    failure.set("BUDGET TRIPPED (whole-run invariant, not necessarily this leg):"
+                        + " depthCapTrips=" + depthTrips + " budgetTrips=" + budgetTrips
+                        + " — evidence of a design fault, not a licence to run. counters: "
+                        + com.warwa.seamlessportals.passthrough.SeamRailContinuity.counters());
+                }
+                // MISROUTE CANARY: the local cell BEHIND the plane must never be written — a proxy
+                // write landing at its local shadow coordinate (instead of the far level) is a
+                // phantom rail in the source dimension, invisible to every shape assertion above.
+                var behindPlane = ow.getBlockState(new BlockPos(bx, by, bz));
+                if (!behindPlane.isAir()) {
+                    failure.set("PHANTOM WRITE BEHIND THE PLANE: local cell (" + bx + "," + by + ","
+                        + bz + ") holds " + behindPlane.getBlock() + " — a shadow-frame write was"
+                        + " executed at its LOCAL coordinate instead of the far level");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-B FAILED: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-RAIL-B PASS — "
+                + (shadowOn
+                    ? "rails CONNECT across the boundary-phase seam (straight + curve), far side"
+                        + " untouched, stable, budgets zero. counters: "
+                    : "INVERSION: vanilla shapes under -PdisableSeamShadow, budgets zero. counters: ")
+                + com.warwa.seamlessportals.passthrough.SeamRailContinuity.counters());
+        }
+        finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(bx - 4, by - 4, bz - 4,
+                            bx + 66, by + 6, bz + 4), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                runCommands(context, List.of(
+                    "fill " + (bx - 6) + " " + (by - 1) + " " + (bz - 3) + " "
+                        + (bx + 66) + " " + (by + 3) + " " + (bz + 3) + " minecraft:air",
+                    "forceload remove " + (bx - 16) + " " + (bz - 16) + " "
+                        + (bx + 76) + " " + (bz + 16)
+                ));
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-RAIL-B cleanup failed", t);
+            }
+        }
+    }
+
+    /**
+     * RS (b) RAIL LEG, TOPOLOGY A — an ignited obsidian frame: the shared mid-block slot, kept
+     * byte-identical by (a)'s mirror, joining an overworld approach to a nether continuation.
+     *
+     * <p>The sequencing is deliberate: the seam rail is placed FIRST (resolving straight toward the
+     * nether track through the bridge), and a second aperture rail EAST of it is placed AFTER —
+     * vanilla then rewrites the seam rail through {@code RailState.connectTo}, an un-bracketed
+     * neighbour write. That exercises the SHAPE-SYNC path end-to-end, and the leg's cross-side
+     * assertion ({@code nether(D) == ow(S).rotate(R)}) fails without it. Under
+     * {@code -PdisableSeamShapeSync} the leg expects the INEQUALITY instead — the divergence
+     * reproduced on demand.
+     */
+    private static void rsRailLegTopologyA(ClientGameTestContext context, int py) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        final boolean shadowOn = !AperturePassthroughLever.DISABLE_SEAM_SHADOW;
+        final boolean shapeSyncOn = !AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC;
+        final int fx = 6000, fz = -6000;   // nether counterpart ~(750,-750): clear of every fixture
+        final BlockPos cellSA = new BlockPos(fx, py + 1, fz);       // bottom-left opening cell
+        final BlockPos cellSA2 = new BlockPos(fx + 1, py + 1, fz);  // bottom-right opening cell
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Vec3> destSeen = new AtomicReference<>(null);
+
+        try {
+            runCommands(context, List.of(
+                "forceload add " + (fx - 16) + " " + (fz - 16) + " " + (fx + 16) + " " + (fz + 16),
+                // CLEAR FIRST, BUILD INTO THE CLEARING — a clear placed after the frame fills would
+                // wipe the frame columns. The generous box also strips any natural terrain that
+                // could donate rail arms or support quirks around the aperture.
+                "fill " + (fx - 2) + " " + py + " " + (fz - 2) + " "
+                    + (fx + 3) + " " + (py + 5) + " " + (fz + 2) + " minecraft:air",
+                fill(fx - 1, py, fz, fx + 2, py, fz),
+                fill(fx - 1, py + 4, fz, fx + 2, py + 4, fz),
+                fill(fx - 1, py + 1, fz, fx - 1, py + 3, fz),
+                fill(fx + 2, py + 1, fz, fx + 2, py + 3, fz)
+            ));
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                        new BlockPos(fx, py + 1, fz), null);
+                if (!fired) {
+                    failure.set("ignition entry rejected the frame");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-A SETUP FAILED: " + failure.get());
+            }
+            final net.minecraft.world.phys.AABB frameBox = new net.minecraft.world.phys.AABB(
+                fx - 8, py - 8, fz - 8, fx + 8, py + 8, fz + 8);
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    if (server == null) {
+                        return false;
+                    }
+                    return !server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                        frameBox, x -> true).isEmpty();
+                }, 1200);
+            }
+            catch (Throwable t) {
+                throw new AssertionError(LOG + "RS-RAIL-A FAILED: no NetherPortalEntity generated"
+                    + " within 1200 ticks", t);
+            }
+            runOnServer(context, server -> {
+                var portals = server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    frameBox, x -> true);
+                destSeen.set(portals.get(0).getDestPos());
+            });
+
+            // Wait for the aperture to BIND (tick-signal-driven; poll the precondition).
+            AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bindingRef =
+                new AtomicReference<>(null);
+            for (int attempt = 0; attempt < 30 && bindingRef.get() == null; attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellSA);
+                    if (cell == null) {
+                        return;
+                    }
+                    cell.bindings().stream()
+                        .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                        .findFirst().ifPresent(bindingRef::set);
+                });
+                if (bindingRef.get() == null) {
+                    context.waitTicks(10);
+                }
+            }
+            var binding = bindingRef.get();
+            if (binding == null) {
+                throw new AssertionError(LOG + "RS-RAIL-A FAILED: aperture cell " + cellSA
+                    + " never bound with a mirrorable binding");
+            }
+            if (binding.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT) {
+                throw new AssertionError(LOG + "RS-RAIL-A FAILED: obsidian aperture classified "
+                    + binding.phase() + " — an obsidian plane is mid-block and must be COINCIDENT");
+            }
+            if (!binding.seamContinuous()) {
+                throw new AssertionError(LOG + "RS-RAIL-A FAILED: obsidian binding not"
+                    + " seamContinuous — (b) would decline its own primary geometry");
+            }
+            final net.minecraft.core.Direction crossDir = binding.crossDir();
+            final BlockPos cellDA = binding.destPos();
+            final BlockPos contC = binding.continuationToward(crossDir);
+            final net.minecraft.world.level.block.Rotation rotR = binding.stateRotation();
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "RS-RAIL-A geometry: S={} crossDir={} D={} in {} continuation={} R={}",
+                cellSA, crossDir, cellDA, binding.destDim().identifier(), contC, rotR);
+
+            // Nether-side continuation track: support cube below it, rail on it, headroom cleared.
+            runOnServer(context, server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                if (nether == null) {
+                    failure.set("destination level " + binding.destDim() + " missing");
+                    return;
+                }
+                nether.getChunk(contC.getX() >> 4, contC.getZ() >> 4);
+                nether.setBlock(contC.below(), Blocks.STONE.defaultBlockState(), 3);
+                nether.setBlock(contC.above(), Blocks.AIR.defaultBlockState(), 3);
+                nether.setBlock(contC, Blocks.RAIL.defaultBlockState(), 3);
+                if (!nether.getBlockState(contC).is(Blocks.RAIL)) {
+                    failure.set("nether continuation rail at " + contC + " did not survive placement"
+                        + " (" + nether.getBlockState(contC).getBlock() + ")");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-A SETUP FAILED: " + failure.get());
+            }
+
+            // ---- Place the seam rail, then the second aperture rail east of it. ----
+            final long hitsBefore =
+                com.warwa.seamlessportals.passthrough.SeamRailContinuity.crossHitsCount();
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cellSA, Blocks.RAIL.defaultBlockState());
+            });
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cellSA2, Blocks.RAIL.defaultBlockState());
+            });
+            context.waitTicks(5);
+
+            AtomicReference<Object> settledS = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var sState = ow.getBlockState(cellSA);
+                var dState = nether.getBlockState(cellDA);
+                if (!sState.is(Blocks.RAIL)) {
+                    failure.set("seam rail at S is gone (" + sState.getBlock() + ")");
+                    return;
+                }
+                var sShape = sState.getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                long hitsAfter =
+                    com.warwa.seamlessportals.passthrough.SeamRailContinuity.crossHitsCount();
+                settledS.set(sShape);
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "RS-RAIL-A: S={} D={} crossHits {} -> {}",
+                    sShape, dState, hitsBefore, hitsAfter);
+
+                var expectCurve = crossDir == net.minecraft.core.Direction.NORTH
+                    ? net.minecraft.world.level.block.state.properties.RailShape.NORTH_EAST
+                    : net.minecraft.world.level.block.state.properties.RailShape.SOUTH_EAST;
+                if (shadowOn) {
+                    if (sShape != expectCurve) {
+                        failure.set("CURVE FAILED: S resolved " + sShape + ", expected " + expectCurve
+                            + " (east arm from the second aperture rail, " + crossDir
+                            + " arm from the nether continuation through the bridge)");
+                        return;
+                    }
+                    if (hitsAfter <= hitsBefore) {
+                        failure.set("COVERAGE FAILED: the curve appeared but crossHits never moved"
+                            + " — the arm did not come from the bridge and this leg proves nothing");
+                        return;
+                    }
+                }
+                else {
+                    if (sShape != net.minecraft.world.level.block.state.properties.RailShape.EAST_WEST) {
+                        failure.set("INVERSION FAILED: with -PdisableSeamShadow S should hold only"
+                            + " the local east arm (EAST_WEST), got " + sShape
+                            + (sShape == expectCurve ? " — a cross arm survived: REGRESSION" : ""));
+                        return;
+                    }
+                }
+
+                // ---- CROSS-SIDE INVARIANT (the assertion whose absence let a real bug through):
+                // the mirrored half must equal the player's half under the binding's rotation, AFTER
+                // the un-bracketed connectTo rewrite. This is shape sync end-to-end. ----
+                var expectedD = sState.rotate(rotR);
+                boolean identical = dState == expectedD;
+                if (shapeSyncOn && !identical) {
+                    failure.set("CROSS-SIDE DIVERGENCE: nether " + cellDA + " holds " + dState
+                        + " but the player's half rotated is " + expectedD
+                        + " — the un-bracketed neighbour rewrite was not re-mirrored (shape sync"
+                        + " failed), the two halves of one visual block disagree");
+                    return;
+                }
+                if (!shapeSyncOn) {
+                    // The inversion must name the divergence it reproduces: the far half still A
+                    // RAIL holding the PRE-REWRITE mirrored shape — not merely "anything unequal",
+                    // which an absent far half would also satisfy. (Panel hardening, 2026-07-27.)
+                    if (!dState.is(Blocks.RAIL)) {
+                        failure.set("SHAPE-SYNC INVERSION: the far half at " + cellDA
+                            + " is not a rail at all (" + dState.getBlock()
+                            + ") — the (a) mirror never wrote it; this is a fixture fault, not the"
+                            + " divergence the inversion exists to reproduce");
+                        return;
+                    }
+                    if (identical) {
+                        failure.set("SHAPE-SYNC INVERSION FAILED (the defect did not reproduce):"
+                            + " with -PdisableSeamShapeSync the halves should diverge after the"
+                            + " neighbour rewrite, but they agree — either nothing rewrote S"
+                            + " (fixture broken) or the lever does not disable the path");
+                        return;
+                    }
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-A FAILED: " + failure.get());
+            }
+
+            // ---- Stability: the pair must not flicker (T2' residual watch). ----
+            context.waitTicks(40);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var sShape = ow.getBlockState(cellSA).getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.RAIL_SHAPE);
+                if (sShape != settledS.get()) {
+                    failure.set("OSCILLATION: S moved " + settledS.get() + " -> " + sShape
+                        + " across 40 idle ticks");
+                    return;
+                }
+                if (shapeSyncOn) {
+                    var dState = nether.getBlockState(cellDA);
+                    var expectedD = ow.getBlockState(cellSA).rotate(rotR);
+                    if (dState != expectedD) {
+                        failure.set("CROSS-SIDE DRIFT: after 40 idle ticks nether " + cellDA
+                            + " holds " + dState + " vs expected " + expectedD);
+                        return;
+                    }
+                }
+                long depthTrips = com.warwa.seamlessportals.passthrough.SeamRailContinuity.depthCapTrips();
+                long budgetTrips = com.warwa.seamlessportals.passthrough.SeamRailContinuity.budgetTrips();
+                if (depthTrips != 0 || budgetTrips != 0) {
+                    // Asserted HERE too, not only in RS-RAIL-B: this is the topology where the
+                    // mirror is ACTIVE, so cross writes, shape sync and reseeds all ran by now.
+                    // (Panel finding: the ceiling was only asserted where the mirror is inactive.)
+                    failure.set("BUDGET TRIPPED (whole-run invariant): depthCapTrips=" + depthTrips
+                        + " budgetTrips=" + budgetTrips + ". counters: "
+                        + com.warwa.seamlessportals.passthrough.SeamRailContinuity.counters());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-RAIL-A FAILED: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-RAIL-A PASS — "
+                + (shadowOn
+                    ? "obsidian seam rail curves onto the nether continuation"
+                    : "INVERSION: local-only shape under -PdisableSeamShadow")
+                + (shapeSyncOn
+                    ? "; halves byte-identical"
+                    : "; halves DIVERGED as the shape-sync inversion expects")
+                + "; stable 40 ticks. counters: "
+                + com.warwa.seamlessportals.passthrough.SeamRailContinuity.counters());
+        }
+        finally {
+            try {
+                runCommands(context, List.of(
+                    "fill " + (fx - 2) + " " + (py - 1) + " " + (fz - 2) + " "
+                        + (fx + 3) + " " + (py + 5) + " " + (fz + 2) + " minecraft:air",
+                    "forceload remove " + (fx - 16) + " " + (fz - 16) + " "
+                        + (fx + 16) + " " + (fz + 16)
+                ));
+                Vec3 d = destSeen.get();
+                if (d != null) {
+                    int dx = (int) Math.floor(d.x), dy = (int) Math.floor(d.y), dz = (int) Math.floor(d.z);
+                    runCommands(context, List.of(
+                        "execute in minecraft:the_nether run forceload add " + (dx - 16) + " "
+                            + (dz - 16) + " " + (dx + 16) + " " + (dz + 16),
+                        inDim("minecraft:the_nether", "fill " + (dx - 5) + " " + (dy - 2) + " "
+                            + (dz - 5) + " " + (dx + 5) + " " + (dy + 5) + " " + (dz + 5)
+                            + " minecraft:air"),
+                        "execute in minecraft:the_nether run forceload remove " + (dx - 16) + " "
+                            + (dz - 16) + " " + (dx + 16) + " " + (dz + 16)
+                    ));
+                }
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-RAIL-A cleanup failed", t);
+            }
+        }
     }
 
     /** Component of a vector along a signed unit axis. */

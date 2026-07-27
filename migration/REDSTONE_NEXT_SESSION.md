@@ -35,16 +35,116 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
-## WHERE THINGS STAND (2026-07-26, latest session)
+## WHERE THINGS STAND (2026-07-27, latest session)
 
 - Sub-feature **(a)** complete and user-verified.
-- Sub-feature **(b) step 1** done — the cross-seam neighbour primitive exists.
-- **(b) step 2 — rails CONNECTING across the plane — NOT STARTED. THIS IS THE NEXT FEATURE WORK.**
-  Nothing consumes the primitive yet. See `REDSTONE_B_SPEC.md`, the re-check notes on it, and the
-  paste-verbatim starter at **`migration/REDSTONE_B_PROMPT.md`**.
+- **(b) step 2 — RAILS CONNECT ACROSS THE PLANE — LANDED AND GATED** (2026-07-27, this session).
+  See the ★ (b) STEP 2 section below for what works, the levers, the TWO PROVISIONAL USER DECISIONS
+  awaiting sign-off, and the deferred items. `REDSTONE_B_SPEC.md` now carries a top banner listing
+  where the shipped code deviates from its body — the code and this handoff override the spec.
+- **The suite has an RS-ONLY mode now** (`-PrsOnly`, default OFF) — open item 5 is closed. It skips
+  the crossing/teleport legs and leg 5's world reopen; every RS gate, portal staging and 6a/6b still
+  run. ~3.5 min instead of ~6+. Full matrix still mandatory before a commit.
 - **The same-dim live-update bug is FIXED and user-confirmed** — see the CLOSED section below. It was
   never a mirror defect; it was a client render-path defect that any block change behind a same-dim
   portal hit, and the mirror was only how it was noticed.
+
+## ★ (b) STEP 2 — RAILS ACROSS THE SEAM (landed 2026-07-27)
+
+**What works, gate-verified in five configurations** (full canonical; full
+`-PdisableAperturePassthrough`; rsOnly + each of `-PdisableSeamShadow`, `-PdisableSeamPhaseGate`,
+`-PdisableSeamShapeSync` — every leg lever-aware, every inversion asserted):
+
+- **Topology B (boundary-phase seam):** a rail laid at the near cell CONNECTS to the far side's own
+  track — straight through (RS-RAIL-B B1: `EAST_WEST` whose only possible source is the far rail;
+  `crossHits` coverage-asserted) and curves (B2: `NORTH_EAST` from a local lateral + the cross arm,
+  far side's own shape never overridden). Laying rail toward an occupied far cell is ALLOWED (the
+  phase gate keeps `mayPlace` out of the way).
+- **Topology A (obsidian):** the seam rail resolves onto the nether continuation through the bridge
+  and, after the second aperture rail rewrites it through vanilla `connectTo`, the mirrored half
+  stays byte-identical (`nether(D) == ow(S).rotate(R)`) — the SHAPE SYNC path end-to-end. Stable
+  across 40 idle ticks; write budgets asserted ZERO everywhere.
+
+**The mechanism** (`common/.../passthrough/`): `SeamShadow` (local shadow coordinate frame; far
+reads/writes only at the `getBlockState`/`setBlock` boundary; cold far chunk reads as AIR + retry
+queue), `SeamShadowBridge.shadowFor` (the one entry point), `SeamRailContinuity` (budgets, counters,
+reseed-on-bind, retries), `MixinRailStateSeam` (owner = LOCAL-FIRST R1′, proxy = shadow-framed;
+the stamp re-checks locality — see the spec banner for why the spec's version was wrong),
+`MixinBaseRailBlockSeamSlope` (slope support bridged, additive-only). Levers: `disableSeamShadow`
+(master), `disableSeamRailWrite`, `disableSeamRailSlope`, `disableSeamRailReseed`, probe
+`seamRailProbe`.
+
+**The primitive's direction convention was FIXED on the way in** — `bindingAcross` matched
+`srcFacing == dir`, right on obsidian clusters only via the flipped twin, inverted for any
+single-binding cell; `continuationCell()` pointed the COINCIDENT crossing at the co-located
+FALLBACK cell behind the far plane. Zero consumers existed, so nothing had shipped wrong. The
+step-1 gate now pins the continuation DIRECTION against `portal.getContentDirection()` — the old
+formula fails it. New surface: `SeamBinding.crossDir()`, `continuationToward(Direction)`,
+`seamContinuous`; `findDestinationPortal` disambiguates bi-faced pairs by IP's own
+`isReversePortal` dot test (`disableSeamReverseDisambig`).
+
+### ⚠ TWO PROVISIONAL USER DECISIONS — taken this session, need the user's word
+
+| # | decision | why (b) needs it | lever restoring the old rule |
+|---|---|---|---|
+| 1 | **DISJOINT (boundary-phase) seams do not mirror** (`SeamMirror.isPhaseGated`, all four mirror paths). The spec §3.6 recommends it and quotes the user's own phrasing that topology B is unmirrored, but no explicit sign-off exists. Without it: whole-block duplicates, `mayPlace` denies joining the far track, and (b)'s far write mirror-backs. COINCIDENT (all obsidian) untouched. | reasons 1–3 in `SeamMirror.isPhaseGated`'s javadoc | `-PdisableSeamPhaseGate` |
+| 2 | **SHAPE SYNC** — a same-block STATE refinement of a seam cell re-mirrors even un-bracketed, IF the counterpart already holds the same block. Vanilla `connectTo:205` rewrites neighbours inside the OTHER cell's placement with no player bracket; player-only declined the re-mirror and the pair's halves diverged (likely the residue of the user's "sometimes not curving"). Creation/removal keep player-only in full. This WIDENS the 2026-07-26 player-only decision. | RS-RAIL-A's cross-side invariant fails without it; inverts under the lever | `-PdisableSeamShapeSync` |
+
+### Latent gate red found and fixed (worth knowing how)
+
+The step-1 seam-map gate's "destination consistent with SeamMap" check predates exact-only and
+demanded a destination from every arithmetically-mirrorable portal — but exact-only binds
+policy-declined portals QUERY-ONLY (`destPos == null`). Test portal A's dest hangs a half-block off
+in Y, so the check fails on it… and never had: **in the full suite the player is in the nether by
+gate time and the spawn-area portals sit in UNLOADED chunks — `getEntitiesOfClass` never returned
+them.** RS-only mode keeps the player at spawn and examined portal A for the first time ever.
+A/B-attributed against a throwaway `eac7db0` worktree (old tip: gate PASS, 4 portals examined —
+all obsidian; new run: portal A examined, latent red exposed). The gate now asserts the policy both
+ways: a declined seam must be query-only, an admitted one must carry the SeamMap destination —
+symmetric under `-PdisableSeamExactOnly`.
+
+### The adversarial panel round (2026-07-27) — four confirmed defects, fixed before commit
+
+An 18-agent panel (4 lenses, every finding adversarially verified) ran over the diff after the
+first green matrix. Confirmed and FIXED:
+
+1. **Shape sync forged mirror provenance onto the PLAYER's half** (3 lenses independently; major).
+   The refinement path fell through to the unconditional `mirrorCreatedCells().add`, so a far-side
+   `connectTo` rewrite syncing D→S marked the player's own rail mirror-created — a later frame
+   break then DELETED it (violating the pinned break rule) and mirror authority suppressed its
+   support pops. Fixed with the AUTHORITY RULE (`SeamMirror.onSeamCellChanged` note): a refinement
+   never touches provenance; at the PLAYER half it propagates to a provenance-marked counterpart
+   only; at the MIRROR half it REVERTS from the player half (`revertMirrorHalf`, counter
+   `shapeReverted`) — the derived-state rule applied, machine-derived far shapes never overwrite
+   the player's block.
+2. **The shape-sync pair test was block-equality, not provenance** — two independently-built halves
+   (bind-time reconciliation explicitly preserves those) could clobber each other. The propagate
+   path now requires the destination to be provenance-marked.
+3. **`-PdisableSeamRailWrite` misrouted proxy writes into the SOURCE world** as phantom rails
+   behind the portal (the spec's own §3.2 carried the bug: `s == null || LEVER → op.call`). Writes
+   are now DROPPED for proxies under the lever, and RS-RAIL-B gained a misroute canary (the local
+   cell behind the plane must stay air — asserted in every configuration).
+4. **The cold-far retry queue gated on the wrong chunk** (the owner's own, loaded by construction)
+   → once-per-tick busy re-resolution per cold seam cell. Retry entries now carry `waitFor` (the
+   far chunk that actually went cold), and out-of-build-height mappings are counted but never
+   queued (permanent, not warmable).
+
+Residuals confirmed-as-minor and DOCUMENTED, not fixed: a DETECTOR rail's far-side 3-way-junction
+rewrite landing inside the mirror's `applying` window is swallowed and the pair diverges until the
+next source-side change (plain rails unaffected); and under the authority rule a far-side player
+cannot CURVE the shared slot from their side (the source side's resolution is the authority — the
+far side joins by laying track the source side's bridge reads). Both are candidates for the (c)
+design pass.
+
+- **Unbind snapshot (spec §3.5(v), lens A B-9)** — `unbind` still enumerates current geometry, so a
+  portal whose geometry changes before unbind leaks stale bindings until dispose. Pre-existing
+  (a)-era gap; (b)'s writes through a stale binding are bounded to shape changes of EXISTING far
+  rails. Take it with (c) if wire makes it hotter.
+- **Cold-far-chunk leg (spec B14)** — the retry queue is implemented (`SeamRailContinuity`,
+  `declinedCold`/`retriesServed` counters) but has no dedicated gate leg; portals hold their far
+  side resident, so the path is hard to reach in the suite.
+- **Offset (non-integral) seams stay fully declined** for rails exactly as for mirroring — same
+  user decision, same future work.
 
 ## ★ OPEN ITEMS, in the order they were raised
 
@@ -102,24 +202,34 @@ Appeared after same-frame mirroring. Suspect a section rebuild racing the predic
 state momentarily stale, so face culling is computed wrong for one frame. Watch the PLACED block,
 not the mirrored one.
 
-### 5. THE SUITE IS SLOW, and the user has said so
+### 5. THE SUITE IS SLOW — ✅ RESOLVED 2026-07-27: `-PrsOnly`
 
-Six gate configurations at ~2 min each. The RS gates are a small fraction of each run — legs 1–7,
-6a/6b and leg 5 are crossing/teleport tests, and leg 5 *closes and reopens the world*. **Proposed:
-an RS-only lever** skipping those. Do NOT shrink the fixed `waitTicks` instead: the hazards list says
-wait for preconditions, never a tick count, and one flaky gate was already fixed that way this session.
+The RS-only lever is implemented (`AperturePassthroughLever.RS_ONLY`, rows in both build.gradle
+blocks). Skips legs 1, 2, 3, 4, 7 and leg 5's world close-and-reopen; keeps portal staging, 6a/6b
+(the seam gate's involution coverage), every RS gate and the rail legs; still ends in the same
+`ALL LEGS PASS` plus a loud not-a-full-suite banner. ⚠ Side effect worth remembering: RS-only keeps
+the player at spawn, so the seam-map gate examines the spawn-area portals the full suite leaves
+unloaded — it has MORE gate coverage there, not less (this is what exposed the latent query-only
+red). The full matrix remains mandatory before a commit.
 
-## GATE MATRIX (as of 2026-07-26)
+## GATE MATRIX (as of 2026-07-27)
 
 | configuration | proves |
 |---|---|
-| `-PapertureTeardownTest -PseamMirrorProbe` | canonical (a) |
+| `-PapertureTeardownTest -PseamMirrorProbe` | canonical (a)+(b) |
 | `-PapertureTeardownTest -PdisableAperturePassthrough` | the master lever restores stock IP |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamShadow` | (b) inversion — both rail legs revert to vanilla shapes |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamPhaseGate` | phase-gate inversion — the veto refuses the far-occupied placement again |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamShapeSync` | shape-sync inversion — the pair's halves diverge after a neighbour rewrite |
 | `-PapertureTeardownTest -PseamDeliveryTest` | same-dim remesh, near AND far arms |
 | `… -PseamDeliveryTest -PdisableSameDimRemesh` | remesh inversion (both arms) |
 | `… -PdisableSeamPlayerOnly` | player-only inversion |
 | `… -PdisableSeamExactOnly` | exact-only inversion |
 | `… -PdisableSeamPrediction` | same-frame inversion |
+
+Iteration tip: add `-PrsOnly` to any RS-focused configuration (~3.5 min instead of ~6+). The five
+configurations run green on 2026-07-27 before commit were: rows 1–5 of this table (rows 1–2 as full
+suites).
 
 ## ★ SUB-FEATURE (a) IS COMPLETE — 2026-07-26, tip `7070101`
 
@@ -508,6 +618,22 @@ Hypotheses as they stood before the measurement, with their verdicts:
 to mechanism. One probe run, on a fixture that put the destination beyond render distance, settled it.
 
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
+
+- **★ VERIFY MIXIN WRAP TARGETS AGAINST THE BYTECODE, NOT THE DECOMPILE.** `javap -c -p -classpath
+  %USERPROFILE%\.gradle\caches\fabric-loom\minecraftMaven\net\minecraft\minecraft-merged-deobf\26.2\minecraft-merged-deobf-26.2.jar <class>`
+  before first launch. Two drifts caught this session: an unqualified static call from a subclass
+  emits the ENCLOSING class as owner (`BaseRailBlock.canSupportRigidBlock`, not `Block.` — the (b)
+  spec had it wrong), and `RailState.getRail` has FOUR `areturn`s where the source shows three (a
+  ternary). `require`/`allow` made both LOAD-TIME failures instead of silent no-weaves — that
+  discipline paid for itself twice in one file.
+- **A GATE ONLY COVERS THE ENTITIES THE RUN KEEPS LOADED.** `getEntitiesOfClass` silently skips
+  unloaded chunks: the full suite's seam-map gate never examined the spawn-area test portals because
+  leg 4 had moved the player to the nether by then — a latent red sat there from 072ba4d until the
+  RS-only mode (player stays at spawn) examined them. When a scan-based gate passes, ask what the
+  scan could NOT see; forceload the fixtures a gate is supposed to judge.
+- **`-P` property names must not start with lowercase letters that read as part of the flag** —
+  `-ProsOnly=true` sets property `rosOnly`, silently. It cost one full misattributed run. Use
+  `-PrsOnly=true` and check the leg banner actually says RS-ONLY MODE.
 
 - **★ ASSERT THE OUTCOME THE USER CAN SEE, NOT THE REQUEST YOUR CODE ISSUED.** Three gates in a row
   passed on a fix that did nothing:

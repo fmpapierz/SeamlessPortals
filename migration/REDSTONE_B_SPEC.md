@@ -1,5 +1,30 @@
 # FINAL IMPLEMENTABLE SPEC — SUB-FEATURE (b), RAIL CONNECTION ACROSS THE PORTAL PLANE
 
+> ## ★★ TOP BANNER (2026-07-27) — IMPLEMENTED, WITH DEVIATIONS. THIS BANNER OVERRIDES THE BODY. ★★
+>
+> (b) step 2 landed on `redstone/passthrough` (session of 2026-07-27; see
+> `REDSTONE_NEXT_SESSION.md` for state and gates). Where this body and the code differ, the CODE
+> and the handoff are right. The load-bearing deviations:
+>
+> 1. **No `crossPos` field, no `SeamPhase` tri-state, no `UNKNOWN`.** The shipped primitive is
+>    direction-aware instead: `SeamBinding.continuationToward(Direction)` (DISJOINT answers only
+>    `crossDir()`; COINCIDENT answers both seam-axis directions), plus `seamContinuous` computed at
+>    bind. "Not classifiable" is expressed as `destPos == null` (query-only), as (a) already did.
+> 2. **§3.2's shadow stamp is WRONG as written and was fixed in the shipped mixin**: stamping every
+>    past-the-plane child turns a REAL local rail at a co-located approach cell into a far proxy and
+>    misroutes its `connectTo` write into the far dimension. The shipped stamp re-checks locality
+>    first (`MixinRailStateSeam.seamlessportals$stamp`).
+> 3. **Two bytecode facts the body has wrong** (verify with `javap` on the loom deobf jar, not the
+>    decompile): `canSupportRigidBlock`'s call-site owner is `BaseRailBlock`, not `Block`; `getRail`
+>    has FOUR return sites, not three (the `:109` ternary is two `areturn`s).
+> 4. **§3.1 (B-1 settled-state) and §3.6's re-entrancy reasoning are already handled** by (a)'s
+>    settled-state read, `UPDATE_SKIP_ON_PLACE` and `MixinBaseRailBlockMirrorAuthority` — plus the
+>    new SHAPE SYNC (un-bracketed same-block refinements re-mirror; see the handoff).
+> 5. **§3.5's unbind snapshot (B-9) is DEFERRED**, recorded in the handoff's open items.
+> 6. Legs shipped as RS-RAIL-B (B0/B1/B2/B4/termination folded into one leg) and RS-RAIL-A
+>    (B5/B13-flavoured with the shape-sync cross-side invariant), lever-aware in both directions,
+>    rather than the B0–B16 enumeration.
+
 **Source of truth for vanilla:** `C:\Users\warwa\ModDev\mc262-ref\net\minecraft\…` (opened this session). **Source of truth for the mod:** `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\redstone`, tip `d7b74a8` (opened this session).
 
 **Reference-copy ruling, settled first because it decides ~40 citations.** Lens B read a NeoForge-patched decompile (its own evidence: it quotes `BaseRailBlock:82` as `getRailDirection(state, level, pos, null)`, a NeoForge patch). I verified `mc262-ref` this session: `RailState.java` is 352 lines with `pos:14`, `updateConnections:34-76`, `getRail:94-110`, `hasConnection:116-125`, `connectTo:143-206`, `place:218-347`, guard `:332`, writes `:205`/`:333`; and `Block.canSupportRigidBlock` is at **`Block.java:325`**, not `:335`. **The adjudication's line numbers are correct and are used throughout. Lens B's §10 "citation drift" list is withdrawn** — it is drift in lens B's own reference, not in the design.
