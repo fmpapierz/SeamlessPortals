@@ -241,8 +241,14 @@ public class IPGlobal {
     // where the correction-OFF run had shown real cameras, and (2) the PRE and POST samples of one
     // bind are mutually inconsistent (cameraPosition differs between them), so at least one of the two
     // is mispaired and the instrument is under suspicion alongside the fix.
-    // Shipping a render-path change that measurably worsens a bind is not acceptable while its own
-    // measurement is in doubt. Arm it for an A/B with -Dseamlessportals.enableIrisDestPrevCamera;
+    // ROUND 4 UPDATE: that "worsened a bind" reading came from a POST sample that was itself mispaired
+    // and is RETRACTED. The real defects were (a) the write was clobbered between the seam at bytecode
+    // 422 and the draw — the seam moved to 447, past everything — and (b) there are TWO blur drivers,
+    // the camera pair AND the matrix pair, and the matrix half had been deleted after generalising
+    // from one run where idMV read zero everywhere. Both halves are now written, keyed per chain by
+    // NEAREST CAMERA (not by bind ordinal, which was measured unstable).
+    // Still DEFAULT OFF: three rounds have shipped a version that did not work, so this one earns
+    // default-ON only from a live run. Arm with -Dseamlessportals.enableIrisDestPrevCamera;
     // the disable lever always wins.
     public static final boolean IRIS_DEST_PREV_CAMERA_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableIrisDestPrevCamera");
@@ -292,6 +298,16 @@ public class IPGlobal {
             + " (0, 64]); using the default 4.0.");
         return 4.0;
     }
+
+    /** IS5-MB MATRIX HALF, A/B lever — RE-ADDED and now meaningful. It was deleted when the first
+     *  census run showed idMV=0.00000 on every sampled row, i.e. the matrix chain always cancelled.
+     *  That generalised from one run: a later 56-row sample found idMV between 0.13 and 0.25 on EVERY
+     *  row whose camera offset was ~zero, each still blurring 57-102 px. So there are two independent
+     *  drivers and the correction writes both halves. Set this to write the CAMERA half only, which
+     *  isolates driver A from driver B in one live A/B:
+     *  -Dseamlessportals.irisDestPrevCameraNoMatrices */
+    public static final boolean IRIS_DEST_PREV_NO_MATRICES =
+        Boolean.getBoolean("seamlessportals.irisDestPrevCameraNoMatrices");
 
     /** Confirm-counter: binds whose nearest last-frame camera was outside the match limit (a portal
      *  coming into view, a teleport, an iris position-shift epoch). These NEUTRALIZE. A steadily

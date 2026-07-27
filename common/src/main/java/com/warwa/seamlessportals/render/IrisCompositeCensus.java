@@ -172,6 +172,11 @@ public final class IrisCompositeCensus {
         final float[] postPrev = new float[4];
         double postCamDelta;
         double postMaxSpanPx;
+        double postIdMv;
+        double postIdProj;
+        /** IS5-MB's action for THIS bind, captured at the post-write hook — see the field comment on
+         *  IrisDestPrevCamera's last-action slot for why it must not be read at emit time. */
+        String mbAction = "(not captured)";
         double maxSpanPx;
         double maxU;
         double maxV;
@@ -409,6 +414,15 @@ public final class IrisCompositeCensus {
             return;
         }
         try {
+            // CAPTURE IS5-MB's ACTION HERE, NOT AT EMIT TIME. Its last-action slot is a single process
+            // global overwritten by every guarded bind, and emit() runs at the frame boundary — so
+            // reading it there stamps EVERY row of a multi-bind frame with the LAST bind's action.
+            // On the documented steady state that means the dest bind, the one row this whole
+            // engagement is about, would be labelled with the main chain's action. This hook runs
+            // immediately after the write for THIS bind, so the slot holds this bind's action and
+            // only here.
+            r.mbAction = qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera
+                .describeLastAction();
             measurePost(r, pendingRowPid);
             if (Double.isNaN(r.postMaxSpanPx) || r.postMaxSpanPx > secondMaxPostSpanPx) {
                 secondMaxPostSpanPx = r.postMaxSpanPx;
@@ -594,11 +608,20 @@ public final class IrisCompositeCensus {
     }
 
     /**
-     * Re-read only what a correction can have changed — {@code cameraPosition} and
-     * {@code previousCameraPosition} — and re-run the replay. The six matrices are NOT re-read: nothing
-     * writes them (IS5-MB is position-only by design, because the census measured idMV=idP=0.00000, so
-     * the matrix chain already cancels), and the scratch arrays still hold this bind's values from the
-     * pre-sample microseconds earlier.
+     * Re-read EVERY input the replay consumes, not just the camera pair.
+     *
+     * <p>An earlier version re-read only {@code cameraPosition}/{@code previousCameraPosition} and
+     * replayed through the {@code MV_PREV}/{@code PROJ_PREV} scratch arrays left over from the PRE
+     * sample. That was justified by a sentence in {@code IrisDestPrevCamera}'s header saying the class
+     * "writes previousCameraPosition and nothing else" — which stopped being true the moment the matrix
+     * half was restored. IS5-MB now writes {@code gbufferPreviousModelView}/
+     * {@code gbufferPreviousProjection} at bytecode 447 and this sample runs at 455, so replaying with
+     * the pre-write matrices would compute a blur span for a uniform combination the GPU never
+     * executed — and it would do so precisely on the rows where the matrix half is doing the work,
+     * turning a working fix into an apparent failure.
+     *
+     * <p>{@code idMV}/{@code idP} are recomputed too: post-write they are the direct read-out of
+     * whether the matrix half achieved cancellation.
      */
     private static void measurePost(Row r, int pid) {
         if (!r.uniformsReadable || pid <= 0) {
@@ -606,11 +629,24 @@ public final class IrisCompositeCensus {
         }
         int lCam = GL20.glGetUniformLocation(pid, "cameraPosition");
         int lPrevCam = GL20.glGetUniformLocation(pid, "previousCameraPosition");
-        if (lCam < 0 || lPrevCam < 0) {
+        int lMvInv = GL20.glGetUniformLocation(pid, "gbufferModelViewInverse");
+        int lMvPrev = GL20.glGetUniformLocation(pid, "gbufferPreviousModelView");
+        int lProjInv = GL20.glGetUniformLocation(pid, "gbufferProjectionInverse");
+        int lProjPrev = GL20.glGetUniformLocation(pid, "gbufferPreviousProjection");
+        if (lCam < 0 || lPrevCam < 0 || lMvInv < 0 || lMvPrev < 0 || lProjInv < 0 || lProjPrev < 0) {
             return;
         }
         GL20.glGetUniformfv(pid, lCam, r.postCam);
         GL20.glGetUniformfv(pid, lPrevCam, r.postPrev);
+        // Refill the replay's matrix inputs from the CURRENT GL state — this is the whole point.
+        GL20.glGetUniformfv(pid, lMvInv, MV_INV);
+        GL20.glGetUniformfv(pid, lMvPrev, MV_PREV);
+        GL20.glGetUniformfv(pid, lProjInv, PROJ_INV);
+        GL20.glGetUniformfv(pid, lProjPrev, PROJ_PREV);
+        mul(MV_PREV, MV_INV, PRODUCT);
+        r.postIdMv = maxAbsDiffFromIdentity(PRODUCT);
+        mul(PROJ_PREV, PROJ_INV, PRODUCT);
+        r.postIdProj = maxAbsDiffFromIdentity(PRODUCT);
         r.postSampled = true;
         double dx = r.postCam[0] - r.postPrev[0];
         double dy = r.postCam[1] - r.postPrev[1];
@@ -884,13 +920,18 @@ public final class IrisCompositeCensus {
                 if (Math.abs(r.postCam[0] - r.cam[0]) > 0.001
                     || Math.abs(r.postCam[1] - r.cam[1]) > 0.001
                     || Math.abs(r.postCam[2] - r.cam[2]) > 0.001) {
-                    sb.append("\n         !! SAMPLE MISPAIRED: cameraPosition CHANGED between the PRE"
-                        + " and POST reads, so these two lines describe DIFFERENT binds. Every verdict"
-                        + " on this row is void. Do not adjudicate the correction from it.");
+                    sb.append("\n         note: cameraPosition CHANGED between the PRE read (inside"
+                        + " Program.use) and the POST read (immediately before the draw). That is NOT"
+                        + " by itself a mispairing — something between those points re-uploads it, and"
+                        + " the POST value is the one the shader uses. The authoritative check is"
+                        + " IS5-MB's own cam below (read at the write seam, right before the draw)"
+                        + " against POST cam: if THOSE differ, the sample really is mispaired.");
                 }
-                sb.append("\n         IS5-MB DID: ").append(
-                    qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera
-                        .describeLastAction());
+                sb.append("\n         POST idMV=").append(f5(r.postIdMv))
+                    .append(" idP=").append(f5(r.postIdProj))
+                    .append("   <- recomputed AFTER the write: this is whether the MATRIX half achieved"
+                        + " cancellation. Nonzero here with a corrected camera means driver B survives.");
+                sb.append("\n         IS5-MB DID: ").append(r.mbAction);
             }
             else {
                 sb.append("\n         POST-WRITE: not sampled (no draw followed this bind)");
