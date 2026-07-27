@@ -139,8 +139,7 @@ public final class SeamMirror {
      *
      * <p>Applied identically by the veto, the driver, bind-time reconciliation and the client
      * prediction, so all four agree by construction. (a)'s user-verified behaviour is untouched:
-     * every obsidian binding is COINCIDENT. Flagged as a provisional user decision — see the lever's
-     * javadoc.
+     * every obsidian binding is COINCIDENT. ✅ USER-CONFIRMED 2026-07-27.
      */
     static boolean isPhaseGated(SeamRegistry.SeamBinding binding) {
         return binding.phase() == SeamMap.SeamPhase.DISJOINT
