@@ -1696,35 +1696,35 @@ public class CrossingSmoke implements FabricClientGameTest {
         boolean fixDisabled = AperturePassthroughLever.DISABLE_SAME_DIM_REMESH;
         String counters = context.computeOnClient(mc ->
             com.warwa.seamlessportals.render.SameDimRemesh.counters());
-        boolean scheduledThisCell = context.computeOnClient(mc ->
-            com.warwa.seamlessportals.render.SameDimRemesh.didScheduleSectionAt(
+        boolean compiledThisCell = context.computeOnClient(mc ->
+            com.warwa.seamlessportals.render.SameDimRemesh.didCompileSectionAt(
                 destCell.getX(), destCell.getY(), destCell.getZ()));
 
         if (fixDisabled) {
-            if (scheduledThisCell) {
+            if (compiledThisCell) {
                 throw new AssertionError(LOG + "[RS-DELIVERY-TEST] *** REGRESSION *** the same-dim"
-                    + " remesh fix is DISABLED, yet a rebuild was scheduled for " + destCell
+                    + " remesh fix is DISABLED, yet a rebuild COMPLETED for " + destCell
                     + "'s section. The disable lever is not restoring stock behaviour."
                     + " counters: " + counters);
             }
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH INVERSION PASS — fix DISABLED and no"
-                    + " rebuild was scheduled for {}, which is the defect reproduced on demand."
+                    + " rebuild completed for {}, which is the defect reproduced on demand."
                     + " counters: {}", destCell, counters);
             return;
         }
-        if (!scheduledThisCell) {
+        if (!compiledThisCell) {
             throw new AssertionError(LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH FAILED: a block was"
-                + " mirrored to " + destCell + " behind a same-dimension portal and NO rebuild was"
-                + " scheduled for that section, so the window will show stale terrain there."
+                + " mirrored to " + destCell + " behind a same-dimension portal and NO rebuild COMPLETED for"
+                + " that section, so the window will show stale terrain there."
                 + " A non-zero scheduled count in the counters below does NOT excuse this — it"
                 + " means other sections were rebuilt while this one was missed."
                 + " counters: " + counters);
         }
         SeamlessPortalsConstants.LOGGER.info(
-            LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH PASS — the section holding {} was scheduled"
-                + " for rebuild, which stock 26.2 never does for a same-dimension portal's far"
-                + " side. counters: {}", destCell, counters);
+            LOG + "[RS-DELIVERY-TEST] SAME-DIM REMESH PASS — the section holding {} was REBUILT"
+                + " — its mesh was actually replaced, which stock 26.2 never does for a"
+                + " same-dimension portal’s far side. counters: {}", destCell, counters);
     }
 
     /**

@@ -35,6 +35,7 @@
     "client.SectionUpdateTrackerDeliveryProbeMixin",
     "client.SectionDirtyConsumedProbeMixin",
     "client.SectionUpdateTrackerRemeshMixin",
+    "client.RenderSectionMeshReplacedMixin",
     "client.SectionDirtyStateAccessor",
     "client.SectionOcclusionGraphAccessorMixin",
     "client.SectionOcclusionGraphPartialUpdateSkipMixin",
