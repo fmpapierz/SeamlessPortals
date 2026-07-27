@@ -298,6 +298,30 @@ S20.
 - **(e):** put a mob straddling the aperture of a **SHORT-distance same-dim** portal. If it is cut
   off there too, distance is irrelevant and (e) is a same-dim projection defect, not a §R.1 member.
 
+### §R.4 B.10 NEOFORGE — PASS (2026-07-26), and the increment-4 weave gate confirmed behaviourally
+
+The row no gate in this repo can see, run on a real ~60s session with a world loaded (21:57:41 →
+21:58:44):
+
+| Check | Result |
+|---|---|
+| the loud `portals NOT AVAILABLE` notice (the §G.1 user-decision requirement) | **present, verbatim** |
+| world loaded — the *"zero chunks, no exception, no log"* silent failure the audit feared | **REFUTED**: `Preparing spawn area: 29% → 57%`, 31 chunk-storage lines, all dimensions saved on exit |
+| `ExceptionInInitializerError` / `NoClassDefFoundError` | **0** |
+| mixin apply / InvalidInjection failures | **0** |
+| qouteall / ImmPtl / iPortal activity | **0** — the ported engine is wholly inert, as designed |
+
+**On `FABRIC_ONLY_IP_DRIVERS` (increment 4's blocker fix):** the `Skipping IP-driver mixin` line does
+NOT appear — but neither does any other `System.out` line from the config plugin, so this is a
+logging-capture gap on NeoForge (the plugin uses `System.out` deliberately: it runs before the mod's
+logger is safe to touch), not evidence of gate failure. **The behavioural proof is stronger than the
+log line would have been:** §G.12's thesis is that an unguarded `MinecraftFramePumpMixin` reaches
+`IPGlobal.PRE_TOTAL_RENDER_TASK_LIST.processTasks()` on the FIRST client frame and dies with
+`ExceptionInInitializerError`. This client rendered a world for a minute with zero IP activity and
+zero init errors — which happens only if those mixins never ran. Ledgered improvement for C7: give
+the skip a visible channel on NeoForge, since the one platform the gate exists for is the one where
+it is currently unobservable.
+
 ### §R.1c ★★ THE FIXES, LIVE-TESTED (2026-07-26, build `8f51bad`) — (d)+(e) FIXED, and the rest resolves to ONE cause owned elsewhere
 
 | Symptom | Result | Owner |
