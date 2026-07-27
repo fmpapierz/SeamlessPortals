@@ -152,6 +152,20 @@ loom {
             // names the stage it stops at. Exists because the same-dim bug survived three fixes that
             // each theorised a mechanism and measured nothing.
             if (project.findProperty('seamDeliveryProbe') == 'true') { vmArg('-Dseamlessportals.seamDeliveryProbe=true') }
+            // RS (b) FIX LEVERS — rails connecting across the seam. disableSeamShadow is (b)'s
+            // master A/B switch; the rest attribute its independent halves (REDSTONE_B_SPEC.md §8).
+            if (project.findProperty('disableSeamShadow') == 'true') { vmArg('-Dseamlessportals.disableSeamShadow=true') }
+            if (project.findProperty('disableSeamRailWrite') == 'true') { vmArg('-Dseamlessportals.disableSeamRailWrite=true') }
+            if (project.findProperty('disableSeamRailSlope') == 'true') { vmArg('-Dseamlessportals.disableSeamRailSlope=true') }
+            if (project.findProperty('disableSeamRailReseed') == 'true') { vmArg('-Dseamlessportals.disableSeamRailReseed=true') }
+            if (project.findProperty('disableSeamPhaseGate') == 'true') { vmArg('-Dseamlessportals.disableSeamPhaseGate=true') }
+            if (project.findProperty('disableSeamReverseDisambig') == 'true') { vmArg('-Dseamlessportals.disableSeamReverseDisambig=true') }
+            if (project.findProperty('disableSeamShapeSync') == 'true') { vmArg('-Dseamlessportals.disableSeamShapeSync=true') }
+            // RS (b) PROBE LEVER — DEFAULT-OFF.
+            if (project.findProperty('seamRailProbe') == 'true') { vmArg('-Dseamlessportals.seamRailProbe=true') }
+            // RS-ONLY suite mode (gametest-side skip of the crossing/teleport legs) — also exposed
+            // here so a live client run can carry it for symmetry, though only the gametest reads it.
+            if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
         }
         server {
             server()
@@ -313,6 +327,19 @@ loom {
             if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
             if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
             if (project.findProperty('seamDeliveryProbe') == 'true') { vmArg('-Dseamlessportals.seamDeliveryProbe=true') }
+            // RS (b) FIX LEVERS — rails connecting across the seam (see the client block's rows).
+            if (project.findProperty('disableSeamShadow') == 'true') { vmArg('-Dseamlessportals.disableSeamShadow=true') }
+            if (project.findProperty('disableSeamRailWrite') == 'true') { vmArg('-Dseamlessportals.disableSeamRailWrite=true') }
+            if (project.findProperty('disableSeamRailSlope') == 'true') { vmArg('-Dseamlessportals.disableSeamRailSlope=true') }
+            if (project.findProperty('disableSeamRailReseed') == 'true') { vmArg('-Dseamlessportals.disableSeamRailReseed=true') }
+            if (project.findProperty('disableSeamPhaseGate') == 'true') { vmArg('-Dseamlessportals.disableSeamPhaseGate=true') }
+            if (project.findProperty('disableSeamReverseDisambig') == 'true') { vmArg('-Dseamlessportals.disableSeamReverseDisambig=true') }
+            if (project.findProperty('disableSeamShapeSync') == 'true') { vmArg('-Dseamlessportals.disableSeamShapeSync=true') }
+            if (project.findProperty('seamRailProbe') == 'true') { vmArg('-Dseamlessportals.seamRailProbe=true') }
+            // RS-ONLY suite mode: skip the crossing/teleport legs (thrown items, hurt cow, pearl,
+            // far-dest leg 7, leg 5's world reopen); portal staging, 6a/6b and every RS gate still
+            // run. The full suite stays the default and is required before a commit.
+            if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
         }
     }
 }
