@@ -116,6 +116,14 @@ loom {
             // CompilerThread0, not any game thread — not mod logic, not the IS0 probes). Same
             // surgical mitigation, same removal condition as the exclude above.
             vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // THIRD victim of the same Temurin 25.0.2 C2 defect (hs_err_pid962536, 2026-07-26 23:42):
+            // EXCEPTION_ACCESS_VIOLATION reading 0x2c, Current thread = "C2 CompilerThread0", problematic
+            // frame V [jvm.dll+0x73238f], Current CompileTask = GlQueryObject::performQuery. Pure
+            // jvm.dll frames on the COMPILER thread with no game thread and no mod frame involved —
+            // the established signature, and distinct from the IS0 native-heap-corruption class which
+            // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
+            // condition: drop all three when a fixed Temurin lands.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
             // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
@@ -142,6 +150,14 @@ loom {
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
             // + the second victim method (IS0 probe round, hs_err_pid248404 — see the client run).
             vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // THIRD victim of the same Temurin 25.0.2 C2 defect (hs_err_pid962536, 2026-07-26 23:42):
+            // EXCEPTION_ACCESS_VIOLATION reading 0x2c, Current thread = "C2 CompilerThread0", problematic
+            // frame V [jvm.dll+0x73238f], Current CompileTask = GlQueryObject::performQuery. Pure
+            // jvm.dll frames on the COMPILER thread with no game thread and no mod frame involved —
+            // the established signature, and distinct from the IS0 native-heap-corruption class which
+            // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
+            // condition: drop all three when a fixed Temurin lands.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -376,6 +392,14 @@ loom {
             // died JIT-compiling IOWorker::storePendingChunk during the suite's world saves —
             // same jvm.dll defect class, not mod logic; see the client run's note).
             vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // THIRD victim of the same Temurin 25.0.2 C2 defect (hs_err_pid962536, 2026-07-26 23:42):
+            // EXCEPTION_ACCESS_VIOLATION reading 0x2c, Current thread = "C2 CompilerThread0", problematic
+            // frame V [jvm.dll+0x73238f], Current CompileTask = GlQueryObject::performQuery. Pure
+            // jvm.dll frames on the COMPILER thread with no game thread and no mod frame involved —
+            // the established signature, and distinct from the IS0 native-heap-corruption class which
+            // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
+            // condition: drop all three when a fixed Temurin lands.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
             // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
             // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
             vmArg('-XX:-OmitStackTraceInFastThrow')
