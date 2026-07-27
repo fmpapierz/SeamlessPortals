@@ -867,12 +867,30 @@ public final class IrisCompositeCensus {
                 .append(" px, MAX=").append(f(r.maxSpanPx)).append(" px at (u=").append(r.maxU)
                 .append(",v=").append(r.maxV).append(",z=").append(r.maxZ).append(')');
             if (r.postSampled) {
+                // BOTH vectors, always. An earlier version printed only prev, and when PRE and POST
+                // disagreed there was no way to tell whether the correction had written the wrong
+                // value or the sample had been taken against the wrong bind — the two look identical
+                // with prev alone. cam MUST be re-read and printed: if postCam != preCam then this
+                // sample does not belong to the bind it is attached to, and nothing else on the line
+                // can be trusted.
                 sb.append("\n         POST-WRITE (sampled between the IS5-MB write and the draw — this"
-                        + " is what the shader ACTUALLY executed with): prev=(")
+                        + " is what the shader ACTUALLY executed with): cam=(")
+                    .append(f(r.postCam[0])).append(',').append(f(r.postCam[1])).append(',')
+                    .append(f(r.postCam[2])).append(") prev=(")
                     .append(f(r.postPrev[0])).append(',').append(f(r.postPrev[1])).append(',')
                     .append(f(r.postPrev[2])).append(") |cam-prev|=").append(f(r.postCamDelta))
                     .append(" BLUR SPAN MAX=").append(f(r.postMaxSpanPx)).append(" px  [")
                     .append(verdict(r)).append(']');
+                if (Math.abs(r.postCam[0] - r.cam[0]) > 0.001
+                    || Math.abs(r.postCam[1] - r.cam[1]) > 0.001
+                    || Math.abs(r.postCam[2] - r.cam[2]) > 0.001) {
+                    sb.append("\n         !! SAMPLE MISPAIRED: cameraPosition CHANGED between the PRE"
+                        + " and POST reads, so these two lines describe DIFFERENT binds. Every verdict"
+                        + " on this row is void. Do not adjudicate the correction from it.");
+                }
+                sb.append("\n         IS5-MB DID: ").append(
+                    qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestPrevCamera
+                        .describeLastAction());
             }
             else {
                 sb.append("\n         POST-WRITE: not sampled (no draw followed this bind)");

@@ -233,17 +233,28 @@ public class IPGlobal {
     // the SLOT (programId, bind ordinal within the frame) and needs no portal context at all.
     // MEASURED defect it fixes: same-dim, stationary, 22 consecutive seconds — the dest content's
     // composite4 reads cam=DEST prev=PLAYER, |cam-prev|=511.088, a 265.8 PIXEL blur span.
-    // A/B OFF via -Dseamlessportals.disableIrisDestPrevCamera. NOTE the enable lever that existed while
-    // this was briefly default-OFF has been REMOVED: with the field defaulting true it could never
-    // change the outcome ((true || x) is true), so it was a lever that silently did nothing — the exact
-    // trap that has voided live runs on this project before.
+    // BACK TO DEFAULT-OFF 2026-07-26 (second live round). The correction did NOT fix the smear and it
+    // MADE ONE BIND WORSE: with three chains in view the census measured the same-dim dest bind going
+    // from PRE |cam-prev|=152 to POST |cam-prev|=515.679 — i.e. the write pushed a 515-block camera
+    // onto it. Two further facts from that run are unexplained and must be settled before this ships
+    // enabled again: (1) iris's previousCameraPosition read exactly (0,0,0) on 100 of 100 census rows,
+    // where the correction-OFF run had shown real cameras, and (2) the PRE and POST samples of one
+    // bind are mutually inconsistent (cameraPosition differs between them), so at least one of the two
+    // is mispaired and the instrument is under suspicion alongside the fix.
+    // Shipping a render-path change that measurably worsens a bind is not acceptable while its own
+    // measurement is in doubt. Arm it for an A/B with -Dseamlessportals.enableIrisDestPrevCamera;
+    // the disable lever always wins.
     public static final boolean IRIS_DEST_PREV_CAMERA_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableIrisDestPrevCamera");
-    public static boolean irisDestPrevCamera = true;
+    public static final boolean IRIS_DEST_PREV_CAMERA_ENABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.enableIrisDestPrevCamera");
+    public static boolean irisDestPrevCamera = false;
 
-    /** True when the guarded composite pass should receive its own chain's previous-frame camera. */
+    /** True when the guarded composite pass should receive its own chain's previous-frame camera.
+     *  Default OFF pending diagnosis (see above); the enable lever arms it, the disable lever wins. */
     public static boolean isIrisDestPrevCameraActive() {
-        return irisDestPrevCamera && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
+        return (irisDestPrevCamera || IRIS_DEST_PREV_CAMERA_ENABLED_LEVER)
+            && !IRIS_DEST_PREV_CAMERA_DISABLED_LEVER;
     }
 
     /** IS5-MB CHAIN-MATCH LIMIT, in blocks: the furthest a composite chain's camera may plausibly

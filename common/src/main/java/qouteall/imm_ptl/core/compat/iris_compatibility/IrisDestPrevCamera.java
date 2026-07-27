@@ -147,6 +147,26 @@ public final class IrisDestPrevCamera {
     private static long lastProbeNanos = 0L;
     private static final float[] TMP3 = new float[4];
 
+    // ---- last-action record, read back by IS5-CEN so a census row can say what THIS class did ----
+    // Without it a POST sample can only show the resulting uniform, which is ambiguous between "the
+    // correction wrote the wrong value", "the correction wrote nothing" and "the sample is mispaired".
+    private static int laPid = -1;
+    private static final float[] laCam = new float[3];
+    private static final float[] laWrote = new float[3];
+    private static String laHow = "nothing yet";
+    private static int laCandidates = 0;
+    private static double laMatchDist = -1.0;
+
+    public static String describeLastAction() {
+        if (laPid < 0) {
+            return "nothing yet (no guarded bind has been written this session)";
+        }
+        return "prog=" + laPid + " cam=(" + f(laCam[0]) + "," + f(laCam[1]) + "," + f(laCam[2]) + ")"
+            + " -> wrote prev=(" + f(laWrote[0]) + "," + f(laWrote[1]) + "," + f(laWrote[2]) + ")"
+            + " via " + laHow + " (candidates last frame=" + laCandidates
+            + ", match distance=" + (laMatchDist < 0 ? "n/a" : f(laMatchDist)) + ")";
+    }
+
     private static double maxDelta() {
         return IPGlobal.IRIS_DEST_PREV_MAX_DELTA;
     }
@@ -255,6 +275,25 @@ public final class IrisDestPrevCamera {
             Pending q = new Pending();
             q.locPrevCam = locPrevCam;
             GL20.glGetUniformfv(pid, locPrevCam, q.savePrevCam);
+            // DO NOT TOUCH A PASS IRIS HAS NOT INITIALISED YET. If previousCameraPosition is still
+            // exactly (0,0,0) then iris has not uploaded it — its Vector3Uniform cache and the GL
+            // state are both at their initial value. Writing here means the paired restore puts that
+            // ZERO back, and because updateValue early-returns whenever its cache already matches what
+            // it wants to upload, iris then NEVER re-uploads and the uniform stays zero for the whole
+            // session. That is the "restore is mandatory" hazard running in reverse, and it is the
+            // leading explanation for the second live round reading prev=(0,0,0) on 100 of 100 census
+            // rows with this feature ON, where the feature-OFF run showed real cameras throughout.
+            // Skipping costs nothing: an uninitialised previous camera means there is no history to
+            // restore anyway.
+            if (q.savePrevCam[0] == 0f && q.savePrevCam[1] == 0f && q.savePrevCam[2] == 0f) {
+                infoOnce("uninit", P + "skipping (once-only): the guarded pass's"
+                    + " previousCameraPosition is still exactly (0,0,0), i.e. iris has not uploaded it"
+                    + " yet. Writing now would make our paired restore put that zero back permanently,"
+                    + " because iris's uniform cache would then never differ from what it wants to"
+                    + " upload. Waiting until iris initialises the uniform.");
+                pending = null;
+                return;
+            }
             // The FIRST guarded pass of a session writes nothing — it exists only to prove the restore
             // seam fires. If it never does, the feature permanently disarms having provably made zero
             // writes, so the main view is untouched by construction.
@@ -262,7 +301,24 @@ public final class IrisDestPrevCamera {
 
             // THE MATCH: the NEAREST camera this program held last frame, accepted only if it is within
             // one frame's plausible camera travel. See #nearest for why this replaced ordinal keying.
-            float[] history = nearest(camsPrev.get(pid), TMP3, maxDelta());
+            List<float[]> candidates = camsPrev.get(pid);
+            float[] history = nearest(candidates, TMP3, maxDelta());
+            laPid = pid;
+            laCam[0] = TMP3[0];
+            laCam[1] = TMP3[1];
+            laCam[2] = TMP3[2];
+            laCandidates = candidates == null ? 0 : candidates.size();
+            laMatchDist = history == null ? -1.0 : dist3(history, TMP3);
+            if (q.probeOnly) {
+                laHow = "NOTHING (seam-proving frame)";
+            }
+            else {
+                laHow = history != null ? "nearest-camera match" : "NEUTRALIZE (no candidate in range)";
+            }
+            float[] written = history != null ? history : TMP3;
+            laWrote[0] = written[0];
+            laWrote[1] = written[1];
+            laWrote[2] = written[2];
             if (!q.probeOnly) {
                 if (history != null) {
                     GL20.glUniform3f(locPrevCam, history[0], history[1], history[2]);
@@ -394,6 +450,13 @@ public final class IrisDestPrevCamera {
             return null;
         }
         return best;
+    }
+
+    private static double dist3(float[] a, float[] b) {
+        double dx = a[0] - b[0];
+        double dy = a[1] - b[1];
+        double dz = a[2] - b[2];
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
     private static double dist(float[] a, float[] b) {
