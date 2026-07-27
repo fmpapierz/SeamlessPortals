@@ -316,6 +316,24 @@ loom {
             // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
             if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-SEAM §2d DEPTH-TEST DISCRIMINATOR (2026-07-27, DIAGNOSTIC): swap the stamp to a
+            // sibling with the depth state FULLY DISABLED (test AND write). Band fills in => the
+            // GEQUAL test vs the snapshot depth was rejecting the stamp at the seam; band PERSISTS
+            // => depth rejection is NOT THE SOLE cause — do NOT exonerate depth from this leg alone
+            // (the pipeline still paints SAMPLED content, so black dest content keeps the band
+            // black regardless of depth); run the -PdebugStampSolid ladder (handoff §2d matrix).
+            // Check the IS5-RC STAMP PIPELINE line before adjudicating —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthTest=true
+            if (project.findProperty('disableStampDepthTest') == 'true') { vmArg('-Dseamlessportals.disableStampDepthTest=true') }
+            // IS5-SEAM SOLID-PAINT DISCRIMINATOR (2026-07-27, DIAGNOSTIC): the magenta tint is a
+            // MULTIPLY and is blind on black content — this stamps solid vColor (WHITE; MAGENTA if
+            // combined with -PdebugTintStamp), ignoring the sample. Band turns solid => fragments
+            // pass and the black is the SAMPLED dest content; band stays black => no fragment
+            // survives there. Composes with -PdisableStampDepthTest ONLY (with
+            // -PdisableStampDepthWrite the write stays ON — SOLID+NO-WRITE is deliberately not
+            // built; the once-only IS5-RC line says so) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugStampSolid=true
+            if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -527,12 +545,26 @@ loom {
             if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
             if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
+            // IS5-G stamp tint (mirror of the clientSodium row for lever parity — the solid rows
+            // below advertise the MAGENTA composition, so the block that carries them must be able
+            // to deliver it; the suite runs iris-ABSENT so this is inert there) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdebugTintStamp=true
+            if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
             // IS5-MB ATTRIBUTION A/B (2026-07-26, DIAGNOSTIC): drop the portal stamp's DEPTH WRITE, to
             // test whether the stamped DEST depth is what makes composite4 compute a huge PER-PIXEL
             // velocity inside the window. If the blur vanishes with this set, that is the mechanism.
             // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
             if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-SEAM §2d depth-test discriminator (mirror of the clientSodium row for lever-row
+            // parity; the suite runs iris-ABSENT so the lever is inert there — see that block for
+            // the full adjudication note) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableStampDepthTest=true
+            if (project.findProperty('disableStampDepthTest') == 'true') { vmArg('-Dseamlessportals.disableStampDepthTest=true') }
+            // IS5-SEAM solid-paint discriminator (mirror of the clientSodium row for lever-row
+            // parity; the suite runs iris-ABSENT so the lever is inert there) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdebugStampSolid=true
+            if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —

@@ -30,7 +30,7 @@ Crossing slowly it is sustained and clearly visible; crossing quickly it reads a
 |---|---|---|
 | 1 | pure black, exactly on the seam; slow crossing = sustained, fast = flash | user |
 | 2 | **shaders OFF ⇒ gone**; no pack setting affects it | user sweep (see 2b) |
-| 3 | **the stamp does not cover the band** — `-PdebugTintStamp` turns the whole window magenta EXCEPT the band | user A/B |
+| 3 | `-PdebugTintStamp` turns the whole window magenta EXCEPT the band. **INFERENCE CORRECTED 2026-07-27 (§2c′):** the tint is a MULTIPLY, so this proves *no NON-BLACK fragment survives there* — NOT "the stamp does not cover the band" | user A/B + shader read |
 | 4 | **predates this session** — reproduces at `082d533` | worktree checkout; log-verified (zero `IS5-RC` lines, that class did not exist yet) |
 | 5 | **not `IrisDestPrevCamera`** | `-PdisableIrisDestPrevCamera`; log-verified `isIrisDestPrevCameraActive() = INACTIVE`, zero writes |
 | 6 | the aperture mesh is **never null** and **never fully dropped**; it IS partially clipped from ~1.2 blocks in | IS5-SEAM census: `meshNull=false` 23/23, `dropped=0` 23/23, `clipped=2` on 13/23 |
@@ -46,31 +46,68 @@ Only disabling shaders entirely did.**
 ### 2c. THE CONTRADICTION THAT DEFINES THE NEXT STEP
 
 Fact 6 + fact 7 say the aperture geometry **fully covers** the band — with the clip disabled, every
-triangle is passed through and nothing is dropped. Fact 3 says the stamp **does not paint** it.
-Geometry covers it, yet no fragment lands.
+triangle is passed through and nothing is dropped. Fact 3 says nothing non-black is **painted** there.
+Geometry covers it, yet nothing visible lands.
 
-⇒ **The stamp's fragments are being REJECTED, not missing.** That is a different class of defect from
-everything tried so far, and it has not been tested at all.
+### 2c′. THE TINT IS MULTIPLICATIVE (instrument audit, 2026-07-27)
 
-### 2d. THE NEXT MEASUREMENT (specified, not built)
+`portal_area_sample.fsh`: `fragColor = texelFetch(InSampler, …) * vertexColor`. Magenta {1,0,1} ×
+black {0,0,0} = black. **The magenta test cannot see a fragment that paints black content.** And an
+overpaint AFTER the stamp would erase magenta too. So fact 3 never separated these **three live
+branches**:
+
+- **(A)** the stamp's fragments are **depth-rejected** at the seam (the original §2d hypothesis);
+- **(B)** fragments **land**, but the SAMPLED dest content (`mainRT` after the nested dest render) is
+  itself **pure black** in the band — the stamp faithfully copies black;
+- **(C)** fragments land and are then **overpainted** by a later writer.
+
+### 2d. THE NEXT MEASUREMENT (BUILT 2026-07-27, this session — awaiting the live legs)
 
 The stamp pipeline is declared **`CompareOp.GREATER_THAN_OR_EQUAL` with depth WRITE ON**
 (`IrisCompatPaste` static init; the GEQUAL direction is the R5 reversed-Z convention, the write is the
 `#13` two-portal fix). The deferred buffer's depth is re-cleared and re-snapshotted from `mainRT` each
 frame in `IrisCompatOn262Renderer.onBeforeHandRendering`.
 
-**Build a third pipeline sibling with the depth test DISABLED** (`Optional.empty()` depth state, the
-same shape `PORTAL_STRAIGHT_COPY` already uses) behind a diagnostic lever, and select it exactly as
-`PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE` is selected today.
+Two new lever-gated stamp siblings (both DEFAULT OFF, diagnostic only; selection + once-only
+`IS5-RC STAMP PIPELINE` self-report in `IrisCompatPaste.selectStampPipeline`):
 
-| observation | verdict |
-|---|---|
-| band fills in with the depth test off | **the depth test rejects the stamp there** — find why the snapshot depth wins at the seam |
-| band persists | the stamp is drawn and then **overpainted afterwards** — hunt what writes after the stamp (blit-back, aperture draw, hand rendering) |
+- **`-PdisableStampDepthTest`** — depth state fully DISABLED (`Optional.empty()`, the proven
+  `PORTAL_STRAIGHT_COPY` shape; GL disables depth WRITES with the test, so this strictly contains
+  `-PdisableStampDepthWrite` and wins when both are set).
+- **`-PdebugStampSolid`** — fragment paints solid vColor and IGNORES the sample
+  (`portal_area_solid.fsh`; WHITE, or MAGENTA when combined with `-PdebugTintStamp`) — the
+  content-free paint the multiplicative tint could never be. Composes with
+  `-PdisableStampDepthTest` ONLY (SOLID+NO-WRITE is deliberately not built; the once-only line
+  says so when both are passed).
 
-Cheaper first probe, already wired: **`-PdisableStampDepthWrite=true`** changes the depth WRITE (not the
-compare). If the band's shape or extent changes at all, depth state is implicated and the full test is
-worth building.
+**Panel-hardened (the verification panel's HIGH, bytecode-verified):** `RenderPipelines.register`
+is a bare map-put — it neither compiles nor validates, and every REGISTERED pipeline joins the
+eager precompile set of every subsequent resource reload (an invalid one hard-fails the reload).
+So the siblings are **LEVER-GATED** (a default run registers zero new pipelines) and
+**COMPILE-VALIDATED before registration** (`GpuDevice.precompilePipeline(...).isValid()`); an
+invalid sibling is never registered, stays null, and selection degrades to the shipped default
+with a VOID warning on the IS5-RC line. "Usable=true" on that line therefore means
+*lever-requested AND compiled* for the three seam siblings (`noDepthTest`/`solid`/
+`solidNoDepthTest`); the pre-existing `noDepthWrite` sibling ships unconditionally from the static
+block and shares the shipped default's shader, so its column is a plain null-check.
+
+**THE ADJUDICATION MATRIX (two legs, run in this order):**
+
+| leg | config | band turns solid | band stays black |
+|---|---|---|---|
+| 1 | `-PdebugStampSolid` (depth DEFAULT) | fragments pass the depth test AND survive ⇒ **(B) the sampled dest content is black** — hunt the nested dest render / what iris leaves in `mainRT` at the seam | (A) or (C) — go to leg 2 |
+| 2 | `-PdebugStampSolid -PdisableStampDepthTest` | **(A) the GEQUAL test vs the snapshot depth was rejecting** (and nothing overpaints) — find why the snapshot depth wins at the seam | **(C) overpainted after the stamp** or a non-depth rejector (scissor/mask) — next tool: the one-frame `DrawCallTrace` capture |
+
+Optional leg 3: `-PdisableStampDepthTest` alone shows the seam with REAL content when depth is off —
+worth one look if leg 2 lands on (A), since it is then a candidate shape for the fix.
+
+**Before adjudicating ANY leg: read the `RUN CONFIG` block AND the once-only
+`IS5-RC STAMP PIPELINE` line — it names the pipeline actually bound, every lever, every sibling's
+registration state, and prints an explicit VOID warning on any degradation. A leg with a VOID
+warning is re-run, not adjudicated. The IS5-SEAM census now also prints `stamp=<name>` on every row.**
+
+The cheap `-PdisableStampDepthWrite=true` probe (write only, compare kept) remains available but is
+superseded by the matrix above.
 
 ### 2e. REFUTED — do not re-open without new evidence
 
@@ -85,13 +122,16 @@ introduced by this session (fact 4).
 
 | lever | what | default |
 |---|---|---|
-| `-PdebugTintStamp` | paints the stamp MAGENTA — the coverage discriminator that produced fact 3 | OFF |
+| `-PdebugTintStamp` | MULTIPLY-tints the stamp MAGENTA — produced fact 3; **blind on black content (§2c′)** | OFF |
+| `-PdebugStampSolid` | stamp paints SOLID vColor, ignoring the sample (white; magenta with the tint lever) — the content-free coverage discriminator | OFF |
+| `-PdisableStampDepthTest` | stamp depth state fully DISABLED (test+write) — the §2d depth discriminator | OFF |
 | `-PdisableAperturePlaneClip` | passes every aperture triangle through unclipped (**diagnostic only**; nominally re-opens the S14.36 sky wedges, though none appeared in the live run) | OFF |
-| `-PdisableStampDepthWrite` | stamp depth-WRITE off (**diagnostic only**; re-opens the `#13` two-portal artifact) | OFF |
+| `-PdisableStampDepthWrite` | stamp depth-WRITE off (**diagnostic only**; re-opens the `#13` two-portal artifact; superseded by `-PdisableStampDepthTest` for the seam work) | OFF |
 
 **IS5-SEAM census** — always on, 1 Hz, only within 3 blocks of the aperture. Prints
-`distToAperture`, `meshNull`, and the near-plane clip's `kept/clipped/dropped` triangle counts. This is
-what refuted two hypotheses in one run; read it before theorising.
+`distToAperture`, `meshNull`, `stamp=<pipeline actually selected>`, and the near-plane clip's
+`kept/clipped/dropped` triangle counts. This is what refuted two hypotheses in one run; read it
+before theorising.
 
 ---
 

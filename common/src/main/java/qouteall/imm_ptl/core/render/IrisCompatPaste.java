@@ -37,7 +37,8 @@ import java.util.OptionalDouble;
  * {@code migration/IRIS_SHADERS_ON_DESIGN.md} §2.3 / §1 IS1 deliverable 3, deviations D19/D20;
  * block-era recipe carrier = {@code migration/FBO_PRECEDENT_MINING.md} §3 + §8-7).
  *
- * <p>Two pipelines + their draw drivers, consumed ONLY by {@code IrisCompatOn262Renderer}:
+ * <p>Two shipped pipelines + their draw drivers, consumed ONLY by {@code IrisCompatOn262Renderer}
+ * (plus lever-selected diagnostic stamp siblings — see {@code selectStampPipeline}):
  * <ul>
  *   <li><b>{@code portalAreaSample}</b> (D20 — IP's {@code PORTAL_DRAW_FB_IN_AREA} re-expressed):
  *       draws the PORTAL-SHAPED view-area mesh (the {@link ViewAreaRenderer} geometry route,
@@ -99,6 +100,14 @@ public class IrisCompatPaste {
     private static RenderPipeline PORTAL_AREA_SAMPLE;
     /** IS5-MB attribution sibling: identical but depth WRITE off. Selected only by the lever. */
     private static RenderPipeline PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE;
+    /** IS5-SEAM §2d sibling: identical but the depth state is fully DISABLED (Optional.empty()).
+     *  Selected only by -Dseamlessportals.disableStampDepthTest. */
+    private static RenderPipeline PORTAL_AREA_SAMPLE_NO_DEPTH_TEST;
+    /** IS5-SEAM solid-paint sibling: fragment outputs vColor, ignoring the sample (the multiply
+     *  tint is blind on black content). Selected only by -Dseamlessportals.debugStampSolid. */
+    private static RenderPipeline PORTAL_AREA_SOLID;
+    /** IS5-SEAM solid + depth fully disabled — the two levers composed. */
+    private static RenderPipeline PORTAL_AREA_SOLID_NO_DEPTH_TEST;
     /** IS5-RC: one line per session naming the stamp pipeline actually bound (see stampPortalArea). */
     private static boolean stampPipelineReported = false;
     private static RenderPipeline PORTAL_STRAIGHT_COPY;
@@ -106,10 +115,16 @@ public class IrisCompatPaste {
     static {
         try {
             // The proven mod idiom for hand-built pipelines (PortalRenderTypes static init):
-            // register through vanilla's private RenderPipelines.register so the device
-            // validates/precompiles like any vanilla pipeline. NOTE (P-PASTE, port-note §1-C):
-            // registration does NOT enter iris's substitution key set — that map is populated
-            // from ~59 explicit vanilla RenderPipelines.* singletons, keyed by OBJECT IDENTITY.
+            // register through vanilla's private RenderPipelines.register. CORRECTED 2026-07-27
+            // (IS5-SEAM panel, bytecode-verified): register() is a bare PIPELINES_BY_LOCATION.put —
+            // it neither validates nor compiles. Compilation is LAZY (first draw via
+            // getOrCompilePipeline; a GLSL failure returns INVALID_PROGRAM without throwing) plus
+            // EAGER on every ShaderManager reload, which hard-fails the whole reload if ANY
+            // registered pipeline is invalid — i.e. registering makes a shader load-bearing for
+            // every F3+T/pack change. What registration buys is exactly that reload-recompile
+            // membership. NOTE (P-PASTE, port-note §1-C): registration does NOT enter iris's
+            // substitution key set — that map is populated from ~59 explicit vanilla
+            // RenderPipelines.* singletons, keyed by OBJECT IDENTITY.
             Method registerMethod = RenderPipelines.class.getDeclaredMethod("register", RenderPipeline.class);
             registerMethod.setAccessible(true);
 
@@ -187,6 +202,117 @@ public class IrisCompatPaste {
             // while every copy silently no-opped: a wrongly-discriminated corruption mode.)
             Helper.err("[IrisCompatPaste] FAILED to create paste pipelines — compat paste will no-op");
             t.printStackTrace();
+        }
+
+        // IS5-SEAM DIAGNOSTIC SIBLINGS — a SEPARATE failure domain, deliberately OUTSIDE the
+        // shipped try/catch above: nothing in here can reach the shipped catch (whose "compat
+        // paste will no-op" discriminator must never contradict arePipelinesReady()), and the
+        // helper swallows everything, so a diagnostic failure can never kill this <clinit>.
+        registerSeamDiagnosticSiblings();
+    }
+
+    /**
+     * IS5-SEAM (2026-07-27, panel-hardened) — build + VALIDATE + register the lever-selected
+     * diagnostic stamp siblings.
+     *
+     * <p><b>Lever-gated:</b> a sibling is created ONLY when the lever that can select it is set
+     * ({@code -PdisableStampDepthTest} / {@code -PdebugStampSolid}). A default (no-lever) run
+     * therefore carries ZERO new pipelines — which matters because registration is permanent and
+     * {@code ShaderManager.apply} eagerly precompiles EVERY registered pipeline on EVERY resource
+     * reload (F3+T / pack change) and hard-fails the reload if any is invalid. Unconditional
+     * registration would have made the diagnostic-only shader load-bearing for every session.
+     *
+     * <p><b>Compile-validated before registration (the panel's HIGH):</b>
+     * {@code RenderPipelines.register} is a bare map-put — it neither compiles nor validates, so a
+     * registration try/catch is dead against shader defects, and a broken {@code .fsh} would
+     * otherwise surface only at first draw (silently SKIPPED when {@code GlRenderPass.VALIDATION}
+     * is off, a throw when on) AFTER the once-only report had already printed the sibling as
+     * usable — the defective-instrument class this project keeps paying for. So each sibling is
+     * run through {@code GpuDevice.precompilePipeline(pipeline).isValid()} FIRST; an invalid one
+     * is NEVER registered (no reload blast radius) and its field stays null, which the selection's
+     * existing degradation turns into a loud VOID on the IS5-RC line. This runs at first compat
+     * use, on the render thread, resources loaded — the same moment the shipped pipelines lazily
+     * compile today.
+     */
+    private static void registerSeamDiagnosticSiblings() {
+        boolean wantNoTest = qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_TEST_DISABLED_LEVER;
+        boolean wantSolid = qouteall.imm_ptl.core.IPGlobal.debugStampSolid;
+        if (!wantNoTest && !wantSolid) {
+            return; // default runs: zero new pipelines, zero new reload surface
+        }
+        try {
+            Method registerMethod = RenderPipelines.class.getDeclaredMethod("register", RenderPipeline.class);
+            registerMethod.setAccessible(true);
+
+            if (wantNoTest) {
+                // §2d: the depth state fully DISABLED (Optional.empty() — the proven
+                // PORTAL_STRAIGHT_COPY shape; GL disables depth WRITES along with the test).
+                PORTAL_AREA_SAMPLE_NO_DEPTH_TEST = buildValidateRegister(
+                    registerMethod, "portal_area_sample_nodepthtest", "core/portal_area_sample",
+                    null, "-PdisableStampDepthTest");
+            }
+            if (wantSolid) {
+                // Solid-paint discriminator: fragment = vColor, sample ignored
+                // (portal_area_solid.fsh — the multiply tint is blind on black content, so
+                // coverage needed a content-free paint). Both depth variants are built whenever
+                // the solid lever is set; SOLID+NO-DEPTH-TEST is only SELECTED with both levers.
+                PORTAL_AREA_SOLID = buildValidateRegister(
+                    registerMethod, "portal_area_solid", "core/portal_area_solid",
+                    new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true), "-PdebugStampSolid");
+                PORTAL_AREA_SOLID_NO_DEPTH_TEST = buildValidateRegister(
+                    registerMethod, "portal_area_solid_nodepthtest", "core/portal_area_solid",
+                    null, "-PdebugStampSolid -PdisableStampDepthTest");
+            }
+        } catch (Throwable t) {
+            // Never let a diagnostic escape into the <clinit> (ExceptionInInitializerError would
+            // kill the whole compat path over a probe). Null fields => VOID at selection time.
+            Helper.err("[IrisCompatPaste] IS5-SEAM diagnostic sibling registration failed —"
+                + " the affected lever legs are VOID (see selection report)");
+            t.printStackTrace();
+        }
+    }
+
+    /**
+     * Build one diagnostic sibling, prove it COMPILES ({@code precompilePipeline(...).isValid()}),
+     * and only then register it. Returns null — loudly — on any failure; the caller's field stays
+     * null and {@code selectStampPipeline} degrades to the shipped default with a VOID warning.
+     * {@code depthOrNull == null} means the depth state is fully disabled ({@code Optional.empty()}).
+     */
+    private static RenderPipeline buildValidateRegister(
+        Method registerMethod, String pipelinePath, String fragmentShaderPath,
+        DepthStencilState depthOrNull, String leverLabel
+    ) {
+        try {
+            var builder = RenderPipeline.builder()
+                .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/" + pipelinePath))
+                .withVertexShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", fragmentShaderPath))
+                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
+                .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withCull(false);
+            if (depthOrNull != null) {
+                builder = builder.withDepthStencilState(depthOrNull);
+            } else {
+                builder = builder.withDepthStencilState(Optional.empty());
+            }
+            RenderPipeline built = builder.build();
+            // THE VALIDITY GATE: compile NOW, through the device's live shader source. register()
+            // alone proves nothing (map-put), and an invalid registered pipeline would also
+            // hard-fail every later resource reload.
+            if (!RenderSystem.getDevice().precompilePipeline(built).isValid()) {
+                Helper.err("[IrisCompatPaste] IS5-SEAM sibling '" + pipelinePath + "' FAILED TO"
+                    + " COMPILE — every " + leverLabel + " leg is VOID until this is fixed"
+                    + " (pipeline NOT registered; selection will degrade with a VOID warning)");
+                return null;
+            }
+            return (RenderPipeline) registerMethod.invoke(null, built);
+        } catch (Throwable t) {
+            Helper.err("[IrisCompatPaste] IS5-SEAM sibling '" + pipelinePath + "' failed to"
+                + " build/register — every " + leverLabel + " leg is VOID until this is fixed");
+            t.printStackTrace();
+            return null;
         }
     }
 
@@ -277,10 +403,13 @@ public class IrisCompatPaste {
             // IS5-SEAM: the aperture mesh can come back null because EVERY triangle failed the
             // S14.36 near-plane clip (ViewAreaRenderer:313 keeps only viewZ < -EPS). Skipping the
             // stamp then leaves the window region holding whatever the deferred buffer had — pure
-            // black — which is the flash the user sees when crossing the seam slowly. Attributed
-            // live: -PdebugTintStamp turned the whole window magenta EXCEPT that band, i.e. the
-            // stamp does not cover it; and it reproduces at pre-session 082d533, so it predates the
-            // motion-blur work and was simply masked by the smear.
+            // black — which is the flash the user sees when crossing the seam slowly. Measured
+            // live: -PdebugTintStamp turned the whole window magenta EXCEPT that band — which
+            // (INFERENCE CORRECTED 2026-07-27) proves no NON-BLACK fragment survives there, NOT
+            // that the stamp misses it: the tint is a MULTIPLY (portal_area_sample.fsh) and is
+            // blind on black sampled content; the solid/no-depth-test levers split the remaining
+            // branches (handoff §2c'/§2d). It reproduces at pre-session 082d533, so it predates
+            // the motion-blur work and was simply masked by the smear.
             //
             // THE GUARD IS LOAD-BEARING. A null mesh ALSO occurs whenever the portal is behind the
             // camera or off to the side, and full-screen stamping there would paint the destination
@@ -355,36 +484,44 @@ public class IrisCompatPaste {
                     OptionalDouble.empty(),
                     new RenderPass.RenderArea(0, 0, deferred.width, deferred.height) // fix (1)
                 )) {
-                    // IS5-MB attribution lever: swap to the no-depth-write sibling to test whether the
-                    // stamped DEST depth is what makes composite4 compute a huge per-pixel velocity
-                    // in the window region. DEFAULT keeps today's depth-writing pipeline.
+                    // IS5-SEAM / IS5-MB pipeline selection — two orthogonal diagnostic axes
+                    // (selectStampPipeline javadoc has the full matrix and precedence). DEFAULT
+                    // keeps today's depth-writing sampling pipeline.
                     //
-                    // IS5-RC SELF-REPORT (once-only). The previous stamp-depth A/B is UNUSABLE and must
-                    // be re-run, because this selection had THREE silent no-op paths and reported none
-                    // of them: the -P row might never have reached the JVM; the sibling pipeline might
-                    // have failed to register, in which case the `!= null` clause below silently falls
-                    // back to the depth-WRITING pipeline; or the stamp might not have run at all. The
-                    // run-config block covers the first. This line covers the other two by naming the
-                    // pipeline that was ACTUALLY bound at the point of effect. A leg whose log lacks
-                    // this line stamped nothing and measured nothing.
-                    boolean noDepthWrite =
-                        qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER
-                            && PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null;
+                    // IS5-RC SELF-REPORT (once-only). An earlier stamp-depth A/B was voided because
+                    // this selection had THREE silent no-op paths and reported none of them: the -P
+                    // row might never have reached the JVM; a requested sibling might have failed to
+                    // register, silently degrading to the base pipeline; or the stamp might not have
+                    // run at all. The run-config block covers the first. This line covers the rest by
+                    // naming the pipeline ACTUALLY bound at the point of effect, every lever input,
+                    // and every sibling's registration state. A leg whose log lacks this line stamped
+                    // nothing and measured nothing; a leg whose line carries a VOID warning must be
+                    // re-run, not adjudicated.
+                    StampSelection sel = selectStampPipeline();
                     if (!stampPipelineReported) {
                         stampPipelineReported = true;
                         Helper.LOGGER.info(
                             "[Seamless Portals] IS5-RC STAMP PIPELINE (once-only): bound={} ;"
-                                + " lever disableStampDepthWrite={} ; no-depth-write pipeline"
-                                + " registered={}. If the lever is set but bound=DEPTH-WRITE, the"
-                                + " sibling pipeline FAILED TO BUILD and this leg is VOID — the stamp"
-                                + " still wrote depth.",
-                            noDepthWrite ? "NO-DEPTH-WRITE" : "DEPTH-WRITE",
+                                + " levers: disableStampDepthTest={} disableStampDepthWrite={}"
+                                + " debugStampSolid={} debugTintStamp={} ; siblings USABLE"
+                                + " (noDepthTest/solid/solidNoDepthTest are lever-gated +"
+                                + " COMPILE-VALIDATED, false = not requested OR failed — see any"
+                                + " [IrisCompatPaste] err lines; noDepthWrite ships unconditionally"
+                                + " from the static block, same shader as the default):"
+                                + " noDepthTest={} noDepthWrite={} solid={} solidNoDepthTest={}{}",
+                            sel.name(),
+                            qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_TEST_DISABLED_LEVER,
                             qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER,
-                            PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null
+                            qouteall.imm_ptl.core.IPGlobal.debugStampSolid,
+                            qouteall.imm_ptl.core.IPGlobal.debugTintStamp,
+                            PORTAL_AREA_SAMPLE_NO_DEPTH_TEST != null,
+                            PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE != null,
+                            PORTAL_AREA_SOLID != null,
+                            PORTAL_AREA_SOLID_NO_DEPTH_TEST != null,
+                            sel.warnings().isEmpty() ? "" : (" ; " + sel.warnings())
                         );
                     }
-                    pass.setPipeline(
-                        noDepthWrite ? PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE : PORTAL_AREA_SAMPLE);
+                    pass.setPipeline(sel.pipeline());
                     pass.setUniform("Projection", combinedSlice);
                     pass.bindTexture(
                         "InSampler", sampleSource.getColorTextureView(),
@@ -398,6 +535,79 @@ public class IrisCompatPaste {
                 }
             }
         }
+    }
+
+    /** The stamp pipeline actually selected, its display name, and any degradation warnings. */
+    private record StampSelection(RenderPipeline pipeline, String name, String warnings) {}
+
+    /**
+     * IS5-SEAM / IS5-MB — the ONE place the stamp pipeline is chosen; also consumed by the census
+     * so every 1 Hz row names the pipeline in force. Two orthogonal diagnostic axes:
+     * <ul>
+     *   <li><b>PAINT</b>: SAMPLE (screen-space copy of the main target — the shipped stamp) vs
+     *       SOLID ({@code -PdebugStampSolid}: fragment paints vColor and ignores the sample — the
+     *       multiply tint is blind on black content, so coverage needed a content-free paint).</li>
+     *   <li><b>DEPTH</b>: DEFAULT (GEQUAL vs the snapshot depth, WRITE on — the #13 shape) vs
+     *       NO-WRITE ({@code -PdisableStampDepthWrite}: GEQUAL kept, write off — the IS5-MB
+     *       attribution lever) vs NO-TEST ({@code -PdisableStampDepthTest}: depth state fully
+     *       disabled — the §2d seam discriminator). GL disables depth WRITES together with the
+     *       test, so NO-TEST strictly contains NO-WRITE and takes precedence when both are set.</li>
+     * </ul>
+     * Siblings are lever-gated AND compile-validated at registration
+     * ({@link #registerSeamDiagnosticSiblings}): a null sibling here means its lever is off (then
+     * it is never requested) or its build/COMPILE failed (then the request degrades). A
+     * requested-but-null sibling binds the SHIPPED DEFAULT instead (never a different diagnostic —
+     * the operator must get either exactly what was asked for or the known baseline) and stamps a
+     * VOID warning into the once-only IS5-RC line: the leg still renders, but must be re-run, not
+     * adjudicated. {@code PORTAL_AREA_SAMPLE} is non-null on every path that reaches this method
+     * ({@code stampPortalArea} early-returns otherwise).
+     */
+    private static StampSelection selectStampPipeline() {
+        boolean wantSolid = qouteall.imm_ptl.core.IPGlobal.debugStampSolid;
+        boolean wantNoTest = qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_TEST_DISABLED_LEVER;
+        boolean wantNoWrite = qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER;
+        StringBuilder w = new StringBuilder();
+        if (wantNoTest && wantNoWrite) {
+            w.append("Both depth levers set: NO-DEPTH-TEST wins (GL disables depth writes together"
+                + " with the test, so it strictly contains NO-WRITE).");
+        }
+        RenderPipeline intended;
+        String name;
+        if (wantSolid && wantNoTest) {
+            intended = PORTAL_AREA_SOLID_NO_DEPTH_TEST;
+            name = "SOLID+NO-DEPTH-TEST";
+        }
+        else if (wantSolid && wantNoWrite) {
+            // SOLID+NO-WRITE is deliberately not built: solid legs adjudicate coverage, not the
+            // #13 write. Keep the write ON and say so.
+            intended = PORTAL_AREA_SOLID;
+            name = "SOLID";
+            w.append(" SOLID+NO-WRITE is not built: depth write stays ON this leg — do NOT"
+                + " adjudicate a depth-write A/B from it.");
+        }
+        else if (wantSolid) {
+            intended = PORTAL_AREA_SOLID;
+            name = "SOLID";
+        }
+        else if (wantNoTest) {
+            intended = PORTAL_AREA_SAMPLE_NO_DEPTH_TEST;
+            name = "SAMPLE+NO-DEPTH-TEST";
+        }
+        else if (wantNoWrite) {
+            intended = PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE;
+            name = "SAMPLE+NO-DEPTH-WRITE";
+        }
+        else {
+            intended = PORTAL_AREA_SAMPLE;
+            name = "SAMPLE(default)";
+        }
+        if (intended == null) {
+            w.append(" THE REQUESTED PIPELINE (").append(name).append(") FAILED TO REGISTER —"
+                + " binding the shipped default instead; THIS LEG IS VOID.");
+            intended = PORTAL_AREA_SAMPLE;
+            name = "SAMPLE(forced-fallback)";
+        }
+        return new StampSelection(intended, name, w.toString().trim());
     }
 
     /** IS5-SEAM: how close to the aperture SHAPE the camera must be for the degenerate-frame
@@ -444,11 +654,13 @@ public class IrisCompatPaste {
         seamCensusNanos = now;
         Helper.LOGGER.info(
             "[Seamless Portals] IS5-SEAM census (1Hz, camera within {} of the aperture):"
-                + " distToAperture={} meshNull={} | near-plane clip: kept={} clipped={} dropped={}"
+                + " distToAperture={} meshNull={} stamp={} | near-plane clip: kept={} clipped={}"
+                + " dropped={}"
                 + " — meshNull=true => the stamp is SKIPPED (full-screen fallback applies);"
                 + " meshNull=false with clipped>0 => the stamp covers only PART of the aperture and"
                 + " the black band is the rest; kept>0 clipped=0 dropped=0 => the clip is innocent.",
             SEAM_CENSUS_DIST, String.format("%.4f", distToAperture), meshNull,
+            selectStampPipeline().name(),
             ViewAreaRenderer.clipTrisKept, ViewAreaRenderer.clipTrisClipped,
             ViewAreaRenderer.clipTrisDropped);
     }

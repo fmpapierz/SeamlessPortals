@@ -341,15 +341,48 @@ public class IPGlobal {
         Boolean.getBoolean("seamlessportals.disableStampDepthWrite");
 
     // IS5-SEAM ATTRIBUTION LEVER (2026-07-27, DIAGNOSTIC ONLY — never ship it on).
-    // The black flash at the portal seam is measured to be a stamp COVERAGE gap: -PdebugTintStamp
-    // turns the whole window magenta EXCEPT that band, and the IS5-SEAM census shows the aperture
-    // mesh is never null (meshNull=false 23/23) and never fully dropped (dropped=0 23/23) but IS
-    // partially clipped on the approach (clipped=2 on 13/23 rows from ~1.2 blocks in). This lever
-    // passes every aperture triangle through UNCLIPPED, so one look settles whether the removed area
-    // is the band. COST while set: re-opens the S14.36 sky-wedge artifact the clip exists to prevent
-    // — and seeing those wedges is itself proof the lever took effect.
+    // The black flash at the portal seam: -PdebugTintStamp turns the whole window magenta EXCEPT
+    // that band (CORRECTED INFERENCE: the tint is a MULTIPLY, blind on black content — this proves
+    // no NON-BLACK fragment survives there, not that the stamp misses it; handoff §2c'), and the
+    // IS5-SEAM census shows the aperture mesh is never null (meshNull=false 23/23) and never fully
+    // dropped (dropped=0 23/23) but IS partially clipped on the approach (clipped=2 on 13/23 rows
+    // from ~1.2 blocks in). This lever passes every aperture triangle through UNCLIPPED, so one
+    // look settles whether the removed area is the band (it settled it: the clip is INNOCENT —
+    // kept=2 clipped=0 dropped=0 on 18/18 and the band survived). COST while set: re-opens the
+    // S14.36 sky-wedge artifact the clip exists to prevent — and seeing those wedges is itself
+    // proof the lever took effect.
     public static final boolean APERTURE_PLANE_CLIP_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableAperturePlaneClip");
+
+    // IS5-SEAM THE DEPTH-TEST DISCRIMINATOR (2026-07-27, DIAGNOSTIC ONLY — never ship it on).
+    // The seam handoff's §2d measurement: the census proves the aperture geometry COVERS the black
+    // band (kept=2 clipped=0 dropped=0 on 18/18 with the clip lever) while -PdebugTintStamp shows no
+    // fragment PAINTED there — so the stamp's fragments are being rejected (or are painting content
+    // that is itself black; see debugStampSolid below, which splits that). This lever swaps the stamp
+    // to a sibling pipeline whose depth state is fully DISABLED (Optional.empty(), the shape
+    // PORTAL_STRAIGHT_COPY uses): band fills in => the GEQUAL test against the snapshot depth was
+    // rejecting the stamp at the seam; band PERSISTS => depth rejection is NOT THE SOLE cause — do
+    // NOT exonerate the depth test from this leg alone (this pipeline still paints SAMPLED content,
+    // so black dest content keeps the band black regardless of depth) — run the debugStampSolid
+    // ladder below, which is what actually separates the branches (handoff §2d matrix).
+    // COST while set: GL's depth-test disable also disables depth WRITES, so the #13 two-portal
+    // occlusion write is off too, and the stamp ignores real occluders in front of the portal.
+    public static final boolean STAMP_DEPTH_TEST_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableStampDepthTest");
+
+    // IS5-SEAM THE SOLID-PAINT DISCRIMINATOR (2026-07-27, DIAGNOSTIC ONLY). The magenta coverage
+    // tint (-PdebugTintStamp) is a MULTIPLY in the stamp's fragment shader (tint × sampled): on
+    // sampled content that is already pure black the tint is invisible, so "the band did not turn
+    // magenta" CANNOT distinguish "no fragment landed" from "fragments landed painting black
+    // content". This lever swaps the stamp to a sibling whose fragment shader outputs the vertex
+    // color DIRECTLY (solid WHITE; solid MAGENTA when combined with -PdebugTintStamp), ignoring the
+    // sample. Band turns solid => fragments pass and survive there, and the black is the SAMPLED
+    // dest content (hunt the nested dest render); band stays black => no fragment survives there
+    // (depth-rejected, or overpainted after the stamp). Composes with -PdisableStampDepthTest
+    // ONLY; combined with -PdisableStampDepthWrite the depth write stays ON (SOLID+NO-WRITE is
+    // deliberately not built — the once-only IS5-RC STAMP PIPELINE line says so).
+    public static final boolean debugStampSolid =
+        Boolean.getBoolean("seamlessportals.debugStampSolid");
 
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
