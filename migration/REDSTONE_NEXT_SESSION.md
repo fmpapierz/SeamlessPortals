@@ -10,15 +10,116 @@ stale by four commits the last time it was read.
 2. `migration/REDSTONE_A_SPEC.md` — the (a) spec. **Its top banner overrides the body** where they differ.
 3. This file.
 
+## ★★ DECISIONS CHANGED 2026-07-26 — THESE OVERRIDE `REDSTONE_RECON.md` §0 ★★
+
+**Read this before §0, and do not "restore" the old rules from §0 alone.** Both changes are the
+USER's, taken live on 2026-07-26, and both contradict text that still stands unedited in the recon.
+Commit `7766010` exists because a design panel once made change #2 *without* the user's word.
+
+| # | change | supersedes | lever |
+|---|---|---|---|
+| 1 | **Only PLAYER writes mirror.** Placing and breaking by hand mirror; pistons, dispensers, gravity, fluid spread, `/setblock`, `/fill` are classified and declined. | §0.8 "non-item writes → ACCEPT BEST-EFFORT" | `-PdisableSeamPlayerOnly` |
+| 2 | **Only EXACTLY-ALIGNED seams mirror.** Offset (sub-block phase) seams are declined; offset support is deferred. | §0.7 "phase-offset target = GREATEST OVERLAP … deliberately reproduces the half-block jog" | `-PdisableSeamExactOnly` |
+
+The architecture was built so both are *policy*, not inlined conditions —
+`SeamWriteSource` (who wrote it) × `SeamAlignment` (how it lines up) → `SeamMirrorPolicy` (the only
+place that decides). **Widening later is editing two methods in `SeamMirrorPolicy`.** `MACHINE`,
+`COMMAND`, `FLUID` and `OFFSET` are already named and classified rather than lumped into "no", so
+each is a one-line admission when its turn comes. The user's stated requirement was that this
+generalise "to everything else easily, including offset mirroring" — that is what those seams are for.
+
+## ALSO LANDED 2026-07-26
+
+- **Same-dimension portals update live at any distance** — both defects fixed, user-confirmed
+  ("WORKS, SAME DIM DISTANCE PORTALS ARE AUTO UPDATING!"). See the CLOSED section below.
+- **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
+  player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
+
 ## WHERE THINGS STAND (2026-07-26, latest session)
 
 - Sub-feature **(a)** complete and user-verified.
 - Sub-feature **(b) step 1** done — the cross-seam neighbour primitive exists.
 - **(b) step 2 — rails CONNECTING across the plane — NOT STARTED. THIS IS THE NEXT FEATURE WORK.**
-  Nothing consumes the primitive yet. See `REDSTONE_B_SPEC.md` and the re-check notes on it.
+  Nothing consumes the primitive yet. See `REDSTONE_B_SPEC.md`, the re-check notes on it, and the
+  paste-verbatim starter at **`migration/REDSTONE_B_PROMPT.md`**.
 - **The same-dim live-update bug is FIXED and user-confirmed** — see the CLOSED section below. It was
   never a mirror defect; it was a client render-path defect that any block change behind a same-dim
   portal hit, and the mirror was only how it was noticed.
+
+## ★ OPEN ITEMS, in the order they were raised
+
+### 1. CLIP A MIRRORED BLOCK AT THE SEAM (user feature, design done, NOT implemented)
+
+Today a mirrored aperture block renders as a **whole cube** in the source world. Nothing clips source
+terrain at the plane — through the portal it looks right only because the stencil+depth **overwrite**
+paints the destination over that region. Stand to the side and the far half is simply drawn.
+Wanted: the source copy is cut at the plane, and everything beyond comes from the mirrored copy.
+
+**No per-block half-models are needed, and they are the wrong answer anyway** — an offset seam needs
+an arbitrary cut fraction, not a fixed half, so real-time clipping is what generalises to the offset
+work; fixed half-models do not. Two routes, adversarially verified:
+
+| route | correct? | cost |
+|---|---|---|
+| **Compile-time** — clamp quads in `SectionCompiler.compile` → `ModelBlockRenderer.tesselateBlock` (geometry is still unpacked floats in block-local `[0,1]`) | ✘ **Permanently wrong for SAME-DIM portals**: one dimension = one `ViewArea`, whose meshes are drawn in the SAME frame by the main camera and the portal camera on opposite sides of the plane. Whichever half is baked, one view is wrong. Also view-dependent generally (an obsidian frame has portals on both sides), and **silently no-ops under Sodium**. | cheap |
+| **Draw-time** — `gl_ClipDistance` via the existing `seamlessportals_ClipPlane` | ✔ correct in every view, free view-dependence, **already has a Sodium path** in this tree | bigger |
+
+**★ The intended mechanism is already written and dead.**
+`FrontClipping.setupOuterClipping` — javadoc: *"clips source-dim geometry PAST the portal plane …
+used on the main camera pass"* — **is never invoked on the live path.** The main pass explicitly
+resets the plane to keep-all at `renderLevel` HEAD, and the only surviving main-pass clip is the
+per-ENTITY bracket. Start there.
+
+The obstacle for draw-time: the plane is GLOBAL per draw, so seam sections need their own bracketed
+draw or a per-vertex "clippable" flag. Recommended route regardless — compile-time cannot be made
+correct on same-dim portals, which is where the user tests.
+
+⚠ **Fluids and block entities will not clip either way** — they bypass the block-quad path
+(`SectionCompiler` routes fluids to `FluidRenderer.Output` and only *collects* block entities).
+⚠ Also note the recorded gotcha: an oblique clip plane must not be coplanar with the geometry it
+cuts, which is exactly what a cut-at-the-plane face is. Draw-time clipping needs the existing
+`ADJUSTMENT` epsilon; compile-time sidesteps it but loses on the points above.
+
+### 2. BIND-TIME RECONCILIATION MIRRORS NON-PLAYER BLOCKS (user-found, live)
+
+`/portal complete_bi_way_bi_faced_portal` over natural terrain now mirrors those blocks into the
+source world; before the player-only change it did not. Cause: the policy gates the live write
+DRIVER, but not `SeamMirror.reconcileApertureOnBind`, which carries blocks already sitting in the
+aperture when a portal binds — at bind time there IS no write source to consult. Options: drop
+bind-time reconciliation (loses §0.4's "relight over a surviving rail"); persist source-side
+provenance; or reconcile only cells already in `mirrorCreatedCells`. **Needs a design call.**
+
+### 3. SOLID BLOCKS SHOULD PLACE INTO A WATER-OCCUPIED FAR HALF (polish)
+
+Refuse-on-conflict treats water as occupied. Vanilla lets a solid block displace water, so the seam
+should too. `SeamMirror.destinationIsFree` accepts only air/placeholder today. Note the user's
+finding that the far half is normally **unoccupiable**, so water was the only way to construct the
+conflict case at all.
+
+### 4. PLACED BLOCK FLASHES XRAY/TRANSPARENT FOR A SPLIT SECOND (polish)
+
+Appeared after same-frame mirroring. Suspect a section rebuild racing the prediction — neighbour
+state momentarily stale, so face culling is computed wrong for one frame. Watch the PLACED block,
+not the mirrored one.
+
+### 5. THE SUITE IS SLOW, and the user has said so
+
+Six gate configurations at ~2 min each. The RS gates are a small fraction of each run — legs 1–7,
+6a/6b and leg 5 are crossing/teleport tests, and leg 5 *closes and reopens the world*. **Proposed:
+an RS-only lever** skipping those. Do NOT shrink the fixed `waitTicks` instead: the hazards list says
+wait for preconditions, never a tick count, and one flaky gate was already fixed that way this session.
+
+## GATE MATRIX (as of 2026-07-26)
+
+| configuration | proves |
+|---|---|
+| `-PapertureTeardownTest -PseamMirrorProbe` | canonical (a) |
+| `-PapertureTeardownTest -PdisableAperturePassthrough` | the master lever restores stock IP |
+| `-PapertureTeardownTest -PseamDeliveryTest` | same-dim remesh, near AND far arms |
+| `… -PseamDeliveryTest -PdisableSameDimRemesh` | remesh inversion (both arms) |
+| `… -PdisableSeamPlayerOnly` | player-only inversion |
+| `… -PdisableSeamExactOnly` | exact-only inversion |
+| `… -PdisableSeamPrediction` | same-frame inversion |
 
 ## ★ SUB-FEATURE (a) IS COMPLETE — 2026-07-26, tip `7070101`
 
@@ -407,6 +508,29 @@ Hypotheses as they stood before the measurement, with their verdicts:
 to mechanism. One probe run, on a fixture that put the destination beyond render distance, settled it.
 
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
+
+- **★ ASSERT THE OUTCOME THE USER CAN SEE, NOT THE REQUEST YOUR CODE ISSUED.** Three gates in a row
+  passed on a fix that did nothing:
+  1. *"some rebuilds were scheduled"* — passed while the queue had saturated and **dropped the very
+     write under test**;
+  2. *"THIS section was scheduled"* — passed while the scheduling was appended to a list the next
+     frame's `reset()` cleared **unread**, i.e. structurally inert;
+  3. *"THIS section's mesh was REPLACED"* — the first that could fail for the reason the user saw.
+  Each sat one step short of reality. Find the last object the engine mutates before the pixels, and
+  hook that. **Also: a fix that logs only on failure makes "did nothing" and "never ran"
+  indistinguishable in a live log** — that cost a whole extra round.
+- **★ GATES MUST BE LEVER-AWARE.** When player-only landed, every RS gate wrote with `/setblock` and
+  went red — correctly. But a gate whose verdict does not INVERT under its own disable lever cannot
+  tell "the fix works" from "the defect never existed here". Two gates had to be taught both
+  directions on the same run.
+- **★ A FIXTURE THAT FAILS FOR THE WRONG REASON IS WORSE THAN ONE THAT PASSES.** A test destination
+  moved 60→600 blocks did fail — reproducing a *different* defect, which was then written up as the
+  answer. Change one variable, not two.
+- **The client and the integrated server are DIFFERENT THREADS.** `SeamWriteContext` began as a
+  plain static documented "server-thread confined" — true until client brackets were added. Now a
+  `ThreadLocal`. Any new shared static in this feature must assume both.
+- **`git add -A` sweeps in the untracked build scaffolding.** Done by accident on 2026-07-26,
+  reverted in `3f29e08`. Use explicit file lists.
 
 - **`ApertureOccupancy.areaPredicate()` is load-bearing in THREE systems at once**: flood-fill
   boundary, frame matchability, ignition validity. Two bad entries broke a different one each:
