@@ -406,6 +406,12 @@ loom {
             // paints and into which target, then whether that footprint vanishes in-window —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandLocator=true
             if (project.findProperty('handLocator') == 'true') { vmArg('-Dseamlessportals.handLocator=true') }
+            // IS5-HAND-DRAW draw-time state dump (DIAGNOSTIC, default OFF): the COMPLETE GL
+            // state at REAL hand-feature draws (trySetup RETURN, pre-draw-call), 1Hz, window
+            // and ambient — the only read that survives per-draw state applies and pass-tail
+            // resets; the window-vs-ambient field diff names the eater —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandDrawDump=true
+            if (project.findProperty('handDrawDump') == 'true') { vmArg('-Dseamlessportals.handDrawDump=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -705,6 +711,12 @@ loom {
             // paints and into which target, then whether that footprint vanishes in-window —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandLocator=true
             if (project.findProperty('handLocator') == 'true') { vmArg('-Dseamlessportals.handLocator=true') }
+            // IS5-HAND-DRAW draw-time state dump (DIAGNOSTIC, default OFF): the COMPLETE GL
+            // state at REAL hand-feature draws (trySetup RETURN, pre-draw-call), 1Hz, window
+            // and ambient — the only read that survives per-draw state applies and pass-tail
+            // resets; the window-vs-ambient field diff names the eater —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandDrawDump=true
+            if (project.findProperty('handDrawDump') == 'true') { vmArg('-Dseamlessportals.handDrawDump=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
