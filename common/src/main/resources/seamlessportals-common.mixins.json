@@ -75,6 +75,8 @@
     "passthrough.MixinBaseRailBlockMirrorAuthority",
     "passthrough.MixinRailStateSeam",
     "passthrough.MixinBaseRailBlockSeamSlope",
+    "passthrough.MixinPoweredRailBlockSeamSignal",
+    "passthrough.MixinRedstoneLampBlockSeamSignal",
     "passthrough.MixinBlockItemPlaceSource",
     "passthrough.MixinServerPlayerGameModeBreakSource",
     "passthrough.ServerLevelDeliveryProbeMixin",

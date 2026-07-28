@@ -143,6 +143,13 @@ public abstract class LevelChunkSetBlockStateMixin {
             // player-only source policy when the pair already exists — see the shape-sync note there.
             boolean refinement = !settled.isAir() && oldState.is(settled.getBlock());
             SeamMirror.onSeamCellChanged(serverLevel, pos, settled, refinement);
+            // RS (c) D1 DISPATCH — a settled state change at a bound seam cell queues a
+            // neighborChanged for the counterpart cell across each binding, flushed at tick end.
+            // AFTER the mirror call on purpose: the mirror's own writes (its far half, the
+            // authority revert) run nested inside that call under the applying bracket, where
+            // SeamSignalContinuity skips itself — so exactly one dispatch per originating change.
+            com.warwa.seamlessportals.passthrough.SeamSignalContinuity
+                .onSeamCellChanged(serverLevel, pos, settled);
         }
 
         // FRAME mirroring — deliberately NOT behind sectionHasSeam. That index is derived from LIVE

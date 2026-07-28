@@ -100,6 +100,9 @@ public final class AperturePassthroughInit {
             // (b) rail continuity: reset the per-tick cross-write budget and serve cold-far-chunk
             // retries that have warmed up.
             SeamRailContinuity.onServerTickEnd(server);
+            // (c) signal continuity: reset the per-tick dispatch budget and flush queued
+            // cross-seam re-evaluations + cold-far retries that have warmed up.
+            SeamSignalContinuity.onServerTickEnd(server);
             // Retire and PRINT any delivery trace that has been open long enough for the client to
             // have answered. Retiring on a timer is what makes a stage that never ran report
             // NOT-REACHED rather than staying silent — see SeamDeliveryProbe's coverage note.

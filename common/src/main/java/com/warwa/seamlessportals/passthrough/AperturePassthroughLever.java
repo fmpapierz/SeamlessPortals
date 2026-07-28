@@ -390,6 +390,39 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_CLIP_PROBE =
         Boolean.getBoolean("seamlessportals.seamClipProbe");
 
+    // =============================================================================================
+    // SUB-FEATURE (c) — REDSTONE SIGNAL ACROSS THE SEAM. Fix levers DEFAULT-ON, probe DEFAULT-OFF,
+    // every one with a -P row in BOTH fabric/build.gradle blocks. Spec: migration/REDSTONE_C_SPEC.md.
+    // =============================================================================================
+
+    /**
+     * MASTER OFF-SWITCH for sub-feature (c) — {@code -Dseamlessportals.disableSeamSignal=true}.
+     * With this set no signal crosses the seam: the neighbor-signal union never consults the far
+     * side, the powered-rail walk stops at the plane, and no cross-seam dispatch is queued —
+     * exactly the (b)-era behaviour where the mirrored half shows powered but propagation dies at
+     * the seam. The single A/B attribution lever for the whole of (c).
+     */
+    public static final boolean DISABLE_SEAM_SIGNAL =
+        Boolean.getBoolean("seamlessportals.disableSeamSignal");
+
+    /**
+     * Disables cross-seam UPDATE DISPATCH while leaving cross-seam READS working —
+     * {@code -Dseamlessportals.disableSeamSignalDispatch=true}. With it set the far side can SEE
+     * power through the bridge but is never TOLD to look: a far circuit goes stale until something
+     * else touches it. "Can the far side see power" and "is it told to re-evaluate" are the two
+     * independent halves of (c), split for attribution exactly as (b) split read from write.
+     */
+    public static final boolean DISABLE_SEAM_SIGNAL_DISPATCH =
+        Boolean.getBoolean("seamlessportals.disableSeamSignalDispatch");
+
+    /**
+     * Per-event signal probe ({@code -Dseamlessportals.seamSignalProbe=true}, DEFAULT-OFF): union
+     * reads/hits, walk crossings, dispatch queue traffic and the budget counters —
+     * {@code SeamSignalContinuity.counters()} printed by the gametest legs and on demand.
+     */
+    public static final boolean SEAM_SIGNAL_PROBE =
+        Boolean.getBoolean("seamlessportals.seamSignalProbe");
+
     /**
      * RS-ONLY SUITE MODE ({@code -Dseamlessportals.rsOnly=true}, DEFAULT-OFF) — the recorded
      * proposal from 2026-07-26: the user has flagged the suite as slow, and the RS gates are a small
