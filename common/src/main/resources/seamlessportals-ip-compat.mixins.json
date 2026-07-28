@@ -22,6 +22,7 @@
     "sodium.MixinSodiumFullbrightProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe",
     "iris.MixinIrisHandRenderer_SeamDepthBracket",
+    "iris.MixinIrisHandRenderer_SubmitTap",
     "iris.MixinIrisSodiumTransformPatcher_ClipInject",
     "iris.MixinIrisCompositeRenderer_BloomApertureMask",
     "iris.MixinIrisCompositeRenderer_DestPrevWrite",

@@ -387,6 +387,12 @@ loom {
             // the stage-C cap anomaly (handoff §00a instrument 2) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampExecProbe=true
             if (project.findProperty('stampExecProbe') == 'true') { vmArg('-Dseamlessportals.stampExecProbe=true') }
+            // IS5-HAND-TAP iris HandRenderer canRender-vs-submit tap (DIAGNOSTIC, default OFF —
+            // log-only): per-pass canRender result + six-condition decomposition + body-entry
+            // proof + viewport/scissor, 1 Hz in-window + 0.1 Hz ambient CONTROL rows — splits
+            // "gate declines the hand" from "body runs but nothing rasterizes" (handoff §00c) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandSubmitTap=true
+            if (project.findProperty('handSubmitTap') == 'true') { vmArg('-Dseamlessportals.handSubmitTap=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -667,6 +673,12 @@ loom {
             // the stage-C cap anomaly (handoff §00a instrument 2) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampExecProbe=true
             if (project.findProperty('stampExecProbe') == 'true') { vmArg('-Dseamlessportals.stampExecProbe=true') }
+            // IS5-HAND-TAP iris HandRenderer canRender-vs-submit tap (DIAGNOSTIC, default OFF —
+            // log-only): per-pass canRender result + six-condition decomposition + body-entry
+            // proof + viewport/scissor, 1 Hz in-window + 0.1 Hz ambient CONTROL rows — splits
+            // "gate declines the hand" from "body runs but nothing rasterizes" (handoff §00c) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandSubmitTap=true
+            if (project.findProperty('handSubmitTap') == 'true') { vmArg('-Dseamlessportals.handSubmitTap=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
