@@ -118,6 +118,36 @@ public final class IrisTemporalTargetGuard {
 
     private IrisTemporalTargetGuard() {}
 
+    /**
+     * IS5-HAND-INLVL read-only peek: {@code {texId, w, h}} of the live pipeline's colortex0
+     * MAIN texture, or null on any failure (no pipeline / reflection miss / no target). Pure
+     * read — binds nothing, copies nothing, never throws. Consumed by
+     * {@code SeamHandInLevelProbe}'s cross-check readback ({@code glGetTextureSubImage}).
+     */
+    public static int[] peekColortex0() {
+        try {
+            WorldRenderingPipeline plRaw = Iris.getPipelineManager().getPipelineNullable();
+            if (!(plRaw instanceof IrisRenderingPipeline pipeline)) {
+                return null;
+            }
+            if (!ensureReflection()) {
+                return null;
+            }
+            RenderTargets rts = (RenderTargets) fRenderTargets.get(pipeline);
+            if (rts == null || rts.getRenderTargetCount() < 1) {
+                return null;
+            }
+            RenderTarget t = rts.get(0);
+            if (t == null) {
+                return null;
+            }
+            return new int[]{t.getMainTexture(), t.getWidth(), t.getHeight()};
+        }
+        catch (Throwable th) {
+            return null;
+        }
+    }
+
     private static boolean ensureReflection() {
         if (reflectionReady) return true;
         if (reflectionAttempted) return false;

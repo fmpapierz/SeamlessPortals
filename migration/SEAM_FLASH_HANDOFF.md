@@ -86,6 +86,61 @@ treat it as UNCONFIRMED, not fact.
 Both shipped hand fixes stay (harmless, verifier-passed, band intact); the hand symptom itself
 is UNCHANGED and OPEN.
 
+### §00b THE 2026-07-28 CONTINUATION — the cap audit's STATIC verdict + both instruments BUILT
+
+**The cap-violation audit (instrument 2) — static half SETTLED, and it found more than a stale
+shader. Three facts, each independently checked:**
+1. **`vsh=capped` was LEVER-ECHO, not effect-proof**: the once-only line prints
+   `STAMP_HAND_DEPTH_CAP_DISABLED_LEVER ? "NOCAP" : "capped"` (IrisCompatPaste, the IS5-RC
+   report args) — it can never detect a stale/mismatched program. Leg 3's landing proof was
+   therefore weaker than recorded; its REFUTATION still stands via the stage-A evidence alone
+   (the hand is absent BEFORE any stamp of the frame, so the stamp cannot be the eater).
+2. **The built resources WERE capped in the stage-diff run** (timeline: cap commit `4161e83`
+   22:29:11 → `fabric/build/resources/main/...vsh` copied 22:35:44, cap line verified present →
+   run booted 22:58; no MC-side shader disk cache exists in the run dir).
+3. **Yet the measured stage-C writes are DOUBLY impossible under the declared stamp state**:
+   (a) GEQUAL-with-write can only RAISE a pixel's depth — B→C mean depth FELL 0.98→0.643-0.660
+   on every painted bin of 13/15 blocks; (b) a capped vsh cannot emit any fragment above 0.5
+   (per-vertex `min`, window-space-linear depth interpolation), and the sub-10cm hand-column
+   fragments would write exactly 0.5000 — measured 0.6597-0.6603 in a smooth planar gradient
+   (geometrically the aperture plane at ~7.6 cm, i.e. NATURAL nocap depth). And one frame's
+   stage C read 0.0000 flat — exactly the clear value, i.e. almost certainly a FAILED read
+   tabulated as zeros: SeamHandStageDiff never checks glGetError (the failure-sentinel trap,
+   again, in our own instrument).
+   ⇒ Either the EXECUTING GL state at the stamp is not the declared pipeline state (a
+   state-application/iris-interaction defect), or the old probe's deferred-buffer reads are
+   unreliable. DO NOT reason further from stage-C depth values until the executed-state probe
+   below has reported.
+
+**BOTH specified instruments are BUILT, adversarially verified (SOUND-WITH-FIXES ×1 +
+PASS-WITH-FIXES ×1, all 10 actionable findings landed), suite-gated:**
+- **IS5-HAND-INLVL** (`-PhandInLevelProbe`, DEFAULT OFF; `SeamHandInLevelProbe` on the landed
+  bracket mixin hooks + a compat-anchor call): five stage points
+  preSolid/postSolid/preTranslucent/postTranslucent/anchor; per stage the LIVE draw FBO column
+  (glGetError-sentineled color+depth, PACK-bracketed, try/finally-restored, att0/dims
+  identified) + iris colortex0 via read-only `IrisTemporalTargetGuard.peekColortex0()`
+  (glGetTextureSubImage, PACK-bracketed, WRONG-SURFACE?-flagged — CORROBORATIVE ONLY under
+  ping-pong flipping). Verdict signal = per-hop CHANGED-BINS with UNMEASURED/CROSS-TARGET
+  guards; depth bands hand=[0.9985,1] / shell=[0.95,0.9985) valid only while the depth bracket
+  is armed (armed-state recorded per emit). KNOWN READING TRAPS (verifier-proven from iris
+  1.11.2 bytecode): iris calls renderSolid from `iris$beginTranslucents` and renderTranslucent
+  from `iris$endLevelRender` — the postSolid→preTrans hop spans ALL translucent terrain; the
+  hand passes leave their last per-program framebuffer bound at RETURN, so pre/post can read
+  different targets (hence the CROSS-TARGET guard); "never drawn" includes iris's canRender
+  GATE (F1/spectator/sleeping/no-item) — split gate-vs-submit next if that branch lands.
+- **IS5-STAMP-EXEC** (`-PstampExecProbe`, DEFAULT OFF; `StampExecStateProbe` called right after
+  the stamp's drawIndexed — synchronous GL backend, state-as-executed): once-only FULL dump
+  (actual program id + attached vertex shader SOURCE + cap-substring presence) then 1 Hz
+  in-window lines of actual depth test/func/mask/clamp/range + draw FBO + viewport, all
+  glGetError-drained, liveness-announced. EXPECTED if all is well: func=GEQUAL writeMask=true
+  clamp=true range=[0,1] CAP-IN-SOURCE=true. ANY mismatch is the anomaly's mechanism.
+
+**THE LEG TO RUN:**
+`.\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandInLevelProbe=true -PstampExecProbe=true`
+(bracket stays DEFAULT ON — the hand-band discriminator needs it). Cross slowly BOTH directions
+several times. Before adjudicating: RUN CONFIG block + the THREE once-only lines (IS5-HAND-INLVL
+ARMED, IS5-STAMP-EXEC ARMED, IS5-RC STAMP PIPELINE) + read the FULL latest.log.
+
 ---
 
 ## §0 (superseded by §00 on the ROOT CAUSE; the clip work below remains SHIPPED for the void class)

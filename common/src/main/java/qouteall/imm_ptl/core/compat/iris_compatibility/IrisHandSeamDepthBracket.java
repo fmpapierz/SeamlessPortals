@@ -71,6 +71,23 @@ public final class IrisHandSeamDepthBracket {
 
     private IrisHandSeamDepthBracket() {}
 
+    /**
+     * IS5-HAND-INLVL corroboration reads (adversarial-verify finding 6): the probe's depth-band
+     * classification assumes the bracket remapped a drawn in-window hand to ≥0.999 — it must
+     * therefore RECORD whether the bracket was actually armed at capture time (the probe's
+     * post-pass captures run BEFORE {@code end()} in the mixin, so {@code armed} is still live
+     * there). Pure reads, probe-only consumers.
+     */
+    public static boolean isArmedNow() {
+        return armed;
+    }
+
+    /** IS5-HAND-INLVL: lever/self-disarm state for the probe's emit line. */
+    public static String statusForProbe() {
+        return "lever=" + (IPGlobal.HAND_SEAM_DEPTH_BRACKET_DISABLED_LEVER ? "DISABLED" : "on")
+            + " disarmedForSession=" + disarmedForSession;
+    }
+
     /** HEAD of both iris hand passes (via the mixin). */
     public static void begin() {
         if (disarmedForSession || IPGlobal.HAND_SEAM_DEPTH_BRACKET_DISABLED_LEVER) {
