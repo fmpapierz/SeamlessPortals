@@ -369,9 +369,15 @@ public final class SeamMirror {
                 BlockState reverted = authorityState.rotate(
                     SeamShadowBridge.inverse(binding.stateRotation()));
                 if (reverted != current) {
-                    level.setBlock(pos, reverted,
-                        net.minecraft.world.level.block.Block.UPDATE_ALL
-                            | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+                    SeamSignalContinuity.beginMirrorWrite(level, pos);
+                    try {
+                        level.setBlock(pos, reverted,
+                            net.minecraft.world.level.block.Block.UPDATE_ALL
+                                | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+                    }
+                    finally {
+                        SeamSignalContinuity.endMirrorWrite(level);
+                    }
                     if (level instanceof ServerLevel serverLevel) {
                         forceClientSync(authority, serverLevel, pos);
                         probe("reverted refined mirror half at", pos, serverLevel,
@@ -460,7 +466,14 @@ public final class SeamMirror {
             if (!existing.isAir()) {
                 BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
                 traceBegin(dest, destPos, air, sourceLevel, sourcePos, "aperture-clear");
-                boolean cleared = dest.setBlockAndUpdate(destPos, air);
+                SeamSignalContinuity.beginMirrorWrite(dest, destPos);
+                boolean cleared;
+                try {
+                    cleared = dest.setBlockAndUpdate(destPos, air);
+                }
+                finally {
+                    SeamSignalContinuity.endMirrorWrite(dest);
+                }
                 traceEnd(dest, destPos, cleared, air, sourceLevel, sourcePos, "aperture-clear");
                 forceClientSync(sourceLevel, dest, destPos);
                 clearedMirrors++;
@@ -488,9 +501,19 @@ public final class SeamMirror {
         // so a track on the far side reacts. Only the mirrored block's own self-resolution is
         // suppressed.
         traceBegin(dest, destPos, rotated, sourceLevel, sourcePos, "aperture-mirror");
-        boolean written = dest.setBlock(destPos, rotated,
-            net.minecraft.world.level.block.Block.UPDATE_ALL
-                | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+        // (c) D1 IDENTITY: name the exact cell this write targets, so the cross-seam dispatch
+        // skips only OUR write's driver echo — cascade flips at other seam cells inside this
+        // write's inline far fan-out must still dispatch. (Panel BLOCKER, 2026-07-27.)
+        SeamSignalContinuity.beginMirrorWrite(dest, destPos);
+        boolean written;
+        try {
+            written = dest.setBlock(destPos, rotated,
+                net.minecraft.world.level.block.Block.UPDATE_ALL
+                    | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+        }
+        finally {
+            SeamSignalContinuity.endMirrorWrite(dest);
+        }
         traceEnd(dest, destPos, written, rotated, sourceLevel, sourcePos, "aperture-mirror");
         forceClientSync(sourceLevel, dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The

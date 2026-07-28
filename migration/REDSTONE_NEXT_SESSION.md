@@ -37,6 +37,12 @@ generalise "to everything else easily, including offset mirroring" — that is w
 
 ## WHERE THINGS STAND (2026-07-27, latest session)
 
+- **★ (c) STEP 1 — REDSTONE SIGNAL ACROSS THE SEAM — LANDED AND GATED** (2026-07-27, this
+  session, the session AFTER the seam-clip one). The powered-rail chain crosses the seam in both
+  topologies and both directions, and a seam LAMP lights from a far-side source — see the
+  ★ (c) STEP 1 section below for the mechanism, the levers, the provisional decisions AWAITING
+  THE USER'S WORD, and the deferred items. Spec + panel record:
+  `migration/REDSTONE_C_SPEC.md` (its ★★ PANEL FOLD banner overrides its body).
 - **★ THE SEAM CLIP IS LANDED, GATED — AND DEFAULT OFF BY USER DECISION (2026-07-27)** — see
   the ★ SEAM CLIP section below. OPEN ITEM 1 is CLOSED as built; the user tested the
   walk-around live and DECLINED the view-dependent doorway semantics in favour of the FUTURE
@@ -57,6 +63,70 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **The same-dim live-update bug is FIXED and user-confirmed** — see the CLOSED section below. It was
   never a mirror defect; it was a client render-path defect that any block change behind a same-dim
   portal hit, and the mirror was only how it was noticed.
+
+## ★ (c) STEP 1 — REDSTONE SIGNAL ACROSS THE SEAM (landed 2026-07-27)
+
+**What works, gate-verified** (`rsSignalLegCoincident` arms A+L, `rsSignalLegDisjoint` arm B —
+run under `-PrsOnly` too; every arm outcome-asserted on the FAR world's `POWERED`/`LIT` block
+state after the full vanilla cascade, coverage-asserted on the bridge counters, lever-aware in
+every matrix direction):
+
+- **Topology A (obsidian, COINCIDENT):** a golden-rail chain through the aperture powers the far
+  side's own continuation rails and unpowers them again when the source drops; the deepest far
+  rail's walk crosses the seam back to the source-side power source (`walkCrossed` coverage).
+- **Topology B (boundary-phase, DISJOINT):** same, with NO mirror involved — the near seam-cell
+  flip queues a cross-seam re-evaluation (`dispatchDelivered` coverage), and the far rail's own
+  walk sees the near chain through the bridge.
+- **The seam LAMP (arm L):** a lamp pair at the seam cell lights when a redstone block appears
+  beside its FAR half and goes dark ~8-10 ticks after it is removed — the far-originated path:
+  far half lights vanilla-locally → the AUTHORITY RULE reverts it (machine write at the mirror
+  half) → D1 wakes the player half → its union read sees the far source → it lights itself →
+  shape sync propagates. The authority rule is obeyed, never amended: the player half computes,
+  the mirror half copies.
+
+**The mechanism** (`SeamSignalContinuity` + 2 mixins, spec §2): (c) NEVER mirrors a block — it
+bridges READS and forwards UPDATE DISPATCH, and each level's own vanilla logic re-derives its own
+blocks. (1) **R-UNION**: `hasNeighborSignal` at a bound seam cell unions the far image's
+neighborhood (hand-rolled with per-read chunk guards down through the conductor fan-out — never
+loads a chunk). (2) **R-WALK**: `PoweredRailBlock.findPoweredRailSignal`'s step probes redirect
+through `SeamShadowBridge.shadowFor` into the far level, re-entering VANILLA walk code there —
+depth cap rides across dimensions, multi-portal chains re-enter the wrap, and the whole ≤8×3 far
+envelope is residency-checked before redirecting. (3) **D1 DISPATCH**: a settled change at a seam
+cell queues `neighborChanged(counterpart, block, null)` (exact vanilla default-path shape — 26.2
+carries no fromPos and null Orientation everywhere), flushed at tick end with budget/dedupe/
+retry-on-warm; the skip for the mirror's own echo is by IDENTITY of the written cell
+(`beginMirrorWrite`/`endMirrorWrite` brackets in `SeamMirror`), NOT by the global `applying` flag
+— the panel's BLOCKER: the global skip swallowed genuine cascade flips at OTHER seam cells inside
+the mirror's inline far fan-out.
+
+Levers: `disableSeamSignal` (master), `disableSeamSignalDispatch` (reads stay, far side goes
+stale), probe `seamSignalProbe`. Note the WALK also dies under (b)'s `disableSeamShadow` (it
+consumes the (b) primitive); the union and dispatch ride the (a) registry and stay live there —
+the lamp arm proves that positively in the shadow-off matrix row.
+
+### ⚠ PROVISIONAL DECISIONS TAKEN AT LANDING — NEED THE USER'S WORD (the (b) precedent)
+
+| # | decision | rationale | where |
+|---|---|---|---|
+| 1 | **Signal is NOT a "machine write"** — (c) carries POWER through reads+dispatch and never mirrors a block; the far half's own evaluator writes are ordinary un-bracketed refinements the existing shape-sync/authority machinery already classifies. The `SeamWriteSource`×`SeamAlignment`×`SeamMirrorPolicy` seams are untouched. | the prompt's own parenthetical; keeps player-only intact | spec §0.1 |
+| 2 | **DISJOINT seams DO carry signal** (the (b) traversal precedent; the phase gate still blocks mirroring there) | a wire flush at a boundary plane is the topology-B rail case | spec §0.2 |
+| 3 | **Junction/curve switching from far signal is NOT shipped** (the panel showed it unreachable-and-sticky as designed; it is also a policy-adjacent geometry widening) | deferred to the D2 family with a wake-up rule | spec §6.8 |
+
+### Deferred/residual (all recorded in spec §6, panel-verified)
+
+Wire-to-wire decay (raw `getBlockState` in the evaluator — needs its own chokepoint); the
+general `SignalGetter` interface-mixin route (feasible per bytecode gates, needs a smoke test +
+worldgen guard); diode/comparator far-BLOCKSTATE visibility; detector-rail rail-graph dispatch;
+D2 delivery-forwarding (conductor relays, no-flip cases, edge-carrying pulses); the two-portal
+in-bracket cascade gate arm; independently-built pairs (converge via D1+union; diverge by design
+under the dispatch attribution lever); cold-far disagreement flicker (bounded, converges on
+warm); experimental-redstone Orientation remapping.
+
+**⚠ FOR THE LIVE ROUND:** far-side crossing needs the FAR level's own bindings, which exist only
+while the far portal entities TICK — the first gate run failed exactly there (OW forceloaded,
+nether side never bound; the leg now forceloads the nether counterpart and poll-asserts its
+binding). In live play this rides IP's destination chunk loading; **watch for one-way signal on
+far portals whose chunks are loaded but not entity-ticking.**
 
 ## ★ (b) STEP 2 — RAILS ACROSS THE SEAM (landed 2026-07-27)
 
@@ -321,6 +391,8 @@ red). The full matrix remains mandatory before a commit.
 | `… -PdisableSeamExactOnly` | exact-only inversion |
 | `… -PdisableSeamPrediction` | same-frame inversion |
 | `-PapertureTeardownTest -PseamMirrorProbe -PrsOnly -PenableSeamClip` | seam-clip ON — the cut renders (farGold 0.00), mechanism live. Default runs assert the OFF branch (whole cube, mechanism idle) |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamSignal` | (c) master inversion — both signal legs reproduce "propagation stops at the seam"; the mirrored half still shows powered (the user's (b)-era baseline) |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamSignalDispatch` | (c) dispatch inversion — far side can SEE power but is never TOLD to look: arm B far rails stale, arm L both lamp halves dark (the authority revert holds) |
 
 Iteration tip: add `-PrsOnly` to any RS-focused configuration (~3.5 min instead of ~6+). The five
 configurations run green on 2026-07-27 before commit were: rows 1–5 of this table (rows 1–2 as full
