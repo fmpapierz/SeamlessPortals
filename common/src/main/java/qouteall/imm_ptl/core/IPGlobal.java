@@ -435,6 +435,21 @@ public class IPGlobal {
     public static final boolean STAMP_HAND_DEPTH_CAP_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableStampHandDepthCap");
 
+    // IS5-HAND V2 — THE HAND-SLICING ROOT-CAUSE FIX, **DEFAULT ON** (2026-07-27). The stamp cap
+    // above was refuted as the dominant carrier (armed + byte-proven, symptom identical); the
+    // hand-region probe then measured the hand SHREDDED IN THE SNAPSHOT ITSELF on deep-crossing
+    // seconds — iris's own hand pass (compressed slice 0.5544..0.5560) loses its depth test to
+    // the seam's 5-10 cm grazing shell (depth 0.56..1.0) in the MAIN pass, before any compat
+    // machinery. Fix = bracket iris's HandRenderer.renderSolid/renderTranslucent with
+    // glDepthRange(0.999, 1.0) while the camera is within the crossing window (0.35, non-Mirror,
+    // main pass only): the hand beats the shell except a ~0.05 mm-equivalent hairline, intra-hand
+    // ordering preserved, and the capped stamp (<= 0.5) can never overpaint it. The once-only
+    // "IS5-HAND depth bracket ARMED" line is the mixin-landing proof (require=0 — an iris drift
+    // unhooks quietly; a lever-ON leg without that line is VOID, not a refutation).
+    // Pass this to force the bracket OFF and reproduce the slicing (attribution both ways) —
+    public static final boolean HAND_SEAM_DEPTH_BRACKET_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableHandSeamDepthBracket");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
