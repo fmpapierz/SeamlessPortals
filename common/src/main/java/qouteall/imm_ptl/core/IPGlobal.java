@@ -450,12 +450,12 @@ public class IPGlobal {
     public static final boolean HAND_SEAM_DEPTH_BRACKET_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableHandSeamDepthBracket");
 
-    // IS5-HAND-FUNC (2026-07-28, DEFAULT ON): force the declared reversed-Z GEQUAL at iris's
-    // hand passes — the measured LEQUAL depth-func leak is the hand arc's root cause (it
-    // inverted the depth bracket and the stamp cap). SeamHandDepthFuncFix javadoc has the
-    // full measurement chain. A/B reproduces the slicing.
+    // IS5-HAND-FUNC (2026-07-28, DEFAULT OFF — premise REFUTED by the draw-time dump: the
+    // hand draws re-apply their own LEQUAL per draw, so the HEAD force is inert for them and
+    // LEQUAL is the hand pass's NORMAL convention, not a leak. Kept as an opt-in experiment
+    // lever only). Enable with -PenableHandDepthFuncFix.
     public static final boolean HAND_DEPTH_FUNC_FIX_DISABLED_LEVER =
-        Boolean.getBoolean("seamlessportals.disableHandDepthFuncFix");
+        !Boolean.getBoolean("seamlessportals.enableHandDepthFuncFix");
 
     // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF). Declared here only so the
     // IS5-RC run-config block reports it (the probe reads its own property —
