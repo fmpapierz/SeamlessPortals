@@ -104,6 +104,42 @@ stale), probe `seamSignalProbe`. Note the WALK also dies under (b)'s `disableSea
 consumes the (b) primitive); the union and dispatch ride the (a) registry and stay live there —
 the lamp arm proves that positively in the shadow-off matrix row.
 
+### ★ THE LIVE ROUND (2026-07-27, same day) — real user failure, NOT YET REPRODUCED headlessly
+
+The user's live report: on a `/portal`-built same-dim pair, signal STOPPED at the seam, STUCK
+ON after the source was cut, and behaved half-dependently (which half the player placed, and
+from which side, decided whether it worked); levers lagged near a second signal-carrying
+portal. The armed probe log (fabric/runs/client, 2026-07-27 session): reads AND dispatch alive
+(1,987 walk crossings, 661/661 dispatches queued/delivered, ZERO cold declines) but a sustained
+write→revert→dispatch PING-PONG at the pair — the two halves persistently DISAGREED about
+shouldPower (bursts of up to 6 dispatch rounds/second to alternating halves).
+
+**Excluded by one-variable-at-a-time reproduction (all green, probe-gated legs kept in-tree):**
+same-dim COINCIDENT mid-block pair with Y-offset (`rsSignalSameDimCoincidentRepro`); a rail
+line THREADING a second nether portal's aperture (`rsSignalTwoSeamLineRepro`); the BI-FACED
+four-entity cluster with deterministically-adversarial binding order (flipped twins spawned
+first, coverage-asserted). A "crossing-preference" fix built on the cluster-order theory was
+REFUTED by its own inversion gate — flipped twins SHARE the portal transform, so both bindings
+answer along-axis queries identically; first-match was never wrong — and reverted same-day
+(lever retired; see the RETIRED note in `AperturePassthroughLever`).
+
+**Still-open suspects, ranked:** (1) the REAL client placement path (aim-half → which LEVEL the
+placement lands in; client prediction; the network bracket) — every user observation was
+half/side-dependent, and every repro bypassed the client via `writeAsPlayer`; (2)
+position-dependent far-end loading (bindings derive per-tick from TICKING portals; an
+intermittently-ticking far end yields exactly asymmetric views → the revert ping-pong) — the
+repro's PHASE C drops the far forceload and reports whether IP alone keeps the far end bound;
+(3) the real `/portal` command's geometry vs the hand-built pair (aperture size, global-portal
+flags). Next live round: rerun with `-PseamSignalProbe` AND `-PseamReconcileProbe` (binding
+add/remove accounting — it was NOT armed this round, so binding flicker was invisible), and
+have the user report F3 coords + which half they aim at when placing.
+
+**Also settled by the round:** the user's "boundary-phase seams don't carry signal" is the
+EXACT-ONLY decline working as decided — a wand/`/portal` boundary-phase pair has the source
+plane at .5 and the dest flush, a non-integral translation = OFFSET seam (the user's own
+2026-07-26 exact-only decision; the wand cannot build an aligned boundary-phase pair — the
+gate's topology-B fixture does it programmatically). Queue it with the offset/fractional work.
+
 ### ⚠ PROVISIONAL DECISIONS TAKEN AT LANDING — NEED THE USER'S WORD (the (b) precedent)
 
 | # | decision | rationale | where |
