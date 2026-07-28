@@ -279,6 +279,20 @@ public final class SeamSignalContinuity {
             }
             SeamShadow s = SeamShadowBridge.shadowFor(level, owner, currentPos, steppedPos, 1);
             if (s == null) {
+                // Instrument-gap closure (live round): a step that SHOULD cross (some binding maps
+                // it) but got no shadow is a silent seam-stop — the exact class the walk-DIED
+                // probe cannot see. Name it, with the per-binding reason.
+                if (AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
+                    for (SeamRegistry.SeamBinding b : owner.bindings()) {
+                        if (b.continuationToward(seamlessportals$stepOf(currentPos, steppedPos)) != null) {
+                            probeLog("walk step at seam cell {} toward {} did NOT redirect —"
+                                    + " binding declined (continuous={} mirrorable={} phase={})",
+                                currentPos, steppedPos, b.seamContinuous(), b.isMirrorable(),
+                                b.phase());
+                            break;
+                        }
+                    }
+                }
                 return null;
             }
             if (!s.farResident(steppedPos)) {
@@ -322,6 +336,19 @@ public final class SeamSignalContinuity {
             readFault(t);
             return null;
         }
+    }
+
+    /** The horizontal axis step from a walk's current cell to its stepped target (probe use only). */
+    private static Direction seamlessportals$stepOf(BlockPos from, BlockPos to) {
+        int dx = to.getX() - from.getX();
+        int dz = to.getZ() - from.getZ();
+        if (dz == 0 && dx != 0) {
+            return dx > 0 ? Direction.EAST : Direction.WEST;
+        }
+        if (dx == 0 && dz != 0) {
+            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+        }
+        return Direction.UP;   // not an axis step; continuationToward(UP) is null for every binding
     }
 
     /** Quarter turns swap the two straight axes; NONE/180 preserve them. Only straight shapes reach here. */
