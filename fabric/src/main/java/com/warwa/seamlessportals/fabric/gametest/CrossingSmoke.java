@@ -542,6 +542,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
                 rsSignalSameDimCoincidentRepro(context);
                 rsSignalTwoSeamLineRepro(context, py);
+                rsSignalCommandPairRepro(context);
             }
 
             // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate. Since the 2026-07-27
@@ -2935,6 +2936,221 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
             catch (Throwable t) {
                 SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO cleanup failed", t);
+            }
+        }
+    }
+
+    /**
+     * DIAGNOSTIC REPRO 3 — THE REAL COMMAND PATH: the pair is built exactly the way the user
+     * builds theirs, {@code /portal make_portal} (orientation derived from the PLAYER'S LOOK,
+     * plane mid-block over the aimed floor block) followed by
+     * {@code /portal complete_bi_way_bi_faced_portal} (the command's own four-entity completion,
+     * including its {@code removeOverlappedPortals} churn) — executed AS the gametest player via
+     * {@code /execute as @p}. Everything downstream (seam cells, approach, far continuation) is
+     * derived from the LIVE binding, so whatever geometry the command actually produces is what
+     * gets tested. Height-2 aperture and a north-south line, both untouched by the other repros.
+     */
+    private static void rsSignalCommandPairRepro(ClientGameTestContext context) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+            || AperturePassthroughLever.DISABLE_SEAM_SIGNAL_DISPATCH
+            || AperturePassthroughLever.DISABLE_SEAM_SHADOW
+            || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC) {
+            return;
+        }
+        final int cx = 5600, cy = 100, cz = 5600;   // near site; far end +60z −50y (user-shaped)
+        final BlockPos targetBlock = new BlockPos(cx, cy - 1, cz);   // the aimed floor block
+        final Vec3 destCenter = new Vec3(cx + 0.5, cy - 49, cz + 60 + 0.5);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Vec3> playerBefore = new AtomicReference<>(null);
+        final var POWERED = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
+
+        try {
+            runOnServer(context, server -> {
+                var players = server.getPlayerList().getPlayers();
+                if (!players.isEmpty()) {
+                    playerBefore.set(players.get(0).position());
+                }
+            });
+            runCommands(context, List.of(
+                "forceload add " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 76),
+                // Near site: a floor strip with a GAP so the player's aim ray hits exactly the
+                // target block's top face (a continuous floor would be hit earlier along the ray).
+                "fill " + (cx - 3) + " " + (cy - 1) + " " + (cz - 4) + " "
+                    + (cx + 3) + " " + (cy + 4) + " " + (cz + 6) + " minecraft:air",
+                "fill " + (cx - 3) + " " + (cy - 1) + " " + (cz + 2) + " "
+                    + (cx + 3) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
+                "setblock " + cx + " " + (cy - 1) + " " + cz + " minecraft:stone",
+                // Far platform under the future far aperture + continuation.
+                "fill " + (cx - 3) + " " + (cy - 51) + " " + (cz + 54) + " "
+                    + (cx + 3) + " " + (cy - 51) + " " + (cz + 64) + " minecraft:stone",
+                "fill " + (cx - 3) + " " + (cy - 50) + " " + (cz + 54) + " "
+                    + (cx + 3) + " " + (cy - 46) + " " + (cz + 64) + " minecraft:air",
+                // Aim: stand south of the gap, look north and down at the target block's top.
+                "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 27"
+            ));
+            context.waitTicks(10);
+            runCommands(context, List.of(
+                "execute as @p at @p run portal make_portal 1 2 minecraft:overworld "
+                    + destCenter.x + " " + destCenter.y + " " + destCenter.z));
+            context.waitTicks(10);
+            runCommands(context, List.of(
+                // Look at the spawned portal (its center hovers over the target block) and
+                // complete it the user's way.
+                "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 5",
+                "execute as @p at @p run portal complete_bi_way_bi_faced_portal"));
+            context.waitTicks(20);
+            // Move the player off the approach lane before rails go down.
+            runCommands(context, List.of(
+                "tp @p " + (cx + 3.5) + " " + cy + " " + (cz + 4.5) + " 180 0"));
+
+            // Find the seam binding at the expected LOWER aperture cell.
+            final BlockPos cellS = new BlockPos(cx, cy, cz);
+            AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bref =
+                new AtomicReference<>(null);
+            for (int attempt = 0; attempt < 30 && bref.get() == null; attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    if (cell != null) {
+                        cell.bindings().stream()
+                            .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                            .findFirst().ifPresent(bref::set);
+                    }
+                });
+                if (bref.get() == null) {
+                    context.waitTicks(10);
+                }
+            }
+            if (bref.get() == null) {
+                throw new AssertionError(LOG + "REPRO3 FAILED: the command-built pair never bound a"
+                    + " mirrorable seam at " + cellS + " — either make_portal aimed wrong (fixture)"
+                    + " or command-built pairs do not bind (defect)");
+            }
+            var b = bref.get();
+            final net.minecraft.core.Direction crossDir = b.crossDir();
+            final net.minecraft.core.Direction approachDir = crossDir.getOpposite();
+            final BlockPos destPos = b.destPos();
+            final BlockPos contC = b.continuationToward(crossDir);
+            final net.minecraft.core.Direction farStep = b.stateRotation().rotate(crossDir);
+            final BlockPos contC2 = contC.relative(farStep);
+            final BlockPos a1 = cellS.relative(approachDir);
+            final BlockPos a0 = a1.relative(approachDir);
+            final BlockPos powerPos = a0.relative(approachDir);
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3 geometry: S={} phase={} crossDir={}"
+                    + " D={} B1={} B2={} A1={} A0={} power={} R={} cluster={}",
+                cellS, b.phase(), crossDir, destPos, contC, contC2, a1, a0, powerPos,
+                b.stateRotation(), com.warwa.seamlessportals.passthrough.SeamRegistry
+                    .lookup(McHelper.getServerWorld(Level.OVERWORLD), cellS).bindings().size());
+            if (b.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
+                || !b.seamContinuous()) {
+                throw new AssertionError(LOG + "REPRO3 FIXTURE WRONG: phase=" + b.phase()
+                    + " continuous=" + b.seamContinuous());
+            }
+
+            // Rails: far scenery first, then approach, then the seam rail as the player.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                for (BlockPos p : List.of(contC, contC2)) {
+                    ow.setBlock(p.below(), Blocks.STONE.defaultBlockState(), 3);
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                for (BlockPos p : List.of(a1, a0)) {
+                    ow.setBlock(p.below(), Blocks.STONE.defaultBlockState(), 3);
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                writeAsPlayer(ow, cellS, Blocks.POWERED_RAIL.defaultBlockState());
+            });
+            context.waitTicks(10);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (!ow.getBlockState(destPos).is(Blocks.POWERED_RAIL)) {
+                    failure.set("mirror half at D=" + destPos + " is "
+                        + ow.getBlockState(destPos).getBlock());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO3 FAILED: " + failure.get());
+            }
+
+            // ---- POWER ON ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            context.waitTicks(60);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3 ON: a0={} a1={} S={} D={} b1={}"
+                        + " b2={} | {}",
+                    ow.getBlockState(a0).getValue(POWERED), ow.getBlockState(a1).getValue(POWERED),
+                    ow.getBlockState(cellS).getValue(POWERED),
+                    ow.getBlockState(destPos).getValue(POWERED),
+                    ow.getBlockState(contC).getValue(POWERED),
+                    ow.getBlockState(contC2).getValue(POWERED),
+                    com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+                if (!ow.getBlockState(contC).getValue(POWERED)
+                    || !ow.getBlockState(contC2).getValue(POWERED)) {
+                    failure.set("USER BUG REPRODUCED (ON, command pair): far rails dark — S="
+                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
+                        + ow.getBlockState(destPos).getValue(POWERED) + " b1="
+                        + ow.getBlockState(contC).getValue(POWERED) + " b2="
+                        + ow.getBlockState(contC2).getValue(POWERED));
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO3: " + failure.get());
+            }
+
+            // ---- POWER OFF ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+            context.waitTicks(60);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                boolean any = ow.getBlockState(cellS).getValue(POWERED)
+                    || ow.getBlockState(destPos).getValue(POWERED)
+                    || ow.getBlockState(contC).getValue(POWERED)
+                    || ow.getBlockState(contC2).getValue(POWERED);
+                if (any) {
+                    failure.set("USER BUG REPRODUCED (STUCK ON, command pair): S="
+                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
+                        + ow.getBlockState(destPos).getValue(POWERED) + " b1="
+                        + ow.getBlockState(contC).getValue(POWERED) + " b2="
+                        + ow.getBlockState(contC2).getValue(POWERED) + " | "
+                        + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO3: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3 PASS — the command-built bi-faced"
+                + " pair carried and released the signal. counters: "
+                + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+        }
+        finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(cx - 6, cy - 56, cz - 6,
+                            cx + 6, cy + 6, cz + 66), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                runCommands(context, List.of(
+                    "fill " + (cx - 3) + " " + (cy - 1) + " " + (cz - 4) + " "
+                        + (cx + 3) + " " + (cy + 4) + " " + (cz + 6) + " minecraft:air",
+                    "fill " + (cx - 3) + " " + (cy - 51) + " " + (cz + 54) + " "
+                        + (cx + 3) + " " + (cy - 46) + " " + (cz + 64) + " minecraft:air",
+                    "forceload remove " + (cx - 16) + " " + (cz - 16) + " "
+                        + (cx + 16) + " " + (cz + 76)
+                ));
+                Vec3 back = playerBefore.get();
+                if (back != null) {
+                    runCommands(context, List.of(
+                        "tp @p " + back.x + " " + back.y + " " + back.z));
+                }
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO3 cleanup failed", t);
             }
         }
     }
