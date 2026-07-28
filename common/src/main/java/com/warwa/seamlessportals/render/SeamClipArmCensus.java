@@ -69,6 +69,7 @@ public final class SeamClipArmCensus {
     private static long windowStartNanos = 0L;
     private static int framesArmed = 0;
     private static int framesDisarmed = 0;
+    private static int framesSuspended = 0;
     private static int framesNullPlane = 0;
     private static int baselineVoidFrames = 0;
     private static int baselineStraddleFrames = 0;
@@ -94,12 +95,16 @@ public final class SeamClipArmCensus {
      * @param corrUsed       the correction the arm actually passed (constant {@code -ADJUSTMENT},
      *                       or the IS5-SEAM crossing-window relax value) — the feed invariant is
      *                       {@code planeW == camToPlane − corrUsed}
+     * @param suspendedByFix true when the V2 crossing-window gate SUSPENDED the inner clip for
+     *                       this pass (the arm called disableClipping instead) — counted apart
+     *                       from other disarmed frames so the fix's activity is visible
      */
     public static void note(
         @Nullable Plane plane,
         FrontClipping.Snapshot armed,
         Vec3 destCameraPos,
-        double corrUsed
+        double corrUsed,
+        boolean suspendedByFix
     ) {
         try {
             if (plane == null) {
@@ -114,6 +119,21 @@ public final class SeamClipArmCensus {
                 + n.z * (destCameraPos.z - p.z);
             if (Math.abs(camToPlane) > GATE_DIST) {
                 return; // far from the plane: neither accumulate nor emit
+            }
+            if (suspendedByFix) {
+                framesSuspended++;
+                // Window markers still accumulate for suspended frames (the baseline says what
+                // the IP-constant arm WOULD have done — the crossing-second label).
+                double baselineWSusp = camToPlane
+                    + qouteall.imm_ptl.core.render.FrontClipping.ADJUSTMENT;
+                if (baselineWSusp >= 0) {
+                    baselineVoidFrames++;
+                }
+                else if (baselineWSusp > -NEAR_REACH) {
+                    baselineStraddleFrames++;
+                }
+                maybeEmit();
+                return;
             }
             if (!armed.enabled) {
                 framesDisarmed++;
@@ -170,12 +190,15 @@ public final class SeamClipArmCensus {
             return;
         }
         windowStartNanos = now;
-        if (framesArmed == 0 && framesDisarmed == 0 && framesNullPlane == 0) {
+        if (framesArmed == 0 && framesDisarmed == 0 && framesSuspended == 0
+            && framesNullPlane == 0) {
             return;
         }
         LOGGER.info(
             "[Seamless Portals] IS5-SEAM-ARM census (1Hz, |camToPlane| < {}): framesArmed={}"
-                + " disarmed={} nullPlane={} | camToPlane min={} max={} (kept-normal signed;"
+                + " SUSPENDED={} (V2 crossing-window clip suspension — nonzero on crossing seconds"
+                + " = the fix is live) disarmed={} nullPlane={} | camToPlane min={} max={}"
+                + " (kept-normal signed;"
                 + " NEGATIVE = camera on the clipped side) | planeW min={} max={} (the eye's clip"
                 + " distance vs the ARMED plane) | corr min={} max={} (-0.0100 = IP constant;"
                 + " below it = the crossing relax active) | WINDOW MARKERS baselineVoid={}"
@@ -184,7 +207,7 @@ public final class SeamClipArmCensus {
                 + " clearance < {}; relax ON => MUST be 0, nonzero = clearance outrun — scaled"
                 + " portal / extreme FOV; relax OFF leg => fires on approach, the pre-fix"
                 + " signature) | maxAbsFeedErr={} (expected ~0; planeW - camToPlane + corr).",
-            GATE_DIST, framesArmed, framesDisarmed, framesNullPlane,
+            GATE_DIST, framesArmed, framesSuspended, framesDisarmed, framesNullPlane,
             fmt(minCamToPlane), fmt(maxCamToPlane),
             fmt(minPlaneW), fmt(maxPlaneW),
             fmt(minCorr), fmt(maxCorr),
@@ -195,6 +218,7 @@ public final class SeamClipArmCensus {
         );
         framesArmed = 0;
         framesDisarmed = 0;
+        framesSuspended = 0;
         framesNullPlane = 0;
         baselineVoidFrames = 0;
         baselineStraddleFrames = 0;
