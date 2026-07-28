@@ -151,7 +151,10 @@ public final class SeamHandSubmitTap {
     /** Executed depth state at each pass RETURN (2026-07-28 third extension: transforms all
      *  healthy ⇒ the last layer is the DRAW-TIME state; the stamp already measured func=LEQUAL
      *  15/15 against a declared GEQUAL — if the hand draws execute under the same leaked func,
-     *  the depth bracket's [0.999,1] remap GUARANTEES total in-window loss instead of a win). */
+     *  the depth bracket's [0.999,1] remap GUARANTEES total in-window loss instead of a win).
+     *  NOTE with the IS5-HAND-FUNC fix armed (DEFAULT ON, landed after this column), the
+     *  RETURN read reports the fix's FORCED GEQUAL — the leak evidence then lives in the
+     *  fix's own found-func census, not here; GEQUAL here with the fix on is EXPECTED. */
     private static final String[] retDepthState = new String[2];
 
     private static String readRetDepthState() {

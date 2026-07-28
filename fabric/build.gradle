@@ -368,6 +368,13 @@ loom {
             // line before adjudicating any leg. Pass this to force it OFF and reproduce —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
             if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // IS5-HAND-FUNC (2026-07-28, FIX, DEFAULT ON): force the declared reversed-Z GEQUAL
+            // at iris's hand passes — the measured LEQUAL depth-func leak inverted the depth
+            // bracket ([0.999,1] remap lost to EVERYTHING) and caused the seam hand slicing.
+            // Check the once-only "IS5-HAND-FUNC ARMED" line + the found-func census before
+            // adjudicating any leg. Pass this to force it OFF and reproduce —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandDepthFuncFix=true
+            if (project.findProperty('disableHandDepthFuncFix') == 'true') { vmArg('-Dseamlessportals.disableHandDepthFuncFix=true') }
             // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF — four blocking 1Hz
             // readbacks inside the crossing window): captures the hand-region pixels at anchor /
             // post-snapshot / post-stamp / post-blit and diffs — the first changed hop names the
@@ -654,6 +661,13 @@ loom {
             // line before adjudicating any leg. Pass this to force it OFF and reproduce —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
             if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // IS5-HAND-FUNC (2026-07-28, FIX, DEFAULT ON): force the declared reversed-Z GEQUAL
+            // at iris's hand passes — the measured LEQUAL depth-func leak inverted the depth
+            // bracket ([0.999,1] remap lost to EVERYTHING) and caused the seam hand slicing.
+            // Check the once-only "IS5-HAND-FUNC ARMED" line + the found-func census before
+            // adjudicating any leg. Pass this to force it OFF and reproduce —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandDepthFuncFix=true
+            if (project.findProperty('disableHandDepthFuncFix') == 'true') { vmArg('-Dseamlessportals.disableHandDepthFuncFix=true') }
             // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF — four blocking 1Hz
             // readbacks inside the crossing window): captures the hand-region pixels at anchor /
             // post-snapshot / post-stamp / post-blit and diffs — the first changed hop names the

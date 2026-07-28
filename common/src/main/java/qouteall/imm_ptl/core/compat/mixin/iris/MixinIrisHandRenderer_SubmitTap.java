@@ -30,22 +30,29 @@ public class MixinIrisHandRenderer_SubmitTap {
 
     @Inject(method = "renderSolid", at = @At("HEAD"), require = 0)
     private void ip_tapBeginSolid(CallbackInfo ci) {
+        // Probe FIRST (captures the pristine pre-pass/pre-fix state — the found-func evidence
+        // lives in the fix's own census), then the IS5-HAND-FUNC fix (forces the declared
+        // GEQUAL for the pass — the hand arc's measured root cause).
         SeamHandSubmitTap.beginSolid();
+        qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.begin();
     }
 
     @Inject(method = "renderSolid", at = @At("RETURN"), require = 0)
     private void ip_tapEndSolid(CallbackInfo ci) {
         SeamHandSubmitTap.endSolid();
+        qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.end();
     }
 
     @Inject(method = "renderTranslucent", at = @At("HEAD"), require = 0)
     private void ip_tapBeginTranslucent(CallbackInfo ci) {
         SeamHandSubmitTap.beginTranslucent();
+        qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.begin();
     }
 
     @Inject(method = "renderTranslucent", at = @At("RETURN"), require = 0)
     private void ip_tapEndTranslucent(CallbackInfo ci) {
         SeamHandSubmitTap.endTranslucent();
+        qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.end();
     }
 
     @Inject(method = "canRender", at = @At("RETURN"), require = 0)
