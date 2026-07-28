@@ -405,6 +405,21 @@ public class IPGlobal {
     public static final boolean SEAM_CONTENT_PROBE =
         Boolean.getBoolean("seamlessportals.seamContentProbe");
 
+    // C4-SEAM — THE BLACK SEAM BAND's ROOT-CAUSE FIX, **DEFAULT ON** (2026-07-27). The band was
+    // the C3-BLOOM aperture mask: it clears colortex0 to black inside the nested dest composite
+    // and repaints only the aperture footprint, but its repaint drew WITHOUT the depth clamp the
+    // stamp draws under — the S14.36 CPU clip cuts at the CAMERA plane, not the 0.05 near plane,
+    // so at a crossing the 0..5 cm aperture shell rasterized for the stamp and near-clipped away
+    // for the mask: the stamp copied the mask's cleared black = the band. Attribution: the
+    // one-frame DrawCallTrace placed the mask's mesh build inside the nested pass; the content
+    // probe measured black COLOR over normal geometry depth; -PdisableIrisBloomApertureMask
+    // killed the band live (and brought the bloom ring back). Fix = depth-clamp the mask's
+    // repaints (exact raster parity with the stamp, the CHelper pair, DISABLED after — the
+    // composite chain's ambient state).
+    // Pass this to force the UNCLAMPED repaints and reproduce the band (attribution both ways) —
+    public static final boolean BLOOM_MASK_SEAM_CLAMP_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableBloomMaskSeamClamp");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
