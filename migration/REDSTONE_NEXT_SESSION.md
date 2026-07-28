@@ -123,16 +123,22 @@ REFUTED by its own inversion gate — flipped twins SHARE the portal transform, 
 answer along-axis queries identically; first-match was never wrong — and reverted same-day
 (lever retired; see the RETIRED note in `AperturePassthroughLever`).
 
-**Still-open suspects, ranked:** (1) the REAL client placement path (aim-half → which LEVEL the
-placement lands in; client prediction; the network bracket) — every user observation was
-half/side-dependent, and every repro bypassed the client via `writeAsPlayer`; (2)
-position-dependent far-end loading (bindings derive per-tick from TICKING portals; an
-intermittently-ticking far end yields exactly asymmetric views → the revert ping-pong) — the
-repro's PHASE C drops the far forceload and reports whether IP alone keeps the far end bound;
-(3) the real `/portal` command's geometry vs the hand-built pair (aperture size, global-portal
-flags). Next live round: rerun with `-PseamSignalProbe` AND `-PseamReconcileProbe` (binding
-add/remove accounting — it was NOT armed this round, so binding flicker was invisible), and
-have the user report F3 coords + which half they aim at when placing.
+**Still-open suspects, after the second exclusion round:** the REAL command path is ALSO green
+(`rsSignalCommandPairRepro` drives `/portal make_portal` + `/portal
+complete_bi_way_bi_faced_portal` through the actual gametest player — look-derived orientation,
+height-2 aperture, bi-faced cluster=2, north-south line — signal carried and released). What
+remains: (1) ★ **CLIENT DISPLAY STALENESS AT 40km** — the user's far end is ~40,000 blocks away,
+observed only THROUGH the portal window; if far-end block data/meshes go stale at that range,
+the SERVER may have been right all along while the user watched a stale picture ("stuck
+powered" = stale powered mesh; the actions that "fix" it — break/replace the seam rail,
+through-portal placements — are exactly the ones that force a far-cell client resync). The
+dispatch ping-pong bursts may simply be the user's own rapid lever toggling. **THE DECIDING
+LIVE EXPERIMENT (zero code): reproduce "signal stops at the seam", touch nothing, teleport
+through to the far end and look at the rails up close — powered on arrival ⇒ display
+staleness (server right); dark at arm's length ⇒ real server failure, variable unknown.**
+(2) the real client interaction layer (aim-half placement, prediction, real lever flips);
+(3) true far-cold states. Next live round runs with `-PseamSignalProbe` +
+`-PseamReconcileProbe` + `-PseamAimProbe` armed.
 
 **Also settled by the round:** the user's "boundary-phase seams don't carry signal" is the
 EXACT-ONLY decline working as decided — a wand/`/portal` boundary-phase pair has the source
