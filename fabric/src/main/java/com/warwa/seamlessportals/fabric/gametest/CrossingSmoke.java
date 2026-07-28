@@ -535,6 +535,15 @@ public class CrossingSmoke implements FabricClientGameTest {
             rsSignalLegDisjoint(context);
             rsSignalLegCoincident(context, py);
 
+            // DIAGNOSTIC REPRO (probe-gated, asserts the DESIGN expectation): the user's live
+            // 2026-07-27 report — same-dim COINCIDENT (make_portal-style mid-block planes) with a
+            // Y-offset; signal stops at the seam / sticks on. Neither shipped arm covers this
+            // combination (A is cross-dim coincident, B is same-dim disjoint).
+            if (AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
+                rsSignalSameDimCoincidentRepro(context);
+                rsSignalTwoSeamLineRepro(context, py);
+            }
+
             // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate. Since the 2026-07-27
             // user decision the clip is DEFAULT OFF (fractional model chosen instead): the
             // default run asserts the whole-cube branch; -PenableSeamClip asserts the cut.
@@ -2621,6 +2630,563 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
             catch (Throwable t) {
                 SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-SIGNAL-B cleanup failed", t);
+            }
+        }
+    }
+
+    /**
+     * DIAGNOSTIC REPRO of the user's 2026-07-27 live report: a SAME-DIMENSION pair whose planes
+     * sit MID-BLOCK (make_portal geometry → COINCIDENT phase) with a Y-offset between the ends.
+     * Seam rail placed as the player from the SOURCE side (player half = source, mirror half =
+     * far), approach + far continuation as scenery, then power ON from the source.
+     *
+     * <p>Asserts the DESIGN expectation (far rails power, then unpower) and LOGS ITS WORKING —
+     * every poll step prints both halves' and both chains' states, so a red run is a state
+     * timeline, not a verdict. The user's reported symptoms this must reproduce: propagation
+     * stops at the seam (ON never crosses), and once crossed by other means the seam sticks
+     * powered after the source is cut.
+     */
+    private static void rsSignalSameDimCoincidentRepro(ClientGameTestContext context) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+            || AperturePassthroughLever.DISABLE_SEAM_SIGNAL_DISPATCH
+            || AperturePassthroughLever.DISABLE_SEAM_SHADOW
+            || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC) {
+            return;   // diagnostic: canonical-config only
+        }
+        final int sx = 5200, sy = 100, sz = 5200;      // clear of every existing fixture
+        final int dxo = 60, dyo = -50;                 // the user's shape: far end lower + away
+        final BlockPos cellS = new BlockPos(sx, sy, sz);            // plane bisects this cell
+        final BlockPos cellD = new BlockPos(sx + dxo, sy + dyo, sz);
+        final BlockPos a1 = new BlockPos(sx - 1, sy, sz);
+        final BlockPos a0 = new BlockPos(sx - 2, sy, sz);
+        final BlockPos powerPos = new BlockPos(sx - 3, sy, sz);
+        final BlockPos b1 = new BlockPos(sx + dxo + 1, sy + dyo, sz);
+        final BlockPos b2 = new BlockPos(sx + dxo + 2, sy + dyo, sz);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        final var POWERED = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
+
+        java.util.function.BiConsumer<MinecraftServer, String> dump = (server, tag) -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "REPRO[{}] a0={} a1={} S={} D={} b1={} b2={} | {}",
+                tag,
+                ow.getBlockState(a0).is(Blocks.POWERED_RAIL) ? ow.getBlockState(a0).getValue(POWERED) : "-",
+                ow.getBlockState(a1).is(Blocks.POWERED_RAIL) ? ow.getBlockState(a1).getValue(POWERED) : "-",
+                ow.getBlockState(cellS).is(Blocks.POWERED_RAIL) ? ow.getBlockState(cellS).getValue(POWERED) : "-",
+                ow.getBlockState(cellD).is(Blocks.POWERED_RAIL) ? ow.getBlockState(cellD).getValue(POWERED) : "-",
+                ow.getBlockState(b1).is(Blocks.POWERED_RAIL) ? ow.getBlockState(b1).getValue(POWERED) : "-",
+                ow.getBlockState(b2).is(Blocks.POWERED_RAIL) ? ow.getBlockState(b2).getValue(POWERED) : "-",
+                com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+        };
+
+        try {
+            runCommands(context, List.of(
+                "forceload add " + (sx - 16) + " " + (sz - 16) + " " + (sx + 16) + " " + (sz + 16),
+                "forceload add " + (sx + dxo - 16) + " " + (sz - 16) + " " + (sx + dxo + 16) + " " + (sz + 16),
+                "fill " + (sx - 6) + " " + (sy - 1) + " " + (sz - 2) + " "
+                    + (sx + 6) + " " + (sy - 1) + " " + (sz + 2) + " minecraft:stone",
+                "fill " + (sx - 6) + " " + sy + " " + (sz - 2) + " "
+                    + (sx + 6) + " " + (sy + 3) + " " + (sz + 2) + " minecraft:air",
+                "fill " + (sx + dxo - 6) + " " + (sy + dyo - 1) + " " + (sz - 2) + " "
+                    + (sx + dxo + 6) + " " + (sy + dyo - 1) + " " + (sz + 2) + " minecraft:stone",
+                "fill " + (sx + dxo - 6) + " " + (sy + dyo) + " " + (sz - 2) + " "
+                    + (sx + dxo + 6) + " " + (sy + dyo + 3) + " " + (sz + 2) + " minecraft:air"
+            ));
+            context.waitTicks(20);
+
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.getChunk(sx >> 4, sz >> 4);
+                ow.getChunk((sx + dxo) >> 4, sz >> 4);
+                // MID-BLOCK planes on BOTH ends (make_portal geometry): plane x = cell + 0.5.
+                qouteall.imm_ptl.core.portal.Portal p =
+                    qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(
+                        ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                if (p == null) {
+                    failure.set("portal create returned null");
+                    return;
+                }
+                p.setOriginPos(new Vec3(sx + 0.5, sy + 0.5, sz + 0.5));
+                p.setDestinationDimension(Level.OVERWORLD);
+                p.setDestination(new Vec3(sx + dxo + 0.5, sy + dyo + 0.5, sz + 0.5));
+                p.setOrientationAndSize(new Vec3(0, 0, 1), new Vec3(0, 1, 0), 1, 1);
+                // THE USER'S PORTAL SHAPE: the wand's BI-FACED BI-WAY four-entity cluster — two
+                // coincident opposite-normal faces per end, so each seam cell carries TWO bindings
+                // with 180°-apart rotations. This is the shape whose first-match binding selection
+                // was order-dependent (the crossing-preference fix's subject). The FLIPPED twins
+                // are spawned FIRST on purpose: they tick and bind first, so the UNLUCKY binding
+                // sits in the cluster's first slot at both ends — the deterministic adversarial
+                // order that first-match resolves wrong and the preference fix must survive.
+                qouteall.imm_ptl.core.portal.Portal flipped =
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createFlippedPortal(
+                        p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+                qouteall.imm_ptl.core.portal.Portal reverse =
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createReversePortal(
+                        p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+                qouteall.imm_ptl.core.portal.Portal parallel =
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createFlippedPortal(
+                        reverse, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(flipped);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(p);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(parallel);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(reverse);
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO SETUP FAILED: " + failure.get());
+            }
+
+            AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bref =
+                new AtomicReference<>(null);
+            for (int attempt = 0; attempt < 20 && bref.get() == null; attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    if (cell != null) {
+                        cell.bindings().stream()
+                            .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                            .findFirst().ifPresent(bref::set);
+                    }
+                });
+                if (bref.get() == null) {
+                    context.waitTicks(10);
+                }
+            }
+            if (bref.get() == null) {
+                throw new AssertionError(LOG + "REPRO FAILED: source cell never bound");
+            }
+            var b = bref.get();
+            if (b.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT) {
+                throw new AssertionError(LOG + "REPRO FIXTURE WRONG: phase=" + b.phase()
+                    + " — mid-block planes must classify COINCIDENT (the user's make_portal shape)");
+            }
+            if (!cellD.equals(b.destPos())) {
+                throw new AssertionError(LOG + "REPRO FIXTURE WRONG: destPos=" + b.destPos()
+                    + " expected " + cellD);
+            }
+            // FIXTURE-ADVERSITY COVERAGE: the cluster must hold TWO bindings and the FIRST slot
+            // must be the UNLUCKY one (its crossing points back west) — otherwise first-match would
+            // resolve correctly by luck and the crossing-preference inversion proves nothing.
+            AtomicReference<String> orderNote = new AtomicReference<>("");
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                var bs = cell.bindings();
+                if (bs.size() < 2) {
+                    failure.set("bi-faced cluster expected TWO bindings at S, got " + bs.size());
+                    return;
+                }
+                orderNote.set("binding[0].crossDir=" + bs.get(0).crossDir()
+                    + " binding[1].crossDir=" + bs.get(1).crossDir());
+                if (bs.get(0).crossDir() == net.minecraft.core.Direction.EAST) {
+                    SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO NOTE: first binding is the"
+                        + " LUCKY one despite adversarial spawn order ({}) — the first-match"
+                        + " inversion cannot reproduce on this run", orderNote.get());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO FIXTURE WRONG: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO geometry: S={} D={} crossDir={}"
+                + " contToward(cross)={} R={} cluster[{}]", cellS, b.destPos(), b.crossDir(),
+                b.continuationToward(b.crossDir()), b.stateRotation(), orderNote.get());
+
+            // Scenery first (no power source exists yet), then the seam rail AS THE PLAYER from
+            // the SOURCE side — the user's exact provenance layout.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                for (BlockPos p : List.of(a1, a0)) {
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                for (BlockPos p : List.of(b1, b2)) {
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                writeAsPlayer(ow, cellS, Blocks.POWERED_RAIL.defaultBlockState());
+            });
+            context.waitTicks(10);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (!ow.getBlockState(cellD).is(Blocks.POWERED_RAIL)) {
+                    failure.set("mirror half at D=" + cellD + " is "
+                        + ow.getBlockState(cellD).getBlock() + " — (a) mirror did not run");
+                }
+                dump.accept(server, "baseline");
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO FAILED: " + failure.get());
+            }
+
+            // ---- POWER ON from the source ----
+            // (History: a "crossing-preference" fix was tried against this adversarial cluster and
+            // REFUTED here — under restored first-match the far rails still powered, because the
+            // flipped twins SHARE the portal transform and their continuations agree. The fixture
+            // stays adversarial as the record and as regression evidence for cluster selection.)
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            for (int i = 0; i < 12; i++) {
+                context.waitTicks(5);
+                final int step = i;
+                runOnServer(context, server -> dump.accept(server, "on+" + (step * 5 + 5) + "t"));
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                boolean farPowered = ow.getBlockState(b1).getValue(POWERED)
+                    && ow.getBlockState(b2).getValue(POWERED);
+                if (!farPowered) {
+                    failure.set("USER BUG REPRODUCED (ON): far rails dark after 60 ticks — b1="
+                        + ow.getBlockState(b1).getValue(POWERED) + " b2="
+                        + ow.getBlockState(b2).getValue(POWERED) + " S="
+                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
+                        + ow.getBlockState(cellD).getValue(POWERED));
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO: " + failure.get());
+            }
+
+            // ---- POWER OFF ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+            for (int i = 0; i < 12; i++) {
+                context.waitTicks(5);
+                final int step = i;
+                runOnServer(context, server -> dump.accept(server, "off+" + (step * 5 + 5) + "t"));
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                boolean any = ow.getBlockState(cellS).getValue(POWERED)
+                    || ow.getBlockState(cellD).getValue(POWERED)
+                    || ow.getBlockState(b1).getValue(POWERED)
+                    || ow.getBlockState(b2).getValue(POWERED);
+                if (any) {
+                    failure.set("USER BUG REPRODUCED (STUCK ON): after the source was cut, S="
+                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
+                        + ow.getBlockState(cellD).getValue(POWERED) + " b1="
+                        + ow.getBlockState(b1).getValue(POWERED) + " b2="
+                        + ow.getBlockState(b2).getValue(POWERED));
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO PASS — same-dim COINCIDENT carried"
+                + " and released the signal (design expectation held). counters: "
+                + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+
+            // ---- PHASE C (EVIDENCE, no hard assert): the FAR END WITHOUT ITS FORCELOAD — the
+            // user's live condition (they stood at the source; the far end 40km away lived on
+            // whatever IP maintains). Bindings derive per-tick from TICKING portals: if the far
+            // end stops entity-ticking, D unbinds and the halves' views go asymmetric — the
+            // suspected mechanism behind the live seam-stop/stuck-on/ping-pong. ----
+            runCommands(context, List.of(
+                "forceload remove " + (sx + dxo - 16) + " " + (sz - 16) + " "
+                    + (sx + dxo + 16) + " " + (sz + 16)));
+            context.waitTicks(100);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var farCell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellD);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO-C far state after forceload"
+                        + " removal +100t: hasChunkAt(D)={} D bound={} bindings={}",
+                    ow.hasChunkAt(cellD), farCell != null,
+                    farCell == null ? 0 : farCell.bindings().size());
+            });
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            for (int i = 0; i < 12; i++) {
+                context.waitTicks(5);
+                final int step = i;
+                runOnServer(context, server -> dump.accept(server, "farcold-on+" + (step * 5 + 5) + "t"));
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                boolean farPowered = ow.hasChunkAt(b1) && ow.getBlockState(b1).is(Blocks.POWERED_RAIL)
+                    && ow.getBlockState(b1).getValue(POWERED);
+                var farCell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellD);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO-C VERDICT: farPowered={} S={}"
+                        + " (D bound={}) — {}. counters: {}",
+                    farPowered,
+                    ow.getBlockState(cellS).getValue(POWERED),
+                    farCell != null,
+                    farPowered
+                        ? "IP alone kept the far end ticking; position-dependence EXCLUDED here"
+                        : "★ USER'S LIVE CONDITION REPRODUCED: the far end without a forceload"
+                            + " cannot cross — this is the live-play mechanism",
+                    com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+                ow.setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3);
+            });
+        }
+        finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(sx - 4, sy + dyo - 4, sz - 4,
+                            sx + dxo + 6, sy + 6, sz + 4), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                runCommands(context, List.of(
+                    "fill " + (sx - 6) + " " + (sy - 1) + " " + (sz - 2) + " "
+                        + (sx + 6) + " " + (sy + 3) + " " + (sz + 2) + " minecraft:air",
+                    "fill " + (sx + dxo - 6) + " " + (sy + dyo - 1) + " " + (sz - 2) + " "
+                        + (sx + dxo + 6) + " " + (sy + dyo + 3) + " " + (sz + 2) + " minecraft:air",
+                    "forceload remove " + (sx - 16) + " " + (sz - 16) + " "
+                        + (sx + dxo + 16) + " " + (sz + 16)
+                ));
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO cleanup failed", t);
+            }
+        }
+    }
+
+    /**
+     * DIAGNOSTIC REPRO 2 — the user's OTHER live variable: the rail line THREADS TWO SEAMS. An
+     * ignited obsidian nether portal sits mid-line (its aperture cell carries a mirrored rail into
+     * the nether), and the line continues east to a same-dim COINCIDENT pair whose far end holds
+     * the continuation. Power at the west end must reach the far end's rails through BOTH seams'
+     * machinery coexisting on one line — the user's world had exactly this shape, and their laggy
+     * levers / stuck states appeared with "a second portal passing another redstone signal".
+     */
+    private static void rsSignalTwoSeamLineRepro(ClientGameTestContext context, int py) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+            || AperturePassthroughLever.DISABLE_SEAM_SIGNAL_DISPATCH
+            || AperturePassthroughLever.DISABLE_SEAM_SHADOW
+            || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC) {
+            return;
+        }
+        final int nx = 8200, nz = -8200, ry = py + 1;   // nether counterpart ~(1025,-1025): clear
+        final BlockPos npCell = new BlockPos(nx, ry, nz);            // nether-portal aperture cell
+        final BlockPos cellS = new BlockPos(nx + 3, ry, nz);         // same-dim seam, 3 east
+        final int dxo = 60, dyo = 30;
+        final BlockPos cellD = new BlockPos(nx + 3 + dxo, ry + dyo, nz);
+        final BlockPos b1 = cellD.east();
+        final BlockPos b2 = b1.east();
+        final BlockPos powerPos = new BlockPos(nx - 3, ry, nz);
+        final List<BlockPos> lineRails = List.of(
+            new BlockPos(nx - 2, ry, nz), new BlockPos(nx - 1, ry, nz),
+            new BlockPos(nx + 1, ry, nz), new BlockPos(nx + 2, ry, nz));
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Vec3> netherDest = new AtomicReference<>(null);
+        final var POWERED = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
+
+        java.util.function.BiConsumer<MinecraftServer, String> dump = (server, tag) -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            StringBuilder sb = new StringBuilder();
+            for (int x = nx - 2; x <= nx + 3; x++) {
+                var st = ow.getBlockState(new BlockPos(x, ry, nz));
+                sb.append(st.is(Blocks.POWERED_RAIL) ? (st.getValue(POWERED) ? "P" : "o") : "?");
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "REPRO2[{}] line[{}..NP..S]={} D={} b1={} b2={} | {}",
+                tag, nx - 2, sb,
+                ow.getBlockState(cellD).is(Blocks.POWERED_RAIL) ? ow.getBlockState(cellD).getValue(POWERED) : "-",
+                ow.getBlockState(b1).is(Blocks.POWERED_RAIL) ? ow.getBlockState(b1).getValue(POWERED) : "-",
+                ow.getBlockState(b2).is(Blocks.POWERED_RAIL) ? ow.getBlockState(b2).getValue(POWERED) : "-",
+                com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+        };
+
+        try {
+            runCommands(context, List.of(
+                "forceload add " + (nx - 16) + " " + (nz - 16) + " " + (nx + dxo + 19) + " " + (nz + 16),
+                "fill " + (nx - 6) + " " + py + " " + (nz - 3) + " "
+                    + (nx + 8) + " " + (py + 5) + " " + (nz + 3) + " minecraft:air",
+                "fill " + (nx - 6) + " " + py + " " + (nz - 3) + " "
+                    + (nx + 8) + " " + py + " " + (nz + 3) + " minecraft:stone",
+                // The obsidian frame, X-normal: sill/lintel along Z at x=nx, columns at nz-1/nz+2.
+                fill(nx, py, nz - 1, nx, py, nz + 2),
+                fill(nx, py + 4, nz - 1, nx, py + 4, nz + 2),
+                fill(nx, py + 1, nz - 1, nx, py + 3, nz - 1),
+                fill(nx, py + 1, nz + 2, nx, py + 3, nz + 2),
+                // Far-end platform for the same-dim pair.
+                "fill " + (nx + dxo - 3) + " " + (ry + dyo - 1) + " " + (nz - 2) + " "
+                    + (nx + dxo + 9) + " " + (ry + dyo - 1) + " " + (nz + 2) + " minecraft:stone",
+                "fill " + (nx + dxo - 3) + " " + (ry + dyo) + " " + (nz - 2) + " "
+                    + (nx + dxo + 9) + " " + (ry + dyo + 3) + " " + (nz + 2) + " minecraft:air"
+            ));
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD), npCell, null);
+                if (!fired) {
+                    failure.set("nether-portal ignition rejected");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO2 SETUP FAILED: " + failure.get());
+            }
+            final net.minecraft.world.phys.AABB npBox = new net.minecraft.world.phys.AABB(
+                nx - 8, py - 8, nz - 8, nx + 8, py + 8, nz + 8);
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    if (server == null) {
+                        return false;
+                    }
+                    return !server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                        npBox, x -> true).isEmpty();
+                }, 1200);
+            }
+            catch (Throwable t) {
+                throw new AssertionError(LOG + "REPRO2 FAILED: nether portal never generated", t);
+            }
+            runOnServer(context, server -> {
+                var portals = server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    npBox, x -> true);
+                netherDest.set(portals.get(0).getDestPos());
+            });
+            // Far-side bindings for the nether portal (the Arm A lesson).
+            Vec3 nd = netherDest.get();
+            runCommands(context, List.of(
+                "execute in minecraft:the_nether run forceload add "
+                    + ((int) nd.x - 16) + " " + ((int) nd.z - 16) + " "
+                    + ((int) nd.x + 16) + " " + ((int) nd.z + 16)));
+
+            // The same-dim pair, mid-block planes.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.getChunk((nx + 3 + dxo) >> 4, nz >> 4);
+                qouteall.imm_ptl.core.portal.Portal p =
+                    qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(
+                        ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                if (p == null) {
+                    failure.set("same-dim portal create returned null");
+                    return;
+                }
+                p.setOriginPos(new Vec3(nx + 3 + 0.5, ry + 0.5, nz + 0.5));
+                p.setDestinationDimension(Level.OVERWORLD);
+                p.setDestination(new Vec3(nx + 3 + dxo + 0.5, ry + dyo + 0.5, nz + 0.5));
+                p.setOrientationAndSize(new Vec3(0, 0, 1), new Vec3(0, 1, 0), 1, 1);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(p);
+                qouteall.imm_ptl.core.portal.Portal q =
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createReversePortal(
+                        p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(q);
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO2 SETUP FAILED: " + failure.get());
+            }
+            AtomicReference<Boolean> ready = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 30 && !ready.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var sCell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    var npC = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, npCell);
+                    ready.set(sCell != null && npC != null
+                        && sCell.bindings().stream().anyMatch(bb -> bb.isMirrorable()
+                            && bb.phase() == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT));
+                });
+                if (!ready.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!ready.get()) {
+                throw new AssertionError(LOG + "REPRO2 FAILED: both seams never bound"
+                    + " (nether aperture + same-dim seam)");
+            }
+
+            // Scenery, then both seam rails AS THE PLAYER, west to east — the user's order.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                for (BlockPos p : lineRails) {
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                for (BlockPos p : List.of(b1, b2)) {
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                writeAsPlayer(ow, npCell, Blocks.POWERED_RAIL.defaultBlockState());
+                writeAsPlayer(ow, cellS, Blocks.POWERED_RAIL.defaultBlockState());
+            });
+            context.waitTicks(10);
+            runOnServer(context, server -> dump.accept(server, "baseline"));
+
+            // ---- POWER ON at the WEST end: through the nether-portal aperture, then the seam ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            for (int i = 0; i < 12; i++) {
+                context.waitTicks(5);
+                final int step = i;
+                runOnServer(context, server -> dump.accept(server, "on+" + (step * 5 + 5) + "t"));
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (!ow.getBlockState(b1).getValue(POWERED) || !ow.getBlockState(b2).getValue(POWERED)) {
+                    failure.set("USER BUG REPRODUCED (ON, two-seam line): far rails dark — b1="
+                        + ow.getBlockState(b1).getValue(POWERED) + " b2="
+                        + ow.getBlockState(b2).getValue(POWERED) + " S="
+                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
+                        + ow.getBlockState(cellD).getValue(POWERED) + " NP="
+                        + ow.getBlockState(npCell).getValue(POWERED));
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO2: " + failure.get());
+            }
+
+            // ---- POWER OFF ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+            for (int i = 0; i < 12; i++) {
+                context.waitTicks(5);
+                final int step = i;
+                runOnServer(context, server -> dump.accept(server, "off+" + (step * 5 + 5) + "t"));
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                boolean any = ow.getBlockState(cellS).getValue(POWERED)
+                    || ow.getBlockState(cellD).getValue(POWERED)
+                    || ow.getBlockState(npCell).getValue(POWERED)
+                    || ow.getBlockState(b1).getValue(POWERED)
+                    || ow.getBlockState(b2).getValue(POWERED);
+                if (any) {
+                    failure.set("USER BUG REPRODUCED (STUCK ON, two-seam line): NP="
+                        + ow.getBlockState(npCell).getValue(POWERED) + " S="
+                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
+                        + ow.getBlockState(cellD).getValue(POWERED) + " b1="
+                        + ow.getBlockState(b1).getValue(POWERED) + " b2="
+                        + ow.getBlockState(b2).getValue(POWERED));
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO2: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO2 PASS — the two-seam line carried and"
+                + " released the signal. counters: "
+                + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+        }
+        finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(nx - 8, py - 8, nz - 8,
+                            nx + dxo + 12, ry + dyo + 8, nz + 8), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                runCommands(context, List.of(
+                    "fill " + (nx - 6) + " " + (py - 1) + " " + (nz - 3) + " "
+                        + (nx + 8) + " " + (py + 5) + " " + (nz + 3) + " minecraft:air",
+                    "fill " + (nx + dxo - 3) + " " + (ry + dyo - 1) + " " + (nz - 2) + " "
+                        + (nx + dxo + 9) + " " + (ry + dyo + 3) + " " + (nz + 2) + " minecraft:air",
+                    "forceload remove " + (nx - 16) + " " + (nz - 16) + " "
+                        + (nx + dxo + 19) + " " + (nz + 16)
+                ));
+                Vec3 d = netherDest.get();
+                if (d != null) {
+                    int dx = (int) Math.floor(d.x), dy = (int) Math.floor(d.y), dz = (int) Math.floor(d.z);
+                    runCommands(context, List.of(
+                        inDim("minecraft:the_nether", "fill " + (dx - 5) + " " + (dy - 2) + " "
+                            + (dz - 5) + " " + (dx + 5) + " " + (dy + 5) + " " + (dz + 5)
+                            + " minecraft:air"),
+                        "execute in minecraft:the_nether run forceload remove " + (dx - 16) + " "
+                            + (dz - 16) + " " + (dx + 16) + " " + (dz + 16)
+                    ));
+                }
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO2 cleanup failed", t);
             }
         }
     }

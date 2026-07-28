@@ -415,6 +415,13 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_SEAM_SIGNAL_DISPATCH =
         Boolean.getBoolean("seamlessportals.disableSeamSignalDispatch");
 
+    // RETIRED SAME-DAY (2026-07-27): disableSeamCrossPreference. A "crossing-preference" fix for
+    // bi-faced cluster binding selection was implemented on the theory that the two twins' bindings
+    // answer along-axis queries differently (180°-apart rotations) — and REFUTED by its own
+    // inversion gate: flipped twins SHARE the portal transform, so blockRotationOf gives both the
+    // same rotation and their continuations agree; first-match was never wrong. The adversarial
+    // bi-faced repro (flipped twins spawned first) stays in the tree as the record.
+
     /**
      * Per-event signal probe ({@code -Dseamlessportals.seamSignalProbe=true}, DEFAULT-OFF): union
      * reads/hits, walk crossings, dispatch queue traffic and the budget counters —
