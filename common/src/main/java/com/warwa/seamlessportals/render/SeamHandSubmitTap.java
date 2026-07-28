@@ -130,6 +130,7 @@ public final class SeamHandSubmitTap {
             camEntDesc = "UNSET";
             heldDesc = "UNSET";
             vpDesc = "UNSET";
+            mxDesc = "UNSET";
             if (!announced) {
                 announced = true;
                 LOGGER.info(P + "ARMED (once-only): per-pass canRender result + six-condition"
@@ -256,8 +257,18 @@ public final class SeamHandSubmitTap {
         }
     }
 
-    /** HEAD of setupGlState — reached ONLY when all three outer gates passed for this pass. */
-    public static void onBodyEntered() {
+    /** Matrix fingerprints at setupGlState RETURN (2026-07-28 second extension: gate, body,
+     *  camera-identity AND equip-height all exonerated — the submitted GEOMETRY's transforms
+     *  are the last suspects standing; the hand PROJECTION is built from the SHARED
+     *  cameraRenderState's hudFov/depthFar, the known 26.2 shared-state hazard). */
+    private static String mxDesc = "UNSET";
+
+    /** RETURN of setupGlState — reached only past that pass's outer gates. */
+    public static void onBodyEntered(
+        net.minecraft.client.renderer.state.level.CameraRenderState cameraState,
+        org.joml.Matrix4fc modelMatrix,
+        com.mojang.blaze3d.vertex.PoseStack pose
+    ) {
         if (!ENABLED || disarmed || !sampling || passIdx < 0) {
             return;
         }
@@ -266,6 +277,37 @@ public final class SeamHandSubmitTap {
                 return; // belt: a nested pass can never write into an armed main sample
             }
             bodyRan[passIdx] = true;
+            if ("UNSET".equals(mxDesc)) {
+                String csPart;
+                try {
+                    csPart = String.format("hudFov=%.2f depthFar=%.1f",
+                        cameraState.hudFov, cameraState.depthFar);
+                }
+                catch (Throwable t) {
+                    csPart = "cs-READ-FAILED(" + t.getClass().getSimpleName() + ")";
+                }
+                String modelPart;
+                try {
+                    modelPart = modelMatrix == null ? "model=null" : String.format(
+                        "model[t=%.3f,%.3f,%.3f d=%.3f,%.3f,%.3f]",
+                        modelMatrix.m30(), modelMatrix.m31(), modelMatrix.m32(),
+                        modelMatrix.m00(), modelMatrix.m11(), modelMatrix.m22());
+                }
+                catch (Throwable t) {
+                    modelPart = "model-READ-FAILED(" + t.getClass().getSimpleName() + ")";
+                }
+                String posePart;
+                try {
+                    org.joml.Matrix4f p = pose == null ? null : pose.last().pose();
+                    posePart = p == null ? "pose=null" : String.format(
+                        "pose[t=%.3f,%.3f,%.3f d=%.3f,%.3f,%.3f]",
+                        p.m30(), p.m31(), p.m32(), p.m00(), p.m11(), p.m22());
+                }
+                catch (Throwable t) {
+                    posePart = "pose-READ-FAILED(" + t.getClass().getSimpleName() + ")";
+                }
+                mxDesc = csPart + " " + modelPart + " " + posePart;
+            }
             if ("UNSET".equals(vpDesc)) {
                 int drained = 0;
                 while (drained < 8 && GL11.glGetError() != GL11.GL_NO_ERROR) {
@@ -393,7 +435,8 @@ public final class SeamHandSubmitTap {
             label = String.format("[window #%d d=%.2f]", windowRows, windowDist);
         }
         LOGGER.info(P + "{} solid: canRender={} failed=[{}] body={} | translucent: canRender={}"
-                + " failed=[{}] body={} | camEnt={} held={} vp={} | handAnim: {} — READ:"
+                + " failed=[{}] body={} | camEnt={} held={} vp={} | handAnim: {} | handMx: {}"
+                + " — READ:"
                 + " canRender=false names the gate (failed[] lists iris's six conditions"
                 + " recomputed same-frame; entityNotPlayer/detached are the crossing-machinery"
                 + " suspects). canRender=true body=false ⇒ the remaining outer gate — PER PASS"
@@ -402,16 +445,19 @@ public final class SeamHandSubmitTap {
                 + " shaders on is itself anomalous). canRender=true body=true on window rows"
                 + " while the INLVL verdict says never-rasterized ⇒ the submitted GEOMETRY:"
                 + " handAnim mainH near 0 on window rows with near 1 on AMBIENT rows convicts"
-                + " the equip-lower animation (teleport-reset hand height; ITEM-MISMATCH names"
-                + " the re-equip trigger); mainH healthy on both ⇒ the pose/matrix path"
-                + " (IS-BOB) is next. vp= is the GL state at body entry, BEFORE iris's own"
-                + " pass setup — corroborating only. AMBIENT rows are the control: they must"
-                + " show canRender=true body=true with a visible hand or this tap is blind and"
+                + " the equip-lower animation (refuted leg 2: mainH=1.00 throughout); handMx"
+                + " compares WINDOW vs AMBIENT — hudFov near 0/NaN or a degenerate pose/model"
+                + " diagonal on window rows = the collapsed-transform eater (the hand"
+                + " projection builds from the SHARED cameraRenderState's hudFov/depthFar);"
+                + " identical handMx both sides moves the hunt into the dispatch itself."
+                + " vp= is the GL state at body entry, BEFORE iris's own pass setup —"
+                + " corroborating only. AMBIENT rows are the control: they must show"
+                + " canRender=true body=true with a visible hand or this tap is blind and"
                 + " the leg is VOID; zero AMBIENT rows ⇒ no control ⇒ not adjudicable.",
             label,
             fmt(canRenderResult[0]), failedConds[0], bodyRan[0],
             fmt(canRenderResult[1]), failedConds[1], bodyRan[1],
-            camEntDesc, heldDesc, vpDesc, readHandAnimState());
+            camEntDesc, heldDesc, vpDesc, readHandAnimState(), mxDesc);
     }
 
     private static String fmt(int v) {

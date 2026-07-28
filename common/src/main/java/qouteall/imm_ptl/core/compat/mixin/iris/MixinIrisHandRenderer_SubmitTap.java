@@ -55,8 +55,17 @@ public class MixinIrisHandRenderer_SubmitTap {
         SeamHandSubmitTap.onCanRender(camera, cir.getReturnValueZ());
     }
 
-    @Inject(method = "setupGlState", at = @At("HEAD"), require = 0)
-    private void ip_tapBodyEntered(CallbackInfoReturnable<?> cir) {
-        SeamHandSubmitTap.onBodyEntered();
+    // RETURN (not HEAD): setupGlState has no early return (bytecode-verified), so body-entry
+    // proof is preserved, and RETURN exposes BOTH the inputs (the shared CameraRenderState
+    // whose hudFov/depthFar build the hand PROJECTION — the 26.2 shared-state hazard — and the
+    // modelMatrix arg) and the OUTPUT pose the hands are submitted under.
+    @Inject(method = "setupGlState", at = @At("RETURN"), require = 0)
+    private void ip_tapBodyEntered(
+        net.minecraft.client.renderer.GameRenderer gameRenderer,
+        net.minecraft.client.renderer.state.level.CameraRenderState cameraState,
+        org.joml.Matrix4fc modelMatrix, float tickDelta,
+        CallbackInfoReturnable<com.mojang.blaze3d.vertex.PoseStack> cir
+    ) {
+        SeamHandSubmitTap.onBodyEntered(cameraState, modelMatrix, cir.getReturnValue());
     }
 }
