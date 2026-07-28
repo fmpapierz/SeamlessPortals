@@ -384,6 +384,21 @@ public class IPGlobal {
     public static final boolean debugStampSolid =
         Boolean.getBoolean("seamlessportals.debugStampSolid");
 
+    // IS5-SEAM THE CROSSING-WINDOW CLIP RELAX — **DEFAULT ON** (2026-07-27). The black seam band
+    // was measured end-to-end: solid-stamp leg => the sampled dest frame is black at the band;
+    // front_clipping live A/B both directions => the IS3 inner clip carries it; IS5-SEAM-ARM
+    // census => feed coherent (maxAbsFeedErr=0.0000, 95/95) and the band frames are the crossing
+    // window (fullyVoid=6, nearStraddle=38 across three crossings) — the clip WORKING AS DESIGNED
+    // voids grazing aperture rays while the render eye is within near-reach of the plane. IP has
+    // identical geometry but fills those pixels with UNCLIPPED sky; deferred packs have no filler
+    // => pure black, shaders-ON only. The fix ramps the inner clip camera-side inside the
+    // crossing window (FrontClipping.innerClipCorrectionForCrossing — derivation and constants
+    // there); far from the portal it is bit-identical to IP's -ADJUSTMENT. Scope: the compat
+    // full-pipeline dest arm only (the measured defect site; shaders-OFF keeps its sky filler).
+    // Pass this to force the relax OFF and reproduce the band (attribution both directions) —
+    public static final boolean SEAM_CLIP_RELAX_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableSeamClipRelax");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;

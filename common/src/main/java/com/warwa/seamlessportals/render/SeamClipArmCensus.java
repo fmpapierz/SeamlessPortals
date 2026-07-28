@@ -8,17 +8,13 @@ import qouteall.q_misc_util.my_util.Plane;
 
 /**
  * IS5-SEAM-ARM — the inner-clip arm-site census (2026-07-27; always-on, log-only, 1 Hz,
- * emits only within {@link #GATE_DIST} blocks of the active clip plane).
- *
- * <h2>Why it exists</h2>
- * The {@code front_clipping} live A/B (both directions, one session) proved the inner clip plane
- * CARRIES the black seam band: disable ⇒ band gone across repeated slow crossings; enable ⇒ band
- * back. But the static plane geometry cannot void aperture rays while the render eye is on the
- * CLIPPED side of the plane — every rasterized aperture ray then crosses into the kept half-space
- * at the aperture itself and dest terrain beyond it draws. An all-void aperture requires frames
- * whose RENDER camera (partialTick-interpolated + view bob) sits ON or PAST the plane before the
- * tick-keyed crossing detector fires. That is a hypothesis, not a measurement — this census
- * measures it per armed frame instead of guessing.
+ * emits only within {@link #GATE_DIST} blocks of the active clip plane). Born as the pre-fix
+ * hypothesis test (its first live run measured fullyVoid=6 / nearStraddle=38 across three
+ * crossings, feed coherent at 0.0000 — the numbers behind the crossing-window relax); it now
+ * doubles as the SHIPPED FIX'S verification instrument, so its classes were REKEYED
+ * (panel-corrected): the relax deliberately drives the armed plane's eye clearance to
+ * +CROSSING_EYE_CLEARANCE, so classifying on the armed plane would count every relaxed frame as
+ * "void" and convict a working fix.
  *
  * <h2>Sign conventions (D4.4 discipline — read before touching)</h2>
  * <ul>
@@ -28,22 +24,29 @@ import qouteall.q_misc_util.my_util.Plane;
  *       to the raw portal plane.</li>
  *   <li>The com.warwa store evaluates {@code gl_ClipDistance = dot(viewPos, planeXYZ) + planeW};
  *       the EYE is the view-space ORIGIN, so {@code planeW} IS the eye's own clip distance to the
- *       ARMED (adjustment-shifted) plane. {@code planeW >= 0} ⇒ the eye is on the kept side of
- *       the armed plane ⇒ every aperture ray points away from the kept boundary it already passed
- *       — the FULLY-VOID frame class.</li>
- *   <li>Feed-coherence invariant: the arm passes {@code correction = −ADJUSTMENT (−0.01)}, and
- *       {@code getClipEquationInner} yields {@code c = camToPlane − correction}, so
- *       {@code planeW − camToPlane − 0.01} is EXPECTED ZERO on the unscaled, translation-free
- *       path. A nonzero residual measures a feed divergence (bob W-term, scale, matrix space) —
- *       printed as {@code feedErr} so a shader-space mismatch cannot hide behind this census.</li>
+ *       ARMED plane (whatever correction produced it).</li>
+ *   <li>Feed-coherence invariant: {@code getClipEquationInner} yields
+ *       {@code c = camToPlane − correction} for WHATEVER correction the arm passed, so
+ *       {@code planeW − camToPlane + corrUsed} is EXPECTED ZERO on the unscaled,
+ *       translation-free path — printed as {@code feedErr} so a feed/space divergence (bob
+ *       W-term, scale) cannot hide behind this census.</li>
  * </ul>
  *
- * <h2>How to read the line</h2>
- * {@code fullyVoid > 0} on the seconds the band shows ⇒ the render camera really does cross the
- * armed plane pre-teleport — the fix must handle the crossing window (design panel next).
- * {@code fullyVoid == 0} with the band showing ⇒ the void is NOT the eye-side class; suspect the
- * per-draw upload space (feedErr) or a different clip consumer.
- * {@code nearStraddle} counts frames where the near plane can poke through (partial-band class).
+ * <h2>The three counter classes (and which leg each speaks for)</h2>
+ * <ul>
+ *   <li><b>baselineVoid / baselineStraddle</b> — classified on the UNRELAXED BASELINE plane
+ *       ({@code camToPlane + ADJUSTMENT}): what the IP-constant arm would have armed. These label
+ *       the crossing-window seconds in EVERY leg (nonzero there is EXPECTED, fix on or off) —
+ *       they are the window marker, not a health check.</li>
+ *   <li><b>armedVoidRisk</b> — the fix's health check: frames inside the sliver-capable zone
+ *       ({@code d < FrontClipping.SLIVER_ZONE}) whose ARMED eye clearance is below
+ *       {@link #RISK_MARGIN} (the view-bob erosion budget — bob translation subtracts
+ *       {@code dot(nView, bobT)}, up to ~0.1 at a sprint bob peak, from the effective clearance).
+ *       Relax ON ⇒ MUST be 0 (the hold pins clearance at +0.20); nonzero means the clearance is
+ *       being outrun (scaled portal, extreme FOV) — the live detector for the documented limits.
+ *       Relax OFF ({@code -PdisableSeamClipRelax}) ⇒ fires on every close approach, reproducing
+ *       the pre-fix signature — the attribution leg.</li>
+ * </ul>
  * Accumulators are min/max over EVERY armed frame of the emission window, not 1 Hz samples — the
  * suspect frames are sparse (bob oscillation) and a sampled census would miss them
  * (never generalize from one sampled block).
@@ -55,20 +58,27 @@ public final class SeamClipArmCensus {
     /** Emit only when the camera is within this of the active plane — silent in ordinary play. */
     private static final double GATE_DIST = 3.0;
 
-    /** Farthest near-plane corner reach: 0.05 near × secant. ~0.087 at FOV 70/16:9, ~0.154 at
-     *  Quake Pro. 0.10 is the counter threshold (a "near disk may straddle" flag, not a claim). */
+    /** Baseline-straddle threshold: near-plane corner reach ~0.087-0.154 (FOV 70/16:9 .. Quake
+     *  Pro). Used ONLY to classify the baseline (window-marker) counters. */
     private static final double NEAR_REACH = 0.10;
+
+    /** The armed-clearance floor the fix must hold in the sliver zone: the view-bob erosion
+     *  budget (see the class javadoc). Below it, void frames become possible again. */
+    private static final double RISK_MARGIN = 0.10;
 
     private static long windowStartNanos = 0L;
     private static int framesArmed = 0;
     private static int framesDisarmed = 0;
     private static int framesNullPlane = 0;
-    private static int fullyVoidFrames = 0;
-    private static int nearStraddleFrames = 0;
+    private static int baselineVoidFrames = 0;
+    private static int baselineStraddleFrames = 0;
+    private static int armedVoidRiskFrames = 0;
     private static double minCamToPlane = Double.POSITIVE_INFINITY;
     private static double maxCamToPlane = Double.NEGATIVE_INFINITY;
     private static double minPlaneW = Double.POSITIVE_INFINITY;
     private static double maxPlaneW = Double.NEGATIVE_INFINITY;
+    private static double minCorr = Double.POSITIVE_INFINITY;
+    private static double maxCorr = Double.NEGATIVE_INFINITY;
     private static double maxAbsFeedErr = 0.0;
 
     private SeamClipArmCensus() {}
@@ -81,11 +91,15 @@ public final class SeamClipArmCensus {
      *                       null when the arm collapsed to disableClipping (counted, not judged)
      * @param armed          the com.warwa store snapshot taken just after the arm
      * @param destCameraPos  the nested pass's virtual (dest-side) camera position
+     * @param corrUsed       the correction the arm actually passed (constant {@code -ADJUSTMENT},
+     *                       or the IS5-SEAM crossing-window relax value) — the feed invariant is
+     *                       {@code planeW == camToPlane − corrUsed}
      */
     public static void note(
         @Nullable Plane plane,
         FrontClipping.Snapshot armed,
-        Vec3 destCameraPos
+        Vec3 destCameraPos,
+        double corrUsed
     ) {
         try {
             if (plane == null) {
@@ -111,15 +125,28 @@ public final class SeamClipArmCensus {
             maxCamToPlane = Math.max(maxCamToPlane, camToPlane);
             minPlaneW = Math.min(minPlaneW, armed.w);
             maxPlaneW = Math.max(maxPlaneW, armed.w);
-            // Expected: planeW = camToPlane − correction = camToPlane + ADJUSTMENT(0.01).
-            double feedErr = armed.w - camToPlane
-                - qouteall.imm_ptl.core.render.FrontClipping.ADJUSTMENT;
+            minCorr = Math.min(minCorr, corrUsed);
+            maxCorr = Math.max(maxCorr, corrUsed);
+            // The feed invariant: planeW = camToPlane − corrUsed (getClipEquationInner).
+            double feedErr = armed.w - camToPlane + corrUsed;
             maxAbsFeedErr = Math.max(maxAbsFeedErr, Math.abs(feedErr));
-            if (armed.w >= 0) {
-                fullyVoidFrames++;
+            // WINDOW MARKERS — classified on the UNRELAXED BASELINE (what the IP-constant arm
+            // would have armed), so they label crossing seconds identically in every leg.
+            double baselineW = camToPlane
+                + qouteall.imm_ptl.core.render.FrontClipping.ADJUSTMENT;
+            if (baselineW >= 0) {
+                baselineVoidFrames++;
             }
-            else if (armed.w > -NEAR_REACH) {
-                nearStraddleFrames++;
+            else if (baselineW > -NEAR_REACH) {
+                baselineStraddleFrames++;
+            }
+            // THE FIX'S HEALTH CHECK — inside the sliver-capable zone the ARMED eye clearance
+            // must stay above the bob budget. Relax ON => must be 0; relax OFF => pre-fix
+            // signature returns (the attribution leg).
+            double d = -camToPlane;
+            if (d < qouteall.imm_ptl.core.render.FrontClipping.SLIVER_ZONE
+                && armed.w < RISK_MARGIN) {
+                armedVoidRiskFrames++;
             }
             maybeEmit();
         }
@@ -149,27 +176,35 @@ public final class SeamClipArmCensus {
         LOGGER.info(
             "[Seamless Portals] IS5-SEAM-ARM census (1Hz, |camToPlane| < {}): framesArmed={}"
                 + " disarmed={} nullPlane={} | camToPlane min={} max={} (kept-normal signed;"
-                + " NEGATIVE = camera on the clipped side) | planeW min={} max={} (= the eye's own"
-                + " clip distance; >=0 = FULLY-VOID frame) | fullyVoid={} nearStraddle={} (planeW >"
-                + " -{}) | maxAbsFeedErr={} (expected ~0; planeW - camToPlane - 0.01)"
-                + " — fullyVoid>0 on band seconds => the render eye crosses the armed plane"
-                + " pre-teleport; fullyVoid=0 with the band showing => eye-side class REFUTED, read"
-                + " feedErr before theorising.",
+                + " NEGATIVE = camera on the clipped side) | planeW min={} max={} (the eye's clip"
+                + " distance vs the ARMED plane) | corr min={} max={} (-0.0100 = IP constant;"
+                + " below it = the crossing relax active) | WINDOW MARKERS baselineVoid={}"
+                + " baselineStraddle={} (vs the UNRELAXED baseline — nonzero on crossing seconds"
+                + " is EXPECTED in every leg) | FIX HEALTH armedVoidRisk={} (d < {} with armed"
+                + " clearance < {}; relax ON => MUST be 0, nonzero = clearance outrun — scaled"
+                + " portal / extreme FOV; relax OFF leg => fires on approach, the pre-fix"
+                + " signature) | maxAbsFeedErr={} (expected ~0; planeW - camToPlane + corr).",
             GATE_DIST, framesArmed, framesDisarmed, framesNullPlane,
             fmt(minCamToPlane), fmt(maxCamToPlane),
             fmt(minPlaneW), fmt(maxPlaneW),
-            fullyVoidFrames, nearStraddleFrames, NEAR_REACH,
+            fmt(minCorr), fmt(maxCorr),
+            baselineVoidFrames, baselineStraddleFrames,
+            armedVoidRiskFrames,
+            qouteall.imm_ptl.core.render.FrontClipping.SLIVER_ZONE, RISK_MARGIN,
             fmt(maxAbsFeedErr)
         );
         framesArmed = 0;
         framesDisarmed = 0;
         framesNullPlane = 0;
-        fullyVoidFrames = 0;
-        nearStraddleFrames = 0;
+        baselineVoidFrames = 0;
+        baselineStraddleFrames = 0;
+        armedVoidRiskFrames = 0;
         minCamToPlane = Double.POSITIVE_INFINITY;
         maxCamToPlane = Double.NEGATIVE_INFINITY;
         minPlaneW = Double.POSITIVE_INFINITY;
         maxPlaneW = Double.NEGATIVE_INFINITY;
+        minCorr = Double.POSITIVE_INFINITY;
+        maxCorr = Double.NEGATIVE_INFINITY;
         maxAbsFeedErr = 0.0;
     }
 
