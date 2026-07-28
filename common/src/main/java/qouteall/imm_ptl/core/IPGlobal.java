@@ -487,6 +487,12 @@ public class IPGlobal {
     public static final boolean HAND_LOCATOR =
         Boolean.getBoolean("seamlessportals.handLocator");
 
+    // IS5-HAND-DRAW draw-time state dump at real hand-feature draws (DIAGNOSTIC, default
+    // OFF). Declared here only so the IS5-RC run-config block reports it (the probe reads
+    // its own property — HandDrawStateDump.ENABLED).
+    public static final boolean HAND_DRAW_DUMP =
+        Boolean.getBoolean("seamlessportals.handDrawDump");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
