@@ -271,6 +271,19 @@ public final class SeamMirror {
         //     mirror-created provenance onto the PLAYER's half — after which a frame break deleted
         //     the player's own rail (violating the pinned break rule) and mirror authority
         //     suppressed its support pops.
+        // ★ STALE-PROVENANCE FIX (2026-07-28 — the user's polarity correction). A break at a seam
+        // cell must clear THAT CELL'S OWN mirror-created mark: the block is gone, and provenance
+        // describes an occupant, not a cell. The clear path below removes only the COUNTERPART's
+        // mark, so a place-from-far → break → re-place-from-near cycle left the near cell marked
+        // "mirror-created" forever — after which the authority rule suppressed the PLAYER'S OWN
+        // freshly placed rail there (including its placement-time self-notification, which is the
+        // power evaluation), producing "the player-placed source half sits dark and only placing
+        // on the dest half works". Unconditional on write source: whoever removed the block,
+        // the provenance of the vanished occupant is void.
+        if (newState.isAir() && !AperturePassthroughLever.DISABLE_SEAM_BREAK_UNMARK) {
+            ((SeamIndexHolder) level).seamlessportals$mirrorCreatedCells().remove(pos.asLong());
+        }
+
         SeamWriteSource source = SeamWriteContext.sourceFor(pos);
         boolean sourceMirrors = SeamMirrorPolicy.mirrors(source);
         boolean refinementSync = sameBlockRefinement

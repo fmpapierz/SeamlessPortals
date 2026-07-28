@@ -2282,6 +2282,182 @@ public class CrossingSmoke implements FabricClientGameTest {
                     && !nether.getBlockState(contC2).getValue(POWERED);
             });
 
+            // ---- ARM R: REVERSE ENTRY — power arrives from the MIRROR half's side (the user's
+            // live defect, found 2026-07-28: mirror authority ate the power update at the mirror
+            // half, so signal entering the pair from that side died at the seam). Same rails,
+            // power source at the FAR end of the far line. ----
+            final boolean powerWakeOn = railBridgeOn && dispatchOn
+                && !AperturePassthroughLever.DISABLE_SEAM_POWER_WAKE;
+            final BlockPos farPowerPos = contC2.relative(farStep);
+            final long walkBeforeR =
+                com.warwa.seamlessportals.passthrough.SeamSignalContinuity.walkCrossedCount();
+            runOnServer(context, server -> server.getLevel(binding.destDim())
+                .setBlock(farPowerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            if (powerWakeOn) {
+                pollOrFail(context, 20, 5,
+                    "RS-SIGNAL-R the NEAR line never powered from the far-side source"
+                        + " (reverse entry through the mirror half)", server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        return ow.getBlockState(a1).getValue(POWERED)
+                            && ow.getBlockState(a0).getValue(POWERED);
+                    });
+                runOnServer(context, server -> server.getLevel(binding.destDim())
+                    .setBlock(farPowerPos, Blocks.AIR.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5,
+                    "RS-SIGNAL-R the near line never unpowered after the far source was removed",
+                    server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        return !ow.getBlockState(a1).getValue(POWERED)
+                            && !ow.getBlockState(a0).getValue(POWERED);
+                    });
+            }
+            else {
+                context.waitTicks(40);
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    boolean farLocal = nether.getBlockState(contC2).getValue(POWERED);
+                    boolean nearPowered = ow.getBlockState(a1).getValue(POWERED)
+                        || ow.getBlockState(a0).getValue(POWERED);
+                    if (railBridgeOn && dispatchOn && !farLocal) {
+                        failure.set("REVERSE-ENTRY INVERSION FIXTURE BROKEN: the far line itself"
+                            + " failed to power locally");
+                        return;
+                    }
+                    if (nearPowered) {
+                        failure.set("REVERSE-ENTRY INVERSION FAILED (the defect did not"
+                            + " reproduce): the near line powered under the pulled lever ("
+                            + (railBridgeOn && dispatchOn ? "-PdisableSeamPowerWake"
+                                : "an upstream (c) lever") + ")");
+                    }
+                });
+                runOnServer(context, server -> server.getLevel(binding.destDim())
+                    .setBlock(farPowerPos, Blocks.AIR.defaultBlockState(), 3));
+                context.waitTicks(10);
+            }
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-SIGNAL-R FAILED: " + failure.get());
+            }
+            // RUNAWAY CEILING: the first power-wake build converged and STILL spun ~500k
+            // same-drain evaluations before vanilla's chain cap broke the loop — the gates
+            // passed because nothing watched the volume. A reverse-entry round is a handful of
+            // evaluations; four orders of magnitude of headroom, not six.
+            runOnServer(context, server -> {
+                long walkDelta = com.warwa.seamlessportals.passthrough
+                    .SeamSignalContinuity.walkCrossedCount() - walkBeforeR;
+                if (walkDelta > 10_000) {
+                    failure.set("RUNAWAY: the reverse-entry arm burned " + walkDelta
+                        + " walk crossings — an evaluation loop is spinning even though the"
+                        + " states converged. counters: " + com.warwa.seamlessportals.passthrough
+                        .SeamSignalContinuity.counters());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-SIGNAL-R FAILED: " + failure.get());
+            }
+
+            // ---- ARM S: THE USER'S RITUAL — place the far half as the player, break the pair,
+            // re-place from the NEAR side, then power. (Stale-provenance defect, 2026-07-28: the
+            // break cleared only the counterpart's mirror-created mark, so the near cell stayed
+            // marked from its mirror-created past and the authority rule suppressed the player's
+            // own re-placed rail — dark at placement, deaf to its neighbors. The invariant the
+            // fix restores: a pair carries AT MOST ONE marked half; a doubly-marked pair is
+            // totally deaf — even the power-wake only ping-pongs pokes between two suppressed
+            // halves.) ----
+            final boolean breakUnmarkOn = !AperturePassthroughLever.DISABLE_SEAM_BREAK_UNMARK;
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cellSA, Blocks.AIR.defaultBlockState());
+            });
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                writeAsPlayer(nether, destPos, Blocks.POWERED_RAIL.defaultBlockState());
+            });
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (!ow.getBlockState(cellSA).is(Blocks.POWERED_RAIL)) {
+                    failure.set("ARM S fixture: the far-side placement did not mirror onto the"
+                        + " near cell (" + ow.getBlockState(cellSA).getBlock() + ")");
+                    return;
+                }
+                writeAsPlayer(ow, cellSA, Blocks.AIR.defaultBlockState());   // break the pair
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-SIGNAL-S FAILED: " + failure.get());
+            }
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cellSA, Blocks.POWERED_RAIL.defaultBlockState());   // the ritual
+            });
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                boolean marked = ((com.warwa.seamlessportals.passthrough.SeamIndexHolder) ow)
+                    .seamlessportals$mirrorCreatedCells().contains(cellSA.asLong());
+                if (breakUnmarkOn && marked) {
+                    failure.set("STALE PROVENANCE SURVIVED: the re-placed player cell " + cellSA
+                        + " is still marked mirror-created after its break — the authority rule"
+                        + " will suppress the player's own rail");
+                }
+                if (!breakUnmarkOn && !marked) {
+                    failure.set("BREAK-UNMARK INVERSION FAILED (the defect did not reproduce):"
+                        + " with -PdisableSeamBreakUnmark the stale mark should survive the"
+                        + " break, but the cell is clean");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-SIGNAL-S FAILED: " + failure.get());
+            }
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            final boolean armSPowered = railBridgeOn && dispatchOn && breakUnmarkOn;
+            if (armSPowered) {
+                pollOrFail(context, 20, 5,
+                    "RS-SIGNAL-S the ritual-re-placed pair never carried power (near half or far"
+                        + " line dark)", server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        return ow.getBlockState(cellSA).getValue(POWERED)
+                            && nether.getBlockState(destPos).getValue(POWERED)
+                            && nether.getBlockState(contC).getValue(POWERED);
+                    });
+            }
+            else {
+                context.waitTicks(40);
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (!breakUnmarkOn && railBridgeOn && dispatchOn
+                        && ow.getBlockState(cellSA).getValue(POWERED)) {
+                        failure.set("BREAK-UNMARK BEHAVIORAL INVERSION FAILED: the stale-marked"
+                            + " player cell powered anyway — the suppression the lever restores"
+                            + " did not bite (note: the power-wake alone cannot heal a"
+                            + " doubly-marked pair, so this should stay dark)");
+                    }
+                });
+            }
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-SIGNAL-S FAILED: " + failure.get());
+            }
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+            context.waitTicks(15);
+            // ARM S deliberately manufactures a stale mark under -PdisableSeamBreakUnmark; scrub
+            // BOTH cells' marks so the downstream lamp arm tests ITS subject on a hygienic pair
+            // (first matrix run: the leaked doubly-marked state made the lamp pair revert-deaf and
+            // ARM L failed for ARM S's reason — an evidence state must never perturb a functional
+            // leg, the standing harness rule).
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                ((com.warwa.seamlessportals.passthrough.SeamIndexHolder) ow)
+                    .seamlessportals$mirrorCreatedCells().remove(cellSA.asLong());
+                ((com.warwa.seamlessportals.passthrough.SeamIndexHolder) nether)
+                    .seamlessportals$mirrorCreatedCells().remove(destPos.asLong());
+            });
+
             // ---- ARM L: THE SEAM LAMP, same fixture. Rails out (a player break clears both
             // halves), lamp pair in, far-side source beside the FAR half. ----
             runOnServer(context, server -> {

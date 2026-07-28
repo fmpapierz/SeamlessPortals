@@ -94,6 +94,33 @@ public abstract class MixinBaseRailBlockMirrorAuthority {
                         + " One-shot; the hook is weaving and firing.",
                     pos, level.dimension().identifier());
             }
+            // ★ (c) POWER-WAKE (found live 2026-07-28 — the user's seam-stop). This suppression
+            // also ate the POWER question: a signal ENTERING a coincident pair from the MIRROR
+            // half's side died at the seam — the approach rail's notification was cancelled here,
+            // the mirror half never reacted, no cross-dispatch fired, and the player half was
+            // never woken ("stops at the first half of the seam rail"; the break-and-replace
+            // ritual worked only because placement-time evaluation runs before provenance lands).
+            //
+            // THE FIX FORWARDS THE POKE, IT DOES NOT EVALUATE HERE. The first build ran the
+            // mirror half's own power evaluation in place — and looped: flip → authority revert →
+            // updateNeighborsAt(pos.below()) re-notifies this very rail → wake again, ~500k
+            // same-drain iterations until vanilla's chain cap broke it. The mirror half must not
+            // WRITE at all: the poke is queued to the COUNTERPART (the player half) through the
+            // tick-end dispatch queue — deduped per tick, budgeted, loop-proof — and the player
+            // half re-derives with the bridged union/walk, then shape sync copies back. The
+            // authority rule stays fully intact: nothing here writes the mirrored cell.
+            // Lever: -Dseamlessportals.disableSeamPowerWake.
+            if (!AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+                && !AperturePassthroughLever.DISABLE_SEAM_POWER_WAKE
+                && level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                if (AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                        "[RS-SIGNAL] poke at mirrored rail {} in {} — counterpart queued",
+                        pos, level.dimension().identifier());
+                }
+                com.warwa.seamlessportals.passthrough.SeamSignalContinuity
+                    .onSeamCellChanged(serverLevel, pos, level.getBlockState(pos));
+            }
             ci.cancel();
         }
     }
