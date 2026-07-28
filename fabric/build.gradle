@@ -355,6 +355,12 @@ loom {
             // force the UNCLAMPED repaints and reproduce the band (attribution both directions) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableBloomMaskSeamClamp=true
             if (project.findProperty('disableBloomMaskSeamClamp') == 'true') { vmArg('-Dseamlessportals.disableBloomMaskSeamClamp=true') }
+            // IS5-HAND — seam hand-slicing fix, **DEFAULT ON** (2026-07-27): the stamp vertex
+            // shader caps NDC z at 0.5 so the depth-clamped crossing sliver stops GEQUAL-painting
+            // the portal view over the iris-baked hand (measured hand slice 0.5556..0.5569).
+            // Pass this to swap in the verbatim pre-cap shader and reproduce the slicing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampHandDepthCap=true
+            if (project.findProperty('disableStampHandDepthCap') == 'true') { vmArg('-Dseamlessportals.disableStampHandDepthCap=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -603,6 +609,12 @@ loom {
             // force the UNCLAMPED repaints and reproduce the band (attribution both directions) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableBloomMaskSeamClamp=true
             if (project.findProperty('disableBloomMaskSeamClamp') == 'true') { vmArg('-Dseamlessportals.disableBloomMaskSeamClamp=true') }
+            // IS5-HAND — seam hand-slicing fix, **DEFAULT ON** (2026-07-27): the stamp vertex
+            // shader caps NDC z at 0.5 so the depth-clamped crossing sliver stops GEQUAL-painting
+            // the portal view over the iris-baked hand (measured hand slice 0.5556..0.5569).
+            // Pass this to swap in the verbatim pre-cap shader and reproduce the slicing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampHandDepthCap=true
+            if (project.findProperty('disableStampHandDepthCap') == 'true') { vmArg('-Dseamlessportals.disableStampHandDepthCap=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
