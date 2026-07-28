@@ -343,6 +343,11 @@ loom {
             // reproduce the band (attribution both directions; the ARM census counters return) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSeamClipRelax=true
             if (project.findProperty('disableSeamClipRelax') == 'true') { vmArg('-Dseamlessportals.disableSeamClipRelax=true') }
+            // IS5-SEAM-CONTENT band-content probe (DIAGNOSTIC, default OFF — blocking 1Hz readback
+            // inside the crossing window): classifies the band pixels' dest depth — ~0.0 (reversed-Z
+            // FAR) = nothing drew (void class); substantially >0 = painted black (pack-pass class) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PseamContentProbe=true
+            if (project.findProperty('seamContentProbe') == 'true') { vmArg('-Dseamlessportals.seamContentProbe=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -579,6 +584,11 @@ loom {
             // lever-row parity) —
             //   .\gradlew.bat :fabric:runCrossingGametest -PdisableSeamClipRelax=true
             if (project.findProperty('disableSeamClipRelax') == 'true') { vmArg('-Dseamlessportals.disableSeamClipRelax=true') }
+            // IS5-SEAM-CONTENT band-content probe (DIAGNOSTIC, default OFF — blocking 1Hz readback
+            // inside the crossing window): classifies the band pixels' dest depth — ~0.0 (reversed-Z
+            // FAR) = nothing drew (void class); substantially >0 = painted black (pack-pass class) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PseamContentProbe=true
+            if (project.findProperty('seamContentProbe') == 'true') { vmArg('-Dseamlessportals.seamContentProbe=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
