@@ -532,6 +532,13 @@ public class CrossingSmoke implements FabricClientGameTest {
             // under -PdisableSeamClip (inversion). After the rail legs: it moves the player.
             rsSeamClipGate(context, px, py, pz);
 
+            // RS SEAM-CLIP ARC EVIDENCE (screenshots lever only, asserts nothing) — 2026-07-27
+            // user live report: "the block doesn't load on the other side at first; it reappears
+            // as soon as I cross where the seam sits" while walking AROUND the portal. Eight
+            // camera positions along that walk, screenshotted, so the flip/pop can be read
+            // frame-by-frame instead of theorised about.
+            rsSeamClipArcEvidence(context, px, py, pz);
+
             if (AperturePassthroughLever.RS_ONLY) {
                 SeamlessPortalsConstants.LOGGER.info(LOG + "RS-ONLY MODE — crossing/teleport legs"
                     + " (1, 2, 3, 4, 7) and the leg-5 datapack reopen were SKIPPED"
@@ -3023,6 +3030,114 @@ public class CrossingSmoke implements FabricClientGameTest {
             } catch (Throwable t) {
                 SeamlessPortalsConstants.LOGGER.warn(tag + "CLEANUP FAILED — later legs may see"
                     + " leftover staging at x=" + qx, t);
+            }
+        }
+    }
+
+    /**
+     * RS SEAM-CLIP ARC EVIDENCE — reproduces the user's 2026-07-27 walk-around report with a
+     * fixed camera arc. Same fixture recipe as the gate (frameless EXACT same-dim portal, gold
+     * in the +X edge aperture cell, glowstone + night vision; NO backdrop — position 8 stands
+     * where the gate's wall was). Eight shots, front → side → across the plane → behind, each
+     * aimed at the seam cell's centre. Asserts nothing; screenshots lever only; fail-soft;
+     * cleanup in finally including player-whereabouts restore.
+     */
+    private static void rsSeamClipArcEvidence(ClientGameTestContext context, int px, int py, int pz) {
+        if (!screenshotsLeverOn() || AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        final String tag = LOG + "[RS-SEAM-CLIP-ARC] ";
+        final int rx = px + 64, ry = py, rz = pz;
+        final double planeZ = rz - 5.5;
+        final int apertureZ = rz - 6;
+        final BlockPos goldCell = new BlockPos(rx + 5, ry + 1, apertureZ);
+        final BlockPos mirrorCell = new BlockPos(rx + 5, ry + 1, apertureZ - 50);
+        final Vec3 portalOrigin = new Vec3(rx + 4.5, ry + 1.5, planeZ);
+        final Vec3 portalDest = new Vec3(rx + 4.5, ry + 1.5, planeZ - 50.0);
+        final double aimX = rx + 5.5, aimY = ry + 1.5, aimZ = planeZ;
+
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+        try {
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run fill " + (rx - 4) + " " + (ry - 1) + " "
+                    + (rz - 14) + " " + (rx + 12) + " " + (ry - 1) + " " + (rz + 2)
+                    + " minecraft:obsidian",
+                "execute in minecraft:overworld run fill " + (rx - 4) + " " + ry + " "
+                    + (rz - 14) + " " + (rx + 12) + " " + (ry + 8) + " " + (rz + 2)
+                    + " minecraft:air"
+            ));
+            seamClipStand(context, rx + 5.5, ry, rz - 1.5);
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run setblock " + (rx + 8) + " " + ry + " "
+                    + (rz - 6) + " minecraft:glowstone",
+                "execute in minecraft:overworld run effect give @p minecraft:night_vision"
+                    + " 3600 0 true"
+            ));
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                spawnTestPortal(ow, portalOrigin, Level.OVERWORLD, portalDest);
+            });
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, goldCell,
+                    net.minecraft.world.level.block.Blocks.GOLD_BLOCK.defaultBlockState());
+            });
+            context.waitTicks(40);
+
+            // The arc: player feet positions walking around the +X side of the portal.
+            // planeZ = rz-5.5; positions 1-4 are FRONT of the plane, 5-8 BEHIND.
+            double[][] arc = {
+                { rx + 5.5, rz - 1.5 },   // 1 front, head-on
+                { rx + 9.5, rz - 2.5 },   // 2 front-oblique
+                { rx + 10.0, rz - 4.5 },  // 3 side, clearly front (the gate's own camera)
+                { rx + 10.0, rz - 5.3 },  // 4 side, 0.2 before the plane
+                { rx + 10.0, rz - 5.7 },  // 5 side, 0.2 past the plane
+                { rx + 10.0, rz - 6.5 },  // 6 side, clearly behind
+                { rx + 9.5, rz - 8.5 },   // 7 back-oblique
+                { rx + 5.5, rz - 9.5 },   // 8 behind, head-on (through the back window)
+            };
+            for (int i = 0; i < arc.length; i++) {
+                seamClipStand(context, arc[i][0], ry, arc[i][1]);
+                aimAt(context, aimX, aimY, aimZ);
+                context.waitTicks(8);
+                maybeScreenshot(context, String.format("rs-seam-clip-arc-%d", i + 1));
+            }
+            SeamlessPortalsConstants.LOGGER.info(tag + "8 arc shots captured; counters: {}",
+                com.warwa.seamlessportals.render.SeamClipRenderer.counters());
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(tag + "FAILED (non-fatal, evidence only)", t);
+        } finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (ow != null) {
+                        for (var portal : ow.getEntitiesOfClass(
+                            qouteall.imm_ptl.core.portal.Portal.class,
+                            new net.minecraft.world.phys.AABB(rx - 4, ry - 8, rz - 14,
+                                rx + 12, ry + 10, rz + 2), p -> true)) {
+                            portal.discard();
+                        }
+                    }
+                });
+                runCommands(context, List.of(
+                    "execute in minecraft:overworld run fill " + (rx - 4) + " " + (ry - 1) + " "
+                        + (rz - 14) + " " + (rx + 12) + " " + (ry + 8) + " " + (rz + 2)
+                        + " minecraft:air",
+                    "execute in minecraft:overworld run setblock " + mirrorCell.getX() + " "
+                        + mirrorCell.getY() + " " + mirrorCell.getZ() + " minecraft:air",
+                    "effect clear @p minecraft:night_vision"
+                ));
+                if (prevDim != null) {
+                    runCommands(context, List.of(
+                        "execute in " + prevDim + " run tp @p " + prevPos.x + " " + prevPos.y
+                            + " " + prevPos.z));
+                }
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(tag + "CLEANUP FAILED", t);
             }
         }
     }
