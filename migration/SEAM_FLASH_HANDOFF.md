@@ -38,7 +38,34 @@ suspension REMAINS SHIPPED — it fixes the real, separately-measured void/flash
 
 **Recorded follow-up (separate item, do not fold in):** the first-person HAND disappears and
 reappears when the camera crosses the seam — persists independently of the band (user-observed on
-the mask-off leg). Likely related to the existing `teleport-hand-glitch-chain` memory.
+the mask-off leg).
+
+### §00a THE HAND ENGAGEMENT (2026-07-27 late) — THREE VALID REFUTATIONS; next = the stage diff
+
+Symptom (user, precise): source→dest the hand slices away progressively from the seam direction
+and pops back whole after crossing; dest→source it vanishes at once and returns part-by-part.
+Adjudicated legs, EVERY one config-proven in the log:
+1. `front_clipping disable` ⇒ unchanged — **clip family exonerated** (store disarmed at every
+   hand draw; hand programs loc==-1 — recon `wf_00a03d77`);
+2. shaders OFF ⇒ intact — compat-route-only (vanilla wipes depth pre-hand; iris bakes the hand
+   INSIDE `LevelRenderer.render`, pre-anchor, and no-ops vanilla's call);
+3. stamp NDC-z 0.5 cap (`vsh=capped` proven) ⇒ unchanged — **stamp overpaint refuted as the
+   dominant carrier** (cap kept: verifier-passed, closes the clamped-sliver edge);
+4. iris-HandRenderer `glDepthRange(0.999,1)` crossing-window bracket (`ARMED` line + 42 census
+   seconds proven) ⇒ unchanged — **the hand-pass depth-test-loss hypothesis refuted**.
+
+**Standing caution recorded:** the "hand shredded in the snapshot" reading rested on ONE mixed
+hand-region probe row of 45 (possible mid-swing animation) — a one-sampled-block generalization;
+treat it as UNCONFIRMED, not fact.
+
+**THE SPECIFIED NEXT MEASUREMENT (hypothesis-free):** a four-point STAGE DIFF of the hand's
+screen region in ONE crossing frame — (a) mainRT immediately at the anchor (pre-snapshot),
+(b) the deferred buffer right after the snapshot copy, (c) the deferred right after the stamp,
+(d) mainRT right after the blit-back — same pixels, color+depth, one log block. The stage where
+the hand pixels change names the eater by construction. Build it on the SeamDestContentProbe
+chassis (FBO resolver + pack-state bracket); readback points already exist in
+`IrisCompatOn262Renderer.onBeforeHandRendering` for (a)/(b)/(d) and `doRenderPortal` for (c).
+Both shipped hand fixes stay (harmless, verifier-passed, band intact).
 
 ---
 
