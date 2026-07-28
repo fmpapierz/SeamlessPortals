@@ -468,6 +468,12 @@ public class IPGlobal {
     public static final boolean STAMP_EXEC_PROBE =
         Boolean.getBoolean("seamlessportals.stampExecProbe");
 
+    // IS5-HAND-TAP iris HandRenderer canRender-vs-submit tap (DIAGNOSTIC, default OFF).
+    // Declared here only so the IS5-RC run-config block reports it (the tap reads its own
+    // property — SeamHandSubmitTap.ENABLED).
+    public static final boolean HAND_SUBMIT_TAP =
+        Boolean.getBoolean("seamlessportals.handSubmitTap");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
