@@ -58,14 +58,33 @@ Adjudicated legs, EVERY one config-proven in the log:
 hand-region probe row of 45 (possible mid-swing animation) — a one-sampled-block generalization;
 treat it as UNCONFIRMED, not fact.
 
-**THE SPECIFIED NEXT MEASUREMENT (hypothesis-free):** a four-point STAGE DIFF of the hand's
-screen region in ONE crossing frame — (a) mainRT immediately at the anchor (pre-snapshot),
-(b) the deferred buffer right after the snapshot copy, (c) the deferred right after the stamp,
-(d) mainRT right after the blit-back — same pixels, color+depth, one log block. The stage where
-the hand pixels change names the eater by construction. Build it on the SeamDestContentProbe
-chassis (FBO resolver + pack-state bracket); readback points already exist in
-`IrisCompatOn262Renderer.onBeforeHandRendering` for (a)/(b)/(d) and `doRenderPortal` for (c).
-Both shipped hand fixes stay (harmless, verifier-passed, band intact).
+**THE STAGE DIFF RAN (2026-07-27 23:00, 15 sampled crossing frames) — VERDICT:**
+- **A→B and C→D byte-clean on every block** — the snapshot copy and the blit-back are innocent.
+- **On the slicing frames the hand is ALREADY ABSENT AT STAGE A**: the anchor-time mainRT holds
+  the grazing shell (depth 0.981–0.994) where the hand's slice (0.554–0.556) should be, on 13/15
+  blocks. The earlier one-row "snapshot shredding" reading is now CORROBORATED at scale.
+- ⇒ **The eater acts INSIDE iris's `renderLevel`, upstream of the whole compat pass** — that is
+  why all three downstream interventions changed nothing. And since the depth bracket (proven
+  ARMED) did not save it, the loss is NOT a depth-test loss: the hand is either never DRAWN at
+  those pixels (something culls/clips its geometry pre-raster) or drawn into colortex and eaten
+  by a PACK COMPOSITE (TAA/reprojection rejecting the hand at the seam) before iris finalizes.
+- **OPEN INSTRUMENT ANOMALY (audit before trusting the cap again):** stage C shows the stamp
+  writing depth ≈0.655 — ABOVE the 0.5 cap — while the once-only line reports `vsh=capped`.
+  Either the built resources did not carry the capped .vsh into that run, the compiled program
+  is stale, or the C-stage depth is not the stamp's write. Settle with a live
+  `glGetShaderSource` dump or a jar-resource check before any further cap-based reasoning.
+
+**NEXT SESSION'S INSTRUMENTS (specified):**
+1. Move the stage points INSIDE `renderLevel` using the ALREADY-LANDED HandRenderer mixin hooks
+   (`MixinIrisHandRenderer_SeamDepthBracket` fires at HEAD/RETURN of both hand passes): read the
+   hand-region pixels of the CURRENT draw target right after `renderSolid` and right after
+   `renderTranslucent`, then at stage A — splitting "hand never drawn" from "hand drawn then
+   eaten by a later in-renderLevel pass (pack composite/final)". Note the hand draws into iris's
+   gbuffer targets there, not mainRT — resolve the live draw FBO, or read iris colortex0 via the
+   IrisTemporalTargetGuard's target-access plumbing.
+2. The cap-violation audit above.
+Both shipped hand fixes stay (harmless, verifier-passed, band intact); the hand symptom itself
+is UNCHANGED and OPEN.
 
 ---
 
