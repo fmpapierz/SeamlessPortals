@@ -59,6 +59,24 @@ dependencies {
         exclude(group: 'net.fabricmc', module: 'fabric-loader')
     }
 
+    // JiJ: nest cloth-config INTO the shipped jar, closing the "TODO release packaging"
+    // above. Without this the jar launches on a cloth-less instance and hard-crashes in
+    // IPModMain.loadConfig — IPConfig `implements ConfigData`, so a missing cloth is a
+    // NoClassDefFoundError at class-DEFINITION time, not a recoverable miss. Fabric Loader
+    // unpacks nested jars and loads them as real mods, so the "cloth-config" entry in
+    // fabric.mod.json depends is satisfied by our own artifact — no dependency screen and
+    // no user action. Mirrors IP's own build.gradle:84-87 (modApi + include).
+    //
+    // transitive = false is REQUIRED, not tidiness: the published cloth-config-fabric jar
+    // already self-nests its only runtime need (META-INF/jars/basic-math-0.6.1.jar), and its
+    // fabric.mod.json depends on nothing but fabricloader + minecraft. Resolving the POM
+    // transitively here would drag fabric-api/jankson/toml4j/snakeyaml into the nest, and
+    // loom would wrap each non-mod jar in a generated mod shell. The `exclude` block above
+    // does not apply to this configuration, so scoping happens here instead. ~1.1 MB added.
+    include("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        transitive = false
+    }
+
     // S19-E: real Sodium 0.9.1 + Iris 1.11.2 on the :fabric compile classpath. The loader
     // recompiles :common's raw source, which now references the real sodium/iris types after
     // the F21 stub retirement, so these types must be visible here too. compileOnly ONLY —
