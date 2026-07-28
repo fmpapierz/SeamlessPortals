@@ -323,6 +323,65 @@ public final class SeamHandSubmitTap {
     private static int windowRows = 0;
     private static int ambientRows = 0;
 
+    /** Lazy reflection into vanilla ItemInHandRenderer's equip-animation state (2026-07-28
+     *  extension: gate + body + camera-entity all exonerated by the first tap leg, so the
+     *  remaining candidates are the SUBMITTED GEOMETRY's transforms — and the prime suspect
+     *  for "instant vanish, part-by-part return" is the hand-HEIGHT/equip animation being
+     *  reset by the seamless teleports; mainHandHeight 0 = fully lowered = the arm translated
+     *  below the viewport = submitted-but-never-rasterized at the probe pixels, exactly the
+     *  measured signature). Field names javap-verified against the 26.2 merged jar. */
+    private static boolean handReflAttempted = false;
+    private static java.lang.reflect.Field fMainHandHeight;
+    private static java.lang.reflect.Field fOMainHandHeight;
+    private static java.lang.reflect.Field fOffHandHeight;
+    private static java.lang.reflect.Field fOOffHandHeight;
+    private static java.lang.reflect.Field fMainHandItem;
+
+    private static String readHandAnimState() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            net.minecraft.client.renderer.ItemInHandRenderer ihr =
+                mc.gameRenderer.itemInHandRenderer;
+            if (ihr == null) {
+                return "NO-IHR";
+            }
+            if (!handReflAttempted) {
+                handReflAttempted = true;
+                try {
+                    Class<?> c = net.minecraft.client.renderer.ItemInHandRenderer.class;
+                    fMainHandHeight = c.getDeclaredField("mainHandHeight");
+                    fOMainHandHeight = c.getDeclaredField("oMainHandHeight");
+                    fOffHandHeight = c.getDeclaredField("offHandHeight");
+                    fOOffHandHeight = c.getDeclaredField("oOffHandHeight");
+                    fMainHandItem = c.getDeclaredField("mainHandItem");
+                    fMainHandHeight.setAccessible(true);
+                    fOMainHandHeight.setAccessible(true);
+                    fOffHandHeight.setAccessible(true);
+                    fOOffHandHeight.setAccessible(true);
+                    fMainHandItem.setAccessible(true);
+                }
+                catch (Throwable t) {
+                    fMainHandHeight = null;
+                }
+            }
+            if (fMainHandHeight == null) {
+                return "REFL-FAILED"; // loud, un-tabulatable
+            }
+            String ihrItem = String.valueOf(fMainHandItem.get(ihr));
+            String playerItem = mc.player == null ? "no-player"
+                : String.valueOf(mc.player.getMainHandItem());
+            return String.format("mainH=%.2f oMainH=%.2f offH=%.2f oOffH=%.2f ihrItem=%s"
+                    + " playerItem=%s%s",
+                fMainHandHeight.getFloat(ihr), fOMainHandHeight.getFloat(ihr),
+                fOffHandHeight.getFloat(ihr), fOOffHandHeight.getFloat(ihr),
+                ihrItem, playerItem,
+                ihrItem.equals(playerItem) ? "" : " ITEM-MISMATCH(re-equip trigger)");
+        }
+        catch (Throwable t) {
+            return "READ-FAILED(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
     private static void emit() {
         String label;
         if (ambientSample) {
@@ -334,23 +393,25 @@ public final class SeamHandSubmitTap {
             label = String.format("[window #%d d=%.2f]", windowRows, windowDist);
         }
         LOGGER.info(P + "{} solid: canRender={} failed=[{}] body={} | translucent: canRender={}"
-                + " failed=[{}] body={} | camEnt={} held={} vp={} — READ: canRender=false names"
-                + " the gate (failed[] lists iris's six conditions recomputed same-frame;"
-                + " entityNotPlayer/detached are the crossing-machinery suspects)."
-                + " canRender=true body=false ⇒ the remaining outer gate — PER PASS (bytecode):"
-                + " solid = isAnyHandSolid|packInUse (held item relevant); translucent ="
-                + " packInUse ONLY (no held-item gate — body=false there with shaders on is"
-                + " itself anomalous). canRender=true body=true on window rows while the INLVL"
-                + " verdict says never-rasterized ⇒ descend into submit/dispatch. vp= is the GL"
-                + " state at body entry, BEFORE iris's own pass setup — corroborating only, not"
-                + " the draw-time state. AMBIENT rows are the control: they must show"
-                + " canRender=true body=true with a visible hand or this tap is blind and the"
-                + " leg is VOID; a leg with zero AMBIENT rows (never out of window) has no"
-                + " control and is likewise not adjudicable on the never-drawn side.",
+                + " failed=[{}] body={} | camEnt={} held={} vp={} | handAnim: {} — READ:"
+                + " canRender=false names the gate (failed[] lists iris's six conditions"
+                + " recomputed same-frame; entityNotPlayer/detached are the crossing-machinery"
+                + " suspects). canRender=true body=false ⇒ the remaining outer gate — PER PASS"
+                + " (bytecode): solid = isAnyHandSolid|packInUse (held item relevant);"
+                + " translucent = packInUse ONLY (no held-item gate — body=false there with"
+                + " shaders on is itself anomalous). canRender=true body=true on window rows"
+                + " while the INLVL verdict says never-rasterized ⇒ the submitted GEOMETRY:"
+                + " handAnim mainH near 0 on window rows with near 1 on AMBIENT rows convicts"
+                + " the equip-lower animation (teleport-reset hand height; ITEM-MISMATCH names"
+                + " the re-equip trigger); mainH healthy on both ⇒ the pose/matrix path"
+                + " (IS-BOB) is next. vp= is the GL state at body entry, BEFORE iris's own"
+                + " pass setup — corroborating only. AMBIENT rows are the control: they must"
+                + " show canRender=true body=true with a visible hand or this tap is blind and"
+                + " the leg is VOID; zero AMBIENT rows ⇒ no control ⇒ not adjudicable.",
             label,
             fmt(canRenderResult[0]), failedConds[0], bodyRan[0],
             fmt(canRenderResult[1]), failedConds[1], bodyRan[1],
-            camEntDesc, heldDesc, vpDesc);
+            camEntDesc, heldDesc, vpDesc, readHandAnimState());
     }
 
     private static String fmt(int v) {
