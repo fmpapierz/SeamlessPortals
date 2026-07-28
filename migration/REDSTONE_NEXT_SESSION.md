@@ -206,6 +206,16 @@ transients around place/bind; moved-portal old cells recompile on natural dirtyi
 filled apertures re-tessellate per frame (escape hatch documented); floor-portal coplanar dither
 (pre-existing); crumbling/outline stay full-cube.
 
+**The walk-around look (user live report, 2026-07-27, arc-verified same session):** walking
+around a portal, the far half is absent from every out-of-window viewpoint on your side of the
+plane, and the visible half SWAPS the moment the camera crosses the plane's lateral extension
+(bi-faced: half↔half, each side's window supplying the complement; single-faced from behind:
+whole cube, the no-window fallback). Verified frame-by-frame by `rsSeamClipArcEvidence`
+(screenshots lever, 8 arc shots, asserts nothing) — the pop is the geometry of view-dependent
+camera-side keep, not a defect; it is unavoidable with one clip plane per draw (any fixed-half
+choice breaks the behind view). **User judgment on whether these doorway semantics are the
+wanted look is PENDING.**
+
 **For (c) redstone:** the clip predicate deliberately equals the mirror's admission predicate.
 If (c) widens what mirrors (e.g. machine writes someday), the clip follows automatically through
 `SeamRegistry` — no clip-side edit needed.
