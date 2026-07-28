@@ -37,12 +37,18 @@ generalise "to everything else easily, including offset mirroring" — that is w
 
 ## WHERE THINGS STAND (2026-07-27, latest session)
 
-- **★ (c) STEP 1 — REDSTONE SIGNAL ACROSS THE SEAM — LANDED AND GATED** (2026-07-27, this
-  session, the session AFTER the seam-clip one). The powered-rail chain crosses the seam in both
-  topologies and both directions, and a seam LAMP lights from a far-side source — see the
-  ★ (c) STEP 1 section below for the mechanism, the levers, the provisional decisions AWAITING
-  THE USER'S WORD, and the deferred items. Spec + panel record:
-  `migration/REDSTONE_C_SPEC.md` (its ★★ PANEL FOLD banner overrides its body).
+- **★★ (c) STEP 1 — REDSTONE SIGNAL ACROSS THE SEAM — COMPLETE AND USER-CONFIRMED LIVE
+  (2026-07-28: "dude it works perfect now").** The powered-rail chain crosses the seam in both
+  topologies and both directions, the seam lamp lights from a far-side source, and the live
+  round surfaced and closed TWO real defects (the POWER-WAKE and BREAK-UNMARK — see the ROOT
+  CAUSE record in the ★ (c) STEP 1 section). Tip `8b06934`, 9-configuration matrix green,
+  everything pushed. The three provisional design decisions still want the user's EXPLICIT word
+  (the live confirmation validates the behavior; the decisions table below records what was
+  decided on their behalf). Spec + panel record: `migration/REDSTONE_C_SPEC.md` (its ★★ PANEL
+  FOLD banner overrides its body). ⚠ User-world note: seam rails placed BEFORE the break-unmark
+  fix may carry old stale marks — one break + re-place per rail heals permanently.
+  **Next-session starter prompt: `migration/REDSTONE_D_PROMPT.md`** — (d) minecarts is the
+  standing next item; (c) step 2 (wire/dust) is the documented alternative.
 - **★ THE SEAM CLIP IS LANDED, GATED — AND DEFAULT OFF BY USER DECISION (2026-07-27)** — see
   the ★ SEAM CLIP section below. OPEN ITEM 1 is CLOSED as built; the user tested the
   walk-around live and DECLINED the view-dependent doorway semantics in favour of the FUTURE
