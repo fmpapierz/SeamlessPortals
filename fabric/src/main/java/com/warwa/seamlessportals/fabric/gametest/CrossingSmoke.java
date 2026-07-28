@@ -527,9 +527,10 @@ public class CrossingSmoke implements FabricClientGameTest {
             rsRailLegTopologyB(context);
             rsRailLegTopologyA(context, py);
 
-            // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate: the seam block's far
-            // half must stop drawing from an out-of-window side view (fix ON) and must reappear
-            // under -PdisableSeamClip (inversion). After the rail legs: it moves the player.
+            // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate. Since the 2026-07-27
+            // user decision the clip is DEFAULT OFF (fractional model chosen instead): the
+            // default run asserts the whole-cube branch; -PenableSeamClip asserts the cut.
+            // After the rail legs: it moves the player.
             rsSeamClipGate(context, px, py, pz);
 
             // RS SEAM-CLIP ARC EVIDENCE (screenshots lever only, asserts nothing) — 2026-07-27
@@ -2817,7 +2818,7 @@ public class CrossingSmoke implements FabricClientGameTest {
      * the mesh no longer contains the block).
      *
      * <p><b>Verdicts:</b> fix ON — far NOT-gold + near gold + {@code cellsDrawn/cellsExcluded > 0};
-     * {@code -PdisableSeamClip} — far GOLD (the defect reproduced on demand) + near gold +
+     * clip OFF (the DEFAULT since 2026-07-27) — far GOLD (whole cube) + near gold +
      * counters 0. Full-suite note: the player is in the nether by this point — the leg records
      * their whereabouts and restores them in the {@code finally}, along with the staging, the
      * mirrored far half, the portal and {@code hideGui}.
@@ -2827,11 +2828,11 @@ public class CrossingSmoke implements FabricClientGameTest {
         // Master lever: with the whole passthrough stack disabled there is no seam registry, no
         // binding and nothing for a clip to gate — the fixture-validity check would (correctly)
         // refuse to run. The master-lever row proves stock-IP restoration; this leg's own
-        // inversion row is -PdisableSeamClip, which keeps the stack alive.
+        // clip-ON row is -PenableSeamClip, which keeps the stack alive.
         if (AperturePassthroughLever.DISABLED) {
             SeamlessPortalsConstants.LOGGER.info(tag + "SKIPPED — master lever"
                 + " (-PdisableAperturePassthrough) disables the seam stack this gate rides on;"
-                + " the clip's own inversion row is -PdisableSeamClip");
+                + " the clip's own enable row is -PenableSeamClip");
             return;
         }
         final boolean clipOn = !AperturePassthroughLever.DISABLE_SEAM_CLIP;
@@ -2991,12 +2992,12 @@ public class CrossingSmoke implements FabricClientGameTest {
                         + " fixture stopped reproducing the defect");
                 }
                 if (cellsDrawn != 0 || cellsExcluded != 0) {
-                    throw new AssertionError(tag + "INVERSION FAILED — the lever is set but the"
+                    throw new AssertionError(tag + "INVERSION FAILED — the clip is OFF but the"
                         + " mechanism still ran (cellsDrawn=" + cellsDrawn + " cellsExcluded="
                         + cellsExcluded + ")");
                 }
                 SeamlessPortalsConstants.LOGGER.info(tag + "INVERSION PASS — whole cube visible"
-                    + " from the side under -PdisableSeamClip, mechanism fully idle");
+                    + " from the side with the clip off (the default), mechanism fully idle");
             }
         } finally {
             try {
