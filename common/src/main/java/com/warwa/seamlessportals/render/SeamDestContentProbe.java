@@ -64,8 +64,12 @@ public final class SeamDestContentProbe {
 
     private SeamDestContentProbe() {}
 
-    /** Called from doRenderPortal right before the stamp. Never throws; self-disarms on failure. */
-    public static void sample(Portal portal, RenderTarget mainRT) {
+    /** Called from doRenderPortal right before the stamp. Never throws; self-disarms on failure.
+     *  {@code deferredOrNull} = the compat snapshot buffer (pre-portal main frame INCLUDING the
+     *  iris-baked hand) — when present, the probe also samples the HAND screen region's snapshot
+     *  depth (IS5-HAND: the stamp-over-hand hypothesis needs the hand slice's REAL depth values,
+     *  not a derivation from javap of HandRenderer's 0.125 scale). */
+    public static void sample(Portal portal, RenderTarget mainRT, RenderTarget deferredOrNull) {
         if (!ENABLED || disarmed) {
             return;
         }
@@ -87,11 +91,92 @@ public final class SeamDestContentProbe {
             }
             lastSampleNanos = now;
             readAndReport(mainRT, dist);
+            if (deferredOrNull != null) {
+                readHandRegion(deferredOrNull);
+            }
         }
         catch (Throwable t) {
             disarmed = true;
             LOGGER.warn(P + "probe threw — DISARMED for this session (render unaffected)", t);
         }
+    }
+
+    /**
+     * IS5-HAND — sample the SNAPSHOT buffer's depth+color along a short column through the
+     * first-person hand's usual screen region (right-hand: ~72% width, rows 78%..95% height).
+     * The hand is iris-baked into the snapshot pre-anchor with a compressed depth slice
+     * (HandRenderer scale(1,1,0.125)); this prints the REAL values so the stamp's depth-range
+     * cap can be designed from measurement. Same FBO-resolver + pack-state bracket as the main
+     * strip.
+     */
+    private static void readHandRegion(RenderTarget deferred) {
+        if (!(RenderSystem.getDevice().backend instanceof GlDevice glDevice)
+            || !(deferred.getColorTextureView() instanceof GlTextureView colorView)
+            || !(deferred.getDepthTextureView() instanceof GlTextureView depthView)
+        ) {
+            return;
+        }
+        int fbo = glDevice.frameBufferCache().getFbo(
+            glDevice.directStateAccess(), List.of(colorView), depthView
+        );
+        int x = (int) (deferred.width * 0.72);
+        int y0 = (int) (deferred.height * 0.05); // GL origin = bottom; hand = lower screen
+        int stripH = (int) (deferred.height * 0.17);
+        int prevRead = GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
+        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, fbo);
+        int prevPackRowLength = GL11.glGetInteger(GL11.GL_PACK_ROW_LENGTH);
+        int prevPackSkipRows = GL11.glGetInteger(GL11.GL_PACK_SKIP_ROWS);
+        int prevPackSkipPixels = GL11.glGetInteger(GL11.GL_PACK_SKIP_PIXELS);
+        int prevPackAlignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT);
+        GlStateManager._pixelStore(GL11.GL_PACK_ROW_LENGTH, 0);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_ROWS, 0);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_PIXELS, 0);
+        GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, 1);
+        ByteBuffer colors = BufferUtils.createByteBuffer(stripH * 4);
+        FloatBuffer depths = BufferUtils.createFloatBuffer(stripH);
+        GL11.glReadPixels(x, y0, 1, stripH, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, colors);
+        GL11.glReadPixels(x, y0, 1, stripH, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depths);
+        int glErr = GL11.glGetError();
+        GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, prevPackAlignment);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_PIXELS, prevPackSkipPixels);
+        GlStateManager._pixelStore(GL11.GL_PACK_SKIP_ROWS, prevPackSkipRows);
+        GlStateManager._pixelStore(GL11.GL_PACK_ROW_LENGTH, prevPackRowLength);
+        GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+
+        float dMin = Float.POSITIVE_INFINITY;
+        float dMax = Float.NEGATIVE_INFINITY;
+        int nonBg = 0;
+        for (int i = 0; i < stripH; i++) {
+            float d = depths.get(i);
+            dMin = Math.min(dMin, d);
+            dMax = Math.max(dMax, d);
+        }
+        // 8 bins bottom→top: mean depth + mean luminance (the hand occupies part of the strip;
+        // the per-bin values separate hand rows from world rows behind it).
+        StringBuilder bins = new StringBuilder();
+        int per = Math.max(1, stripH / 8);
+        for (int b = 0; b < 8; b++) {
+            double lum = 0;
+            double dep = 0;
+            int cnt = 0;
+            for (int i = b * per; i < Math.min((b + 1) * per, stripH); i++) {
+                int r = colors.get(i * 4) & 0xFF;
+                int g = colors.get(i * 4 + 1) & 0xFF;
+                int bl = colors.get(i * 4 + 2) & 0xFF;
+                lum += (r + g + bl) / (3.0 * 255.0);
+                dep += depths.get(i);
+                cnt++;
+            }
+            if (cnt > 0) {
+                bins.append(String.format("[%d l=%.2f d=%.4f]", b, lum / cnt, dep / cnt));
+            }
+        }
+        LOGGER.info(P + "HAND-REGION snapshot sample (deferred buffer, column x=" + x
+            + " y=" + y0 + "..+" + stripH + ", fbo=" + fbo + ", glErr=" + glErr
+            + "): depth min=" + dMin + " max=" + dMax
+            + " | bins b0(bottom)..b7: " + bins
+            + " — the HAND's depth slice vs world depth, measured; the stamp's clamped sliver"
+            + " writes 1.0 and needs a cap strictly between the two.");
     }
 
     private static void readAndReport(RenderTarget mainRT, double distToAperture) {
