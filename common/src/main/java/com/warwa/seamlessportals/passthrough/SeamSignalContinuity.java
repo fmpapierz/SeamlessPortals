@@ -500,6 +500,59 @@ public final class SeamSignalContinuity {
         }
     }
 
+    /**
+     * A redirected walk returned FALSE — log WHAT the landing cell held, so a live log names the
+     * kill reason directly: wrong block (golden chains die on plain/detector rails — vanilla),
+     * not POWERED (the pair's powered state diverged — shape-sync/provenance family), or an
+     * incompatible SHAPE (the pair's shapes diverged — the independent-pair §6.9 family).
+     */
+    public static void probeWalkDied(
+        ServerLevel farLevel, BlockPos farPos, RailShape expectedAxis, Block walkingBlock
+    ) {
+        if (!AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
+            return;
+        }
+        try {
+            BlockState st = farLevel.getBlockState(farPos);
+            String detail;
+            if (!st.is(walkingBlock)) {
+                detail = "WRONG BLOCK (walk carries " + walkingBlock + ", cell holds "
+                    + st.getBlock() + " — golden chains die on other rail types, vanilla rule)";
+            }
+            else {
+                var shapeProp = ((net.minecraft.world.level.block.BaseRailBlock) st.getBlock())
+                    .getShapeProperty();
+                RailShape shape = st.getValue(shapeProp);
+                boolean powered = st.hasProperty(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED)
+                    && st.getValue(net.minecraft.world.level.block.state.properties
+                        .BlockStateProperties.POWERED);
+                detail = "shape=" + shape + " (walk axis " + expectedAxis + ") powered=" + powered
+                    + (!powered ? " — UNPOWERED (powered-state divergence family)" : "")
+                    + (isAxisIncompatible(shape, expectedAxis)
+                        ? " — SHAPE INCOMPATIBLE (shape divergence family, spec §6.9)" : "");
+            }
+            LOGGER.info("[RS-SIGNAL] walk DIED at {} in {}: {}",
+                farPos, farLevel.dimension().identifier(), detail);
+        }
+        catch (Throwable t) {
+            readFault(t);
+        }
+    }
+
+    /** Mirrors isSameRailWithPower's shape-compat test (PoweredRailBlock.java:112-113). */
+    private static boolean isAxisIncompatible(RailShape shape, RailShape dir) {
+        if (dir == RailShape.EAST_WEST) {
+            return shape == RailShape.NORTH_SOUTH || shape == RailShape.ASCENDING_NORTH
+                || shape == RailShape.ASCENDING_SOUTH;
+        }
+        if (dir == RailShape.NORTH_SOUTH) {
+            return shape == RailShape.EAST_WEST || shape == RailShape.ASCENDING_EAST
+                || shape == RailShape.ASCENDING_WEST;
+        }
+        return false;
+    }
+
     public static String counters() {
         return "unionReads=" + unionReads
             + " unionHits=" + unionHits

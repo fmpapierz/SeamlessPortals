@@ -96,7 +96,14 @@ public abstract class MixinPoweredRailBlockSeamSignal {
             if (r == null) {
                 return false;
             }
-            return op.call(self, r.farLevel(), r.farPos(), r.forward(), depth, r.dirShape());
+            boolean crossed = op.call(self, r.farLevel(), r.farPos(), r.forward(), depth, r.dirShape());
+            if (!crossed) {
+                // The crossed walk DIED — name the reason at the landing cell (live diagnosis:
+                // wrong block type / not powered / incompatible shape are indistinguishable from
+                // the outside, and each has a different fix).
+                SeamSignalContinuity.probeWalkDied(r.farLevel(), r.farPos(), r.dirShape(), self);
+            }
+            return crossed;
         }
         finally {
             if (owned) {

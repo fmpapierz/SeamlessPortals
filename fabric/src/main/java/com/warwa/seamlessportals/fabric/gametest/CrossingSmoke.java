@@ -542,7 +542,12 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
                 rsSignalSameDimCoincidentRepro(context);
                 rsSignalTwoSeamLineRepro(context, py);
-                rsSignalCommandPairRepro(context);
+                rsSignalCommandPairRepro(context, 5600, 100, 5600, 1, 2, "1x2");
+                // The user's REAL aperture size (their live pair binds cells=15 → 5×3) — wide
+                // apertures were uncovered by every earlier repro; the edge-column variant
+                // exercises the lateral cell mapping for off-center columns.
+                rsSignalCommandPairRepro(context, 6400, 100, 6400, 5, 3, "5x3");
+                rsSignalCommandPairRepro(context, 7200, 100, 7200, 5, 3, -2, "5x3-edge");
             }
 
             // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate. Since the 2026-07-27
@@ -2950,16 +2955,26 @@ public class CrossingSmoke implements FabricClientGameTest {
      * derived from the LIVE binding, so whatever geometry the command actually produces is what
      * gets tested. Height-2 aperture and a north-south line, both untouched by the other repros.
      */
-    private static void rsSignalCommandPairRepro(ClientGameTestContext context) {
+    private static void rsSignalCommandPairRepro(
+        ClientGameTestContext context, int cx, int cy, int cz, int width, int height, String tag
+    ) {
+        rsSignalCommandPairRepro(context, cx, cy, cz, width, height, 0, tag);
+    }
+
+    private static void rsSignalCommandPairRepro(
+        ClientGameTestContext context, int cx, int cy, int cz, int width, int height,
+        int railXOff, String tag
+    ) {
         if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
             || AperturePassthroughLever.DISABLE_SEAM_SIGNAL_DISPATCH
             || AperturePassthroughLever.DISABLE_SEAM_SHADOW
             || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC) {
             return;
         }
-        final int cx = 5600, cy = 100, cz = 5600;   // near site; far end +60z −50y (user-shaped)
-        final BlockPos targetBlock = new BlockPos(cx, cy - 1, cz);   // the aimed floor block
-        final Vec3 destCenter = new Vec3(cx + 0.5, cy - 49, cz + 60 + 0.5);
+        // Portal center y = (cy-1) + 1 + h/2; the typed dest must carry the SAME sub-block phase
+        // on every axis or the pair classifies OFFSET and (rightly) declines. Far bottom row is
+        // cy-50 for every height.
+        final Vec3 destCenter = new Vec3(cx + 0.5, cy + height / 2.0 - 50, cz + 60 + 0.5);
         AtomicReference<String> failure = new AtomicReference<>(null);
         AtomicReference<Vec3> playerBefore = new AtomicReference<>(null);
         final var POWERED = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
@@ -2975,22 +2990,23 @@ public class CrossingSmoke implements FabricClientGameTest {
                 "forceload add " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 76),
                 // Near site: a floor strip with a GAP so the player's aim ray hits exactly the
                 // target block's top face (a continuous floor would be hit earlier along the ray).
-                "fill " + (cx - 3) + " " + (cy - 1) + " " + (cz - 4) + " "
-                    + (cx + 3) + " " + (cy + 4) + " " + (cz + 6) + " minecraft:air",
-                "fill " + (cx - 3) + " " + (cy - 1) + " " + (cz + 2) + " "
-                    + (cx + 3) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                    + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz + 2) + " "
+                    + (cx + 6) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
                 "setblock " + cx + " " + (cy - 1) + " " + cz + " minecraft:stone",
                 // Far platform under the future far aperture + continuation.
-                "fill " + (cx - 3) + " " + (cy - 51) + " " + (cz + 54) + " "
-                    + (cx + 3) + " " + (cy - 51) + " " + (cz + 64) + " minecraft:stone",
-                "fill " + (cx - 3) + " " + (cy - 50) + " " + (cz + 54) + " "
-                    + (cx + 3) + " " + (cy - 46) + " " + (cz + 64) + " minecraft:air",
+                "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                    + (cx + 6) + " " + (cy - 51) + " " + (cz + 64) + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 50) + " " + (cz + 54) + " "
+                    + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
                 // Aim: stand south of the gap, look north and down at the target block's top.
                 "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 27"
             ));
             context.waitTicks(10);
             runCommands(context, List.of(
-                "execute as @p at @p run portal make_portal 1 2 minecraft:overworld "
+                "execute as @p at @p run portal make_portal " + width + " " + height
+                    + " minecraft:overworld "
                     + destCenter.x + " " + destCenter.y + " " + destCenter.z));
             context.waitTicks(10);
             runCommands(context, List.of(
@@ -3003,8 +3019,10 @@ public class CrossingSmoke implements FabricClientGameTest {
             runCommands(context, List.of(
                 "tp @p " + (cx + 3.5) + " " + cy + " " + (cz + 4.5) + " 180 0"));
 
-            // Find the seam binding at the expected LOWER aperture cell.
-            final BlockPos cellS = new BlockPos(cx, cy, cz);
+            // Find the seam binding at the chosen LOWER aperture column (railXOff=0 is the
+            // aimed/center column; a nonzero offset threads an OFF-CENTER column of a wide
+            // aperture — the lateral-mapping case the user's 5-wide portal exercises).
+            final BlockPos cellS = new BlockPos(cx + railXOff, cy, cz);
             AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bref =
                 new AtomicReference<>(null);
             for (int attempt = 0; attempt < 30 && bref.get() == null; attempt++) {
@@ -3022,7 +3040,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                 }
             }
             if (bref.get() == null) {
-                throw new AssertionError(LOG + "REPRO3 FAILED: the command-built pair never bound a"
+                throw new AssertionError(LOG + "REPRO3[" + tag + "] FAILED: the command-built pair never bound a"
                     + " mirrorable seam at " + cellS + " — either make_portal aimed wrong (fixture)"
                     + " or command-built pairs do not bind (defect)");
             }
@@ -3036,14 +3054,14 @@ public class CrossingSmoke implements FabricClientGameTest {
             final BlockPos a1 = cellS.relative(approachDir);
             final BlockPos a0 = a1.relative(approachDir);
             final BlockPos powerPos = a0.relative(approachDir);
-            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3 geometry: S={} phase={} crossDir={}"
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3[" + tag + "] geometry: S={} phase={} crossDir={}"
                     + " D={} B1={} B2={} A1={} A0={} power={} R={} cluster={}",
                 cellS, b.phase(), crossDir, destPos, contC, contC2, a1, a0, powerPos,
                 b.stateRotation(), com.warwa.seamlessportals.passthrough.SeamRegistry
                     .lookup(McHelper.getServerWorld(Level.OVERWORLD), cellS).bindings().size());
             if (b.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
                 || !b.seamContinuous()) {
-                throw new AssertionError(LOG + "REPRO3 FIXTURE WRONG: phase=" + b.phase()
+                throw new AssertionError(LOG + "REPRO3[" + tag + "] FIXTURE WRONG: phase=" + b.phase()
                     + " continuous=" + b.seamContinuous());
             }
 
@@ -3058,18 +3076,30 @@ public class CrossingSmoke implements FabricClientGameTest {
                     ow.setBlock(p.below(), Blocks.STONE.defaultBlockState(), 3);
                     ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
                 }
+                // Support under the SEAM cell too — the center column sits on the aimed target
+                // block, but an off-center column's below-cell is the gap row (first edge run
+                // failed HERE: the seam rail popped for lack of support and the leg misread the
+                // missing mirror half as the user's bug — fixture-fails-for-the-wrong-reason).
+                ow.setBlock(cellS.below(), Blocks.STONE.defaultBlockState(), 3);
                 writeAsPlayer(ow, cellS, Blocks.POWERED_RAIL.defaultBlockState());
             });
             context.waitTicks(10);
             runOnServer(context, server -> {
                 ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (!ow.getBlockState(cellS).is(Blocks.POWERED_RAIL)) {
+                    failure.set("FIXTURE: the seam rail at S=" + cellS + " did not survive"
+                        + " placement (" + ow.getBlockState(cellS).getBlock()
+                        + ") — nothing downstream is meaningful");
+                    return;
+                }
                 if (!ow.getBlockState(destPos).is(Blocks.POWERED_RAIL)) {
                     failure.set("mirror half at D=" + destPos + " is "
-                        + ow.getBlockState(destPos).getBlock());
+                        + ow.getBlockState(destPos).getBlock()
+                        + " while S holds the player's rail — THE (a) MIRROR DID NOT WRITE");
                 }
             });
             if (failure.get() != null) {
-                throw new AssertionError(LOG + "REPRO3 FAILED: " + failure.get());
+                throw new AssertionError(LOG + "REPRO3[" + tag + "] FAILED: " + failure.get());
             }
 
             // ---- POWER ON ----
@@ -3078,7 +3108,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             context.waitTicks(60);
             runOnServer(context, server -> {
                 ServerLevel ow = server.getLevel(Level.OVERWORLD);
-                SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3 ON: a0={} a1={} S={} D={} b1={}"
+                SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3[" + tag + "] ON: a0={} a1={} S={} D={} b1={}"
                         + " b2={} | {}",
                     ow.getBlockState(a0).getValue(POWERED), ow.getBlockState(a1).getValue(POWERED),
                     ow.getBlockState(cellS).getValue(POWERED),
@@ -3121,7 +3151,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (failure.get() != null) {
                 throw new AssertionError(LOG + "REPRO3: " + failure.get());
             }
-            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3 PASS — the command-built bi-faced"
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO3[" + tag + "] PASS — the command-built bi-faced"
                 + " pair carried and released the signal. counters: "
                 + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
         }
@@ -3136,10 +3166,10 @@ public class CrossingSmoke implements FabricClientGameTest {
                     }
                 });
                 runCommands(context, List.of(
-                    "fill " + (cx - 3) + " " + (cy - 1) + " " + (cz - 4) + " "
-                        + (cx + 3) + " " + (cy + 4) + " " + (cz + 6) + " minecraft:air",
-                    "fill " + (cx - 3) + " " + (cy - 51) + " " + (cz + 54) + " "
-                        + (cx + 3) + " " + (cy - 46) + " " + (cz + 64) + " minecraft:air",
+                    "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                        + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+                    "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                        + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
                     "forceload remove " + (cx - 16) + " " + (cz - 16) + " "
                         + (cx + 16) + " " + (cz + 76)
                 ));
@@ -3150,7 +3180,7 @@ public class CrossingSmoke implements FabricClientGameTest {
                 }
             }
             catch (Throwable t) {
-                SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO3 cleanup failed", t);
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "REPRO3[" + tag + "] cleanup failed", t);
             }
         }
     }
