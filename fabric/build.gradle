@@ -368,6 +368,12 @@ loom {
             // line before adjudicating any leg. Pass this to force it OFF and reproduce —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
             if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF — four blocking 1Hz
+            // readbacks inside the crossing window): captures the hand-region pixels at anchor /
+            // post-snapshot / post-stamp / post-blit and diffs — the first changed hop names the
+            // eater's stage by construction (handoff §00a) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandStageDiff=true
+            if (project.findProperty('handStageDiff') == 'true') { vmArg('-Dseamlessportals.handStageDiff=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -629,6 +635,12 @@ loom {
             // line before adjudicating any leg. Pass this to force it OFF and reproduce —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
             if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF — four blocking 1Hz
+            // readbacks inside the crossing window): captures the hand-region pixels at anchor /
+            // post-snapshot / post-stamp / post-blit and diffs — the first changed hop names the
+            // eater's stage by construction (handoff §00a) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandStageDiff=true
+            if (project.findProperty('handStageDiff') == 'true') { vmArg('-Dseamlessportals.handStageDiff=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —

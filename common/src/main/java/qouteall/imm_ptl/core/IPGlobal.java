@@ -450,6 +450,12 @@ public class IPGlobal {
     public static final boolean HAND_SEAM_DEPTH_BRACKET_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableHandSeamDepthBracket");
 
+    // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF). Declared here only so the
+    // IS5-RC run-config block reports it (the probe reads its own property —
+    // SeamHandStageDiff.ENABLED).
+    public static final boolean HAND_STAGE_DIFF_PROBE =
+        Boolean.getBoolean("seamlessportals.handStageDiff");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;

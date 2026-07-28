@@ -201,6 +201,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
 
         CHelper.checkGlError();
+        // IS5-HAND-STAGE A (lever-gated -Dseamlessportals.handStageDiff, DEFAULT OFF): the main
+        // frame exactly as iris finalized it, before any compat touch. Stage B/C/D below.
+        com.warwa.seamlessportals.render.SeamHandStageDiff.stageA(mainRT);
         // Stencil belt (anchor slot; §6 hazard row 8-2's raw-disable family).
         GL11.glDisable(GL_STENCIL_TEST);
 
@@ -224,6 +227,8 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // (blitAndBlendToTexture is ALPHA-BLEND — settled OQ5, never on this path).
         deferredBuffer.fb.copyDepthFrom(mainRT);
         IrisCompatPaste.drawStraightCopy(mainRT, deferredBuffer.fb);
+        // IS5-HAND-STAGE B: the snapshot as the compat pass preserved it.
+        com.warwa.seamlessportals.render.SeamHandStageDiff.stageB(deferredBuffer.fb);
 
         CHelper.checkGlError();
 
@@ -282,6 +287,8 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // taken unconditionally above, so on a mid-loop throw this restores the composited
             // snapshot instead of leaving the last portal's raw dest render on the main target.
             IrisCompatPaste.drawStraightCopy(deferredBuffer.fb, mainRT);
+            // IS5-HAND-STAGE D: mainRT after the blit-back — emits the four-stage diff block.
+            com.warwa.seamlessportals.render.SeamHandStageDiff.stageD(mainRT);
 
             // IS5-P phantom fix: undo the dest render's pollution of iris's persistent temporal targets
             // (byte-identical restore of the pre-dest history) — the phantom carrier the mainRT blit above
@@ -438,6 +445,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         if (!IPGlobal.debugNoStampDepthClamp) {
             CHelper.disableDepthClamp();
         }
+
+        // IS5-HAND-STAGE C: the deferred buffer after this portal's stamp (last capture wins).
+        com.warwa.seamlessportals.render.SeamHandStageDiff.stageC(deferredBuffer.fb);
 
         // Color-mask restore — cache-coherent via GlStateManager._colorMask(15) (all buffers,
         // 15 = R|G|B|A), the S14.22 idiom (RendererUsingStencil:451). Fable-fold CORRECTION
