@@ -361,6 +361,13 @@ loom {
             // Pass this to swap in the verbatim pre-cap shader and reproduce the slicing —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampHandDepthCap=true
             if (project.findProperty('disableStampHandDepthCap') == 'true') { vmArg('-Dseamlessportals.disableStampHandDepthCap=true') }
+            // IS5-HAND V2 — the hand-slicing ROOT-CAUSE fix, **DEFAULT ON** (2026-07-27): iris's
+            // hand passes draw at glDepthRange(0.999, 1.0) inside the crossing window so the
+            // measured hand slice beats the seam's grazing shell (which shredded the hand IN THE
+            // MAIN FRAME — hand-region probe). Check the once-only "IS5-HAND depth bracket ARMED"
+            // line before adjudicating any leg. Pass this to force it OFF and reproduce —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
+            if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -615,6 +622,13 @@ loom {
             // Pass this to swap in the verbatim pre-cap shader and reproduce the slicing —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampHandDepthCap=true
             if (project.findProperty('disableStampHandDepthCap') == 'true') { vmArg('-Dseamlessportals.disableStampHandDepthCap=true') }
+            // IS5-HAND V2 — the hand-slicing ROOT-CAUSE fix, **DEFAULT ON** (2026-07-27): iris's
+            // hand passes draw at glDepthRange(0.999, 1.0) inside the crossing window so the
+            // measured hand slice beats the seam's grazing shell (which shredded the hand IN THE
+            // MAIN FRAME — hand-region probe). Check the once-only "IS5-HAND depth bracket ARMED"
+            // line before adjudicating any leg. Pass this to force it OFF and reproduce —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
+            if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
