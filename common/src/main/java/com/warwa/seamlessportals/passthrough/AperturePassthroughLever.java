@@ -358,21 +358,29 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.seamRailProbe");
 
     /**
-     * Disables the SEAM CLIP — {@code -Dseamlessportals.disableSeamClip=true}.
+     * THE SEAM CLIP — ★ DEFAULT OFF BY USER DECISION, 2026-07-27 (live round after the landing).
      *
-     * <p>With the fix ON (default), a seam block is cut at its portal plane in EVERY view: its
-     * qualifying cells are excluded from compiled section meshes (reported as AIR during compile,
-     * which also un-culls neighbour faces) and re-drawn dynamically each pass with a per-cell
-     * {@code gl_ClipDistance} plane keeping the CAMERA-side half, so the far half never draws in
-     * the dimension that does not own it — from the side as well as through the window. The
-     * mirrored copy supplies the far half through the stencil window exactly as before. OFF
-     * restores the pre-clip behaviour (whole cube drawn from the section mesh; the far half
-     * visible from the side). Design + adversarial-panel record:
-     * {@code migration/SEAM_CLIP_DESIGN.md}. Self-gates OFF under sodium regardless of this lever
-     * (no meshing hook — the exclusion arm cannot apply there).
+     * <p>The clip cuts a seam block at its portal plane in every view: qualifying cells are
+     * excluded from compiled section meshes (reported as AIR during compile, which also un-culls
+     * neighbour faces) and re-drawn dynamically each pass with a per-cell
+     * {@code gl_ClipDistance} plane keeping the CAMERA-side half. It landed gated and
+     * pixel-proven (12-run matrix green; `rsSeamClipGate`), but the user tested the walk-around
+     * live and DECLINED the view-dependent doorway semantics: the kept half necessarily swaps
+     * when the camera crosses the plane's lateral extension (arc-verified, commit {@code 7c57241}
+     * — inherent to one clip plane per draw, not a defect). The chosen direction instead is the
+     * FULL FRACTIONAL MODEL (recon §0.9: each dimension holds a genuine partial block — real
+     * geometry, collision and state ending at the plane — which retires both the invisible-solid
+     * far half AND the crossing pop). The clip machinery is kept intact as that model's RENDERER.
+     *
+     * <p><b>ONE-LINE REVERT:</b> launch with {@code -PenableSeamClip=true}
+     * ({@code -Dseamlessportals.enableSeamClip=true}) for a session, or flip this initializer
+     * back to {@code Boolean.getBoolean("seamlessportals.disableSeamClip")} to restore
+     * default-ON permanently. Every consumer reads THIS field; nothing else changes.
+     * Self-gates OFF under sodium regardless (no meshing hook). Design + panel record:
+     * {@code migration/SEAM_CLIP_DESIGN.md}.
      */
     public static final boolean DISABLE_SEAM_CLIP =
-        Boolean.getBoolean("seamlessportals.disableSeamClip");
+        !Boolean.getBoolean("seamlessportals.enableSeamClip");
 
     /**
      * Per-frame seam-clip probe ({@code -Dseamlessportals.seamClipProbe=true}, DEFAULT-OFF):

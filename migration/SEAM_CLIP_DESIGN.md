@@ -1,5 +1,15 @@
 # SEAM CLIP — DESIGN v2 (2026-07-27, post-adversarial-panel)
 
+> **STATUS 2026-07-27 (post-live-round): DEFAULT OFF BY USER DECISION.** The clip landed, the
+> 12-run matrix was green, and the user tested the walk-around live. The view-dependent doorway
+> semantics (the kept half swaps when the camera crosses the plane's lateral extension —
+> arc-verified, commit `7c57241`, inherent to one clip plane per draw) were DECLINED in favour of
+> implementing the FULL FRACTIONAL MODEL (recon §0.9: genuine partial blocks — geometry,
+> collision and state ending at the plane — which retires both the invisible-solid far half and
+> the crossing pop). **Everything below is kept intact as the fractional model's RENDERER.**
+> One-line re-enable: `-PenableSeamClip=true`, or flip the `DISABLE_SEAM_CLIP` initializer in
+> `AperturePassthroughLever`. The pixel gate asserts BOTH directions either way.
+
 Cut source-dimension geometry at the portal plane on the MAIN camera pass, so a seam block's far
 half stops drawing when viewed from the side, and everything beyond the plane comes from the
 mirrored copy (visible only through the window). Draw-time `gl_ClipDistance` via the existing

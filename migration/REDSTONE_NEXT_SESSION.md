@@ -37,11 +37,13 @@ generalise "to everything else easily, including offset mirroring" — that is w
 
 ## WHERE THINGS STAND (2026-07-27, latest session)
 
-- **★ THE SEAM CLIP IS LANDED AND GATED (2026-07-27, this session)** — see the ★ SEAM CLIP
-  section below. OPEN ITEM 1 is CLOSED. Lever `-PdisableSeamClip`; the suite gained its first
-  PIXEL gate (`rsSeamClipGate`), green in both lever directions. **Needs the user's live look**
-  — especially the frameless-portal side view, where "the far half ends at the plane" is now the
-  rendered behaviour and is INTENDED (design §1a).
+- **★ THE SEAM CLIP IS LANDED, GATED — AND DEFAULT OFF BY USER DECISION (2026-07-27)** — see
+  the ★ SEAM CLIP section below. OPEN ITEM 1 is CLOSED as built; the user tested the
+  walk-around live and DECLINED the view-dependent doorway semantics in favour of the FUTURE
+  FRACTIONAL MODEL (recon §0.9). The clip machinery is kept intact as that model's renderer;
+  one-line re-enable `-PenableSeamClip=true` (or flip the initializer in
+  `AperturePassthroughLever.DISABLE_SEAM_CLIP`). The suite's first PIXEL gate
+  (`rsSeamClipGate`) asserts BOTH directions and is green either way round.
 - Sub-feature **(a)** complete and user-verified.
 - **(b) step 2 — RAILS CONNECT ACROSS THE PLANE — LANDED AND GATED** (2026-07-27, this session).
   See the ★ (b) STEP 2 section below for what works, the levers, the two user decisions (BOTH
@@ -164,6 +166,18 @@ design pass.
 
 ## ★ THE SEAM CLIP (landed 2026-07-27, this session) — closes OPEN ITEM 1
 
+**★★ USER DECISION 2026-07-27 (live round after the landing): DEFAULT OFF.** The user walked
+around a portal with a seam block and the view-dependent cut read wrong to them: the far half is
+absent from every out-of-window viewpoint on your side, and the visible half SWAPS the instant
+the camera crosses the plane's lateral extension (arc-verified frame-by-frame,
+`rsSeamClipArcEvidence`, commit `7c57241` — inherent to one clip plane per draw, NOT a defect).
+Their chosen direction is the **FULL FRACTIONAL MODEL** (recon §0.9): each dimension holds a
+genuine partial block — geometry, collision and state ending at the plane — which retires both
+the invisible-solid far half AND the crossing pop. The clip stays in the tree as that model's
+RENDERER (an arbitrary-fraction cut was the design requirement from day one). One-line
+re-enable: `-PenableSeamClip=true` / flip `DISABLE_SEAM_CLIP`'s initializer. **Do not
+"fix" the default back on; do not delete the machinery.**
+
 **Full design + adversarial-panel record: `migration/SEAM_CLIP_DESIGN.md` (v2).** Read that file
 before touching this feature; every choice below has a panel finding behind it.
 
@@ -213,8 +227,8 @@ plane, and the visible half SWAPS the moment the camera crosses the plane's late
 whole cube, the no-window fallback). Verified frame-by-frame by `rsSeamClipArcEvidence`
 (screenshots lever, 8 arc shots, asserts nothing) — the pop is the geometry of view-dependent
 camera-side keep, not a defect; it is unavoidable with one clip plane per draw (any fixed-half
-choice breaks the behind view). **User judgment on whether these doorway semantics are the
-wanted look is PENDING.**
+choice breaks the behind view). **User judgment: DECLINED — hence the ★★ default-OFF decision
+above; the fractional model is the chosen future.**
 
 **For (c) redstone:** the clip predicate deliberately equals the mirror's admission predicate.
 If (c) widens what mirrors (e.g. machine writes someday), the clip follows automatically through
@@ -306,7 +320,7 @@ red). The full matrix remains mandatory before a commit.
 | `… -PdisableSeamPlayerOnly` | player-only inversion |
 | `… -PdisableSeamExactOnly` | exact-only inversion |
 | `… -PdisableSeamPrediction` | same-frame inversion |
-| `-PapertureTeardownTest -PseamMirrorProbe -PrsOnly -PdisableSeamClip` | seam-clip inversion — far half visible from the side again, mechanism idle |
+| `-PapertureTeardownTest -PseamMirrorProbe -PrsOnly -PenableSeamClip` | seam-clip ON — the cut renders (farGold 0.00), mechanism live. Default runs assert the OFF branch (whole cube, mechanism idle) |
 
 Iteration tip: add `-PrsOnly` to any RS-focused configuration (~3.5 min instead of ~6+). The five
 configurations run green on 2026-07-27 before commit were: rows 1–5 of this table (rows 1–2 as full
