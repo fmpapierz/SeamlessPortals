@@ -204,6 +204,10 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // IS5-HAND-STAGE A (lever-gated -Dseamlessportals.handStageDiff, DEFAULT OFF): the main
         // frame exactly as iris finalized it, before any compat touch. Stage B/C/D below.
         com.warwa.seamlessportals.render.SeamHandStageDiff.stageA(mainRT);
+        // IS5-HAND-INLVL anchor (lever-gated -Dseamlessportals.handInLevelProbe, DEFAULT OFF):
+        // closes the in-renderLevel stage points armed at the iris hand passes and emits the
+        // five-stage block (handoff §00a instrument 1).
+        com.warwa.seamlessportals.render.SeamHandInLevelProbe.anchor(mainRT);
         // Stencil belt (anchor slot; §6 hazard row 8-2's raw-disable family).
         GL11.glDisable(GL_STENCIL_TEST);
 

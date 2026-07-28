@@ -374,6 +374,19 @@ loom {
             // eater's stage by construction (handoff §00a) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandStageDiff=true
             if (project.findProperty('handStageDiff') == 'true') { vmArg('-Dseamlessportals.handStageDiff=true') }
+            // IS5-HAND-INLVL in-renderLevel stage points (DIAGNOSTIC, default OFF — five blocking
+            // 1Hz readbacks inside the crossing window): captures the hand-region column at the
+            // HEAD/RETURN of iris's two hand passes (LIVE draw FBO + iris colortex0) and at the
+            // compat anchor — splits "hand never drawn" from "drawn then composite-eaten"
+            // (handoff §00a instrument 1) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandInLevelProbe=true
+            if (project.findProperty('handInLevelProbe') == 'true') { vmArg('-Dseamlessportals.handInLevelProbe=true') }
+            // IS5-STAMP-EXEC executed-state probe (DIAGNOSTIC, default OFF — pure GL gets after
+            // the stamp draw): dumps the ACTUAL program + vertex-shader source (cap present?) +
+            // depth func/mask/clamp/range the stamp executed under — the ground-truth audit of
+            // the stage-C cap anomaly (handoff §00a instrument 2) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampExecProbe=true
+            if (project.findProperty('stampExecProbe') == 'true') { vmArg('-Dseamlessportals.stampExecProbe=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -641,6 +654,19 @@ loom {
             // eater's stage by construction (handoff §00a) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandStageDiff=true
             if (project.findProperty('handStageDiff') == 'true') { vmArg('-Dseamlessportals.handStageDiff=true') }
+            // IS5-HAND-INLVL in-renderLevel stage points (DIAGNOSTIC, default OFF — five blocking
+            // 1Hz readbacks inside the crossing window): captures the hand-region column at the
+            // HEAD/RETURN of iris's two hand passes (LIVE draw FBO + iris colortex0) and at the
+            // compat anchor — splits "hand never drawn" from "drawn then composite-eaten"
+            // (handoff §00a instrument 1) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandInLevelProbe=true
+            if (project.findProperty('handInLevelProbe') == 'true') { vmArg('-Dseamlessportals.handInLevelProbe=true') }
+            // IS5-STAMP-EXEC executed-state probe (DIAGNOSTIC, default OFF — pure GL gets after
+            // the stamp draw): dumps the ACTUAL program + vertex-shader source (cap present?) +
+            // depth func/mask/clamp/range the stamp executed under — the ground-truth audit of
+            // the stage-C cap anomaly (handoff §00a instrument 2) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampExecProbe=true
+            if (project.findProperty('stampExecProbe') == 'true') { vmArg('-Dseamlessportals.stampExecProbe=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —

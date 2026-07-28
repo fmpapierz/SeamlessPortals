@@ -551,6 +551,12 @@ public class IrisCompatPaste {
                     pass.setVertexBuffer(0, vertexSlice);
                     pass.setIndexBuffer(indexBuffer, indices.type());
                     pass.drawIndexed(indexCount, 1, 0, 0, 0);
+                    // IS5-STAMP-EXEC (lever-gated -Dseamlessportals.stampExecProbe, DEFAULT
+                    // OFF): read the driver's ACTUAL program/vsh-source/depth state right after
+                    // the draw applied it — the ground-truth audit of the stage-C cap anomaly
+                    // (declared GEQUAL+capped cannot produce the measured 0.98→0.65 writes).
+                    com.warwa.seamlessportals.render.StampExecStateProbe
+                        .afterStampDraw(sel.name());
                 } finally {
                     GlStateManager._enableBlend(0);
                 }

@@ -27,21 +27,28 @@ public class MixinIrisHandRenderer_SeamDepthBracket {
 
     @Inject(method = "renderSolid", at = @At("HEAD"), require = 0)
     private void ip_beginSolid(CallbackInfo ci) {
+        // IS5-HAND-INLVL stage point FIRST (captures the pristine pre-pass target, and arms the
+        // frame), then the bracket. Probe is DEFAULT OFF and returns on its first line unless
+        // -Dseamlessportals.handInLevelProbe is set.
+        com.warwa.seamlessportals.render.SeamHandInLevelProbe.preSolid();
         IrisHandSeamDepthBracket.begin();
     }
 
     @Inject(method = "renderSolid", at = @At("RETURN"), require = 0)
     private void ip_endSolid(CallbackInfo ci) {
+        com.warwa.seamlessportals.render.SeamHandInLevelProbe.postSolid();
         IrisHandSeamDepthBracket.end();
     }
 
     @Inject(method = "renderTranslucent", at = @At("HEAD"), require = 0)
     private void ip_beginTranslucent(CallbackInfo ci) {
+        com.warwa.seamlessportals.render.SeamHandInLevelProbe.preTranslucent();
         IrisHandSeamDepthBracket.begin();
     }
 
     @Inject(method = "renderTranslucent", at = @At("RETURN"), require = 0)
     private void ip_endTranslucent(CallbackInfo ci) {
+        com.warwa.seamlessportals.render.SeamHandInLevelProbe.postTranslucent();
         IrisHandSeamDepthBracket.end();
     }
 }

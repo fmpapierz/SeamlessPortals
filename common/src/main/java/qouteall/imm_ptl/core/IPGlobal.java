@@ -456,6 +456,18 @@ public class IPGlobal {
     public static final boolean HAND_STAGE_DIFF_PROBE =
         Boolean.getBoolean("seamlessportals.handStageDiff");
 
+    // IS5-HAND-INLVL in-renderLevel hand-pass stage points (DIAGNOSTIC, default OFF). Declared
+    // here only so the IS5-RC run-config block reports it (the probe reads its own property —
+    // SeamHandInLevelProbe.ENABLED).
+    public static final boolean HAND_IN_LEVEL_PROBE =
+        Boolean.getBoolean("seamlessportals.handInLevelProbe");
+
+    // IS5-STAMP-EXEC executed-state probe at the stamp draw (DIAGNOSTIC, default OFF). Declared
+    // here only so the IS5-RC run-config block reports it (the probe reads its own property —
+    // StampExecStateProbe.ENABLED).
+    public static final boolean STAMP_EXEC_PROBE =
+        Boolean.getBoolean("seamlessportals.stampExecProbe");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;
