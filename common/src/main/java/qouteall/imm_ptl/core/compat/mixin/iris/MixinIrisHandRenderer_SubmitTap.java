@@ -30,16 +30,17 @@ public class MixinIrisHandRenderer_SubmitTap {
 
     @Inject(method = "renderSolid", at = @At("HEAD"), require = 0)
     private void ip_tapBeginSolid(CallbackInfo ci) {
-        // Probe FIRST (captures the pristine pre-pass/pre-fix state — the found-func evidence
-        // lives in the fix's own census), then the IS5-HAND-FUNC fix (forces the declared
-        // GEQUAL for the pass — the hand arc's measured root cause).
+        // Probes FIRST (pristine pre-pass state; the locator's full-frame pre snapshot), then
+        // the IS5-HAND-FUNC fix (forces the declared GEQUAL for the pass — the measured leak).
         SeamHandSubmitTap.beginSolid();
+        com.warwa.seamlessportals.render.SeamHandLocator.preSolid();
         qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.begin();
     }
 
     @Inject(method = "renderSolid", at = @At("RETURN"), require = 0)
     private void ip_tapEndSolid(CallbackInfo ci) {
         SeamHandSubmitTap.endSolid();
+        com.warwa.seamlessportals.render.SeamHandLocator.postSolid();
         qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.end();
     }
 

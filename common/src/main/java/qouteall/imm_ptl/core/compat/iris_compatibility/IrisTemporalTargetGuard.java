@@ -125,6 +125,13 @@ public final class IrisTemporalTargetGuard {
      * {@code SeamHandInLevelProbe}'s cross-check readback ({@code glGetTextureSubImage}).
      */
     public static int[] peekColortex0() {
+        int[] pair = peekColortex0Pair();
+        return pair == null ? null : new int[]{pair[0], pair[2], pair[3]};
+    }
+
+    /** IS5-HAND-LOC: {mainTexId, altTexId, w, h} of colortex0, or null — BOTH ping-pong
+     *  surfaces (the hand may write either depending on accumulated flip parity). */
+    public static int[] peekColortex0Pair() {
         try {
             WorldRenderingPipeline plRaw = Iris.getPipelineManager().getPipelineNullable();
             if (!(plRaw instanceof IrisRenderingPipeline pipeline)) {
@@ -141,7 +148,7 @@ public final class IrisTemporalTargetGuard {
             if (t == null) {
                 return null;
             }
-            return new int[]{t.getMainTexture(), t.getWidth(), t.getHeight()};
+            return new int[]{t.getMainTexture(), t.getAltTexture(), t.getWidth(), t.getHeight()};
         }
         catch (Throwable th) {
             return null;
