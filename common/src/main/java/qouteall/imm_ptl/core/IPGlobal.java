@@ -399,6 +399,12 @@ public class IPGlobal {
     public static final boolean SEAM_CLIP_RELAX_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableSeamClipRelax");
 
+    // IS5-SEAM-CONTENT band-content probe (DIAGNOSTIC, default OFF). Declared here only so the
+    // IS5-RC run-config block reports it beside every other lever (the IrisCompositeCensus
+    // precedent); the probe reads its own system property (SeamDestContentProbe.ENABLED).
+    public static final boolean SEAM_CONTENT_PROBE =
+        Boolean.getBoolean("seamlessportals.seamContentProbe");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;

@@ -405,6 +405,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             CHelper.enableDepthClamp();
         }
 
+        // IS5-SEAM-CONTENT probe (lever-gated -Dseamlessportals.seamContentProbe, DEFAULT OFF;
+        // 1 Hz, only inside the crossing window): mainRT holds the FINISHED dest frame here —
+        // read the center column's color+depth to classify the band pixels (void vs painted
+        // black). Self-disarming; never throws into the pass.
+        com.warwa.seamlessportals.render.SeamDestContentProbe.sample(
+            portal, client.gameRenderer.mainRenderTarget());
+
         if (!isDebugMode) {
             // THE STAMP (D20): portal-shaped copy main→deferred, snapshot-depth-tested.
             // Matrices per the held source: the passing model view + the live layer-0 draw
