@@ -131,6 +131,8 @@ public final class SeamHandSubmitTap {
             heldDesc = "UNSET";
             vpDesc = "UNSET";
             mxDesc = "UNSET";
+            retDepthState[0] = "UNSET";
+            retDepthState[1] = "UNSET";
             if (!announced) {
                 announced = true;
                 LOGGER.info(P + "ARMED (once-only): per-pass canRender result + six-condition"
@@ -146,6 +148,29 @@ public final class SeamHandSubmitTap {
         }
     }
 
+    /** Executed depth state at each pass RETURN (2026-07-28 third extension: transforms all
+     *  healthy ⇒ the last layer is the DRAW-TIME state; the stamp already measured func=LEQUAL
+     *  15/15 against a declared GEQUAL — if the hand draws execute under the same leaked func,
+     *  the depth bracket's [0.999,1] remap GUARANTEES total in-window loss instead of a win). */
+    private static final String[] retDepthState = new String[2];
+
+    private static String readRetDepthState() {
+        boolean test = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+        int func = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
+        String funcName = switch (func) {
+            case GL11.GL_LEQUAL -> "LEQUAL";
+            case GL11.GL_GEQUAL -> "GEQUAL";
+            case GL11.GL_ALWAYS -> "ALWAYS";
+            case GL11.GL_LESS -> "LESS";
+            case GL11.GL_GREATER -> "GREATER";
+            default -> "0x" + Integer.toHexString(func);
+        };
+        java.nio.FloatBuffer range = BufferUtils.createFloatBuffer(16);
+        GL11.glGetFloatv(GL11.GL_DEPTH_RANGE, range);
+        return String.format("test=%s func=%s range=[%.4f,%.4f]",
+            test, funcName, range.get(0), range.get(1));
+    }
+
     /** RETURN of renderSolid (nested-pass-guarded like every boundary — see beginSolid). */
     public static void endSolid() {
         if (!ENABLED || disarmed || !sampling) {
@@ -155,6 +180,7 @@ public final class SeamHandSubmitTap {
             if (PortalRendering.isRendering()) {
                 return;
             }
+            retDepthState[0] = readRetDepthState();
             passIdx = -1;
         }
         catch (Throwable t) {
@@ -187,6 +213,7 @@ public final class SeamHandSubmitTap {
             if (PortalRendering.isRendering()) {
                 return; // nested pass: leave the (already-emitted or dead) sample alone
             }
+            retDepthState[1] = readRetDepthState();
             passIdx = -1;
             emit();
             sampling = false;
@@ -436,6 +463,7 @@ public final class SeamHandSubmitTap {
         }
         LOGGER.info(P + "{} solid: canRender={} failed=[{}] body={} | translucent: canRender={}"
                 + " failed=[{}] body={} | camEnt={} held={} vp={} | handAnim: {} | handMx: {}"
+                + " | depthAtRet: solid[{}] transl[{}]"
                 + " — READ:"
                 + " canRender=false names the gate (failed[] lists iris's six conditions"
                 + " recomputed same-frame; entityNotPlayer/detached are the crossing-machinery"
@@ -450,6 +478,12 @@ public final class SeamHandSubmitTap {
                 + " diagonal on window rows = the collapsed-transform eater (the hand"
                 + " projection builds from the SHARED cameraRenderState's hudFov/depthFar);"
                 + " identical handMx both sides moves the hunt into the dispatch itself."
+                + " depthAtRet is the DRIVER state right after each pass returned (the state"
+                + " the last hand-feature draw left — the stamp-probe ground-truth style):"
+                + " func=LEQUAL there means the hand draws under the leaked func, and the"
+                + " armed bracket's [0.999,1] remap then GUARANTEES total in-window loss"
+                + " (0.999 <= shell is false everywhere) — run the"
+                + " -PdisableHandSeamDepthBracket A/B to confirm rasterization returns."
                 + " vp= is the GL state at body entry, BEFORE iris's own pass setup —"
                 + " corroborating only. AMBIENT rows are the control: they must show"
                 + " canRender=true body=true with a visible hand or this tap is blind and"
@@ -457,7 +491,8 @@ public final class SeamHandSubmitTap {
             label,
             fmt(canRenderResult[0]), failedConds[0], bodyRan[0],
             fmt(canRenderResult[1]), failedConds[1], bodyRan[1],
-            camEntDesc, heldDesc, vpDesc, readHandAnimState(), mxDesc);
+            camEntDesc, heldDesc, vpDesc, readHandAnimState(), mxDesc,
+            retDepthState[0], retDepthState[1]);
     }
 
     private static String fmt(int v) {
