@@ -62,8 +62,17 @@ public final class IrisHandSeamDepthBracket {
     /** Same crossing-window scale as the V2 clip suspension (FrontClipping.SUSPEND_ZONE). */
     private static final double WINDOW = 0.35;
 
-    /** The hand slice (0.5544..0.5560 measured) remaps into [NEAR_LO, 1.0]. */
-    private static final double NEAR_LO = 0.999;
+    /**
+     * 2026-07-28 SIGN CORRECTION (the IS5-HAND-DRAW draw-time dump's one-field diff): iris's
+     * hand draws execute under func=LEQUAL as their own normal convention (45/45 ambient rows,
+     * hand visible and working) — NOT the reversed-Z GEQUAL this bracket was designed against.
+     * The original [0.999, 1.0] remap therefore GUARANTEED total in-window loss (0.999 <=
+     * stored fails against everything) — measured as the two window rows differing from
+     * ambient in exactly this field. The corrected remap sends the hand DOWN into
+     * [0.0, WIN_HI]: under LEQUAL the hand then wins against all stored content, which was
+     * the design intent from the start.
+     */
+    private static final double WIN_HI = 0.001;
 
     private static boolean armed = false;
     private static boolean announced = false;
@@ -135,15 +144,17 @@ public final class IrisHandSeamDepthBracket {
             if (!inWindow) {
                 return;
             }
-            GL11.glDepthRange(NEAR_LO, 1.0);
+            GL11.glDepthRange(0.0, WIN_HI);
             armed = true;
             if (!announced) {
                 announced = true;
-                LOGGER.info("[Seamless Portals] IS5-HAND depth bracket ARMED (once-only): iris"
-                    + " hand passes draw at glDepthRange({}, 1.0) while the camera is within {}"
-                    + " of a crossable portal — the measured hand slice (0.554..0.556) now beats"
-                    + " the seam's grazing shell. A/B: -PdisableHandSeamDepthBracket.",
-                    NEAR_LO, WINDOW);
+                LOGGER.info("[Seamless Portals] IS5-HAND depth bracket ARMED (once-only,"
+                    + " SIGN-CORRECTED 2026-07-28): iris hand passes draw at glDepthRange(0.0,"
+                    + " {}) while the camera is within {} of a crossable portal — under the"
+                    + " hand pass's MEASURED LEQUAL convention (draw-time dump) the remapped"
+                    + " hand now WINS against the seam's grazing shell and all window content."
+                    + " A/B: -PdisableHandSeamDepthBracket.",
+                    WIN_HI, WINDOW);
             }
         }
         catch (Throwable t) {
