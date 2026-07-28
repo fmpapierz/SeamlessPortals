@@ -420,6 +420,21 @@ public class IPGlobal {
     public static final boolean BLOOM_MASK_SEAM_CLAMP_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableBloomMaskSeamClamp");
 
+    // IS5-HAND — THE SEAM HAND-SLICING FIX, **DEFAULT ON** (2026-07-27). Under a pack iris
+    // bakes the first-person hand into the main frame PRE-anchor (HandRenderer inside
+    // LevelRenderer.render; vanilla's post-anchor hand call is no-op'd) with a compressed depth
+    // slice MEASURED at 0.5556..0.5569 (45 probe samples). The stamp draws under GL_DEPTH_CLAMP,
+    // so the crossing sliver's nearer-than-near fragments wrote depth 1.0 and GEQUAL-painted the
+    // portal view OVER the hand exactly along the seam (clip family exonerated by the
+    // front_clipping leg — store disarmed at every hand draw, hand programs loc==-1; shaders-off
+    // intact because vanilla wipes depth pre-hand). Fix = the stamp vertex shader caps NDC z at
+    // 0.5: the sliver still stamps over all world content beyond 10 cm (the C4-SEAM band fix
+    // intact) but always loses to the hand slice. Selected at PIPELINE REGISTRATION (this lever
+    // swaps in the verbatim pre-cap portal_area_sample_nocap.vsh for every stamp pipeline) —
+    // pass it to reproduce the hand slicing (attribution both directions).
+    public static final boolean STAMP_HAND_DEPTH_CAP_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableStampHandDepthCap");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;

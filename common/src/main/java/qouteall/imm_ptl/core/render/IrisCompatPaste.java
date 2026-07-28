@@ -57,7 +57,10 @@ import java.util.OptionalDouble;
  *       non-recursive portals (nearest-first stamp order) the NEAR portal left no depth footprint
  *       and the FAR portal's later stamp GEQUAL-passed over it — the "second portal paints on top
  *       of the first" bug. Writing the near portal's plane depth into the deferred buffer now
- *       GEQUAL-rejects the far stamp exactly where it sits behind = IP parity. The deferred
+ *       GEQUAL-rejects the far stamp exactly where it sits behind = IP parity. IS5-HAND note:
+ *       the vertex-shader depth cap quantizes sub-10cm fragments to exactly 0.5, so two portal
+ *       surfaces BOTH inside the camera's 10cm shell at the same pixel tie (0.5 >= 0.5) and the
+ *       later stamp wins — a degenerate mid-crossing edge, accepted without a live repro. The deferred
  *       buffer's depth is discarded at the depth-test-OFF blit-back and re-cleared + re-snapshotted
  *       each frame in {@code IrisCompatOn262Renderer.onBeforeHandRendering}
  *       ({@code clearColorAndDepthTextures} then {@code copyDepthFrom(mainRT)}), so the write has
@@ -112,6 +115,20 @@ public class IrisCompatPaste {
     private static boolean stampPipelineReported = false;
     private static RenderPipeline PORTAL_STRAIGHT_COPY;
 
+    /**
+     * IS5-HAND — the stamp VERTEX shader, selected once at registration: the default
+     * {@code core/portal_area_sample} carries the NDC-z 0.5 depth cap (the seam hand-slicing
+     * fix — derivation in the .vsh and the IPGlobal lever comment);
+     * {@code -PdisableStampHandDepthCap} swaps in the verbatim pre-cap
+     * {@code core/portal_area_sample_nocap} for EVERY stamp pipeline (shipped + diagnostic
+     * siblings — the axes stay comparable). Reported on the IS5-RC STAMP PIPELINE line.
+     */
+    private static Identifier stampVertexShaderId() {
+        return Identifier.fromNamespaceAndPath("seamlessportals",
+            qouteall.imm_ptl.core.IPGlobal.STAMP_HAND_DEPTH_CAP_DISABLED_LEVER
+                ? "core/portal_area_sample_nocap" : "core/portal_area_sample");
+    }
+
     static {
         try {
             // The proven mod idiom for hand-built pipelines (PortalRenderTypes static init):
@@ -137,7 +154,7 @@ public class IrisCompatPaste {
             // query/aperture draws).
             RenderPipeline portalAreaSample = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/portal_area_sample"))
-                .withVertexShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withVertexShader(stampVertexShaderId()) // IS5-HAND: capped by default, lever-swapped
                 .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
@@ -163,7 +180,7 @@ public class IrisCompatPaste {
             RenderPipeline portalAreaSampleNoDepthWrite = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath(
                     "seamlessportals", "pipeline/portal_area_sample_nodepthwrite"))
-                .withVertexShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withVertexShader(stampVertexShaderId()) // IS5-HAND: capped by default, lever-swapped
                 .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
@@ -285,7 +302,7 @@ public class IrisCompatPaste {
         try {
             var builder = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/" + pipelinePath))
-                .withVertexShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withVertexShader(stampVertexShaderId()) // IS5-HAND: same axis as the shipped pair
                 .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", fragmentShaderPath))
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
@@ -502,6 +519,8 @@ public class IrisCompatPaste {
                         stampPipelineReported = true;
                         Helper.LOGGER.info(
                             "[Seamless Portals] IS5-RC STAMP PIPELINE (once-only): bound={} ;"
+                                + " vsh={} (capped = the IS5-HAND NDC-z 0.5 depth cap; nocap = the"
+                                + " -PdisableStampHandDepthCap reproduction shader) ;"
                                 + " levers: disableStampDepthTest={} disableStampDepthWrite={}"
                                 + " debugStampSolid={} debugTintStamp={} ; siblings USABLE"
                                 + " (noDepthTest/solid/solidNoDepthTest are lever-gated +"
@@ -510,6 +529,8 @@ public class IrisCompatPaste {
                                 + " from the static block, same shader as the default):"
                                 + " noDepthTest={} noDepthWrite={} solid={} solidNoDepthTest={}{}",
                             sel.name(),
+                            qouteall.imm_ptl.core.IPGlobal.STAMP_HAND_DEPTH_CAP_DISABLED_LEVER
+                                ? "NOCAP" : "capped",
                             qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_TEST_DISABLED_LEVER,
                             qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER,
                             qouteall.imm_ptl.core.IPGlobal.debugStampSolid,
