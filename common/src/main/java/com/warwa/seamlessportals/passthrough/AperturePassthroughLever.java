@@ -415,6 +415,33 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_SEAM_SIGNAL_DISPATCH =
         Boolean.getBoolean("seamlessportals.disableSeamSignalDispatch");
 
+    /**
+     * Disables the STALE-PROVENANCE fix — {@code -Dseamlessportals.disableSeamBreakUnmark=true}.
+     *
+     * <p>With the fix ON (default), breaking a seam cell clears that cell's OWN mirror-created
+     * mark (the clear path only ever removed the counterpart's). With it OFF, the 2026-07-28
+     * live defect returns: after a place-from-far → break → re-place-from-near cycle the near
+     * cell keeps a stale mark, and the authority rule suppresses the PLAYER'S OWN rail there —
+     * dark at placement, deaf to its neighbors, "only placing on the other half works".
+     */
+    public static final boolean DISABLE_SEAM_BREAK_UNMARK =
+        Boolean.getBoolean("seamlessportals.disableSeamBreakUnmark");
+
+    /**
+     * Disables the POWER-WAKE carve-out in the mirror-authority rule —
+     * {@code -Dseamlessportals.disableSeamPowerWake=true}.
+     *
+     * <p>With the fix ON (default), a provenance-marked (mirror-created) POWERED RAIL still runs
+     * its POWER-ONLY evaluation ({@code PoweredRailBlock.updateState} — POWERED property only,
+     * never shape, never removal) when notified; shape re-resolution and support-deletion stay
+     * suppressed exactly as the authority rule demands. With it OFF, the (a)-era full suppression
+     * returns and the LIVE defect of 2026-07-28 reproduces: signal entering a coincident pair from
+     * the MIRROR half's side dies at the seam ("stops at the first half of the seam rail"),
+     * half/side-dependently on provenance, with break-and-replace as the only workaround.
+     */
+    public static final boolean DISABLE_SEAM_POWER_WAKE =
+        Boolean.getBoolean("seamlessportals.disableSeamPowerWake");
+
     // RETIRED SAME-DAY (2026-07-27): disableSeamCrossPreference. A "crossing-preference" fix for
     // bi-faced cluster binding selection was implemented on the theory that the two twins' bindings
     // answer along-axis queries differently (180°-apart rotations) — and REFUTED by its own

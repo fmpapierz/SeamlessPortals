@@ -171,6 +171,8 @@ loom {
             // disableSeamSignal is (c)'s master A/B switch; dispatch is its independent half.
             if (project.findProperty('disableSeamSignal') == 'true') { vmArg('-Dseamlessportals.disableSeamSignal=true') }
             if (project.findProperty('disableSeamSignalDispatch') == 'true') { vmArg('-Dseamlessportals.disableSeamSignalDispatch=true') }
+            if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
+            if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
             // RS (c) PROBE LEVER — DEFAULT-OFF.
             if (project.findProperty('seamSignalProbe') == 'true') { vmArg('-Dseamlessportals.seamSignalProbe=true') }
             // RS-ONLY suite mode (gametest-side skip of the crossing/teleport legs) — also exposed
@@ -353,6 +355,8 @@ loom {
             // RS (c) FIX LEVERS — redstone signal across the seam (see the client block's rows).
             if (project.findProperty('disableSeamSignal') == 'true') { vmArg('-Dseamlessportals.disableSeamSignal=true') }
             if (project.findProperty('disableSeamSignalDispatch') == 'true') { vmArg('-Dseamlessportals.disableSeamSignalDispatch=true') }
+            if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
+            if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
             if (project.findProperty('seamSignalProbe') == 'true') { vmArg('-Dseamlessportals.seamSignalProbe=true') }
             // RS-ONLY suite mode: skip the crossing/teleport legs (thrown items, hurt cow, pearl,
             // far-dest leg 7, leg 5's world reopen); portal staging, 6a/6b and every RS gate still

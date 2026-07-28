@@ -123,7 +123,38 @@ REFUTED by its own inversion gate — flipped twins SHARE the portal transform, 
 answer along-axis queries identically; first-match was never wrong — and reverted same-day
 (lever retired; see the RETIRED note in `AperturePassthroughLever`).
 
-**Still-open suspects, after the second exclusion round:** the REAL command path is ALSO green
+**★★ ROOT CAUSE FOUND AND FIXED — TWO DEFECTS (2026-07-28, the round after the exclusions
+below):** the user's poke round produced the one-line answer — `[RS-MIRROR-AUTHORITY] LIVE —
+suppressed …` at the very cell the dispatch had just delivered to — and the user's polarity
+correction ("my PLAYER-PLACED source half was the dark one") split it in two:
+
+1. **The authority rule swallows the power question.** (a)'s mirror-authority mixin cancels
+ALL of `BaseRailBlock.neighborChanged` at provenance-marked cells — written when the only
+re-derivations were shape and support-deletion, it also ate "should I be powered?": signal
+entering a coincident pair from the MIRROR half's side died at the seam. **FIX: the
+POWER-WAKE** — a notification at a suppressed rail queues its COUNTERPART through the
+tick-end dispatch queue; nothing ever writes the mirrored cell, the authority rule stands.
+⚠ The FIRST build evaluated the mirror half in place and LOOPED ~500k same-drain iterations
+(flip → revert → `updateNeighborsAt(pos.below())` re-notifies the same rail) until vanilla's
+chain cap broke it — and the suite PASSED, because nothing watched volume. Hence the RUNAWAY
+CEILING in ARM R (walk-crossing delta < 10k). Lever `-PdisableSeamPowerWake`.
+
+2. **Stale provenance — the user's actual polarity.** The break path cleared only the
+COUNTERPART's mirror-created mark, never the broken cell's own; after a place-from-far →
+break → re-place-from-near cycle the near cell stayed marked, and the authority rule
+suppressed the PLAYER'S OWN re-placed rail — including the placement-time self-notification
+carrying the power evaluation: dark at placement, deaf to neighbors, "only placing on the
+DEST half works". Restored invariant: **a pair carries AT MOST ONE marked half** (a
+doubly-marked pair is totally deaf — the power-wake alone only ping-pongs pokes between two
+suppressed halves). **FIX: a break at a seam cell clears THAT CELL'S OWN mark**,
+unconditionally on write source. Lever `-PdisableSeamBreakUnmark`.
+
+Gates: ARM R (reverse entry) + ARM S (the user's ritual, with the provenance-clean assertion)
+in `rsSignalLegCoincident`, each inverting under its lever. Poke traffic sane: 93 pokes /
+walkCrossed=150 per RS suite. **Live user confirmation still pending.** The exclusion record
+below is kept as the method's history.
+
+**Still-open suspects, after the second exclusion round (HISTORICAL — resolved above):** the REAL command path is ALSO green
 (`rsSignalCommandPairRepro` drives `/portal make_portal` + `/portal
 complete_bi_way_bi_faced_portal` through the actual gametest player — look-derived orientation,
 height-2 aperture, bi-faced cluster=2, north-south line — signal carried and released). What
