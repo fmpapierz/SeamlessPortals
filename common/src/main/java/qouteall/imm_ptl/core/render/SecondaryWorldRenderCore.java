@@ -1768,16 +1768,35 @@ public class SecondaryWorldRenderCore {
             // resolved ONCE and shared with the arm + census so all three see the same object.
             qouteall.q_misc_util.my_util.Plane seamActivePlane =
                 PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null;
+            qouteall.imm_ptl.core.portal.Portal seamRenderingPortal =
+                PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null;
             double seamClipCorrection = FrontClipping.innerClipCorrectionForCrossing(
-                seamActivePlane,
-                PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null,
-                destCameraPos);
-            FrontClipping.setupInnerClipping(
-                seamActivePlane,
-                // IS-BOB C6: the clip plane must follow the DRAW transform (the bobbed matrix
-                // carries a translation column; FrontClipping's planeW term compensates it).
-                destDrawViewMatrix, seamClipCorrection
-            );
+                seamActivePlane, seamRenderingPortal, destCameraPos);
+            // IS5-SEAM V2: inside the crossing window SUSPEND the inner clip for this pass — the
+            // depth probe measured the v1 plane-shift keeping UNLIT near-side wall faces (black
+            // at depth ~1.0), while the user-validated front_clipping-disable content is correct
+            // (the lit faces cover them). Equivalence scope (verify-fold): identical to the
+            // front_clipping-disable state for the AMBIENT dest arm — terrain and un-bracketed
+            // draws; PerEntityClipBracket's per-entity planes remain active, and the outer clip
+            // is untouched. The com.warwa store is reset DIRECTLY (unconditional) so the
+            // suspended state is guaranteed by this branch itself — the mirror-guarded qouteall
+            // disableClipping() alone would no-op when already-disabled and the state would rest
+            // on ambient invariants (a future direct-store arm would then freeze a STALE plane
+            // into FullPipelineClipState while the census counted the frame as SUSPENDED).
+            boolean seamSuspend = FrontClipping.shouldSuspendInnerClipForCrossing(
+                seamActivePlane, seamRenderingPortal, destCameraPos);
+            if (seamSuspend) {
+                FrontClipping.disableClipping();
+                com.warwa.seamlessportals.render.FrontClipping.disable();
+            }
+            else {
+                FrontClipping.setupInnerClipping(
+                    seamActivePlane,
+                    // IS-BOB C6: the clip plane must follow the DRAW transform (the bobbed matrix
+                    // carries a translation column; FrontClipping's planeW term compensates it).
+                    destDrawViewMatrix, seamClipCorrection
+                );
+            }
             // IS3 V6 FOLD — FREEZE the just-armed view-space plane into the pass-scoped full-pipeline
             // override. render() runs submitFeatures (its entity submit) BEFORE the framegraph terrain
             // execute, and M4 (MixinLevelRenderer_CrossPortalEntity submitEntities-TAIL) disarms the
@@ -1805,7 +1824,7 @@ public class SecondaryWorldRenderCore {
             // -PdisableSeamClipRelax leg reproduces the pre-fix signature). Class javadoc has the
             // full counter semantics and the D4.4 sign conventions.
             com.warwa.seamlessportals.render.SeamClipArmCensus.note(
-                seamActivePlane, armedClipPlane, destCameraPos, seamClipCorrection);
+                seamActivePlane, armedClipPlane, destCameraPos, seamClipCorrection, seamSuspend);
             // §4.7 discriminator probe — arm a 1Hz capture window for this full-pipeline pass
             // (lever-gated -Dseamlessportals.clipProbe; byte-inert at the default). The vanilla
             // trySetup handler feeds it per-draw; endPass() dumps in the finally.

@@ -140,6 +140,49 @@ public class FrontClipping {
     /** Where the relax has fully ramped out to IP's constant -ADJUSTMENT. */
     public static final double RAMP_END = 0.60;
 
+    // ===== V2 (2026-07-27, same day): SUSPEND, don't shift — the plane-shift relax was measured
+    // INSUFFICIENT. With v1 provably armed (ARM census: armedVoidRisk=0 on 33/33, corr to −0.49,
+    // feedErr=0.0000) the band persisted, and the IS5-SEAM-CONTENT depth probe named the reason:
+    // the band pixels hold geometry at depth 0.995–1.0 (reversed-Z EXTREME NEAR) painted pure
+    // black — the kept slab's UNLIT near-side wall faces (interior faces get zero light). The
+    // shift traded clip-void black for unlit-geometry black. The user-validated reference is the
+    // front_clipping-disable leg: with the clip FULLY OFF the crossing view is correct (the lit
+    // jamb/room faces closer to the camera cover the unlit ones). So inside the crossing window
+    // the inner clip is SUSPENDED outright (the validated content), the v1 ramp covers
+    // (SUSPEND_ZONE, RAMP_END) for continuity, and IP's constant applies beyond. The clip's
+    // purpose (hide near-side occluders when viewing the window from afar) does not apply while
+    // the eye is in the doorway.
+    /** Camera-to-plane distance below which the inner clip is fully suspended for the pass. */
+    public static final double SUSPEND_ZONE = 0.35;
+
+    /**
+     * V2 gate: true when the full-pipeline dest arm should SUSPEND the inner clip for this pass
+     * (the crossing window; same lever/Mirror/layer gates as the correction). The caller routes
+     * to an unconditional store reset instead of {@code setupInnerClipping} — identical to the
+     * user-validated {@code front_clipping disable} content for the AMBIENT dest arm (terrain
+     * and un-bracketed draws; {@code PerEntityClipBracket}'s per-entity planes remain active),
+     * window-gated and inner-only.
+     */
+    public static boolean shouldSuspendInnerClipForCrossing(
+        @Nullable Plane plane, @Nullable Portal renderingPortal, Vec3 renderCameraPos
+    ) {
+        if (plane == null || IPGlobal.SEAM_CLIP_RELAX_DISABLED_LEVER) {
+            return false;
+        }
+        if (renderingPortal instanceof qouteall.imm_ptl.core.portal.Mirror) {
+            return false;
+        }
+        if (PortalRendering.getPortalLayer() > 1) {
+            return false;
+        }
+        Vec3 n = plane.normal();
+        Vec3 p = plane.pos();
+        double camToPlane = n.x * (renderCameraPos.x - p.x)
+            + n.y * (renderCameraPos.y - p.y)
+            + n.z * (renderCameraPos.z - p.z);
+        return -camToPlane < SUSPEND_ZONE; // also true once the eye is past the plane (d < 0)
+    }
+
     /**
      * The correction to pass to {@link #setupInnerClipping} for a full-pipeline dest render:
      * IP's constant {@code -ADJUSTMENT} far from the plane, smoothly relaxed camera-side inside
