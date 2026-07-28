@@ -170,8 +170,24 @@ public final class SeamHandSubmitTap {
         };
         java.nio.FloatBuffer range = BufferUtils.createFloatBuffer(16);
         GL11.glGetFloatv(GL11.GL_DEPTH_RANGE, range);
-        return String.format("test=%s func=%s range=[%.4f,%.4f]",
-            test, funcName, range.get(0), range.get(1));
+        // 2026-07-28 fourth extension — THE CLIP-ENABLE READ: FrontClipping delivers per-entity
+        // crossing clips as gl_ClipDistance[0] shader injection; GL_CLIP_DISTANCE0 ENABLED at a
+        // draw whose program does NOT write gl_ClipDistance[0] is UNDEFINED BEHAVIOR (can clip
+        // everything on some drivers) — the hole in the old "hand programs loc==-1" exoneration.
+        boolean clip0 = GL11.glIsEnabled(org.lwjgl.opengl.GL30.GL_CLIP_DISTANCE0);
+        String fcState;
+        try {
+            com.warwa.seamlessportals.render.FrontClipping.Snapshot snap =
+                com.warwa.seamlessportals.render.FrontClipping.capture();
+            fcState = String.format("fc[en=%s p=%.2f,%.2f,%.2f,%.2f]",
+                snap.enabled, snap.x, snap.y, snap.z, snap.w);
+        }
+        catch (Throwable t) {
+            fcState = "fc[READ-FAILED]";
+        }
+        return String.format("test=%s func=%s range=[%.4f,%.4f] CLIP0=%s %s",
+            test, funcName, range.get(0), range.get(1),
+            clip0 ? "ENABLED(!)" : "off", fcState);
     }
 
     /** RETURN of renderSolid (nested-pass-guarded like every boundary — see beginSolid). */
