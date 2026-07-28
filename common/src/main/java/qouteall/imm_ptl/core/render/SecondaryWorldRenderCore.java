@@ -1761,11 +1761,22 @@ public class SecondaryWorldRenderCore {
             // by the vanilla GlCommandEncoderClipMixin + sodium MixinSodiumGLDrawContext_ClipUpload
             // guards (port-note §4.0). The finally re-asserts disableClipping() after render().
             GL11.glDisable(GL11.GL_STENCIL_TEST);
+            // IS5-SEAM crossing-window relax (DEFAULT ON, -PdisableSeamClipRelax to A/B): the
+            // correction is IP's constant -ADJUSTMENT far from the plane and ramps camera-side
+            // inside the crossing window so no rasterized aperture ray has its dest content
+            // culled (the measured black-band mechanism — FrontClipping derivation). The plane is
+            // resolved ONCE and shared with the arm + census so all three see the same object.
+            qouteall.q_misc_util.my_util.Plane seamActivePlane =
+                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null;
+            double seamClipCorrection = FrontClipping.innerClipCorrectionForCrossing(
+                seamActivePlane,
+                PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null,
+                destCameraPos);
             FrontClipping.setupInnerClipping(
-                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                seamActivePlane,
                 // IS-BOB C6: the clip plane must follow the DRAW transform (the bobbed matrix
                 // carries a translation column; FrontClipping's planeW term compensates it).
-                destDrawViewMatrix, -FrontClipping.ADJUSTMENT
+                destDrawViewMatrix, seamClipCorrection
             );
             // IS3 V6 FOLD — FREEZE the just-armed view-space plane into the pass-scoped full-pipeline
             // override. render() runs submitFeatures (its entity submit) BEFORE the framegraph terrain
@@ -1787,16 +1798,14 @@ public class SecondaryWorldRenderCore {
                 com.warwa.seamlessportals.render.FullPipelineClipState.disarm();
             }
             // IS5-SEAM-ARM census (2026-07-27; always-on, log-only, 1 Hz within 3 blocks of the
-            // plane). The front_clipping live A/B proved the inner clip CARRIES the black seam
-            // band, but static plane geometry cannot void aperture rays while the render eye is on
-            // the clipped side — an all-void aperture needs frames whose RENDER camera (partialTick
-            // + bob) sits ON/past the armed plane before the tick-keyed crossing fires. This
-            // measures exactly that (planeW = the eye's own clip distance; >=0 = fully-void frame)
-            // plus the feed-coherence residual, per ARMED FRAME with min/max accumulators — the
-            // suspect frames are sparse and a sampled census would miss them. Numbers before fix.
+            // plane). Born as the pre-fix hypothesis test (its first run measured the crossing
+            // window: baselineVoid=6 / baselineStraddle=38, feed coherent at 0.0000); now the
+            // relax fix's VERIFICATION instrument: the baseline counters mark crossing seconds in
+            // every leg, and armedVoidRisk is the health check (relax ON => must be 0; the
+            // -PdisableSeamClipRelax leg reproduces the pre-fix signature). Class javadoc has the
+            // full counter semantics and the D4.4 sign conventions.
             com.warwa.seamlessportals.render.SeamClipArmCensus.note(
-                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
-                armedClipPlane, destCameraPos);
+                seamActivePlane, armedClipPlane, destCameraPos, seamClipCorrection);
             // §4.7 discriminator probe — arm a 1Hz capture window for this full-pipeline pass
             // (lever-gated -Dseamlessportals.clipProbe; byte-inert at the default). The vanilla
             // trySetup handler feeds it per-draw; endPass() dumps in the finally.

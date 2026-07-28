@@ -1,7 +1,44 @@
-# IS5-SEAM HANDOFF — the black flash at the portal seam (OPEN)
+# IS5-SEAM HANDOFF — the black flash at the portal seam (ROOT-CAUSED; FIX LANDED, awaiting live confirm)
 
 **Worktree** `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`, branch
-`iris-on/is5-shadow`. Session 2026-07-26 → 2026-07-27 01:20.
+`iris-on/is5-shadow`. Session 2026-07-26 → 2026-07-27 01:20; continued 2026-07-27 (day session).
+
+---
+
+## §0 RESOLUTION (2026-07-27 day session) — read this first; §2's ladder is HISTORY
+
+**Root cause, every link measured live:**
+1. **Solid-stamp leg** (`-PdebugStampSolid`, log-valid `bound=SOLID`): the band turned WHITE ⇒
+   stamp fragments pass the default depth test and survive ⇒ depth-rejection AND overpaint both
+   refuted in one leg; the black is the SAMPLED dest content — `mainRT` after the nested dest
+   render is itself pure black at the band.
+2. **`/imm_ptl_client_debug front_clipping disable` live A/B (both directions):** band gone across
+   repeated slow crossings while disabled, back on enable ⇒ **the IS3 inner clip plane carries it**.
+3. **IS5-SEAM-ARM census** (95 rows, `maxAbsFeedErr=0.0000` on all — feed coherent): the band
+   frames ARE the crossing window — `fullyVoid=6` (render eye at/past the armed plane ⇒
+   whole-aperture void = the fast-crossing flash) + `nearStraddle=38` (eye 1–11 cm short ⇒ the
+   seam sliver's grazing rays lose their near-side dest content for meters = the sustained band).
+4. **IP comparison** (`ip-source`, verified): IP arms the IDENTICAL plane
+   (`RectangularPortalShape.getInnerClipping` + `-ADJUSTMENT`) — IP fills those pixels with its
+   UNCLIPPED sky; a deferred shaderpack has no filler ⇒ pure black, shaders-ON only.
+
+**The fix (DEFAULT ON, `-PdisableSeamClipRelax` to A/B):**
+`FrontClipping.innerClipCorrectionForCrossing` — IP's constant far from the plane; inside the
+crossing window the inner clip ramps camera-side so the render eye stays KEPT-side of the armed
+plane (clearance +0.20, bob budget 0.10; hold zone 0.30 covers the sprint-FOV sliver reach, ramp
+out by 0.60). The load-bearing invariant (panel-corrected): an aperture ray can only void while
+the EYE is on the CLIPPED side of the armed plane — holding the eye kept-side, every aperture
+ray's near dest content draws. The extra content kept is the dest doorway interior the eye is
+physically inside mid-crossing. Mirrors excluded (never crossed); nested recursion layers
+excluded (layer-1 gate — also closes the inherited-outer-Mirror-plane hole). Scope: the compat
+full-pipeline arm only (shaders-OFF keeps IP's sky filler).
+
+**Verification instrument:** the ARM census counters were REKEYED (the relax deliberately pins the
+armed clearance positive, so the old armed-plane classes would convict a working fix):
+`baselineVoid`/`baselineStraddle` mark crossing seconds in every leg (nonzero EXPECTED);
+`armedVoidRisk` is the health check — relax ON ⇒ MUST be 0; the disable leg reproduces the
+pre-fix signature. Documented trade-off: leaning within 0.6 of a crossable portal without
+crossing shows up to ~0.5 blocks of near-side dest content IP would clip (continuous, no pop).
 
 ---
 
@@ -19,7 +56,7 @@ queue was assessed against a blurred window.**
 
 ---
 
-## §2 THE OPEN PROBLEM
+## §2 THE (formerly) OPEN PROBLEM — historical record; §0 supersedes the "next step" here
 
 **Symptom (user-observed, authoritative):** crossing a portal shows **pure black, exactly at the seam**.
 Crossing slowly it is sustained and clearly visible; crossing quickly it reads as a brief flash.
@@ -127,6 +164,11 @@ introduced by this session (fact 4).
 | `-PdisableStampDepthTest` | stamp depth state fully DISABLED (test+write) — the §2d depth discriminator | OFF |
 | `-PdisableAperturePlaneClip` | passes every aperture triangle through unclipped (**diagnostic only**; nominally re-opens the S14.36 sky wedges, though none appeared in the live run) | OFF |
 | `-PdisableStampDepthWrite` | stamp depth-WRITE off (**diagnostic only**; re-opens the `#13` two-portal artifact; superseded by `-PdisableStampDepthTest` for the seam work) | OFF |
+| `-PdisableSeamClipRelax` | **THE FIX's A/B** — forces the crossing-window clip relax OFF, reproducing the band (§0) | OFF (fix ON) |
+
+**IS5-SEAM-ARM census** — always on, 1 Hz, within 3 blocks of the active clip plane. Counter
+semantics in §0 / the class javadoc; `/imm_ptl_client_debug front_clipping disable` remains the
+zero-rebuild whole-mechanism kill switch.
 
 **IS5-SEAM census** — always on, 1 Hz, only within 3 blocks of the aperture. Prints
 `distToAperture`, `meshNull`, `stamp=<pipeline actually selected>`, and the near-plane clip's

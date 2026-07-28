@@ -334,6 +334,15 @@ loom {
             // built; the once-only IS5-RC line says so) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugStampSolid=true
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            // IS5-SEAM CROSSING-WINDOW CLIP RELAX — **DEFAULT ON** (2026-07-27). The measured black
+            // seam band = the inner clip voiding grazing aperture rays in the crossing window
+            // (IS5-SEAM-ARM census: fullyVoid=6 nearStraddle=38 across three crossings, feed
+            // coherent at 0.0000). The fix ramps the clip camera-side inside the window
+            // (FrontClipping.innerClipCorrectionForCrossing — derivation there); far from the
+            // portal it is bit-identical to IP's -ADJUSTMENT. Pass this to force it OFF and
+            // reproduce the band (attribution both directions; the ARM census counters return) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSeamClipRelax=true
+            if (project.findProperty('disableSeamClipRelax') == 'true') { vmArg('-Dseamlessportals.disableSeamClipRelax=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -565,6 +574,11 @@ loom {
             // parity; the suite runs iris-ABSENT so the lever is inert there) —
             //   .\gradlew.bat :fabric:runCrossingGametest -PdebugStampSolid=true
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            // IS5-SEAM crossing-window clip relax A/B (mirror; DEFAULT-ON; the suite runs
+            // iris-ABSENT so the compat full-pipeline arm never executes there — inert;
+            // lever-row parity) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableSeamClipRelax=true
+            if (project.findProperty('disableSeamClipRelax') == 'true') { vmArg('-Dseamlessportals.disableSeamClipRelax=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
