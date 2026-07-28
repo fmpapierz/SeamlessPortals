@@ -71,7 +71,10 @@ import java.util.WeakHashMap;
  * colortex0 writer has drawn and BEFORE the next pass regenerates c0's mipmaps and gathers its
  * bloom tiles, mutate the c0 texture that next pass will read: copy it to scratch
  * ({@code glCopyImageSubData}), clear it to black ({@code glClearTexImage}), and repaint ONLY the
- * aperture footprint back from scratch — the same {@link ViewAreaRenderer#buildPortalViewAreaMesh}
+ * aperture footprint back from scratch — under DEPTH CLAMP, matching the stamp's raster state
+ * (C4-SEAM: without it, the near-straddling crossing sliver rasterized for the stamp but not for
+ * the mask, and the stamp copied the cleared black = the seam band) — the same
+ * {@link ViewAreaRenderer#buildPortalViewAreaMesh}
  * geometry and the same layer-0 {@code P·MV} the stamp uses, fragment = {@code texelFetch} at
  * {@code gl_FragCoord} (idempotent per pixel), 5 NDC-offset draws dilating the keep-region ~1.5 px
  * so mask ⊇ stamp footprint unconditionally. composite4's tiles then gather ONLY window-visible
@@ -661,19 +664,45 @@ public final class IrisBloomApertureMask {
         // rasterization non-invariance + the C4 +0.01 overhang. Idempotent fragment ⇒ overdraw
         // harmless. Unrolled — zero allocation in the post-clear tail.
         // debugBloomMaskBlackout skips all 5 (clear-only footprint/crop proof leg).
+        //
+        // C4-SEAM DEPTH CLAMP (2026-07-27 — THE BLACK SEAM BAND's root cause, attributed live):
+        // the stamp rasterizes this IDENTICAL mesh under CHelper.enableDepthClamp (the
+        // doRenderPortal bracket), and the S14.36 CPU clip cuts at the CAMERA plane (viewZ <
+        // -EPS), NOT the 0.05 near plane — so during a crossing the 0..5 cm shell of the aperture
+        // survives to the GPU, where the stamp (clamp ON) keeps it and this repaint (clamp OFF)
+        // lost it to hardware near clipping: mask ⊉ stamp exactly at the seam, and the stamp
+        // copied the mask's cleared-black c0 there = the band (shaders-ON only; the content probe
+        // measured black COLOR over normal geometry depth, and -PdisableIrisBloomApertureMask
+        // killed the band live). Clamp brackets the repaints only, via the SAME CHelper pair the
+        // stamp uses (both gated on enableClippingMechanism — exact raster-state parity), and is
+        // left DISABLED after, matching the composite chain's ambient state.
+        // A/B: -PdisableBloomMaskSeamClamp reverts to the unclamped repaints (band returns).
         if (!IPGlobal.debugBloomMaskBlackout) {
-            float dx = 3.0f / w;
-            float dy = 3.0f / h;
-            GL20C.glUniform2f(locNdcOffset, 0.0f, 0.0f);
-            GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
-            GL20C.glUniform2f(locNdcOffset, dx, dy);
-            GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
-            GL20C.glUniform2f(locNdcOffset, -dx, -dy);
-            GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
-            GL20C.glUniform2f(locNdcOffset, dx, -dy);
-            GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
-            GL20C.glUniform2f(locNdcOffset, -dx, dy);
-            GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+            boolean seamClamp = !IPGlobal.BLOOM_MASK_SEAM_CLAMP_DISABLED_LEVER;
+            if (seamClamp) {
+                qouteall.imm_ptl.core.CHelper.enableDepthClamp();
+            }
+            // try/finally per the StencilPortalRenderer clamp-bracket precedent: the body is raw
+            // non-throwing GL, but the class-wide catch would otherwise swallow a throw and leak
+            // clamp ENABLED into the rest of the composite chain for the frame.
+            try {
+                float dx = 3.0f / w;
+                float dy = 3.0f / h;
+                GL20C.glUniform2f(locNdcOffset, 0.0f, 0.0f);
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                GL20C.glUniform2f(locNdcOffset, dx, dy);
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                GL20C.glUniform2f(locNdcOffset, -dx, -dy);
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                GL20C.glUniform2f(locNdcOffset, dx, -dy);
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                GL20C.glUniform2f(locNdcOffset, -dx, dy);
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+            } finally {
+                if (seamClamp) {
+                    qouteall.imm_ptl.core.CHelper.disableDepthClamp();
+                }
+            }
         }
 
         // 10. Restore. VAO: MANDATORY quad re-bind (every subsequent composite draw rides it —

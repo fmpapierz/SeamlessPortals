@@ -1,11 +1,48 @@
-# IS5-SEAM HANDOFF — the black flash at the portal seam (ROOT-CAUSED; FIX LANDED, awaiting live confirm)
+# IS5-SEAM HANDOFF — the black flash at the portal seam (ROOT CAUSE = THE C3-BLOOM MASK; C4-SEAM fix landed)
 
 **Worktree** `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`, branch
 `iris-on/is5-shadow`. Session 2026-07-26 → 2026-07-27 01:20; continued 2026-07-27 (day session).
 
 ---
 
-## §0 RESOLUTION (2026-07-27 day session) — read this first; §2's ladder is HISTORY
+## §00 THE ACTUAL ROOT CAUSE (2026-07-27, evening) — supersedes §0's clip attribution
+
+**The band's painter is the C3-BLOOM aperture mask** (`IrisBloomApertureMask`): inside the nested
+dest composite it clears `colortex0` to BLACK and repaints only the aperture footprint — but its
+repaints drew WITHOUT the depth clamp the stamp draws under. The S14.36 CPU clip cuts at the
+CAMERA plane (viewZ < −EPS), NOT the 0.05 near plane, so at a crossing the 0–5 cm aperture shell
+survives to the GPU: the stamp (clamp ON) rasterizes it, the mask (clamp OFF) loses it to hardware
+near clipping — **mask ⊉ stamp exactly at the seam**, and the stamp copies the mask's cleared
+black = the band. Shaders-ON-only by construction (the mask exists only in the compat route).
+
+**The attribution chain that got here (each step live/log-verified):**
+1. solid-stamp leg → band pixels ARE stamped; the sampled dest frame is black there;
+2. v1 plane-shift relax, provably armed (`armedVoidRisk=0`) → band unchanged;
+3. v2 full clip suspension, provably live (`SUSPENDED=70–87/s`) → band unchanged ⇒ **the terrain
+   clip exonerated as the painter**;
+4. `IS5-SEAM-CONTENT` probe → the band = black COLOR over NORMAL geometry depth (z≈0.050–0.051)
+   ⇒ a color-only painter, not missing geometry;
+5. one-frame `DrawCallTrace` → the mask's aperture-mesh build fires INSIDE the nested pass;
+6. `-PdisableIrisBloomApertureMask` live leg → **band GONE** (bloom ring back = lever self-proof).
+
+**THE FIX (C4-SEAM, DEFAULT ON):** depth-clamp the mask's 5 dilated repaints (the same `CHelper`
+pair the stamp uses — exact raster parity; clamp DISABLED after = the composite chain's ambient
+state; try/finally per the StencilPortalRenderer precedent). A/B: `-PdisableBloomMaskSeamClamp`
+reproduces the band with the mask on.
+
+**Retro-corrections to the earlier evidence:** fact 3's magenta band = the stamp faithfully
+copying the mask's black (multiply-blind); the `front_clipping disable` "band gone" observation
+was CONFOUNDED and is superseded by the controlled mask-off leg. The v2 crossing-window clip
+suspension REMAINS SHIPPED — it fixes the real, separately-measured void/flash frame class
+(`baselineVoid`) and provides the user-validated crossing content.
+
+**Recorded follow-up (separate item, do not fold in):** the first-person HAND disappears and
+reappears when the camera crosses the seam — persists independently of the band (user-observed on
+the mask-off leg). Likely related to the existing `teleport-hand-glitch-chain` memory.
+
+---
+
+## §0 (superseded by §00 on the ROOT CAUSE; the clip work below remains SHIPPED for the void class)
 
 **Root cause, every link measured live:**
 1. **Solid-stamp leg** (`-PdebugStampSolid`, log-valid `bound=SOLID`): the band turned WHITE ⇒
