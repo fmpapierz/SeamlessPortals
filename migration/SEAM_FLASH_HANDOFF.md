@@ -141,6 +141,54 @@ PASS-WITH-FIXES ×1, all 10 actionable findings landed), suite-gated:**
 several times. Before adjudicating: RUN CONFIG block + the THREE once-only lines (IS5-HAND-INLVL
 ARMED, IS5-STAMP-EXEC ARMED, IS5-RC STAMP PIPELINE) + read the FULL latest.log.
 
+### §00c THE LEG RAN (2026-07-28 00:05, ~1 min, crossings both directions) — TWO VERDICTS
+
+**Config proven:** both probes armed (RUN CONFIG + both ARMED once-only lines), zero disarms,
+zero anchor-miss warnings, bracket `armed=true` at BOTH post-pass captures on every block,
+14 IS5-HAND-INLVL blocks + 1 full dump + 14 in-window IS5-STAMP-EXEC samples, teleports
+interleaved (the user was genuinely crossing).
+
+**VERDICT 1 — THE HAND IS NEVER RASTERIZED IN-WINDOW (the never-drawn branch CONFIRMED;
+composite-eaten DEAD).** On ALL 14 blocks: iris colortex0-main is byte-identical across
+preSolid→postSolid→preTranslucent→postTranslucent at the hand region (the hand passes painted
+NOTHING), and the anchor's mainRT depth carries ZERO hand-band (≥0.9985) rows — with the
+bracket PROVEN armed, any rasterized-and-depth-tested hand fragment MUST have landed ≥0.999 in
+the shared main depth texture (depth has no ping-pong; the alt-surface caveat does not apply to
+it). Historical control: the SAME column caught the hand slice (0.554-0.556) on 45 samples in
+the pre-bracket sessions, so the column does catch a present hand. Instrument limitation
+discovered live: at the pass boundaries the live GL draw binding is fbo=0 (the DEFAULT
+framebuffer — iris binds its per-program FBOs only INSIDE the pass), so the fb rows are inert
+padding; ct0 + anchor-depth carried the verdict.
+⇒ NEXT SPLIT (the only one left): WHY does iris's HandRenderer emit nothing —
+(i) its canRender-family gate declines the pass entirely in-window, vs (ii) the pass runs but
+submits no geometry / geometry clipped pre-raster. Instrument: a require=0 tap on iris's
+HandRenderer internals logging (1 Hz in-window + 0.1 Hz ambient CONTROL — the ambient rows
+prove the tap sees a DRAWN hand normally): the gate decision, the held-item/arm submit count,
+and GL_VIEWPORT/SCISSOR at the pass. OUR code is swept clean: `doRenderHand` is nested-render
+plumbing (dead param in the sibling), no main-pass hand gate exists mod-side.
+
+**VERDICT 2 — THE STAMP EXECUTES UNDER func=LEQUAL, NOT THE DECLARED GEQUAL (15/15 samples:
+the full dump + all 14 in-window), with CAP-IN-SOURCE=true, clamp=true, writeMask=true,
+range=[0,1], same prog=240 every time.** The declared-vs-executed mismatch is the stage-C
+anomaly's mechanism-class (a raw-GL depth-func leak reaching the stamp's RenderPass apply —
+prime suspect: the nested render's iris finalize leaves LEQUAL raw and the pass apply
+short-circuits against a stale GlStateManager cache). CONSEQUENCE FOR THE HAND: under real
+LEQUAL the 0.5 cap is INVERTED — capped fragments (0.5) pass against ANYTHING nearer than
+10 cm (hand slice 0.554 included), so the stamp is a GUARANTEED deferred-buffer hand-eater
+wherever the aperture covers a surviving hand; the uncapped natural depth (≥0.55 there) would
+NOT overpaint the hand slice under LEQUAL. (Leg 3's "cap ⇒ unchanged" stays refuted-as-carrier
+only because the hand is already gone upstream — VERDICT 1.)
+**OPEN before ANY fix:** all 15 samples were in-window or the session-first — whether
+out-of-window stamps also run LEQUAL is UNMEASURED, and the working normal-window content is
+easier to explain if they run GEQUAL. The probe now emits 0.1 Hz AMBIENT (out-of-window)
+samples to split this next leg. Fix CANDIDATE (do not build until the ambient data lands): a
+cache-desync-buster before the stamp pass (cache-coherent `_depthFunc(GL_ALWAYS)` so the pass
+apply re-issues the declared GEQUAL), lever-gated; audit the C4-SEAM mask + #13 + window
+content under it — today's user-validated behavior was validated ON the LEQUAL-executing stamp,
+so flipping it is a REGRESSION RISK, not a free correctness win. Yesterday's stage-C depth
+NUMBERS (0.66/0.0000) stay quarantined: the old stage diff has no glGetError checks and one
+frame provably tabulated a failed read as zeros.
+
 ---
 
 ## §0 (superseded by §00 on the ROOT CAUSE; the clip work below remains SHIPPED for the void class)

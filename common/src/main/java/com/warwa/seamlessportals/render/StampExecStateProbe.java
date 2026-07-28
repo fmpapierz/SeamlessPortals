@@ -53,6 +53,7 @@ public final class StampExecStateProbe {
     private static boolean announced = false;
     private static boolean fullDumpDone = false;
     private static long lastWindowNanos = 0L;
+    private static long lastAmbientNanos = 0L;
 
     private StampExecStateProbe() {}
 
@@ -73,18 +74,27 @@ public final class StampExecStateProbe {
             }
             boolean firstDump = !fullDumpDone;
             boolean windowSample = false;
+            boolean ambientSample = false;
             if (!firstDump) {
                 long now = System.nanoTime();
                 if (now - lastWindowNanos >= 1_000_000_000L && isInCrossingWindow()) {
                     lastWindowNanos = now;
                     windowSample = true;
                 }
+                else if (now - lastAmbientNanos >= 10_000_000_000L) {
+                    // AMBIENT (out-of-window) sample, ~0.1 Hz (instrument-every-branch: the
+                    // 2026-07-28 leg sampled ONLY in-window stamps and could not say whether
+                    // the LEQUAL leak is window-correlated or universal — this branch splits
+                    // that on the next leg).
+                    lastAmbientNanos = now;
+                    ambientSample = true;
+                }
             }
-            if (!firstDump && !windowSample) {
+            if (!firstDump && !windowSample && !ambientSample) {
                 return;
             }
             fullDumpDone = true;
-            sample(pipelineName, firstDump);
+            sample(pipelineName, firstDump, ambientSample);
         }
         catch (Throwable t) {
             disarmed = true;
@@ -114,7 +124,7 @@ public final class StampExecStateProbe {
         return false;
     }
 
-    private static void sample(String pipelineName, boolean fullDump) {
+    private static void sample(String pipelineName, boolean fullDump, boolean ambient) {
         GL11.glGetError(); // drain pre-existing
 
         int prog = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
@@ -158,7 +168,8 @@ public final class StampExecStateProbe {
         }
         int shaderErr = GL11.glGetError();
 
-        String line = P + (fullDump ? "FULL DUMP (first stamp of the session)" : "window sample")
+        String line = P + (fullDump ? "FULL DUMP (first stamp of the session)"
+                : (ambient ? "AMBIENT sample (out-of-window)" : "window sample"))
             + ": pipeline=" + pipelineName
             + " prog=" + prog + " " + vshInfo
             + " | depthTest=" + depthTest
