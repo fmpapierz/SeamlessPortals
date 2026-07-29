@@ -17,16 +17,27 @@ out vec4 vertexColor;
 
 void main() {
     gl_Position = ProjMat * vec4(Position, 1.0);
-    // IS5-HAND DEPTH CAP (2026-07-27; A/B = the nocap.vsh sibling via
-    // -PdisableStampHandDepthCap). Under a pack, iris bakes the first-person hand into the
-    // main frame PRE-anchor with a compressed depth slice MEASURED at 0.5556..0.5569
-    // (reversed-Z; 45 probe samples). The stamp draws under GL_DEPTH_CLAMP, so the crossing
-    // sliver's nearer-than-near fragments would write depth 1.0 and GEQUAL-paint the portal
-    // view OVER the baked-in hand exactly along the seam (the hand "slices away"). Capping
-    // NDC z at 0.5 keeps the sliver stamping over all world content beyond 10 cm (the band
-    // fix intact — normal window fragments sit below 0.55 anyway) while ALWAYS losing to the
-    // hand slice. w > 0 for every vertex here (the S14.36 CPU clip keeps only in-front-of-
-    // camera geometry), so the min() is well-formed.
-    gl_Position.z = min(gl_Position.z, 0.5 * gl_Position.w);
+    // IS5-STAMP-EAT NEAR FLOOR (2026-07-28; A/B = the nocap.vsh sibling via
+    // -PdisableStampHandDepthCap). MEASURED, per-pixel, at the anchor->blit boundary: at the
+    // crossing (camera distance ~0.00 to the portal plane) EVERY hand pixel is overpainted by
+    // the stamp (359/359, mean |dlum| 0.41), while at distance 0.29 none are (0/359) — the
+    // progressive slice. Mechanism: the stamp executes func=LEQUAL (draw-time ground truth,
+    // trySetup RETURN) under GL_DEPTH_CLAMP, and as the camera reaches the portal plane the
+    // aperture's projected depth falls to the near plane (clamped to ~0.0). Once it drops
+    // BELOW the hand's depth, LEQUAL lets the aperture win — and it sweeps across the hand as
+    // more of the aperture crosses that threshold.
+    //
+    // The previous line capped the FAR side (min(z, 0.5w)) — the reversed-Z assumption, which
+    // this buffer does not use (the hand pass proves small-is-near/LEQUAL: hand 0.5546 beats
+    // scene 0.9945). Capping the far side cannot stop a near-plane-clamped fragment. The
+    // correct guard is a NEAR FLOOR: keep every stamp fragment at window depth >= 0.005
+    // (NDC z >= -0.99), which is
+    //   * ALWAYS behind the IS5-HAND bracket's hand (remapped into [0, 0.001]) => the hand can
+    //     never be overpainted, at any crossing distance; the two fixes compose by design, and
+    //   * still in front of everything the window must replace (scene behind the portal sits
+    //     at ~0.98), so window content and the C4-SEAM band fix are unaffected.
+    // w > 0 for every vertex here (the S14.36 CPU clip keeps only in-front-of-camera
+    // geometry), so the max() is well-formed.
+    gl_Position.z = max(gl_Position.z, -0.99 * gl_Position.w);
     vertexColor = Color;
 }
