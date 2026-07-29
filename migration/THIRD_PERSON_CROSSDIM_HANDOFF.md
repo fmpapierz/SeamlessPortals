@@ -1,0 +1,164 @@
+# TP-XDIM HANDOFF — third-person cross-dimension camera + shaders = corrupted render
+
+**Status: OPEN, NOT STARTED.** Reported by the user 2026-07-28, immediately after the seam
+hand arc closed. Branch `iris-on/is5-shadow`, worktree
+`C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`.
+
+---
+
+## §1 THE SYMPTOM (user, verbatim)
+
+> "when you cross a portal in 3rd person with shaders, and the third person camera happens to
+> be in a different dim than the player, there is a totally corrupted artifact thing render
+> that happens. it super insane."
+
+Three conditions co-occur: **third person** + **shaders ON** + **the camera is on the other
+side of the portal from the player** (i.e. camera and player are in different dimensions).
+"Totally corrupted", not a subtle artifact — expect whole-screen garbage, not a seam defect.
+
+**UNMEASURED and to be established first (do NOT assume):** whether it is shaders-only, whether
+it needs a CROSS-DIM portal (vs same-dim), whether it survives after the crossing completes or
+only during, and what the corruption actually IS (garbage colors / wrong-dim content / stale
+frame / depth garbage / geometry explosion). The user's phrasing is a starting point, not a
+classification.
+
+---
+
+## §2 WHY THIS PATH IS STRUCTURALLY DANGEROUS (code-grounded — read this before theorising)
+
+The camera-in-other-dimension case is not a variation of the normal frame; it is a **completely
+different frame path** that REPLACES `renderLevel`.
+
+`CrossPortalViewRendering.renderCrossPortalView()`
+(`common/src/main/java/qouteall/imm_ptl/core/render/CrossPortalViewRendering.java`) is invoked
+from `MixinGameRenderer.seamlessportals$redirectRenderingWorld` — an `@WrapOperation` on the
+`render → renderLevel` INVOKE. When it returns true it has rendered the frame ITSELF and
+**vanilla `renderLevel` never runs**. Consequences, all documented in that file's own comments:
+
+1. **The IS0 post-main anchor never fires.** `MixinGameRenderer_IPPostLevelAnchor` injects
+   inside `GameRenderer.renderLevel` (@ INVOKE `LevelRenderer.render`, shift=AFTER). No
+   `renderLevel` ⇒ no anchor ⇒ **the entire iris compat pass is skipped for that frame**:
+   no snapshot, no per-portal dest render, no stamp, no blit-back, and none of the state
+   hygiene that pass owns (`IrisTemporalTargetGuard.save/restore`,
+   `IrisShadowCompositeSuppressor.install/uninstall`, `IrisDestPrevCamera`,
+   `healPreviousFrameUniforms`, the stencil belts, the `IS5-*` fixes from the whole IS5 arc).
+2. **The Fabric AFTER_TRANSLUCENT_TERRAIN driver never fires either** (it lives inside the
+   replaced `renderLevel`) — the file says so explicitly and hand-rolls a
+   `prepareRendering`/`finishRendering` bracket plus a manual `glDisable(GL_STENCIL_TEST)` to
+   compensate. That compensation was written for the STENCIL renderer, long before the iris
+   compat renderer existed.
+3. **The dest world is rendered through the D23 fallback, not the compat pipeline.**
+   `renderCrossPortalView` calls `IPCGlobal.renderer.invokeWorldRendering(worldRenderInfo)`.
+   In `IrisCompatOn262Renderer.invokeWorldRendering` the first branch is
+   `if (!isInsideOwnRenderPortals)` — which is TRUE here (we are not inside the compat pass's
+   own `renderPortals` loop) — so it takes the documented D23 fallback
+   `MyGameRenderer.renderWorldNew(...)`, the **decomposed** driver, whose own comment calls it
+   *"strictly better than nothing; full fidelity deferred"*. That fallback was designed for
+   GuiPortalRendering-style layer-0 calls, never validated as a whole-frame renderer under an
+   active shaderpack.
+4. **Dimension switch under a per-dimension iris pipeline.** The render targets
+   `ClientWorldLoader.getWorld(portal.getDestDim())`. Iris keeps a pipeline PER DIMENSION;
+   switching dimensions mid-frame calls `preparePipeline` for the other dim, and (measured
+   earlier this project, see the IS5-ACT heal note in `IrisCompatOn262Renderer`) **nothing
+   restores iris's pipeline-manager slot afterwards**. On the normal path the compat pass
+   captures and heals that; on this path there is no such heal.
+5. `RenderStates.capturedMainPassBobbedProjection = null` is set here deliberately, and the
+   projection falls back to `cameraState.projectionMatrix` — a different projection source than
+   every other iris-path frame uses.
+
+**Working hypothesis to test first (NOT a conclusion):** the corruption is the cross-view frame
+running the decomposed D23 fallback and/or a foreign-dimension iris pipeline with none of the
+compat pass's state save/restore — i.e. the "nested render pollutes shared persistent state"
+family (see memory `polish-rounds-lessons`), but at whole-frame scale instead of
+window-shaped.
+
+---
+
+## §3 FIRST INSTRUMENTS (specified — build these before any fix)
+
+Every one of these is cheap, log-only, and lever-gated DEFAULT OFF. Follow the discipline in §5.
+
+1. **TP-XDIM FRAME CENSUS** (the classifier — build first). One line per second while
+   `renderCrossPortalView()` is being entered, recording: returned true/false; camera dim vs
+   player dim vs `mc.level` dim; `isThirdPerson()`; the portal hit; whether the IS0 anchor
+   fired this frame (a boolean the anchor sets, read+cleared here); whether
+   `invokeWorldRendering` took the D23 fallback or the full-pipeline branch; the iris pipeline
+   identity BEFORE and AFTER the call (`Iris.getPipelineManager().getPipelineNullable()`
+   identity hash + its dimension). This alone will confirm or destroy the §2 hypothesis and
+   tells the next session which of the five consequences actually happens live.
+2. **The shaders A/B** — same scenario with shaders OFF. If it is clean shaders-OFF, the
+   corruption is in the iris interaction, not the cross-view geometry/camera math. (Cheap,
+   run it early, it halves the search space.)
+3. **A frame-capture of the corruption itself.** `SeamHandLocator`'s full-frame grid
+   (`-PhandLocator`) already reads mainRT colour+depth over a 12x8 grid at four stages and can
+   be re-pointed at this path; or use the `DrawCallTrace` one-frame capture
+   (`/imm_ptl_client_debug debug_capture_frame_enable`) on a corrupted frame vs a control
+   frame and diff the pass lists — that instrument found the S14 wedge cause in two captures.
+4. **Only after the above:** if the D23 fallback is confirmed as the renderer, the fix
+   direction is almost certainly *"make the cross-view frame use the same compat machinery the
+   normal frame uses"* — i.e. give this path its own anchor-equivalent bracket rather than
+   letting it run bare. Do not build that until the census says the fallback is what runs.
+
+---
+
+## §4 REPRO PROTOCOL (for the live legs)
+
+Shaders ON (Complementary Reimagined r5.8.1 is the project's reference pack), third person
+(F5), walk through a **cross-dimensional** portal slowly so the camera passes the plane before
+the player. Then repeat with a **same-dim** portal, and repeat both shaders-OFF. Note for each:
+does the corruption appear, when (camera crossing / player crossing / after), and does it clear.
+
+---
+
+## §5 THE DISCIPLINE (binding — the hand arc is the case study, and it cost days)
+
+NO GUESSING / diagnose-first · read the FULL `latest.log` every run · **check the `RUN CONFIG`
+block and the once-only self-report lines before adjudicating ANY leg** (a leg without its
+landing proof is VOID, not a refutation) · never generalize from one sampled block · a probe's
+failure sentinel is not a measurement · instrument every branch, not just the one your
+hypothesis predicts · A/B both directions · **change ONE variable per leg** · panels +
+adversarial verify + final-diff for every non-trivial mechanism ·
+`.\gradlew.bat :fabric:runCrossingGametest` before every commit · push every stage commit ·
+`git add` explicit file lists only · Java cleanup by own-project PID only, **never
+`gradlew --stop`**.
+
+**Instrument defects the hand arc paid for — do not repeat them** (full text in memory
+`seam-hand-slicing-open`):
+- **Validate a probe's AIM against a frame where the target is KNOWN present.** A fixed-column
+  probe sat outside the in-window hand footprint and printed "all hops clean" — empty screen
+  reported as evidence.
+- **Coverage questions need PER-PIXEL classification.** Coarse cells (143x170 px) reported hand
+  loss when only the background inside the cell changed.
+- **Pass-boundary GL reads are not draw-time state.** Only `GlCommandEncoder.trySetup` RETURN
+  is trustworthy for "what did this draw execute under". A whole fix was built on a boundary
+  read and was inert.
+- **Pin the window size across an A/B.** Three legs at three resolutions were compared using
+  proportional probe coordinates — a two-variable comparison.
+- **A symptom CHANGING is data.** "Progressive slice → instant vanish" is what revealed which
+  of two fixes governed which failure.
+
+---
+
+## §6 THE ONE FACT MOST LIKELY TO MISLEAD THE NEXT SESSION
+
+**This buffer is small-is-near / LEQUAL, NOT reversed-Z / GEQUAL.** Two shipped "fixes" were
+built on the reversed-Z assumption and each did the exact opposite of its intent (handoff
+§00z). Anything in this new arc that reasons about depth comparisons must start from the
+measured convention, and must verify it at the DRAW, not at a pass boundary.
+
+---
+
+## §7 KIT ALREADY IN THE TREE (all DEFAULT OFF unless noted)
+
+`-PhandLocator` (full-frame 12x8 grid + per-pixel row classifier, four stages) ·
+`-PhandDrawDump` (draw-time GL state at hand AND stamp draws, via the `GlCommandEncoder`
+trySetup hook — the pattern to copy for any new draw-time probe) · `-PhandSubmitTap`
+(iris HandRenderer gate/body/transform tap) · `-PhandInLevelProbe` · `-PhandStageDiff`
+(single-column, four compat stages — remember its aim caveat) · `-PseamContentProbe` ·
+`-PdebugStampSolid` / `-PdisableStampDepthTest` / `-PstampLequal` (stamp discriminators) ·
+`DrawCallTrace` via `/imm_ptl_client_debug debug_capture_frame_enable` · always-on: the
+`IS5-SEAM` and `IS5-SEAM-ARM` censuses, `RunConfigReport`'s `RUN CONFIG` block.
+
+Shipped hand fixes (DEFAULT ON, do not disturb): the hand depth bracket
+`glDepthRange(0, 0.0005)` (`-PdisableHandSeamDepthBracket`) and the stamp NEAR FLOOR
+`max(z, -0.998w)` (`-PdisableStampHandDepthCap`). Their values are load-bearing — §00z.
