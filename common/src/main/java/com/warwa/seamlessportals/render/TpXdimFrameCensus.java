@@ -138,11 +138,14 @@ public final class TpXdimFrameCensus {
      * code becomes live only if a future caller CATCHES the cross-view throw.
      */
     public static final int X_ENTERED_NO_EXIT = 10;
+    /** -PcrossViewSuppressUnderPack declined the cross view because a shaderpack is running. */
+    public static final int X_SUPPRESSED_UNDER_PACK = 11;
 
     private static final String[] X_NAME = {
         "NOT_ENTERED", "GATE_OFF", "PRE_PLAYER_NULL", "PRE_LEVEL_NULL",
         "PRE_PLAYER_LEVEL_MISMATCH", "PRE_NO_CAMERA_ENTITY", "PRE_NO_ORIGINAL_CAMERA",
-        "NO_PORTAL_HIT", "PORTAL_REJECTS_CAMERA", "RENDERED", "ENTERED_NO_EXIT_RECORDED"
+        "NO_PORTAL_HIT", "PORTAL_REJECTS_CAMERA", "RENDERED", "ENTERED_NO_EXIT_RECORDED",
+        "SUPPRESSED_UNDER_PACK"
     };
 
     // ===== sampling policy ====================================================================
@@ -216,6 +219,10 @@ public final class TpXdimFrameCensus {
     private static int invokeD23 = 0;
     private static int invokeFull = 0;
     private static int invokeBase = 0;
+    /** Counted SEPARATELY from invokeFull: folding them would make the TP-XDIM fix route
+     *  indistinguishable from the pre-existing own-portal-loop branch in exactly the rows that
+     *  prove the fix took effect. */
+    private static int invokeXview = 0;
     private static boolean invokeInsideCrossView = false;
     private static boolean insideCrossViewNow = false;
     private static String glState = null;
@@ -459,7 +466,8 @@ public final class TpXdimFrameCensus {
     /**
      * @param kind 0 = the IrisCompat D23 layer-0 decomposed fallback, 1 = the IrisCompat
      *             full-pipeline branch, 2 = the base {@code PortalRenderer} decomposed driver
-     *             (the stencil family's path, live shaders-OFF). The dormant iris renderers held in
+     *             (the stencil family's path, live shaders-OFF), 3 = the CROSS-VIEW layer-0
+     *             full-pipeline route (the TP-XDIM fix). The dormant iris renderers held in
      *             the tree are NOT in {@code switchToCorrectRenderer}'s reachable set and are
      *             therefore not instrumented; if one is ever routed to, its dest renders would show
      *             up here as {@code BASE-DECOMPOSED} or {@code NOT-CALLED}.
@@ -475,8 +483,14 @@ public final class TpXdimFrameCensus {
             else if (kind == 1) {
                 invokeFull++;
             }
-            else {
+            // NOT a raw else: an unknown kind falling into invokeBase would print the fix route as
+            // BASE-DECOMPOSED, i.e. "the route was never taken" — the exact reading the fix leg
+            // exists to test.
+            else if (kind == 2) {
                 invokeBase++;
+            }
+            else {
+                invokeXview++;
             }
             if (insideCrossViewNow) {
                 invokeInsideCrossView = true;
@@ -756,6 +770,7 @@ public final class TpXdimFrameCensus {
         invokeD23 = 0;
         invokeFull = 0;
         invokeBase = 0;
+        invokeXview = 0;
         invokeInsideCrossView = false;
         // A throw between notePreRender and notePostRender must not leak into the next frame.
         insideCrossViewNow = false;
@@ -880,10 +895,13 @@ public final class TpXdimFrameCensus {
     }
 
     private static String invokeStr() {
-        if (invokeD23 == 0 && invokeFull == 0 && invokeBase == 0) {
+        if (invokeD23 == 0 && invokeFull == 0 && invokeBase == 0 && invokeXview == 0) {
             return "NOT-CALLED";
         }
         StringBuilder b = new StringBuilder(64);
+        if (invokeXview > 0) {
+            b.append("XVIEW-FULL x").append(invokeXview).append(' ');
+        }
         if (invokeD23 > 0) {
             b.append("D23-FALLBACK x").append(invokeD23).append(' ');
         }

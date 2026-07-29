@@ -134,6 +134,22 @@ loom {
             //   .\gradlew.bat :fabric:runClient -PtpXdimCensus=true
             if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
             if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
         }
         server {
             server()
@@ -145,6 +161,22 @@ loom {
             // exactly how earlier legs on this project were voided.
             if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
             if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
         }
         // S19-E live Sodium/Iris compat run. Sodium/Iris are compileOnly by default (see the
         // dependencies block), so this run only actually LOADS them when the matching runtime
@@ -481,6 +513,22 @@ loom {
             // leg — do not mix it into a primary A/B —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PtpXdimCensus=true -PtpXdimCensusGl=true
             if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -509,6 +557,22 @@ loom {
             // leg competes with the log rotation. Byte-inert without the property.
             if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
             if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
         }
         // S15 entity-crossing smoke on the UNIFIED path (EXECUTION_PLAN §S15,
         // D4.6 — re-run at every later stage). Own run dir: its config is
@@ -793,6 +857,22 @@ loom {
             // so irisNow prints the NO-IRIS-FACADE sentinel — row kept for lever-row parity).
             if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
             if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
         }
     }
 }
