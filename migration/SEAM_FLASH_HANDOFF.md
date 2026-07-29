@@ -86,6 +86,57 @@ treat it as UNCONFIRMED, not fact.
 Both shipped hand fixes stay (harmless, verifier-passed, band intact); the hand symptom itself
 is UNCHANGED and OPEN.
 
+### §00z THE HAND ARC — ROOT-CAUSED AND FIXED (2026-07-28). READ THIS FIRST.
+
+**TWO independent eaters, both ours, both from the same wrong belief: that this depth buffer is
+reversed-Z/GEQUAL. It is NOT — the hand pass proves small-is-near/LEQUAL (hand 0.5546 beats
+scene 0.9945; a [0.999,1] remap loses to everything; [0,0.001] wins).**
+
+1. **The IS5-HAND depth bracket had the wrong sign** (shipped 2026-07-27). It remapped the hand
+   into [0.999, 1.0] intending "beat the grazing shell"; under the real LEQUAL convention that
+   remap loses to EVERYTHING ⇒ total in-window vanish. This is what the whole §00a arc was
+   chasing: "the hand is never rasterized" was OUR bracket. FIXED: `glDepthRange(0.0, 0.001)`.
+   Symptom change on the fix leg (user): progressive slice → instant whole-hand vanish → (after
+   the sign fix) back to the ORIGINAL progressive slice, which was eater #2 all along.
+2. **The stamp's depth cap guarded the wrong side.** `min(z, 0.5w)` caps the FAR side (the
+   reversed-Z assumption). The stamp executes `func=LEQUAL` (draw-time ground truth at
+   `trySetup` RETURN) under `GL_DEPTH_CLAMP`; as the camera reaches the portal plane the
+   aperture's projected depth falls to the near plane and CLAMPS to ~0.0, dropping below the
+   hand's depth ⇒ LEQUAL lets the aperture win, sweeping across the hand as more of it crosses
+   that threshold = the progressive slice, at every distance close enough. FIXED:
+   `max(z, -0.99w)` — a NEAR FLOOR (window depth ≥ 0.005), always behind the bracket's hand
+   ([0, 0.001]) and always in front of the scene the window replaces (~0.98). The two fixes
+   COMPOSE BY CONSTRUCTION.
+
+**THE MEASUREMENT THAT SETTLED IT (per-pixel, `-PhandLocator`):** classify each pixel of the
+hand rows by its ANCHOR depth, then compare THOSE pixels after the blit-back.
+- Pre-fix: `window d=0.00 → HAND-px 359 chg 359` (mean |dlum| 0.41), `row1 325/325`, repeatable;
+  `window d=0.29 → 359 chg 0`; ambient always 0. ⇒ the compat pass eats the hand's OWN pixels,
+  distance-gated.
+- Post-fix: every window row `HAND-px chg 0` over 15 teleports, including frames where the
+  aperture repaints 93% of the background row (`far 1328 chg 1239`).
+
+**INSTRUMENT LESSONS THIS ARC ADDED (all three were MY errors, each caught by its own output):**
+- **Fixed-column probes lie by omission.** The single-column stage diff (x=0.72W = grid c8) sat
+  OUTSIDE the in-window hand footprint (c9–c11) and reported "all hops clean" — a measurement of
+  empty screen. Validate a probe's aim against a frame where the target is KNOWN present.
+- **Coarse cells manufacture false positives.** 143x170px cells read "hand color halved" when
+  only the BACKGROUND inside the cell was replaced by portal content. Per-pixel classification
+  is the only safe reading for a coverage question.
+- **Pass-boundary GL reads are not draw-time state.** The hand pass re-applies its own func per
+  draw; the only trustworthy read is at `GlCommandEncoder.trySetup` RETURN. The "LEQUAL leak"
+  premise (IS5-HAND-FUNC, now DEFAULT OFF) died on this.
+- **Three legs ran at three window sizes** (3440x1369 / 854x480 / 1718x1360) while comparing
+  proportional probe coordinates — a two-variable comparison. Pin resolution across an A/B.
+
+**LEVERS:** `-PdisableStampHandDepthCap` (no floor — reproduces the eating) ·
+`-PdisableHandSeamDepthBracket` (no remap) · `-PhandLocator` (the per-pixel verdict) ·
+`-PhandDrawDump` (hand + stamp draw-time state) · `-PhandSubmitTap` · `-PhandInLevelProbe` ·
+`-PenableHandDepthFuncFix` (opt-in, premise refuted) · `-PstampLequal` (unused: the stamp
+already runs LEQUAL).
+
+---
+
 ### §00b THE 2026-07-28 CONTINUATION — the cap audit's STATIC verdict + both instruments BUILT
 
 **The cap-violation audit (instrument 2) — static half SETTLED, and it found more than a stale
