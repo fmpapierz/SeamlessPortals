@@ -185,6 +185,16 @@ band inside a cell the cart never leaves, and the hover gate passed that build *
 spawn placement** (adversarial panel round 2). RS-CART-C now spawns 0.30 from the boundary,
 INSIDE that old band, so it fails against the old rule.
 
+✅ **BOTH FIXES USER-CONFIRMED LIVE (2026-07-28, second round, same world).** The probe log shows
+`attachment=(0.0, 0.4125, 0.0)` — the corrected two-term offset — and EVERY `VEHICLE-CARRIED`
+landing at exactly `19.063` / `71.063`, rail riding height, in both directions. Zero
+`COME-OFF-TRACK` and zero bridge hits in the entire session: their pair is COINCIDENT, where
+crossings already worked stock, so the ridden arrival is the whole of what they gained.
+⚠ That round also caught the instrument, not the feature: the live SAMPLE channel emitted 40,104
+lines plus 4,962 truncation notices — 96% of a 46k-line log — because the panel's "make SAMPLE
+work live" fix shipped without a rate limit. Now: seam-adjacent carts every tick (the crossing
+window, and rare), everything else one heartbeat line per second.
+
 **Fix 2 — the arrival height (SHARED MACHINERY, user-authorised 2026-07-28: "change shared
 vehicle-crossing machinery as part of (d) to make it totally seamless").**
 `McHelper.getVehicleOffsetFromPassenger` returned only `passenger.getVehicleAttachmentPoint`,
