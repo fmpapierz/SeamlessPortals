@@ -233,10 +233,23 @@ public class IrisCompatPaste {
             t.printStackTrace();
         }
 
-        // IS5-SEAM DIAGNOSTIC SIBLINGS — a SEPARATE failure domain, deliberately OUTSIDE the
-        // shipped try/catch above: nothing in here can reach the shipped catch (whose "compat
-        // paste will no-op" discriminator must never contradict arePipelinesReady()), and the
-        // helper swallows everything, so a diagnostic failure can never kill this <clinit>.
+        // IS5-SEAM DIAGNOSTIC SIBLINGS — registration moved OUT of <clinit> (2026-07-28): the
+        // siblings are COMPILE-validated, and <clinit> can run during resource loading, before
+        // the shader assets exist — which failed the LEQUAL sibling's gate and VOIDed its leg
+        // for a timing reason that looked like a shader defect. They now register lazily at the
+        // first stamp (render thread, resources loaded, immediately before first use) via
+        // ensureSiblingsRegistered(). The shipped pipelines above stay in <clinit>: they are
+        // registered-not-compiled there and compile lazily at first draw, as before.
+    }
+
+    /** Lazy, once-only sibling registration at the first stamp (see the <clinit> note). */
+    private static boolean siblingsRegistrationAttempted = false;
+
+    private static void ensureSiblingsRegistered() {
+        if (siblingsRegistrationAttempted) {
+            return;
+        }
+        siblingsRegistrationAttempted = true;
         registerSeamDiagnosticSiblings();
     }
 
@@ -616,6 +629,7 @@ public class IrisCompatPaste {
      * ({@code stampPortalArea} early-returns otherwise).
      */
     private static StampSelection selectStampPipeline() {
+        ensureSiblingsRegistered(); // resources are loaded by the first stamp (see <clinit>)
         boolean wantSolid = qouteall.imm_ptl.core.IPGlobal.debugStampSolid;
         boolean wantNoTest = qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_TEST_DISABLED_LEVER;
         boolean wantNoWrite = qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_WRITE_DISABLED_LEVER;

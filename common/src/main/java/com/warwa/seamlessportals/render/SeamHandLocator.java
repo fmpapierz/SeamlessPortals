@@ -63,6 +63,21 @@ public final class SeamHandLocator {
     private static final boolean GET_TEX_SUB_IMAGE_SUPPORTED =
         GL.getCapabilities().glGetTextureSubImage != 0L;
 
+    /**
+     * PER-PIXEL tracker (2026-07-28, the coarse-bin correction): the grid cells are ~143x170
+     * px, so a cell holding a sliver of hand plus a lot of background reads as "changed" when
+     * only the BACKGROUND is replaced by portal content — which is exactly how the survival
+     * table's halving misread as hand loss (the stamp executes LEQUAL and provably cannot beat
+     * the hand's own depth). This keeps the RAW rows for the two hand rows at stages 2/3 and
+     * classifies each pixel by its stage-2 depth: veryNear (&lt;0.01 = the bracket-remapped hand),
+     * mid (0.01..0.9 = natural hand / near geometry), far (&gt;=0.9 = scene). A color change on
+     * veryNear/mid pixels IS hand loss; changes confined to far pixels are the portal window
+     * legitimately replacing background.
+     */
+    private static final int FINE_ROWS = 2;
+    private static final double[][][] fineLum = new double[4][FINE_ROWS][];
+    private static final double[][][] fineDepth = new double[4][FINE_ROWS][];
+
     private static boolean disarmed = false;
     private static boolean announced = false;
     private static long lastSampleNanos = 0L;
@@ -260,6 +275,14 @@ public final class SeamHandLocator {
                 }
                 else {
                     binRowColor(grid[0][stage][r], colors, w);
+                    if (r < FINE_ROWS) {
+                        double[] raw = new double[w];
+                        for (int x = 0; x < w; x++) {
+                            raw[x] = ((colors.get(x * 4) & 0xFF) + (colors.get(x * 4 + 1) & 0xFF)
+                                + (colors.get(x * 4 + 2) & 0xFF)) / (3.0 * 255.0);
+                        }
+                        fineLum[stage][r] = raw;
+                    }
                 }
                 GL11.glReadPixels(0, y, w, 1, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depths);
                 if (drain() != GL11.GL_NO_ERROR) {
@@ -267,6 +290,13 @@ public final class SeamHandLocator {
                 }
                 else {
                     binRowDepth(grid[1][stage][r], depths, w);
+                    if (r < FINE_ROWS) {
+                        double[] raw = new double[w];
+                        for (int x = 0; x < w; x++) {
+                            raw[x] = depths.get(x);
+                        }
+                        fineDepth[stage][r] = raw;
+                    }
                 }
             }
             targetStatus[0] = colorOk ? "ok" : "READ-FAILED";
@@ -454,6 +484,60 @@ public final class SeamHandLocator {
             sb.append(" NO HAND-PAINT CELLS THIS FRAME (the hand did not draw at all — see the"
                 + " paint rows above; nothing to trace).");
         }
+        // PER-PIXEL VERDICT — the reading that cannot be confounded by cell averaging.
+        sb.append("\n  PER-PIXEL (rows 0-1, classified by ANCHOR depth; |dlum|>0.02 counted;"
+            + " anchor->postBlit):");
+        for (int r = 0; r < FINE_ROWS; r++) {
+            double[] d2 = fineDepth[2][r];
+            double[] l2 = fineLum[2][r];
+            double[] l3 = fineLum[3][r];
+            if (d2 == null || l2 == null || l3 == null) {
+                sb.append("\n    row").append(r).append(": UNMEASURED");
+                continue;
+            }
+            int n = Math.min(d2.length, Math.min(l2.length, l3.length));
+            int handN = 0;
+            int handChanged = 0;
+            double handDelta = 0;
+            int midN = 0;
+            int midChanged = 0;
+            int farN = 0;
+            int farChanged = 0;
+            for (int x = 0; x < n; x++) {
+                double delta = Math.abs(l3[x] - l2[x]);
+                boolean changed = delta > 0.02;
+                if (d2[x] < 0.01) {
+                    handN++;
+                    if (changed) {
+                        handChanged++;
+                        handDelta += delta;
+                    }
+                }
+                else if (d2[x] < 0.9) {
+                    midN++;
+                    if (changed) {
+                        midChanged++;
+                    }
+                }
+                else {
+                    farN++;
+                    if (changed) {
+                        farChanged++;
+                    }
+                }
+            }
+            sb.append(String.format(
+                "\n    row%d: HAND-px(d<0.01) %d chg %d (mean|dlum| %.3f) | mid(0.01-0.9) %d"
+                    + " chg %d | far(>=0.9) %d chg %d",
+                r, handN, handChanged, handChanged > 0 ? handDelta / handChanged : 0.0,
+                midN, midChanged, farN, farChanged));
+        }
+        sb.append("\n  PER-PIXEL READ: HAND-px chg > 0 ⇒ the compat pass overpaints the hand's"
+            + " OWN pixels (stamp/blit) = the eater. HAND-px chg == 0 while far-px change ⇒ the"
+            + " compat pass only replaced BACKGROUND (the portal window doing its job) and the"
+            + " hand survives to the shipped frame — the loss is then NOT in the compat pass."
+            + " HAND-px count 0 in-window while ambient rows show hundreds ⇒ the hand's depth"
+            + " never reached mainRT at the anchor (iris's own composite dropped it).");
         sb.append("\n  READ: the hand's own depth is NEAR (small d) vs scene/shell (d~0.96+)."
             + " Follow each cell across the stages: d stays near through stage 3 ⇒ the hand"
             + " survives the whole pipeline (the loss is elsewhere/GUI-era). d flips to the"
