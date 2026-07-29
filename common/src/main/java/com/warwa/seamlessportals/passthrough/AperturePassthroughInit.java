@@ -107,6 +107,10 @@ public final class AperturePassthroughInit {
             // have answered. Retiring on a timer is what makes a stage that never ran report
             // NOT-REACHED rather than staying silent — see SeamDeliveryProbe's coverage note.
             SeamDeliveryProbe.onServerTickEnd();
+            // (d) cart-crossing instrument: one SAMPLE line per watched cart per tick. ⚠ Shares
+            // this event with ServerTaskList's teleport execution — registration order decides
+            // which sees the teleport tick first; the probe's EVT lines carry the precise instant.
+            SeamCartProbe.onServerTickEnd(server);
         });
 
         LOGGER.info("[RS-SEAM-REGISTRY] aperture passthrough initialised (disabled={})",

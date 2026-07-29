@@ -35,6 +35,35 @@ public final class SeamShadowBridge {
         BlockPos queryPos,
         int yWindow
     ) {
+        return shadowFor(level, owner, ownerCell, queryPos, yWindow, false);
+    }
+
+    /**
+     * As above, with {@code crossingOnly} restricting the answer to the CANONICAL CROSSING
+     * direction ({@code step == binding.crossDir()}).
+     *
+     * <p>Why (d) needs it and (b)/(c) must not have it. On a COINCIDENT seam
+     * {@link SeamRegistry.SeamBinding#continuationToward} deliberately answers BOTH directions
+     * along the seam axis: for {@code dir == srcFacing} it returns the far world's cell CO-LOCATED
+     * with this side's approach — the fallback a SHAPE resolver consults when the local approach is
+     * empty, and a genuine part of (b)'s two-sided view. Read as PHYSICAL PRESENCE by a cart,
+     * that same fallback conjures a rail on a cell entirely in FRONT of the plane: a cart rolling
+     * out of a portal onto an unrailed near approach would keep resolving "on rails" and levitate
+     * one cell past the end of the track (adversarial panel, 2026-07-28, two independent lenses).
+     *
+     * <p>Cart physics only ever needs the crossing direction, so (d) asks for exactly that. (b)'s
+     * shape resolution and (c)'s signal walk keep the unrestricted view they were designed and
+     * gated against — this parameter narrows the NEW caller, it does not change theirs.
+     */
+    @Nullable
+    public static SeamShadow shadowFor(
+        Level level,
+        @Nullable SeamRegistry.SeamCell owner,
+        BlockPos ownerCell,
+        BlockPos queryPos,
+        int yWindow,
+        boolean crossingOnly
+    ) {
         if (owner == null) {
             return null;
         }
@@ -71,6 +100,9 @@ public final class SeamShadowBridge {
 
         for (SeamRegistry.SeamBinding b : owner.bindings()) {
             if (!b.seamContinuous() || !b.isMirrorable()) {
+                continue;
+            }
+            if (crossingOnly && step != b.crossDir()) {
                 continue;
             }
             BlockPos far = b.continuationToward(step);
