@@ -457,6 +457,83 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_SIGNAL_PROBE =
         Boolean.getBoolean("seamlessportals.seamSignalProbe");
 
+    // =============================================================================================
+    // SUB-FEATURE (d) — MINECART TRAVERSAL ACROSS THE SEAM. Probe DEFAULT-OFF; fix levers (when the
+    // instrument round has decided the design) DEFAULT-ON, every one with a -P row in BOTH
+    // fabric/build.gradle blocks.
+    // =============================================================================================
+
+    /**
+     * MASTER OFF-SWITCH for sub-feature (d) — {@code -Dseamlessportals.disableSeamCartRail=true}.
+     *
+     * <p>With the fix ON (default), a minecart's rail resolution ({@code OldMinecartBehavior}'s
+     * on-rails test, shape read and lane-snap lookahead, plus
+     * {@code AbstractMinecart.getCurrentBlockPosOrRailBelow}) sees the far side's continuation
+     * rail through the seam for the ONE cell past the plane, so the stranded tick between
+     * crossing and teleport stays on rails at riding height. With it OFF, the measured 2026-07-28
+     * defect returns on DISJOINT seams: the stranded tick {@code comeOffTrack}s at the behind-cell,
+     * the teleport transfers the corrupted Y (arrival epsilon below the far rail's cell), and the
+     * cart halts one block past the far plane, permanently off-rail beside a good rail.
+     * COINCIDENT (obsidian) crossings work either way — measured clean stock; the lever's
+     * observable inversion is the DISJOINT arm.
+     *
+     * <p>Note the bridge consumes {@link SeamShadowBridge#shadowFor}, so it also dies under (b)'s
+     * {@code -PdisableSeamShadow} — same dependency the (c) walk has.
+     */
+    public static final boolean DISABLE_SEAM_CART_RAIL =
+        Boolean.getBoolean("seamlessportals.disableSeamCartRail");
+
+    /**
+     * Restores the UNRESTRICTED (two-directional) seam view for cart rail resolution —
+     * {@code -Dseamlessportals.disableSeamCartCrossOnly=true}.
+     *
+     * <p>With the narrowing ON (default), (d)'s bridge asks {@code SeamShadowBridge} for
+     * {@code crossingOnly} shadows: only the canonical crossing direction
+     * ({@code step == binding.crossDir()}) can answer. With it OFF, the COINCIDENT backward
+     * fallback in {@code SeamBinding.continuationToward} — the far world's cell CO-LOCATED with
+     * this side's approach, which (b)'s SHAPE resolver legitimately consults — is read as PHYSICAL
+     * RAIL PRESENCE, and the pre-fix defect returns: on a coincident pair whose far side has an
+     * approach rail but whose near approach is unrailed, a cart rolling out of the portal keeps
+     * resolving "on rails" and LEVITATES one cell past the end of the track, indefinitely.
+     *
+     * <p>Found by the adversarial panel before commit (2026-07-28, two independent lenses), never
+     * shipped. The lever exists so {@code rsCartLegPhantomRail} can reproduce it on demand — a
+     * gate whose verdict does not invert cannot tell "the fix works" from "the defect never
+     * existed here" (the house rule that has caught this engagement out before).
+     */
+    public static final boolean DISABLE_SEAM_CART_CROSS_ONLY =
+        Boolean.getBoolean("seamlessportals.disableSeamCartCrossOnly");
+
+    /**
+     * Removes the STRADDLE TEST from (d)'s rail bridge —
+     * {@code -Dseamlessportals.disableSeamCartStraddle=true}.
+     *
+     * <p>With the test ON (default), the bridge answers only for a cart whose own collision box
+     * overlaps the seam cell — i.e. one physically ON the seam, mid-crossing. With it OFF, any
+     * cart resolving the through-image cell gets the far world's rail, and the measured defect
+     * returns: on a BI-FACED portal (every obsidian frame is a four-entity cluster, and each
+     * face's own {@code crossDir} points the opposite way, so the direction narrowing alone
+     * cannot help) a cart resting one cell clear of the aperture over open air HOVERS on the far
+     * world's track instead of falling — measured at 0.038 blocks of drop in 60 ticks against
+     * 1.100 with the test on.
+     *
+     * <p>Found by {@code rsCartLegPhantomRail} after the adversarial panel's direction finding was
+     * already fixed — the panel named the family, the gate found the member that survived.
+     */
+    public static final boolean DISABLE_SEAM_CART_STRADDLE =
+        Boolean.getBoolean("seamlessportals.disableSeamCartStraddle");
+
+    /**
+     * RS (d) minecart-crossing instrument ({@code -Dseamlessportals.seamCartProbe=true},
+     * DEFAULT-OFF): per-tick SAMPLE lines per watched cart, COME-OFF-TRACK event lines with the
+     * failing resolution cell, teleport-path EVT lines (queued / skip reasons / run) from
+     * {@code ServerTeleportationManager}, and per-hit bridge lines from
+     * {@link SeamCartContinuity}. The recon §5.5 ordering experiment that decided the (d) design
+     * ran under this lever (2026-07-28). See {@link SeamCartProbe}.
+     */
+    public static final boolean SEAM_CART_PROBE =
+        Boolean.getBoolean("seamlessportals.seamCartProbe");
+
     /**
      * RS-ONLY SUITE MODE ({@code -Dseamlessportals.rsOnly=true}, DEFAULT-OFF) — the recorded
      * proposal from 2026-07-26: the user has flagged the suite as slow, and the RS gates are a small

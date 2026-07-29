@@ -127,15 +127,19 @@ public class ServerTeleportationManager {
             return;
         }
         if (entity.getVehicle() != null || doesEntityClusterContainPlayer(entity)) {
+            cartProbe(entity, "TELEPORT-SKIP vehicle-or-player-cluster");
             return;
         }
         if (entity.isRemoved()) {
+            cartProbe(entity, "TELEPORT-SKIP removed");
             return;
         }
         if (!entity.canTeleport(entity.level(), portal.getDestinationWorld())) {
+            cartProbe(entity, "TELEPORT-SKIP canTeleport=false");
             return;
         }
         if (isJustTeleported(entity, 1)) {
+            cartProbe(entity, "TELEPORT-SKIP just-teleported");
             return;
         }
         //a new born entity may have last tick pos 0 0 0
@@ -143,11 +147,13 @@ public class ServerTeleportationManager {
             LOGGER.warn("Trying to teleport a fresh new entity {}", entity);
             return;
         }
-        
+
         double motion = McHelper.lastTickPosOf(entity).distanceToSqr(entity.position());
         if (motion > 20) {
+            cartProbe(entity, "TELEPORT-SKIP motion>20");
             return;
         }
+        cartProbe(entity, "TELEPORT-QUEUED (detected in Portal.tick; runs at END_SERVER_TICK)");
         ServerTaskList.of(portal.level().getServer()).addTask(() -> {
             try {
                 teleportRegularEntity(entity, portal);
@@ -157,6 +163,18 @@ public class ServerTeleportationManager {
             }
             return true;
         });
+    }
+
+    /**
+     * RS (d) minecart-crossing instrument — one line per teleport-path event for watched carts
+     * ({@code -Dseamlessportals.seamCartProbe=true}, DEFAULT-OFF; byte-inert otherwise). Exists
+     * so a cart that never crosses names the gate that stopped it instead of failing silently.
+     */
+    private static void cartProbe(Entity entity, String msg) {
+        if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
+            && entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart) {
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity, msg);
+        }
     }
     
     private static Stream<Entity> getEntitiesToTeleport(Portal portal) {
@@ -360,10 +378,19 @@ public class ServerTeleportationManager {
         }
         
         McHelper.adjustVehicle(player);
-        
+
+        // RS (d) instrument: the SAME-DIMENSION ridden crossing has no changePlayerDimension
+        // branch at all — the cart is carried purely by adjustVehicle above, which places it at
+        // the player's new position plus the offset sampled from its current (possibly already
+        // corrupted) near-level position.
+        if (player.getVehicle() != null) {
+            cartProbe(player.getVehicle(), "VEHICLE-CARRIED (player teleport, "
+                + (fromWorld == toWorld ? "same-dim via adjustVehicle" : "cross-dim") + ")");
+        }
+
         // reset the "authentic" player position as the current position
         player.connection.resetPosition();
-        
+
         PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
             player, newEyePos, newEyePos, 1
         );
@@ -483,6 +510,10 @@ public class ServerTeleportationManager {
         toWorld.addDuringTeleport(player);
         
         if (vehicle != null) {
+            // RS (d) instrument: this is where a RIDDEN cart is carried, and the offset below is
+            // computed from the vehicle's CURRENT near-level position — so a cart that derailed
+            // during the player's client-first crossing window carries that corruption across.
+            cartProbe(vehicle, "VEHICLE-CARRY-BEGIN (cross-dim, offset sampled here)");
             Vec3 offset = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
             Vec3 vehiclePos = player.position().add(offset);
             vehicle = teleportVehicleAcrossDimensions(
@@ -497,6 +528,7 @@ public class ServerTeleportationManager {
             );
             ((IEServerPlayerEntity) player).ip_startRidingWithoutTeleportRequest(vehicle);
             McHelper.adjustVehicle(player);
+            cartProbe(vehicle, "VEHICLE-CARRY-DONE (cross-dim)");
         }
         
         if (IPConfig.getConfig().serverTeleportLogging) {
@@ -573,11 +605,13 @@ public class ServerTeleportationManager {
         
         Vec3 velocity = entity.getDeltaMovement();
         Vec3 oldPos = entity.position();
-        
+
         List<Entity> passengerList = entity.getPassengers();
-        
+
         Vec3 newEyePos = getRegularEntityTeleportedEyePos(entity, portal);
-        
+
+        cartProbe(entity, "TELEPORT-RUN-BEGIN (pre-transform)");
+
         TeleportationUtil.transformEntityVelocity(
             portal, entity, TeleportationUtil.PortalPointVelocity.ZERO, oldPos
         );
@@ -611,11 +645,13 @@ public class ServerTeleportationManager {
         );
         
         portal.onEntityTeleportedOnServer(entity);
-        
+
         ScaleUtils.onServerEntityTeleported(entity, portal);
-        
+
         // a new entity may be created
         this.lastTeleportGameTime.put(entity, currGameTime);
+
+        cartProbe(entity, "TELEPORT-RUN-DONE (post-move, post-transform)");
     }
     
     private static Vec3 getRegularEntityTeleportedEyePos(Entity entity, Portal portal) {

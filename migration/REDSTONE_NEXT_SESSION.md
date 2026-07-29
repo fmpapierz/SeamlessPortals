@@ -35,8 +35,16 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
-## WHERE THINGS STAND (2026-07-27, latest session)
+## WHERE THINGS STAND (2026-07-28, latest session)
 
+- **★★ (d) MINECART TRAVERSAL ACROSS THE SEAM — LANDED AND GATED (2026-07-28, this session).**
+  Instrument-first per recon §5.5: the ordering question was MEASURED before any design
+  (probe legs + `SeamCartProbe`, `-PseamCartProbe`), the answer overturned half the recon's
+  fear (COINCIDENT crossings were already CLEAN STOCK), and the fix is one READ bridge at the
+  cart's rail-resolution chokepoints. See the ★ (d) section below for the measured record, the
+  levers (`-PdisableSeamCartRail` master), the two RS-CART gates, and the deferred items
+  (ridden-cart rotated-binding velocity, slopes, NewMinecartBehavior). **Live user round still
+  pending** — empty carts and ridden carts both want live eyes.
 - **★★ (c) STEP 1 — REDSTONE SIGNAL ACROSS THE SEAM — COMPLETE AND USER-CONFIRMED LIVE
   (2026-07-28: "dude it works perfect now").** The powered-rail chain crosses the seam in both
   topologies and both directions, the seam lamp lights from a far-side source, and the live
@@ -69,6 +77,129 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **The same-dim live-update bug is FIXED and user-confirmed** — see the CLOSED section below. It was
   never a mirror defect; it was a client render-path defect that any block change behind a same-dim
   portal hit, and the mirror was only how it was noticed.
+
+## ★ (d) MINECART TRAVERSAL ACROSS THE SEAM (landed 2026-07-28)
+
+**What works, gate-verified both lever directions** (`rsCartLegCoincident` + `rsCartLegDisjoint`,
+run in RS-only too; outcome-asserted on the CART the user sees — position/onRails/rolled-on
+distance in the FAR world after the cascade — coverage-asserted on `SeamCartContinuity` counters,
+runaway ceiling in the same leg):
+
+- **Topology A (obsidian, COINCIDENT, cross-dim):** an empty cart rides a rail line straight
+  through the portal and keeps rolling on the nether continuation. **Measured CLEAN STOCK — the
+  (d) fix is not even needed here** (bridge fires zero times): the plane is mid-block, so the
+  one stranded tick still resolves the seam cell's own near rail, and the teleport lands the
+  cart on the far rail at riding height. The arm is REGRESSION coverage (asserts the same
+  outcome in every matrix row), not the fix's proof.
+- **Topology B (boundary-phase, DISJOINT, same-dim):** the fix's proof and its inversion. Stock
+  (measured, deterministic): the single stranded tick `comeOffTrack`s at the behind-cell, the
+  cart leaves rail height, and the teleport transfers the corrupted Y — arrival at
+  y=99.99999998867511, EPSILON BELOW the far rail's cell, so `getCurrentBlockPosOrRailBelow`
+  floors into the stone below forever and the cart halts 0.4 blocks past the far plane, off-rail
+  beside a good rail. Fix ON: arrival y=100.0625 (riding height), rolls +6 cells, onRails=true,
+  bridgeHits=5. Inversion `-PdisableSeamCartRail` reproduces the halt on demand.
+
+**THE INSTRUMENT DECIDED THE DESIGN (recon §5.5 question 5, answered by measurement 2026-07-28):**
+detection runs inside `Portal.tick` (eye-segment test, entity-order dependent), the teleport
+itself at `END_SERVER_TICK` (`ServerTaskList`) — so a crossing cart is stranded in the near level
+for AT MOST ONE behavior tick. `comeOffTrack` fires before the teleport only on DISJOINT seams
+(behind-cell has no near rail); the damage is not the derail itself but the Y-corruption it
+hands the teleport. The full tick-by-tick traces are in the RS-CART SAMPLE/EVT lines
+(`-PseamCartProbe`).
+
+- **RIDDEN carts (cross-dim obsidian) measured CLEAN** (`rsCartLegRiddenProbe`, probe-gated): the
+  real player mounts, rides through, and the cart arrives in the nether still ridden, on rails,
+  rolled +9 cells, ZERO `comeOffTrack`. This matters because a ridden cart never uses the
+  entity pipeline at all — `startTeleportingRegularEntity` skips it on the vehicle/player-cluster
+  gate and the cart is carried by the PLAYER's client-first crossing — so the "≤1 stranded tick"
+  bound the one-cell reach is sized for does not apply to it by construction. Single-player only;
+  the multiplayer-latency version of that window is the first thing to watch live.
+
+**The mechanism** (`SeamCartContinuity` + 3 mixins): a seam-framed READ bridge, never a state
+copy — every `Level.getBlockState` in `OldMinecartBehavior` (6 javap-counted sites: tick,
+moveAlongTrack, getPos ×2, getPosOffs ×2) and `AbstractMinecart.getCurrentBlockPosOrRailBelow`
+(2 sites) routes through `railAwareState`: LOCAL-FIRST (a local rail always answers; the bridge
+can only ADD a rail vanilla would miss), and only when the queried cell is the THROUGH-IMAGE of
+an adjacent bound seam cell does `SeamShadowBridge.shadowFor` + `SeamShadow.readLocal` answer
+with the far continuation's state rotated into the near frame (cold far reads AIR + counted
+decline). The stranded tick therefore stays ON RAILS AT RIDING HEIGHT, which is the entire fix:
+the teleport then transfers an uncorrupted Y and the far side re-mounts.
+
+**★ THE REACH IS BOUNDED BY THREE THINGS, AND TWO OF THEM WERE PAID FOR IN BLOOD.** "One cell
+past the plane" is not one condition:
+
+| guard | what it stops | lever | how it was found |
+|---|---|---|---|
+| **depth** — the owner must be a bound seam cell | the cell past THAT has no seam owner, so a never-teleporting cart derails at cell 2, vanilla-like | (the master) | by construction |
+| **direction** — `crossingOnly`: only `step == binding.crossDir()` may answer | `continuationToward` answers BOTH axis directions on COINCIDENT (the far world's CO-LOCATED approach cell — a fallback (b)'s SHAPE resolver legitimately wants); read as PHYSICAL PRESENCE it conjures rails in FRONT of the plane | `-PdisableSeamCartCrossOnly` | adversarial panel, two independent lenses, before commit |
+| **occupancy** — the STRADDLE TEST: the cart's own AABB must intersect the seam cell | direction alone is not enough on a BI-FACED portal, and **every obsidian frame is a four-entity cluster**: each face's own `crossDir` points the opposite way, so both axis directions pass the direction test for one binding or the other. A cart resting one cell clear of the aperture over open air HOVERED on the far world's track | `-PdisableSeamCartStraddle` | `rsCartLegPhantomRail` — the gate written for the panel's finding caught the member of the family that survived the panel's own fix |
+
+⚠ **The direction guard has no fixture of its own.** Its reproduction needs a COINCIDENT
+SINGLE-FACED portal with a STRADDLING cart reading backward; RS-CART-C's obsidian frame is
+bi-faced, so the straddle test is what its lever inverts. Defence in depth, honestly labelled —
+do not read `-PdisableSeamCartCrossOnly` passing as evidence that guard is covered.
+
+**One accepted consequence, scoped rather than removed:** the bridged state also feeds
+`moveAlongTrack`'s POWERED_RAIL branch, so a stranded tick can apply ONE tick of the far rail's
+power to the cart's own velocity — that is the motion we want carried across and it escapes
+nothing. The other action it could have driven, `tick`'s ACTIVATOR_RAIL branch, is suppressed at
+its own call site (a far activator rail would otherwise eject a passenger / prime TNT / run a
+command block IN THE NEAR LEVEL at a locally-air cell). Panel finding; the guard is a no-op under
+vanilla, where that branch is only reachable with the state read from that same cell.
+
+Levers: `disableSeamCartRail` (master (d) A/B switch; the bridge also dies under (b)'s
+`disableSeamShadow`, which it consumes — same dependency as the (c) walk),
+`disableSeamCartCrossOnly` and `disableSeamCartStraddle` (the two guards above), probe
+`seamCartProbe` (per-tick SAMPLE lines per watched cart, COME-OFF-TRACK events with the failing
+cell, teleport-path EVT lines from `ServerTeleportationManager` naming every skip gate, the
+VEHICLE-CARRY lines that time a ridden crossing, and bridge-hit lines). ⚠ The probe's own
+resolution reads are BRACKETED out of the counters (`inProbeRead`) — unbracketed, the instrument
+would satisfy the gates' own coverage assertion, which is the fifth member of this engagement's
+false-reading family.
+
+### The adversarial panel round (2026-07-28) — what it caught, and what its own fix missed
+
+A 4-lens panel ran over the diff after the first green matrix (10 of its 20 refuters died on a
+model rate limit; the surviving verdicts are recorded). Confirmed and FIXED before commit:
+
+1. **The phantom rail** (two independent lenses) — the direction guard above. Real: verified by
+   hand against `SeamRegistry.continuationToward:120-124` before touching code.
+2. **The activator-rail action branch** fed by bridged far state — scoped at its call site.
+3. **The probe polluting its own gates' coverage counters** — bracketed.
+4. **The new legs leaked forceloads, portals and terrain** into every later leg — full teardown
+   added to all of them (the suite is already flagged as slow, and a surviving obsidian frame
+   stays matchable: that has made a later leg link to the wrong portal once before).
+5. **The ridden-cart window** — flagged as the most likely first live action, and the reason
+   RS-CART-D exists. Measured clean single-player; see the ⚠ above.
+
+**★ AND THE LESSON WORTH KEEPING: the panel's fix was not the whole fix.** Closing the direction
+hole left the same defect reachable by another route — bi-faced clusters make BOTH axis
+directions a legitimate `crossDir` — and it was the GATE WRITTEN FOR THE PANEL'S FINDING that
+caught it, on its first run, by reporting `onRails=true` for a cart that should have fallen. Two
+things earned that: the gate asserted the OUTCOME (did the cart fall?) rather than "did the bridge
+decline?", and it was built to fail loudly rather than to confirm the fix. A gate written to
+confirm a fix would have been green and wrong.
+
+### Found on the way in, deliberately NOT (d)'s scope — do not rediscover
+
+- **The ×2 slow-minecart velocity boost at teleport is IP's OWN deliberate kludge** —
+  `Portal.transformVelocityRelativeToPortal`: any cart slower than ~0.7 gets `result.scale(2)`,
+  comment "avoid cannot push minecart out of nether portal". Measured in both arms
+  (0.192→0.384, 0.177→0.354). Inherited, bounded by the 0.4 rail clamp, left as-is.
+- **The ridden-cart vehicle path carries velocity through NBT untransformed**
+  (`teleportVehicleAcrossDimensions` — `restoreFrom`, no `transformEntityVelocity` call; the
+  empty-cart path transforms BEFORE the recreate, so it is correct). Only observable on ROTATED
+  bindings; far-side `moveAlongTrack` re-projects onto the far rail axis so the symptom is a
+  stutter/reversal, not a derail. Take it with the rotated-binding live round.
+- **Slopes at the seam**: `yWindow` stays 1; an ascending rail INTO the plane is (b)-supported
+  for shape, but cart traversal of a seam slope is untested and the lane-snap y-math is not
+  bridged for it. Deferred.
+- **`NewMinecartBehavior` (MINECART_IMPROVEMENTS, off by default)** is only partially covered
+  (the `getCurrentBlockPosOrRailBelow` wrap fires; its own resolution sites are not wrapped).
+  If Mojang flips the flag default, (d) needs a NewMinecartBehavior pass.
+- **Stalled-cart restart at the seam**: `isRedstoneConductor(pos.west()/east()/…)` probes in the
+  powered-rail stall branch read the near level raw. A cart parked EXACTLY at a seam-boundary
+  powered rail may not restart from a far-side conductor. Cosmetic, deferred.
 
 ## ★ (c) STEP 1 — REDSTONE SIGNAL ACROSS THE SEAM (landed 2026-07-27)
 
@@ -472,6 +603,10 @@ red). The full matrix remains mandatory before a commit.
 | `-PapertureTeardownTest -PseamMirrorProbe -PrsOnly -PenableSeamClip` | seam-clip ON — the cut renders (farGold 0.00), mechanism live. Default runs assert the OFF branch (whole cube, mechanism idle) |
 | `-PapertureTeardownTest -PrsOnly -PdisableSeamSignal` | (c) master inversion — both signal legs reproduce "propagation stops at the seam"; the mirrored half still shows powered (the user's (b)-era baseline) |
 | `-PapertureTeardownTest -PrsOnly -PdisableSeamSignalDispatch` | (c) dispatch inversion — far side can SEE power but is never TOLD to look: arm B far rails stale, arm L both lamp halves dark (the authority revert holds) |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamCartRail` | (d) master inversion — RS-CART-B reproduces the measured halt (cart off-rail, epsilon below the far rail line, stopped); RS-CART-A still passes (COINCIDENT works stock) |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamCartStraddle` | (d) occupancy inversion — RS-CART-C reproduces the HOVER (cart resting one cell clear of the aperture rides the far world's rail: dropped 0.038 vs 1.100, bridgeReads 249 vs 5) |
+| `-PapertureTeardownTest -PrsOnly -PdisableSeamCartCrossOnly` | (d) direction lever — all cart arms still pass; the straddle test independently covers RS-CART-C's bi-faced fixture, so this row proves the lever is wired, not that the guard is exercised (see the ⚠ above) |
+| `… -PrsOnly -PseamCartProbe` | arms RS-CART-D, the RIDDEN measurement (report-only; moves the real player and restores them) plus every SAMPLE/EVT/COME-OFF-TRACK/bridge-hit line |
 
 Iteration tip: add `-PrsOnly` to any RS-focused configuration (~3.5 min instead of ~6+). The five
 configurations run green on 2026-07-27 before commit were: rows 1–5 of this table (rows 1–2 as full
