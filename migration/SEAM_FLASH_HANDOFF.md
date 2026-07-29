@@ -86,6 +86,12 @@ treat it as UNCONFIRMED, not fact.
 Both shipped hand fixes stay (harmless, verifier-passed, band intact); the hand symptom itself
 is UNCHANGED and OPEN.
 
+> **QUEUE (user-set 2026-07-28, in order):** (1) **third-person cross-dimension camera +
+> shaders = corrupted render** — see `migration/THIRD_PERSON_CROSSDIM_HANDOFF.md` (OPEN, not
+> started); (2) the MB bloom-ring commission (`MB_SMEAR_HANDOFF` §1c — one look with Motion
+> Blur explicitly ON); (3) the sharp-window polish re-audit (the entire polish queue was
+> assessed against a blurred window).
+
 ### §00z THE HAND ARC — CLOSED, USER-CONFIRMED LIVE (2026-07-28: *"ITS FINALLY FIXED"*).
 
 **Shipped DEFAULT ON:** the sign-corrected hand bracket (`glDepthRange(0.0, 0.0005)`) + the
