@@ -520,12 +520,17 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
                 && CrossPortalViewRendering.isRenderingCrossPortalView()
             ) {
                 com.warwa.seamlessportals.render.TpXdimFrameCensus.noteInvokeWorldRendering(3);
+                // ORDER IS LOAD-BEARING: increment BEFORE noteArmedFrame. The run-config block is
+                // emitted once, synchronously, by that call — incrementing after it would print
+                // "crossViewFullPipelineCount = 0" in the very block whose job is to prove the
+                // route was taken, i.e. a running counter read as "never happened" (the
+                // failure-sentinel-tabulated-as-a-value trap this project has already paid for).
+                IPGlobal.crossViewFullPipelineCount++;
                 // IS5-RC: the first proof the fix route is live. doRenderPortal's noteArmedFrame
                 // never fires on a cross-view frame, so without this the run-config block would
                 // wait for its 600-frame fallback — three earlier legs of this project were voided
                 // for want of exactly that self-report.
                 com.warwa.seamlessportals.render.RunConfigReport.noteArmedFrame();
-                IPGlobal.crossViewFullPipelineCount++;
                 MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
                 return;
             }
