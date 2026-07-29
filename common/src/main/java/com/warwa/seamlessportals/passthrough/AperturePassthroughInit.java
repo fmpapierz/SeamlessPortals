@@ -111,6 +111,8 @@ public final class AperturePassthroughInit {
             // this event with ServerTaskList's teleport execution — registration order decides
             // which sees the teleport tick first; the probe's EVT lines carry the precise instant.
             SeamCartProbe.onServerTickEnd(server);
+            // (d) cart continuity: evict stale mid-crossing marks (the ridden-window grace).
+            SeamCartContinuity.onServerTickEnd(server);
         });
 
         LOGGER.info("[RS-SEAM-REGISTRY] aperture passthrough initialised (disabled={})",

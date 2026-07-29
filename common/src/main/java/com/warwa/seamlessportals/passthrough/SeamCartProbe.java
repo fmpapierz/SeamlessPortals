@@ -124,9 +124,23 @@ public final class SeamCartProbe {
             fmt(entity.position()), fmt(entity.getDeltaMovement()));
     }
 
-    /** Per-tick SAMPLE per watched cart. Registered in {@code AperturePassthroughInit}. */
+    /**
+     * Per-tick SAMPLE per watched cart. Registered in {@code AperturePassthroughInit}.
+     *
+     * <p>An EMPTY watch set means "every minecart", matching {@link #isWatched} — this class's
+     * javadoc advertises exactly that for live runs, and the first build broke the promise by
+     * returning early on an empty set, so a live {@code -PseamCartProbe} round got every channel
+     * EXCEPT the per-tick one (adversarial panel, round 2; confirmed against the user's own
+     * 2026-07-28 log, which contains no SAMPLE line at all). Live sampling is capped at
+     * {@link #LIVE_SAMPLE_CAP} carts per tick so a rail yard cannot flood the log — and says so
+     * when it truncates, because a silent cap is how an instrument starts lying.
+     */
     public static void onServerTickEnd(MinecraftServer server) {
-        if (!AperturePassthroughLever.SEAM_CART_PROBE || WATCHED.isEmpty()) {
+        if (!AperturePassthroughLever.SEAM_CART_PROBE) {
+            return;
+        }
+        if (WATCHED.isEmpty()) {
+            sampleAllCarts(server);
             return;
         }
         for (int id : WATCHED) {
@@ -153,6 +167,50 @@ public final class SeamCartProbe {
                 }
             }
         }
+    }
+
+    /** Live-run sampling cap — see {@link #onServerTickEnd}. */
+    private static final int LIVE_SAMPLE_CAP = 8;
+
+    /** Sample every minecart in the server (live mode: nobody called {@link #watch}). */
+    private static void sampleAllCarts(MinecraftServer server) {
+        int sampled = 0;
+        int seen = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getAllEntities()) {
+                if (!(e instanceof AbstractMinecart cart)) {
+                    continue;
+                }
+                seen++;
+                if (sampled >= LIVE_SAMPLE_CAP) {
+                    continue;
+                }
+                sampled++;
+                sampleOne(level, cart);
+            }
+        }
+        if (seen > LIVE_SAMPLE_CAP) {
+            LOGGER.info(TAG + "SAMPLE truncated — {} minecarts present, {} sampled (cap {})",
+                seen, sampled, LIVE_SAMPLE_CAP);
+        }
+    }
+
+    private static void sampleOne(ServerLevel level, AbstractMinecart cart) {
+        boolean prev = SeamCartContinuity.beginProbeRead();
+        BlockPos cell;
+        try {
+            cell = cart.getCurrentBlockPosOrRailBelow();
+        }
+        finally {
+            SeamCartContinuity.endProbeRead(prev);
+        }
+        LOGGER.info(TAG + "t={} SAMPLE id={} dim={} pos={} vel={} hSpeed={} onRails={}"
+                + " ridden={} cell={} cellIsRail={}",
+            level.getGameTime(), cart.getId(), level.dimension().identifier(),
+            fmt(cart.position()), fmt(cart.getDeltaMovement()),
+            String.format(Locale.ROOT, "%.4f", cart.getDeltaMovement().horizontalDistance()),
+            cart.isOnRails(), !cart.getPassengers().isEmpty(), cell.toShortString(),
+            BaseRailBlock.isRail(level.getBlockState(cell)));
     }
 
     private static String fmt(Vec3 v) {

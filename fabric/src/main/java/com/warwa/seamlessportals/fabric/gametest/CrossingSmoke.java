@@ -564,6 +564,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             // runs last among the cart legs and restores them in its finally.
             if (AperturePassthroughLever.SEAM_CART_PROBE) {
                 rsCartLegRiddenProbe(context, py);
+                rsCartLegRiddenSameDimProbe(context);
             }
 
             // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate. Since the 2026-07-27
@@ -5496,6 +5497,299 @@ public class CrossingSmoke implements FabricClientGameTest {
         ));
     }
 
+    /**
+     * RS-CART-E (probe-gated) — THE USER'S OWN GEOMETRY: a RIDDEN cart through a SAME-DIMENSION
+     * COINCIDENT pair, which is where the 2026-07-28 live round showed every ridden arrival
+     * landing 0.1875 ABOVE rail riding height (y=…250 instead of …063), in both directions,
+     * five times out of five — while the CROSS-DIM ridden arm (RS-CART-D) landed exactly on the
+     * rail. Two different carry paths: cross-dim goes through {@code changePlayerDimension}
+     * (which dismounts, moves, remounts), same-dim never does and relies on {@code adjustVehicle}
+     * alone.
+     *
+     * <p>Both arrival heights are {@code player.position() + attachment} by construction, so the
+     * discriminator is the PLAYER's arrival height; the CARRY-TERMS probe lines dump every term.
+     * Fixture mirrors the user's pair: planes at cell centres (mid-block ⇒ COINCIDENT), rails
+     * straight through, destination far enough that the two ends never share chunks.
+     */
+    private static void rsCartLegRiddenSameDimProbe(ClientGameTestContext context) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        final int bx = 12800, by = 100, bz = 12800;
+        final int ddz = 400;                       // destination 400 blocks down +Z
+        final BlockPos cellS = new BlockPos(bx, by, bz);
+        final BlockPos cellD = new BlockPos(bx, by, bz + ddz);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Integer> cartId = new AtomicReference<>(null);
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+        try {
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run forceload add " + (bx - 16) + " " + (bz - 16)
+                    + " " + (bx + 16) + " " + (bz + ddz + 16),
+                "execute in minecraft:overworld run fill " + (bx - 3) + " " + (by - 1) + " "
+                    + (bz - 12) + " " + (bx + 3) + " " + (by - 1) + " " + (bz + ddz + 12)
+                    + " minecraft:stone",
+                "execute in minecraft:overworld run fill " + (bx - 3) + " " + by + " "
+                    + (bz - 12) + " " + (bx + 3) + " " + (by + 4) + " " + (bz + ddz + 12)
+                    + " minecraft:air"
+            ));
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.getChunk(bx >> 4, bz >> 4);
+                ow.getChunk(bx >> 4, (bz + ddz) >> 4);
+                // Planes at CELL CENTRES => the plane bisects the cell => COINCIDENT, the user's
+                // topology (a /portal-made mid-block pair), not the flush topology of RS-CART-B.
+                qouteall.imm_ptl.core.portal.Portal p =
+                    qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(
+                        ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                if (p == null) {
+                    failure.set("portal create returned null");
+                    return;
+                }
+                p.setOriginPos(new Vec3(bx + 0.5, by + 1.5, bz + 0.5));
+                p.setDestinationDimension(Level.OVERWORLD);
+                p.setDestination(new Vec3(bx + 0.5, by + 1.5, bz + ddz + 0.5));
+                p.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 3, 3);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(p);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createReversePortal(
+                        p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE));
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-CART-E SETUP FAILED: " + failure.get());
+            }
+            context.waitTicks(30);
+
+            // Which way actually CROSSES is the binding's business, not the fixture author's: the
+            // first build laid track along +Z and shoved the cart that way, straight into the
+            // portal's BACK face, and it sailed through the plane without ever teleporting
+            // (crossed=false). Derive the direction the way arms A and D do.
+            AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bindingRef =
+                new AtomicReference<>(null);
+            for (int attempt = 0; attempt < 30 && bindingRef.get() == null; attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    if (cell == null) {
+                        return;
+                    }
+                    cell.bindings().stream()
+                        .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                        .findFirst().ifPresent(bindingRef::set);
+                });
+                if (bindingRef.get() == null) {
+                    context.waitTicks(10);
+                }
+            }
+            var binding = bindingRef.get();
+            if (binding == null) {
+                throw new AssertionError(LOG + "RS-CART-E FAILED: seam cell " + cellS
+                    + " never bound with a mirrorable binding");
+            }
+            final net.minecraft.core.Direction crossDir = binding.crossDir();
+            final net.minecraft.core.Direction backDir = crossDir.getOpposite();
+            final net.minecraft.core.Direction farDir =
+                com.warwa.seamlessportals.passthrough.SeamRegistry.mapDir(binding, crossDir);
+            final BlockPos contC = binding.continuationToward(crossDir);
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-E geometry: S={} phase={} crossDir={}"
+                + " D={} continuation={} farDir={}", cellS, binding.phase(), crossDir,
+                binding.destPos(), contC, farDir);
+            if (binding.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT) {
+                throw new AssertionError(LOG + "RS-CART-E FAILED: fixture is " + binding.phase()
+                    + ", not COINCIDENT — this leg exists to mirror the user's mid-block pair");
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                for (int k = 1; k <= 12; k++) {
+                    ow.setBlock(cellS.relative(backDir, k), Blocks.RAIL.defaultBlockState(), 3);
+                }
+                for (int k = 0; k <= 14; k++) {
+                    BlockPos fp = contC.relative(farDir, k);
+                    ow.getChunk(fp.getX() >> 4, fp.getZ() >> 4);
+                    ow.setBlock(fp, Blocks.RAIL.defaultBlockState(), 3);
+                }
+                writeAsPlayer(ow, cellS, Blocks.RAIL.defaultBlockState());
+            });
+            context.waitTicks(10);
+
+            BlockPos start = cellS.relative(backDir, 7);
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run tp @p " + (start.getX() + 0.5) + " "
+                    + start.getY() + " " + (start.getZ() + 0.5) + " 0 0"));
+            context.waitTicks(60);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var player = server.getPlayerList().getPlayers().get(0);
+                var cart = EntityTypes.MINECART.create(ow, EntitySpawnReason.COMMAND);
+                if (cart == null) {
+                    failure.set("minecart create returned null");
+                    return;
+                }
+                cart.snapTo(start.getX() + 0.5, start.getY() + 0.1, start.getZ() + 0.5, 0f, 0f);
+                ow.addFreshEntity(cart);
+                com.warwa.seamlessportals.passthrough.SeamCartProbe.watch(cart.getId());
+                cartId.set(cart.getId());
+                if (!player.startRiding(cart, true, true)) {
+                    failure.set("player refused to mount");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-CART-E SETUP FAILED: " + failure.get());
+            }
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                var cart = server.getLevel(Level.OVERWORLD).getEntity(cartId.get());
+                if (cart == null) {
+                    failure.set("cart vanished before the shove");
+                    return;
+                }
+                cart.setDeltaMovement(Vec3.atLowerCornerOf(crossDir.getUnitVec3i()).scale(0.4));
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-E shoved the RIDDEN cart id={}"
+                    + " {} at 0.4 (same-dim COINCIDENT, the user's topology)",
+                    cartId.get(), crossDir);
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-CART-E SETUP FAILED: " + failure.get());
+            }
+
+            // "Crossed" = the cart is now on the far side of the pair, measured along the far
+            // continuation's own axis rather than a hard-coded +Z.
+            AtomicReference<Boolean> crossed = new AtomicReference<>(false);
+            AtomicReference<Double> arrivalY = new AtomicReference<>(null);
+            for (int i = 0; i < 40 && !crossed.get(); i++) {
+                runOnServer(context, server -> {
+                    Entity e = server.getLevel(Level.OVERWORLD).getEntity(cartId.get());
+                    if (e == null) {
+                        return;
+                    }
+                    boolean past = e.position().distanceToSqr(Vec3.atCenterOf(contC)) < 400;
+                    if (past) {
+                        crossed.set(true);
+                        if (arrivalY.get() == null) {
+                            arrivalY.set(e.getY());   // FIRST reading after arrival, before it
+                                                      // has had time to fall back onto the rail
+                        }
+                    }
+                });
+                if (!crossed.get()) {
+                    context.waitTicks(2);
+                }
+            }
+            context.waitTicks(30);
+            AtomicReference<String> verdict = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                Entity cart = server.getLevel(Level.OVERWORLD).getEntity(cartId.get());
+                int offs = com.warwa.seamlessportals.passthrough.SeamCartProbe
+                    .comeOffTrackCount(cartId.get());
+                double ridingHeight = by + 0.0625;
+                if (!(cart instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart mcart)) {
+                    verdict.set("the cart vanished (" + cart + ")");
+                    return;
+                }
+                // THE PLACEMENT, not a later sample: an off-rail arrival is snapped back by
+                // moveAlongTrack within one tick, so a polled position cannot judge it (the
+                // first build's inversion passed on exactly that race).
+                Vec3 placed = com.warwa.seamlessportals.passthrough.SeamCartContinuity
+                    .lastVehicleCarry(cartId.get());
+                Double ay = placed == null ? arrivalY.get() : placed.y;
+                SeamlessPortalsConstants.LOGGER.info(LOG + "★ RS-CART-E MEASUREMENT (same-dim"
+                        + " ridden): crossed={} placedAt={} placementErrorVsRidingHeight={}"
+                        + " firstPolledY={} settledPos={} onRails={} stillRidden={}"
+                        + " comeOffTracks={} {}",
+                    crossed.get(), placed,
+                    ay == null ? "n/a"
+                        : String.format(java.util.Locale.ROOT, "%+.4f", ay - ridingHeight),
+                    arrivalY.get(), mcart.position(), mcart.isOnRails(),
+                    !mcart.getPassengers().isEmpty(), offs,
+                    com.warwa.seamlessportals.passthrough.SeamCartContinuity.counters());
+                if (placed == null) {
+                    verdict.set("COVERAGE FAILED: no vehicle-carry placement was recorded for the"
+                        + " ridden cart — the crossing did not go through the carry path at all,"
+                        + " so this arm cannot judge the arrival height");
+                    return;
+                }
+                if (!crossed.get()) {
+                    verdict.set("the RIDDEN cart never crossed the same-dim pair at all"
+                        + " (settled at " + mcart.position() + ")");
+                    return;
+                }
+                if (!AperturePassthroughLever.DISABLE_SEAM_VEHICLE_ATTACH) {
+                    // THE OUTCOME THE RIDER SEES: they arrive ON the rail, not above it.
+                    if (Math.abs(ay - ridingHeight) > 0.02) {
+                        verdict.set("the ridden cart was PLACED at y=" + ay + ", off rail riding"
+                            + " height " + ridingHeight + " by "
+                            + String.format(java.util.Locale.ROOT, "%+.4f", ay - ridingHeight)
+                            + " — the vehicle-carry offset is wrong again (see"
+                            + " McHelper.getVehicleOffsetFromPassenger)");
+                    }
+                    if (offs > 0) {
+                        verdict.set("the ridden cart derailed " + offs + " time(s) crossing the"
+                            + " seam — the mid-crossing mark did not cover the ridden window");
+                    }
+                }
+                else if (Math.abs(ay - ridingHeight) < 0.05) {
+                    verdict.set("INVERSION FAILED: with -PdisableSeamVehicleAttach the ridden"
+                        + " cart should be PLACED the vehicle's own passenger-attachment offset"
+                        + " above riding height, but it was placed at " + ay + " (if this now"
+                        + " matches, the one-term offset is no longer reachable and the lever is"
+                        + " dead code)");
+                }
+            });
+            if (verdict.get() != null) {
+                throw new AssertionError(LOG + "RS-CART-E FAILED: " + verdict.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-E PASS ({})",
+                AperturePassthroughLever.DISABLE_SEAM_VEHICLE_ATTACH
+                    ? "attach fix OFF — the ridden arrival hop reproduced on demand"
+                    : "attach fix ON — the ridden cart arrived ON the rail");
+        }
+        finally {
+            try {
+                runOnServer(context, server -> {
+                    var players = server.getPlayerList().getPlayers();
+                    if (!players.isEmpty() && players.get(0).getVehicle() != null) {
+                        players.get(0).stopRiding();
+                    }
+                    Integer id = cartId.get();
+                    if (id != null) {
+                        for (ServerLevel l : server.getAllLevels()) {
+                            Entity e = l.getEntity(id);
+                            if (e != null) {
+                                e.discard();
+                            }
+                        }
+                    }
+                    com.warwa.seamlessportals.passthrough.SeamCartProbe.clear();
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(bx - 6, by - 6, bz - 6,
+                            bx + 6, by + 8, bz + ddz + 6), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                if (prevDim != null) {
+                    runCommands(context, List.of("execute in " + prevDim + " run tp @p "
+                        + prevPos.x + " " + prevPos.y + " " + prevPos.z));
+                    context.waitTicks(20);
+                }
+                runCommands(context, List.of(
+                    "execute in minecraft:overworld run fill " + (bx - 3) + " " + (by - 1) + " "
+                        + (bz - 12) + " " + (bx + 3) + " " + (by + 4) + " " + (bz + ddz + 12)
+                        + " minecraft:air",
+                    "execute in minecraft:overworld run forceload remove " + (bx - 16) + " "
+                        + (bz - 16) + " " + (bx + 16) + " " + (bz + ddz + 16)
+                ));
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-CART-E cleanup failed", t);
+            }
+        }
+    }
+
     /** Vanilla yaw for a horizontal direction (south=0, west=90, north=180, east=270). */
     private static int yawOf(net.minecraft.core.Direction dir) {
         return switch (dir) {
@@ -5550,7 +5844,13 @@ public class CrossingSmoke implements FabricClientGameTest {
         final boolean phantomExpected = bridgeLive
             && AperturePassthroughLever.DISABLE_SEAM_CART_STRADDLE;
         final int fx = 10400, fz = -10400;
-        final BlockPos cellS = new BlockPos(fx, py + 1, fz);
+        // THE MIDDLE aperture row, not the bottom one. The cart is spawned deliberately close to
+        // the plane (see the adversarial placement below), so its 0.98-wide box overhangs the
+        // frame column — and from the BOTTOM row it simply came to rest on the frame's own
+        // obsidian sill, which made the leg report "held up by something the fixture did not
+        // intend" instead of measuring anything. One row up there is open aperture below it.
+        final BlockPos ignitePos = new BlockPos(fx, py + 1, fz);
+        final BlockPos cellS = new BlockPos(fx, py + 2, fz);
         AtomicReference<String> failure = new AtomicReference<>(null);
         AtomicReference<Integer> cartId = new AtomicReference<>(null);
         AtomicReference<BlockPos> nearApproach = new AtomicReference<>(null);
@@ -5569,7 +5869,7 @@ public class CrossingSmoke implements FabricClientGameTest {
             context.waitTicks(20);
             runOnServer(context, server -> {
                 boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
-                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD), cellS, null);
+                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD), ignitePos, null);
                 if (!fired) {
                     failure.set("ignition entry rejected the frame");
                 }
@@ -5677,7 +5977,18 @@ public class CrossingSmoke implements FabricClientGameTest {
                     failure.set("minecart create returned null");
                     return;
                 }
-                cart.snapTo(nearN.getX() + 0.5, nearN.getY() + 0.1, nearN.getZ() + 0.5, 0f, 0f);
+                // ADVERSARIAL PLACEMENT, not the cell centre. The first build's guard tested the
+                // cart's 0.98-wide COLLISION BOX against the seam cell, which admitted any cart
+                // whose centre came within 0.49 of the boundary — a half-block band inside this
+                // very cell. At the cell centre (0.50 away) this gate passed by 0.02 blocks of
+                // luck (adversarial panel, round 2). Spawning 0.30 from the boundary puts the
+                // cart INSIDE that old band, so the leg now fails against the old rule and
+                // passes only for the right reason: the cart's CENTRE was never on the seam.
+                double towardSeam = 0.5 - 0.30;
+                cart.snapTo(
+                    nearN.getX() + 0.5 + srcFacing.getOpposite().getStepX() * towardSeam,
+                    nearN.getY() + 0.1,
+                    nearN.getZ() + 0.5 + srcFacing.getOpposite().getStepZ() * towardSeam, 0f, 0f);
                 ow.addFreshEntity(cart);
                 com.warwa.seamlessportals.passthrough.SeamCartProbe.watch(cart.getId());
                 cartId.set(cart.getId());
