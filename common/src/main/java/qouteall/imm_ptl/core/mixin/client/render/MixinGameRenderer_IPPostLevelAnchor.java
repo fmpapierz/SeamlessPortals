@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.IPCGlobal;
+import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.compat.iris_compatibility.ShaderpackViewsProbe;
 import qouteall.imm_ptl.core.compat.iris_compatibility.ShaderpackViewsProbeLever;
 import qouteall.imm_ptl.core.render.renderer.PortalRenderer;
@@ -90,6 +91,13 @@ public abstract class MixinGameRenderer_IPPostLevelAnchor {
         )
     )
     private void seamlessportals$onPostLevelPreHand(DeltaTracker deltaTracker, CallbackInfo ci) {
+        // TP-XDIM census witness: this anchor injects INSIDE renderLevel, so it CANNOT fire on a
+        // frame that CrossPortalViewRendering rendered instead. One folded static-final test plus
+        // one int increment; byte-inert at the default. Deliberately an increment on IPGlobal and
+        // NOT a call into com.warwa — this class's S20-safe clause above (zero com.warwa imports).
+        if (IPGlobal.TP_XDIM_CENSUS_LEVER) {
+            IPGlobal.noteTpXdimIs0AnchorFired();
+        }
         PortalRenderer renderer = IPCGlobal.renderer;
         if (renderer != null) {
             // == the object passed as render()'s 5th arg (GameRenderer:532-533); no @Local

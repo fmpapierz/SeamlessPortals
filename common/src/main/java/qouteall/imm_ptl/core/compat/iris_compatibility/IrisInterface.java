@@ -89,6 +89,21 @@ public class IrisInterface {
             return null;
         }
 
+        /**
+         * TP-XDIM census: iris's CURRENT pipeline identity + CURRENT dimension, read at ONE
+         * synchronous call site. They must NEVER be combined from values captured at different
+         * times — the IS5-ACT heal note below records cross-dim frames where a stored pipeline and
+         * {@code Iris.getCurrentDimension()} disagreed.
+         *
+         * <p>Returns null when iris is absent OR when the compat invoker was never installed; the
+         * caller MUST render that as a loud sentinel naming this invoker's class, never as
+         * {@code ""} and never as a value.
+         */
+        @Nullable
+        public String describePipelineAndDim() {
+            return null;
+        }
+
         @Nullable
         public String getShaderpackName() {
             return null;
@@ -210,6 +225,38 @@ public class IrisInterface {
             }
             catch (Throwable t) {
                 return null;
+            }
+        }
+
+        /**
+         * TP-XDIM census (log-only). Both reads happen HERE, in one call, so the pair can never be
+         * assembled from two different moments.
+         *
+         * <p>The dimension is built from {@code NamespacedId}'s TYPED accessors
+         * ({@code getNamespace()}/{@code getName()}), javap-verified present on Iris
+         * 1.11.2+26.2 — deliberately NOT from {@code toString()}. A {@code toString()} that a
+         * future Iris build stops overriding would silently degrade to an identity hash, which is
+         * not a stable dimension identity and would be tabulated as if it were one. The accessors
+         * cannot fail that way: they either return the real strings or throw, and a throw prints
+         * the UNREADABLE sentinel below.
+         */
+        @Override
+        @Nullable
+        public String describePipelineAndDim() {
+            try {
+                Object p = Iris.getPipelineManager().getPipelineNullable();
+                net.irisshaders.iris.shaderpack.materialmap.NamespacedId d =
+                    Iris.getCurrentDimension();
+                return "[pipeline="
+                    + (p == null ? "NONE(manager slot is null)"
+                    : p.getClass().getSimpleName() + "@"
+                        + Integer.toHexString(System.identityHashCode(p)))
+                    + " irisCurrentDim="
+                    + (d == null ? "NULL" : (d.getNamespace() + ":" + d.getName()))
+                    + "]";
+            }
+            catch (Throwable t) {
+                return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
             }
         }
 

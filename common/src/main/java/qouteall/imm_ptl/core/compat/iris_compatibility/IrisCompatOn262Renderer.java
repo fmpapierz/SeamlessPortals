@@ -475,9 +475,14 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // call prepare/invoke/finish directly) — NO snapshot context exists and a
             // full-pipeline render would clobber the main target mid-frame. Fall back to the
             // decomposed driver (strictly better than nothing; full fidelity deferred).
+            // TP-XDIM census: BOTH branches of this method are instrumented, not just the one the
+            // working hypothesis predicts — a census that could only ever print D23-FALLBACK could
+            // not falsify the hypothesis it exists to test.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteInvokeWorldRendering(0);
             MyGameRenderer.renderWorldNew(worldRenderInfo, Runnable::run);
             return;
         }
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteInvokeWorldRendering(1);
         // IS5-PH gate: a full-pipeline dest render is about to run this frame — arm the once-per-
         // frame prev-uniform heal in onBeforeHandRendering's finally (see there).
         anyFullPipelineDestRendered = true;

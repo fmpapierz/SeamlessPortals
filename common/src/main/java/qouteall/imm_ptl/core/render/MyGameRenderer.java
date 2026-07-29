@@ -306,6 +306,11 @@ public class MyGameRenderer {
         // switch (note: it will no longer switch the world that client player is in )
         ((IEMinecraftClient) client).ip_setWorldRenderer(worldRenderer);
         client.level = newWorld;
+        // TP-XDIM census: client.level is the DEST from here until the restore below — the ONLY
+        // window in which the dest render's iris state is observable. Every read taken outside it
+        // resolves to the SOURCE and can never disagree about the dimension (the trap
+        // ActSeedProbe.endPortal's javadoc already records). Log-only, DEFAULT OFF, never throws.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipeline();
         ieGameRenderer.ip_setLightmapTextureManager(helper.lightmapTexture);
 
         client.player.noPhysics = true;
@@ -431,6 +436,10 @@ public class MyGameRenderer {
             });
         } finally {
             SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+
+            // TP-XDIM census: the LAST read while client.level is still the DEST (the restore
+            // below puts the source back). Log-only, DEFAULT OFF, never throws.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipelineEnd();
 
             //recover
             modelViewStack.popMatrix();
@@ -593,6 +602,10 @@ public class MyGameRenderer {
         // switch (pairing: SWAP-IN, same order)
         ((IEMinecraftClient) client).ip_setWorldRenderer(worldRenderer);
         client.level = newWorld;
+        // TP-XDIM census: same slot, same reason as the decomposed sibling — client.level is the
+        // DEST from here to the restore, the only window where the dest render's iris state can be
+        // read at all. Log-only, DEFAULT OFF, never throws.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipeline();
         ieGameRenderer.ip_setLightmapTextureManager(helper.lightmapTexture);
 
         client.player.noPhysics = true;
@@ -660,6 +673,10 @@ public class MyGameRenderer {
             profiler.pop();
         } finally {
             SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+
+            // TP-XDIM census: the LAST read while client.level is still the DEST (pairing with the
+            // decomposed sibling). Log-only, DEFAULT OFF, never throws.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipelineEnd();
 
             // recover (pairing: RESTORE, exact decomposed order)
             modelViewStack.popMatrix();

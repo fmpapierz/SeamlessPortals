@@ -46,7 +46,14 @@ public class CrossPortalViewRendering {
 
     // if rendered, return true
     public static boolean renderCrossPortalView() {
+        // TP-XDIM census (log-only, DEFAULT OFF, never throws; fully-qualified calls so this file
+        // gains no import — the IrisCompatOn262Renderer precedent for qouteall -> com.warwa probe
+        // calls). EVERY exit below is noted with its own code: "it did not render" must never
+        // collapse into one unreadable bucket.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteEnter();
         if (!IPGlobal.enableCrossPortalView) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_GATE_OFF);
             return false;
         }
 
@@ -61,6 +68,10 @@ public class CrossPortalViewRendering {
             || client.getCameraEntity() == null
             || RenderStates.originalCamera == null
         ) {
+            // TP-XDIM: re-derive WHICH of the five sub-conditions tripped, in this guard's own
+            // short-circuit order. The production guard is deliberately NOT split into five ifs —
+            // a drift in the census's copy can only mis-LABEL a row, never mis-render a frame.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExitPrecondition();
             return false;
         }
 
@@ -101,13 +112,23 @@ public class CrossPortalViewRendering {
         ).orElse(null);
 
         if (portalHit == null) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_NO_PORTAL_HIT);
             return false;
         }
 
         Portal portal = portalHit.getFirst();
         Vec3 hitPos = portalHit.getSecond();
 
+        // TP-XDIM: physicalPlayerHeadPos and realCameraPos are BOTH in SOURCE space here — the only
+        // space in which a signed distance to the SOURCE portal plane means anything (the
+        // renderingCameraPos derived below is already dest-transformed).
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.notePortalHit(
+            portal, physicalPlayerHeadPos, realCameraPos);
+
         if (!portal.canTeleportEntity(cameraEntity)) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_PORTAL_REJECTS_CAMERA);
             return false;
         }
 
@@ -155,6 +176,12 @@ public class CrossPortalViewRendering {
         // IP-faithful projection for a bob-free cross view. The next normal frame recaptures.
         RenderStates.capturedMainPassBobbedProjection = null;
 
+        // TP-XDIM: the render bracket is about to be entered — this is the point past which the
+        // frame is committed to being rendered HERE instead of by vanilla renderLevel. irisPre is
+        // captured now so it can be compared with irisPost below (the pipeline-slot leak question).
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.notePreRender(
+            renderingCameraPos, isThirdPerson());
+
         qouteall.imm_ptl.core.render.renderer.PortalRenderer.switchToCorrectRenderer();
         IPCGlobal.renderer.prepareRendering();
         try {
@@ -168,8 +195,15 @@ public class CrossPortalViewRendering {
             // and the whole GUI pass draw stencil-tested. 26.2 vanilla owns no stencil state to
             // restore it; IP exited cross-view frames stencil-disabled.
             org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
+            // TP-XDIM: LAST statement of the finally. NOTE the honest limit — an UNCAUGHT throw
+            // from the render bracket propagates past this method and out of GameRenderer.render,
+            // so the census's TAIL row-builder never runs: that frame emits NO ROW AT ALL and the
+            // buffered window is lost with it. This capture is visible on the normal path only.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.notePostRender();
         }
 
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.X_RENDERED);
         return true;
     }
 
