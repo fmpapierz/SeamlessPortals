@@ -17,12 +17,40 @@ public abstract class GameRendererMixin {
 
     @Inject(method = "render", at = @At("HEAD"))
     private void seamlessportals$beforeRender(DeltaTracker deltaTracker, boolean advanceGameTime, CallbackInfo ci) {
+        // TP-XDIM: the frame OPEN bracket. Deliberately BEFORE the D3 gate return below — the
+        // census needs it in BOTH flag states. Guarantees a throw inside GameRenderer.render cannot
+        // carry one frame's per-frame state into the next (it is counted as framesStartedWithoutEnd
+        // and printed as an INTEGRITY line instead of silently mis-attributing a row).
+        // Byte-inert without -Dseamlessportals.tpXdimCensus.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.onFrameStart();
         // D3 EXCLUSIVITY GATE (row 17 — CameraTransitionHandler). Flag ON → IP's
         // TransformationManager.managePlayerRotationAndChangeGravity supersedes it; this block-era
         // camera-transition driver stays off. Flag OFF (default) → unchanged. (The TAIL half below is
         // §3 substrate — GPU-buffer endFrame + secondary light — and stays active in BOTH states.)
         if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) return;
         CameraTransitionHandler.tick();
+    }
+
+    /**
+     * TP-XDIM census witness #1, and the arc's load-bearing measurement: DID VANILLA
+     * {@code renderLevel} RUN THIS FRAME. This mixin config
+     * ({@code seamlessportals-common.mixins.json}) is ALWAYS woven — unlike
+     * {@code seamlessportals-ip-client.mixins.json}, which {@code SeamlessMixinConfigPlugin
+     * .shouldApplyMixin} skips wholesale when the entity-portals flag is OFF. So this witness is
+     * independent of BOTH the IS0 anchor and the Fabric AFTER_TRANSLUCENT_TERRAIN driver: the
+     * working hypothesis predicts all three read NO together on a cross-view frame, and any ONE
+     * reading YES destroys it. Three differently-woven witnesses agreeing is what turns this into a
+     * confirmation instead of a single-mixin artifact.
+     *
+     * <p>Byte-inert at the default: one folded static-final test.
+     */
+    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"))
+    private void seamlessportals$tpXdimCensusRenderLevelHead(
+        DeltaTracker deltaTracker, CallbackInfo ci
+    ) {
+        if (qouteall.imm_ptl.core.IPGlobal.TP_XDIM_CENSUS_LEVER) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteRenderLevelEntered();
+        }
     }
 
     /**
@@ -84,6 +112,12 @@ public abstract class GameRendererMixin {
         // been rendered by then it emits the config block anyway, so a run that measured nothing still
         // says so IN THE LOG rather than looking deceptively healthy.
         com.warwa.seamlessportals.render.RunConfigReport.tickFrame();
+        // TP-XDIM: the census FRAME BOUNDARY — same anchor and same reasoning as the IS5-CEN
+        // boundary above. GameRenderer.render TAIL is the only hook in the mod that fires exactly
+        // once per rendered frame unconditionally, INCLUDING the cross-view frames where
+        // renderLevel never ran (RenderStates.frameIndex is NOT usable: MinecraftFramePumpMixin
+        // skips it on mid-packet mismatch frames). Byte-inert without -Dseamlessportals.tpXdimCensus.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.onFrameEnd();
         com.warwa.seamlessportals.render.PerfTimers.add("endSecondaryFrames", System.nanoTime() - t0);
     }
 }

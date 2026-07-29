@@ -217,6 +217,52 @@ public class IPGlobal {
         return !HEAL_RETARGET_DISABLED_LEVER;
     }
 
+    // ===== TP-XDIM FRAME CENSUS (2026-07-28) — log-only, DEFAULT OFF ==========================
+    // The third-person cross-dimension corruption arc's first instrument. The lever lives HERE
+    // (not on a holder class) on purpose: RunConfigReport's [2/3] sweep reflects IPGlobal's public
+    // static primitives with NO name filter, so these rows print in EVERY run — true when the -P
+    // landed, FALSE when it did not, and ABSENT entirely on a pre-census jar. Three distinguishable
+    // states from the once-per-session self-ID block; a holder class outside IPGlobal reaches the
+    // [1/3] raw-property section only and cannot tell "lever off" from "wrong jar".
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PtpXdimCensus=true
+    public static final boolean TP_XDIM_CENSUS_LEVER =
+        Boolean.getBoolean("seamlessportals.tpXdimCensus");
+
+    /** TP-XDIM optional GL add-on: adds TWO glIsEnabled STATE QUERIES (stencil, scissor) once per
+     *  frame at the census's frame boundary. No readback, no barrier, no fence, no glGetError, and
+     *  never inside a pass. Split from the primary lever so the base census is provably GL-free; a
+     *  leg run with this set is a SEPARATE leg and is never mixed into the primary A/B. */
+    public static final boolean TP_XDIM_CENSUS_GL_LEVER =
+        Boolean.getBoolean("seamlessportals.tpXdimCensusGl");
+
+    /** MONOTONIC count of frames on which the IS0 post-main anchor fired. Written ONLY by
+     *  MixinGameRenderer_IPPostLevelAnchor (gated on the lever above), read as a DELTA by
+     *  TpXdimFrameCensus at GameRenderer.render TAIL — the "did the anchor fire this frame"
+     *  boolean expressed as a COUNTER, so no clear can be stranded by a throw and print a false NO.
+     *  Held on IPGlobal (not on the census class) so the anchor mixin keeps its
+     *  zero-com.warwa-imports property (its javadoc's S20-safety clause).
+     *
+     *  <p>DELIBERATELY PRIVATE, reached through the two accessors below. RunConfigReport's [2/3]
+     *  sweep prints every PUBLIC static primitive on this class under the heading "lever constants",
+     *  and that block is emitted at the first portal dest render — before this anchor has fired even
+     *  once. A public field here would therefore print "tpXdimCensusIs0AnchorFrames = 0" directly
+     *  under "TP_XDIM_CENSUS_LEVER = true" in a list of levers, which reads as "the IS0 witness is
+     *  not woven": a running counter tabulated as a lever state. The sweep's no-name-predicate
+     *  property is deliberate and load-bearing, so the field hides from it instead.
+     *  Render-thread plain int; no atomic needed. */
+    private static int tpXdimCensusIs0AnchorFrames = 0;
+
+    /** Called by the IS0 anchor mixin (already inside its folded lever test). */
+    public static void noteTpXdimIs0AnchorFired() {
+        tpXdimCensusIs0AnchorFrames++;
+    }
+
+    /** Read by TpXdimFrameCensus as a per-frame delta. Not a boolean, so RunConfigReport's
+     *  decision sweep (public static boolean isX()) does not pick it up either. */
+    public static int getTpXdimCensusIs0AnchorFrames() {
+        return tpXdimCensusIs0AnchorFrames;
+    }
+
     // IS5-MB PER-DEST PREVIOUS-FRAME CAMERA STATE (2026-07-26) — the same-dim portal-window motion-blur
     // smear fix. MEASURED: at the same-dim dest composite4 the shader reads cameraPosition=dest_N but
     // previousCameraPosition=main_N (|d|=125.82 with the player STATIONARY) => the pack's soft clamp

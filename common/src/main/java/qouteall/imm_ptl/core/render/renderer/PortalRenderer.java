@@ -353,6 +353,11 @@ public abstract class PortalRenderer {
     public void invokeWorldRendering(
         WorldRenderInfo worldRenderInfo
     ) {
+        // TP-XDIM census: the THIRD dest-driver branch. Shaders-OFF the active renderer is the
+        // stencil family, whose invokeWorldRendering is this base method — without this call the
+        // census's invoke= column would read NOT-CALLED on a frame that definitely rendered, i.e. a
+        // hole that reads as a measurement. Log-only, DEFAULT OFF, never throws.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteInvokeWorldRendering(2);
         MyGameRenderer.renderWorldNew(
             worldRenderInfo,
             Runnable::run
