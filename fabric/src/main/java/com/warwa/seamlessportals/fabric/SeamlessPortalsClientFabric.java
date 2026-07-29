@@ -138,7 +138,20 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
                 // with "driver fired and early-returned". No lever test needed here — noteF1Driver's
                 // own first statement is the folded lever test.
                 com.warwa.seamlessportals.render.TpXdimFrameCensus.noteF1Driver("flagON");
-                if (PortalRendering.isRendering()) {
+                // TP-XDIM: isRendering() is the re-entrancy guard for layer>=1 nested renders. A
+                // FRAME-REPLACING cross-view render is a nested renderLevel at LAYER 0, where
+                // isRendering() is FALSE — this event would otherwise fire UNGUARDED inside the
+                // dest render, re-running switchToCorrectRenderer / prepareRendering /
+                // onBeforeTranslucentRendering / finishRendering and overwriting passingModelView
+                // with the DEST pose. Under the DECOMPOSED cross-view driver no framegraph runs and
+                // this event never fires at all, so honoring the latch keeps the two routes
+                // behaviour-identical. LOAD-BEARING for any renderer whose
+                // onBeforeTranslucentRendering renders portals (the stencil family's does):
+                // without it a layer-0 nested render recurses.
+                if (PortalRendering.isRendering()
+                    || qouteall.imm_ptl.core.render.CrossPortalViewRendering
+                        .isRenderingCrossPortalView()
+                ) {
                     com.warwa.seamlessportals.render.TpXdimFrameCensus
                         .noteF1Driver("skipped-reentrant");
                     return;

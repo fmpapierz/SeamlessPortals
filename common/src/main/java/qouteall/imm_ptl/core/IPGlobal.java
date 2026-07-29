@@ -235,6 +235,40 @@ public class IPGlobal {
     public static final boolean TP_XDIM_CENSUS_GL_LEVER =
         Boolean.getBoolean("seamlessportals.tpXdimCensusGl");
 
+    // ===== TP-XDIM — CROSS-VIEW FULL-PIPELINE ROUTE, DEFAULT ON (2026-07-28) ==================
+    // MEASURED (census bdd8b62, 10k+ frames, 272/272 rows): third person + shaderpack + the camera
+    // on the far side of a portal => whole-screen terrain vertex-transform explosion, sky perfect,
+    // no GL errors, SAME-DIM and CROSS-DIM alike. Every such row: renderLevel=NO is0=NO f1=NO
+    // invoke=D23-FALLBACK. CrossPortalViewRendering had replaced vanilla renderLevel, so iris's
+    // ENTIRE per-frame gbuffer envelope (its @Inject at LevelRenderer.render HEAD: pipeline
+    // selection, beginLevelRendering, the gbufferModelView/Projection capture, plus the separate
+    // isRenderingLevel toggle that gates the terrain vertex-FORMAT remap) never ran — while the
+    // pack's gbuffer PROGRAMS still substituted. Confirmed by the shaders A/B: identical dest-render
+    // code, clean without a pack, exploded with one.
+    // FIX: route that ONE layer-0 caller to the FULL-PIPELINE driver, whose single direct 8-arg
+    // LevelRenderer.render() makes iris's class-woven hooks re-enter naturally — which is what IP
+    // itself did (its cross-view invoke body was client.gameRenderer.renderLevel(...), translation
+    // recorded at MyGameRenderer.java:68-70). GuiPortalRendering keeps the decomposed D23 fallback.
+    // Pass this to force the pre-fix route and REPRODUCE the explosion (attribution both ways) —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+    public static final boolean CROSS_VIEW_FULL_PIPELINE_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableCrossViewFullPipeline");
+
+    /** Confirm-counter: cross-view frames driven through the full pipeline. Render-thread int; the
+     *  RunConfigReport [2/3] sweep surfaces it, so "the route was taken" is provable from the
+     *  once-per-session self-ID block without reading a single census row. */
+    public static int crossViewFullPipelineCount = 0;
+
+    // TP-XDIM ESCAPE HATCH — DEFAULT OFF. Decline the cross-portal view entirely while a shaderpack
+    // is running: vanilla renderLevel renders the frame and the third-person camera sees the SOURCE
+    // world from inside the portal wall (IP's pre-cross-view behaviour — clipping, never
+    // corruption). The documented-limitation fallback if the route above proves unusable live, AND
+    // this arc's strongest NEGATIVE discriminator: if the explosion survives it, the cross-view
+    // path is not the carrier and every conclusion in the TP-XDIM handoff must be re-opened —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+    public static final boolean CROSS_VIEW_SUPPRESS_UNDER_PACK_LEVER =
+        Boolean.getBoolean("seamlessportals.crossViewSuppressUnderPack");
+
     /** MONOTONIC count of frames on which the IS0 post-main anchor fired. Written ONLY by
      *  MixinGameRenderer_IPPostLevelAnchor (gated on the lever above), read as a DELTA by
      *  TpXdimFrameCensus at GameRenderer.render TAIL — the "did the anchor fire this frame"

@@ -14,6 +14,7 @@ import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.portal.PortalRenderInfo;
+import qouteall.imm_ptl.core.render.CrossPortalViewRendering;
 import qouteall.imm_ptl.core.render.IrisCompatPaste;
 import qouteall.imm_ptl.core.render.MyGameRenderer;
 import qouteall.imm_ptl.core.render.SecondaryFrameBuffer;
@@ -471,10 +472,66 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
     @Override
     public void invokeWorldRendering(WorldRenderInfo worldRenderInfo) {
         if (!isInsideOwnRenderPortals) {
-            // D23: a layer-0 invocation (CrossPortalViewRendering:158-171 / GuiPortalRendering
-            // call prepare/invoke/finish directly) — NO snapshot context exists and a
-            // full-pipeline render would clobber the main target mid-frame. Fall back to the
-            // decomposed driver (strictly better than nothing; full fidelity deferred).
+            // ===== D23 layer-0, SPLIT BY CALLER (TP-XDIM, 2026-07-28) ============================
+            // The original D23 comment wrote ONE rule for TWO callers whose contexts are OPPOSITES.
+            //
+            //  * CrossPortalViewRendering REPLACES vanilla renderLevel for the WHOLE frame
+            //    (seamlessportals$redirectRenderingWorld returns without calling original). The main
+            //    render target is the REAL one and NOTHING has been drawn into it yet — there is no
+            //    snapshot to protect and no mid-frame clobber to avoid, because there is no main
+            //    frame. Painting the whole main target IS the assignment. This is IP's OWN
+            //    architecture: IP's cross-view invoke body was client.gameRenderer.renderLevel(...)
+            //    (translation recorded at MyGameRenderer.java:68-70), which is precisely why iris's
+            //    per-frame gbuffer envelope — its @Inject at LevelRenderer.render HEAD, plus the
+            //    separate isRenderingLevel toggle that gates the terrain vertex-FORMAT remap —
+            //    re-entered naturally under IP. The 26.2 decomposed driver never calls
+            //    LevelRenderer.render, so on a cross-view frame NONE of it runs while the pack's
+            //    gbuffer PROGRAMS still substitute (that substitution is gated on the pipeline
+            //    being non-null, not on isRenderingLevel). MEASURED consequence (census bdd8b62,
+            //    272/272 rows): a whole-screen terrain vertex-transform explosion with the sky
+            //    intact and no GL errors. Restoring the 8-arg render() here is a REWRITE TO MATCH
+            //    IP, not a compensation.
+            //
+            //  * GuiPortalRendering does NOT qualify: it swaps mainRenderTarget() to a caller FBO
+            //    (ip_setFrameBuffer, hard-asserted != main at GuiPortalRendering:80-84) and runs at
+            //    frame TAIL, AFTER iris finalized the real frame. A second begin/finalize
+            //    LevelRendering there would re-run the pack's composite chain over the shipped
+            //    frame. It KEEPS the decomposed fallback, byte-identical.
+            //
+            // DELIBERATE OMISSIONS vs the isInsideOwnRenderPortals branch below — each would be an
+            // ACTIVE DEFECT here, not a missing nicety:
+            //   * anyFullPipelineDestRendered NOT set: it arms the prev-uniform heal in
+            //     onBeforeHandRendering's finally, and that anchor injects INSIDE renderLevel — it
+            //     CANNOT fire on this frame. The flag would survive into the NEXT frame and heal
+            //     against an unrelated pipeline.
+            //   * IrisTemporalTargetGuard.clearForDestPass() NOT called: the guard never save()d
+            //     this frame, and this render IS the main view — zeroing its own TAA history would
+            //     be a self-inflicted ghost.
+            //   * IrisShadowCompositeSuppressor NOT installed: it protects a MAIN frame's
+            //     shadowcomp dispatch. There is no main frame; this render's shadowcomp is the
+            //     frame's only dispatch and MUST run normally.
+            //   * bumpPerFrameUniformCounter NOT called: IS5-L exists because a NESTED dest render
+            //     reuses programs a MAIN pass earlier in the SAME frame already uploaded PER_FRAME
+            //     uniforms for. This render is the frame's FIRST and ONLY level render — exactly
+            //     like a normal frame's main pass, which gets no bump. Parity with a normal frame.
+            //     (Pre-registered discriminator if the cross view comes out mis-lit.)
+            // "Bare" IS the fidelity claim here: this is what a normal frame does.
+            if (!IPGlobal.CROSS_VIEW_FULL_PIPELINE_DISABLED_LEVER
+                && CrossPortalViewRendering.isRenderingCrossPortalView()
+            ) {
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.noteInvokeWorldRendering(3);
+                // IS5-RC: the first proof the fix route is live. doRenderPortal's noteArmedFrame
+                // never fires on a cross-view frame, so without this the run-config block would
+                // wait for its 600-frame fallback — three earlier legs of this project were voided
+                // for want of exactly that self-report.
+                com.warwa.seamlessportals.render.RunConfigReport.noteArmedFrame();
+                IPGlobal.crossViewFullPipelineCount++;
+                MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
+                return;
+            }
+            // GuiPortalRendering, an unknown future layer-0 caller, or the
+            // -PdisableCrossViewFullPipeline A/B leg — the pre-fix path, unchanged, which
+            // reproduces the explosion byte-for-byte.
             // TP-XDIM census: BOTH branches of this method are instrumented, not just the one the
             // working hypothesis predicts — a census that could only ever print D23-FALLBACK could
             // not falsify the hypothesis it exists to test.

@@ -464,7 +464,18 @@ public class PerEntityClipBracket {
      * protects against a future re-entrant framegraph render.
      */
     public static void onMainPassBeforeTranslucentTerrain() {
-        if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+        // TP-XDIM: same blindness as the F1 driver — a frame-replacing cross-view render is a
+        // nested framegraph at LAYER 0, where isRendering() is FALSE. The DECOMPOSED cross-view
+        // route never reaches this event (it runs no framegraph), so a corruption fix must not
+        // silently start drawing brackets it has never drawn. PARITY, not a hazard claim:
+        // mc.levelRenderer is already swapped to the dest renderer by the time this could fire, so
+        // the storage read would be the dest pass's own, not the main pass's. If dest-pass entity
+        // bracketing is wanted under the full pipeline, that is its own levered change with its own
+        // live round. (The javadoc's "the event never fires for dest passes" clause above is now
+        // only half true — the full-pipeline arm is live and guarded here.)
+        if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()
+            || qouteall.imm_ptl.core.render.CrossPortalViewRendering.isRenderingCrossPortalView()
+        ) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
