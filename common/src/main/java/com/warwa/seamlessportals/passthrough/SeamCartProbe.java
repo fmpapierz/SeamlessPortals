@@ -172,27 +172,65 @@ public final class SeamCartProbe {
     /** Live-run sampling cap — see {@link #onServerTickEnd}. */
     private static final int LIVE_SAMPLE_CAP = 8;
 
-    /** Sample every minecart in the server (live mode: nobody called {@link #watch}). */
+    /** Ticks between the live heartbeat lines (1 Hz), so silence still proves coverage. */
+    private static final int LIVE_HEARTBEAT_TICKS = 20;
+
+    /**
+     * Live mode (nobody called {@link #watch}): sample only the carts that are AT a seam, every
+     * tick, plus a 1 Hz heartbeat counting the rest.
+     *
+     * <p>The first build sampled every cart every tick and produced 40,104 SAMPLE lines plus
+     * 4,962 truncation notices in one live session — 96% of the log, for a session whose actual
+     * findings were two numbers. A per-tick line per entity is also the shape that costs ~130 ms
+     * log4j stalls on the render thread (the aim probe's recorded scar, which is why that one is
+     * 1 Hz-latched). Near-seam carts are rare and are exactly the crossing window, so they get
+     * full per-tick resolution and everything else costs one line per second.
+     */
     private static void sampleAllCarts(MinecraftServer server) {
-        int sampled = 0;
-        int seen = 0;
+        int atSeam = 0;
+        int elsewhere = 0;
+        long now = server.overworld().getGameTime();
+        boolean heartbeat = now % LIVE_HEARTBEAT_TICKS == 0;
         for (ServerLevel level : server.getAllLevels()) {
             for (Entity e : level.getAllEntities()) {
                 if (!(e instanceof AbstractMinecart cart)) {
                     continue;
                 }
-                seen++;
-                if (sampled >= LIVE_SAMPLE_CAP) {
+                if (!nearSeam(level, cart)) {
+                    elsewhere++;
                     continue;
                 }
-                sampled++;
-                sampleOne(level, cart);
+                atSeam++;
+                if (atSeam <= LIVE_SAMPLE_CAP) {
+                    sampleOne(level, cart);
+                }
             }
         }
-        if (seen > LIVE_SAMPLE_CAP) {
-            LOGGER.info(TAG + "SAMPLE truncated — {} minecarts present, {} sampled (cap {})",
-                seen, sampled, LIVE_SAMPLE_CAP);
+        if (atSeam > LIVE_SAMPLE_CAP) {
+            LOGGER.info(TAG + "SAMPLE truncated — {} carts at seams, {} sampled (cap {})",
+                atSeam, LIVE_SAMPLE_CAP, LIVE_SAMPLE_CAP);
         }
+        if (heartbeat && (atSeam > 0 || elsewhere > 0)) {
+            LOGGER.info(TAG + "heartbeat — {} cart(s) at a seam, {} elsewhere (only seam-adjacent"
+                + " carts are sampled per tick)", atSeam, elsewhere);
+        }
+    }
+
+    /** Is this cart on, or one step from, a bound seam cell? The crossing window and nothing else. */
+    private static boolean nearSeam(ServerLevel level, AbstractMinecart cart) {
+        BlockPos cell = cart.blockPosition();
+        if (!SeamRegistry.sectionHasSeam(level, cell)) {
+            return false;
+        }
+        if (SeamRegistry.lookup(level, cell) != null) {
+            return true;
+        }
+        for (net.minecraft.core.Direction d : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            if (SeamRegistry.lookup(level, cell.relative(d)) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void sampleOne(ServerLevel level, AbstractMinecart cart) {
