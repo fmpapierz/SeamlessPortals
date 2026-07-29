@@ -70,9 +70,13 @@ public final class SeamHandLocator {
     private static boolean frameAmbient = false;
     private static double frameDist = Double.NaN;
 
-    /** [target][stage(0=pre,1=post)][row][col] lum or depth mean; NaN = unread. Targets:
+    /** Stage names: 0=preSolid 1=postSolid 2=anchor(post-iris-finalize) 3=postBlit(final). */
+    private static final String[] STAGE_NAMES = {"preSolid", "postSolid", "ANCHOR", "postBlit"};
+    private static final int STAGES = 4;
+
+    /** [target][stage][row][col] lum or depth mean; NaN = unread. Targets:
      *  0=mainRT-color 1=mainRT-depth 2=ct0-main 3=ct0-alt. */
-    private static final double[][][][] grid = new double[4][2][ROWS][COLS];
+    private static final double[][][][] grid = new double[4][STAGES][ROWS][COLS];
     private static final String[] targetStatus = new String[4];
     private static final String[] TARGET_NAMES = {"mainRT-color", "mainRT-depth",
         "ct0-MAIN", "ct0-ALT"};
@@ -106,7 +110,7 @@ public final class SeamHandLocator {
             frameArmed = true;
             for (int t = 0; t < 4; t++) {
                 targetStatus[t] = "UNSET";
-                for (int s = 0; s < 2; s++) {
+                for (int s = 0; s < STAGES; s++) {
                     for (int r = 0; r < ROWS; r++) {
                         for (int c = 0; c < COLS; c++) {
                             grid[t][s][r][c] = Double.NaN;
@@ -129,7 +133,7 @@ public final class SeamHandLocator {
         }
     }
 
-    /** RETURN of renderSolid — captures post and emits the diff. */
+    /** RETURN of renderSolid — captures the post-hand-paint stage (emit waits for postBlit). */
     public static void postSolid() {
         if (!ENABLED || disarmed || !frameArmed) {
             return;
@@ -139,6 +143,32 @@ public final class SeamHandLocator {
                 return;
             }
             captureAll(1);
+        }
+        catch (Throwable t) {
+            disarm(t);
+        }
+    }
+
+    /** Compat anchor (onBeforeHandRendering entry) — mainRT as iris FINALIZED it. */
+    public static void anchor() {
+        if (!ENABLED || disarmed || !frameArmed) {
+            return;
+        }
+        try {
+            captureAll(2);
+        }
+        catch (Throwable t) {
+            disarm(t);
+        }
+    }
+
+    /** After the compat blit-back — the frame that ships. Emits the whole table. */
+    public static void postBlit() {
+        if (!ENABLED || disarmed || !frameArmed) {
+            return;
+        }
+        try {
+            captureAll(3);
             emit();
         }
         catch (Throwable t) {
@@ -185,7 +215,11 @@ public final class SeamHandLocator {
         else {
             captureMainRT(stage, mainRT);
         }
-        captureColortex(stage);
+        // colortex0 is only meaningful during the gbuffer era (stages 0/1); post-composite
+        // stages read mainRT only (cost + the ct0 ping-pong is irrelevant there).
+        if (stage < 2) {
+            captureColortex(stage);
+        }
     }
 
     /** mainRT color+depth via its cached FBO, row-strip reads, PACK-bracketed (the proven
@@ -346,12 +380,14 @@ public final class SeamHandLocator {
     }
 
     private static void emit() {
-        StringBuilder sb = new StringBuilder(1024);
+        StringBuilder sb = new StringBuilder(2048);
         sb.append(P).append(frameAmbient ? "[AMBIENT]"
             : String.format("[window d=%.2f]", frameDist));
-        sb.append(" changed cells across renderSolid (grid ").append(COLS).append('x')
+        sb.append(" HAND-PAINT cells across renderSolid (grid ").append(COLS).append('x')
             .append(ROWS).append(", r0 = screen BOTTOM; lum>").append(LUM_THRESHOLD)
             .append(" / depth>").append(DEPTH_THRESHOLD).append("):");
+        // Collect the hand footprint from the mainRT-depth paint diff (the reliable signal).
+        boolean[][] footprint = new boolean[ROWS][COLS];
         for (int t = 0; t < 4; t++) {
             sb.append("\n  ").append(TARGET_NAMES[t]).append(" [").append(targetStatus[t])
                 .append("]: ");
@@ -369,6 +405,9 @@ public final class SeamHandLocator {
                     measurable = true;
                     if (Math.abs(a - b) > threshold) {
                         changed++;
+                        if (t == 1 || t == 2) {
+                            footprint[r][c] = true;
+                        }
                         if (changed <= 24) {
                             cells.append('r').append(r).append('c').append(c).append(' ');
                         }
@@ -388,13 +427,44 @@ public final class SeamHandLocator {
                 }
             }
         }
-        sb.append("\n  READ: AMBIENT rows are ground truth — the changed cells are where the"
-            + " VISIBLE hand paints and into which target(s); the hand should appear in the"
-            + " bottom rows (r0-r2), right half. NO ambient footprint on ANY target ⇒ every"
-            + " prior probe was instrument-blind (the hand draws elsewhere entirely)."
-            + " WINDOW rows: the ambient footprint vanishing = the in-window eater, now"
-            + " localized to target and cells. Changed cells OUTSIDE the hand footprint on"
-            + " ct0 are iris's own copies — do not read them as hand paint.");
+
+        // THE SURVIVAL TABLE: raw mainRT color+depth at each hand-footprint cell, at all four
+        // stages. Absolute values (no diffing, no fixed column) — this is what answers "where
+        // between the hand draw and the shipped frame did the hand go".
+        sb.append("\n  SURVIVAL TABLE (mainRT lum/depth at each hand-paint cell; stages:");
+        for (int s = 0; s < STAGES; s++) {
+            sb.append(' ').append(s).append('=').append(STAGE_NAMES[s]);
+        }
+        sb.append("):");
+        int printed = 0;
+        for (int r = 0; r < ROWS && printed < 8; r++) {
+            for (int c = 0; c < COLS && printed < 8; c++) {
+                if (!footprint[r][c]) {
+                    continue;
+                }
+                printed++;
+                sb.append("\n    r").append(r).append('c').append(c).append(": ");
+                for (int s = 0; s < STAGES; s++) {
+                    sb.append(String.format("[%d l=%s d=%s]", s,
+                        fmt(grid[0][s][r][c], "%.3f"), fmt(grid[1][s][r][c], "%.4f")));
+                }
+            }
+        }
+        if (printed == 0) {
+            sb.append(" NO HAND-PAINT CELLS THIS FRAME (the hand did not draw at all — see the"
+                + " paint rows above; nothing to trace).");
+        }
+        sb.append("\n  READ: the hand's own depth is NEAR (small d) vs scene/shell (d~0.96+)."
+            + " Follow each cell across the stages: d stays near through stage 3 ⇒ the hand"
+            + " survives the whole pipeline (the loss is elsewhere/GUI-era). d flips to the"
+            + " scene value (or lum jumps to the window content) between stage 1 and 2 ⇒ IRIS'S"
+            + " OWN composite/finalize discards it. Between 2 and 3 ⇒ THE COMPAT PASS (stamp"
+            + " overpaint / blit) — and the stamp's depth test is the lever. AMBIENT rows are"
+            + " the working-hand control: whatever pattern they show IS 'healthy'.");
         LOGGER.info(sb.toString());
+    }
+
+    private static String fmt(double v, String f) {
+        return Double.isNaN(v) ? "n/a" : String.format(f, v);
     }
 }

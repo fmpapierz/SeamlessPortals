@@ -208,6 +208,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // closes the in-renderLevel stage points armed at the iris hand passes and emits the
         // five-stage block (handoff §00a instrument 1).
         com.warwa.seamlessportals.render.SeamHandInLevelProbe.anchor(mainRT);
+        // IS5-HAND-LOC stage 2 (anchor): mainRT exactly as iris finalized it — the survival
+        // table's "did the hand survive iris's own composite" row.
+        com.warwa.seamlessportals.render.SeamHandLocator.anchor();
         // Stencil belt (anchor slot; §6 hazard row 8-2's raw-disable family).
         GL11.glDisable(GL_STENCIL_TEST);
 
@@ -293,6 +296,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             IrisCompatPaste.drawStraightCopy(deferredBuffer.fb, mainRT);
             // IS5-HAND-STAGE D: mainRT after the blit-back — emits the four-stage diff block.
             com.warwa.seamlessportals.render.SeamHandStageDiff.stageD(mainRT);
+            // IS5-HAND-LOC stage 3 (postBlit): the frame that ships — closes the survival
+            // table and emits it.
+            com.warwa.seamlessportals.render.SeamHandLocator.postBlit();
 
             // IS5-P phantom fix: undo the dest render's pollution of iris's persistent temporal targets
             // (byte-identical restore of the pre-dest history) — the phantom carrier the mainRT blit above
