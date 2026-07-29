@@ -715,7 +715,12 @@ public final class TpXdimFrameCensus {
             .append(" irisPresent=").append(irisPresent())
             .append(" shaders=").append(shadersOn())
             .append(" pack=").append(packName())
-            .append(" glLever=").append(IPGlobal.TP_XDIM_CENSUS_GL_LEVER);
+            .append(" glLever=").append(IPGlobal.TP_XDIM_CENSUS_GL_LEVER)
+            // The fix route's running total, live per window — the RUN CONFIG block only ever
+            // snapshots it once, near session start, so it is near-zero there by construction.
+            .append(" xviewFullPipelineTotal=").append(IPGlobal.crossViewFullPipelineCount)
+            .append(" xviewRouteLever=").append(
+                IPGlobal.CROSS_VIEW_FULL_PIPELINE_DISABLED_LEVER ? "DISABLED(pre-fix route)" : "ON");
         out.append("\n  tally:");
         for (int i = 0; i < X_NAME.length; i++) {
             out.append(' ').append(X_NAME[i]).append('=').append(tally[i]);
