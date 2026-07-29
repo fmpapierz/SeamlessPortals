@@ -111,6 +111,18 @@ public class IrisCompatPaste {
     private static RenderPipeline PORTAL_AREA_SOLID;
     /** IS5-SEAM solid + depth fully disabled — the two levers composed. */
     private static RenderPipeline PORTAL_AREA_SOLID_NO_DEPTH_TEST;
+    /** IS5-STAMP-EAT sibling: identical to the shipped stamp but depth compare LESS_THAN_OR_EQUAL.
+     *  The survival table (2026-07-28) caught the stamp overpainting the hand between the anchor
+     *  and the blit-back; the hand pass's measured convention is small-is-near/LEQUAL, so the
+     *  shipped GEQUAL (a reversed-Z assumption) lets the aperture beat everything NEARER than
+     *  it — including the hand. Selected only by -PstampLequal. */
+    private static RenderPipeline PORTAL_AREA_SAMPLE_LEQUAL;
+
+    /** IS5-STAMP-EAT: true only while the stamp's drawIndexed is executing — lets the encoder
+     *  probe dump the state the STAMP draw actually runs under (the pass-boundary reads proved
+     *  blind; only trySetup-time reads are ground truth). */
+    public static volatile boolean STAMP_DRAWING = false;
+
     /** IS5-RC: one line per session naming the stamp pipeline actually bound (see stampPortalArea). */
     private static boolean stampPipelineReported = false;
     private static RenderPipeline PORTAL_STRAIGHT_COPY;
@@ -254,12 +266,20 @@ public class IrisCompatPaste {
     private static void registerSeamDiagnosticSiblings() {
         boolean wantNoTest = qouteall.imm_ptl.core.IPGlobal.STAMP_DEPTH_TEST_DISABLED_LEVER;
         boolean wantSolid = qouteall.imm_ptl.core.IPGlobal.debugStampSolid;
-        if (!wantNoTest && !wantSolid) {
+        boolean wantLequal = qouteall.imm_ptl.core.IPGlobal.STAMP_LEQUAL_LEVER;
+        if (!wantNoTest && !wantSolid && !wantLequal) {
             return; // default runs: zero new pipelines, zero new reload surface
         }
         try {
             Method registerMethod = RenderPipelines.class.getDeclaredMethod("register", RenderPipeline.class);
             registerMethod.setAccessible(true);
+
+            if (wantLequal) {
+                // IS5-STAMP-EAT: the shipped stamp with the compare flipped to LEQUAL.
+                PORTAL_AREA_SAMPLE_LEQUAL = buildValidateRegister(
+                    registerMethod, "portal_area_sample_lequal", "core/portal_area_sample",
+                    new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true), "-PstampLequal");
+            }
 
             if (wantNoTest) {
                 // §2d: the depth state fully DISABLED (Optional.empty() — the proven
@@ -550,7 +570,13 @@ public class IrisCompatPaste {
                     );
                     pass.setVertexBuffer(0, vertexSlice);
                     pass.setIndexBuffer(indexBuffer, indices.type());
-                    pass.drawIndexed(indexCount, 1, 0, 0, 0);
+                    STAMP_DRAWING = true;
+                    try {
+                        pass.drawIndexed(indexCount, 1, 0, 0, 0);
+                    }
+                    finally {
+                        STAMP_DRAWING = false;
+                    }
                     // IS5-STAMP-EXEC (lever-gated -Dseamlessportals.stampExecProbe, DEFAULT
                     // OFF): read the driver's ACTUAL program/vsh-source/depth state right after
                     // the draw applied it — the ground-truth audit of the stage-C cap anomaly
@@ -623,6 +649,13 @@ public class IrisCompatPaste {
         else if (wantNoWrite) {
             intended = PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE;
             name = "SAMPLE+NO-DEPTH-WRITE";
+        }
+        else if (qouteall.imm_ptl.core.IPGlobal.STAMP_LEQUAL_LEVER) {
+            // IS5-STAMP-EAT candidate fix: LEQUAL compare — under the measured small-is-near
+            // convention the aperture then loses to everything NEARER than it (the hand) while
+            // still beating the far scene it must replace.
+            intended = PORTAL_AREA_SAMPLE_LEQUAL;
+            name = "SAMPLE+LEQUAL";
         }
         else {
             intended = PORTAL_AREA_SAMPLE;

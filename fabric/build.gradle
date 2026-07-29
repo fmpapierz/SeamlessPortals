@@ -410,6 +410,13 @@ loom {
             // resets; the window-vs-ambient field diff names the eater —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandDrawDump=true
             if (project.findProperty('handDrawDump') == 'true') { vmArg('-Dseamlessportals.handDrawDump=true') }
+            // IS5-STAMP-EAT (2026-07-28) — THE CANDIDATE HAND FIX: bind the LEQUAL stamp
+            // sibling. The survival table caught the stamp overpainting the hand between the
+            // anchor and the blit-back; under the measured small-is-near convention LEQUAL
+            // makes the aperture lose to everything nearer than it (the hand) while still
+            // beating the far scene it replaces —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampLequal=true
+            if (project.findProperty('stampLequal') == 'true') { vmArg('-Dseamlessportals.stampLequal=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
@@ -713,6 +720,13 @@ loom {
             // resets; the window-vs-ambient field diff names the eater —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandDrawDump=true
             if (project.findProperty('handDrawDump') == 'true') { vmArg('-Dseamlessportals.handDrawDump=true') }
+            // IS5-STAMP-EAT (2026-07-28) — THE CANDIDATE HAND FIX: bind the LEQUAL stamp
+            // sibling. The survival table caught the stamp overpainting the hand between the
+            // anchor and the blit-back; under the measured small-is-near convention LEQUAL
+            // makes the aperture lose to everything nearer than it (the hand) while still
+            // beating the far scene it replaces —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampLequal=true
+            if (project.findProperty('stampLequal') == 'true') { vmArg('-Dseamlessportals.stampLequal=true') }
             // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
             // to settle whether the near-plane clip's removed area is the black seam band. Expect the
             // S14.36 sky wedges to return while set — that is also the proof the lever took effect —

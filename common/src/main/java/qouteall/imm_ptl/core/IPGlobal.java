@@ -493,6 +493,13 @@ public class IPGlobal {
     public static final boolean HAND_DRAW_DUMP =
         Boolean.getBoolean("seamlessportals.handDrawDump");
 
+    // IS5-STAMP-EAT (2026-07-28) — the candidate hand fix: bind the LEQUAL stamp sibling.
+    // The survival table caught the stamp overpainting the hand between the anchor and the
+    // blit-back; the hand pass's measured convention is small-is-near/LEQUAL, so the shipped
+    // GEQUAL lets the aperture beat everything NEARER than it. A/B: -PstampLequal.
+    public static final boolean STAMP_LEQUAL_LEVER =
+        Boolean.getBoolean("seamlessportals.stampLequal");
+
     // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF):
     // -Dseamlessportals.compositeCensus (+ -Dseamlessportals.compositeCensusPasses to rename the deep
     // pass). Declared here only so the IS5-RC run-config block reports it beside every other lever;

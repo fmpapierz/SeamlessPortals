@@ -47,6 +47,54 @@ public final class HandDrawStateDump {
 
     private HandDrawStateDump() {}
 
+    private static long lastStampNanos = 0L;
+
+    /** IS5-STAMP-EAT: the STAMP draw's own executed state (encoder mixin, trySetup RETURN —
+     *  the only ground truth; the post-drawIndexed reads that reported LEQUAL were taken
+     *  after the pass and may not be what the draw ran under). 1 Hz. */
+    public static void onStampDrawSetup() {
+        if (!ENABLED || disarmed) {
+            return;
+        }
+        try {
+            long now = System.nanoTime();
+            if (now - lastStampNanos < 1_000_000_000L) {
+                return;
+            }
+            lastStampNanos = now;
+            for (int i = 0; i < 8 && GL11.glGetError() != GL11.GL_NO_ERROR; i++) {
+            }
+            boolean test = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+            int func = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
+            boolean write = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+            FloatBuffer range = BufferUtils.createFloatBuffer(16);
+            GL11.glGetFloatv(GL11.GL_DEPTH_RANGE, range);
+            boolean clamp = GL11.glIsEnabled(GL32.GL_DEPTH_CLAMP);
+            int fbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+            String funcName = switch (func) {
+                case GL11.GL_LEQUAL -> "LEQUAL";
+                case GL11.GL_GEQUAL -> "GEQUAL";
+                case GL11.GL_ALWAYS -> "ALWAYS";
+                case GL11.GL_LESS -> "LESS";
+                case GL11.GL_GREATER -> "GREATER";
+                default -> "0x" + Integer.toHexString(func);
+            };
+            LOGGER.info(P + "STAMP DRAW state (trySetup RETURN — ground truth): test={}"
+                    + " func={} write={} range=[{},{}] clamp={} fbo={} — the hand's own depth"
+                    + " is ~0.0006 (bracket) / ~0.55 (natural) and the aperture's is ~0.65:"
+                    + " func=GEQUAL here means the stamp BEATS the hand (the measured"
+                    + " overpaint); func=LEQUAL means it should lose to it and the eater is"
+                    + " elsewhere in the compat pass.",
+                test, funcName, write,
+                String.format("%.4f", range.get(0)), String.format("%.4f", range.get(1)),
+                clamp, fbo);
+        }
+        catch (Throwable t) {
+            disarmed = true;
+            LOGGER.warn(P + "stamp dump threw — DISARMED for this session", t);
+        }
+    }
+
     /** Called from the encoder mixin right after trySetup returned true, iff iris's
      *  HandRenderer is ACTIVE (the caller checks — this class stays iris-free). */
     public static void onHandDrawSetup(boolean renderingSolidPass) {
