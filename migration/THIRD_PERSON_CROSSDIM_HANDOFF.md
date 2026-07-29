@@ -63,12 +63,37 @@ projection, chunk offsets, the per-frame uniform block) — **never ran, because
 or uninitialised values. This explains same-dim and cross-dim equally, and explains sky-fine /
 terrain-exploded.
 
-### §0.6 THE NEXT MEASUREMENT (specified, cheap, decisive)
-**The shaders A/B — handoff §3 instrument 2, still NOT RUN** (`grep -c "class=RENDERED.*shaders=OFF"`
-= 0 for leg 1). Toggle the pack with **K** in the same client; the census stamps `shaders=` on every
-row so each leg self-identifies. Clean shaders-OFF while `RENDERED` rows keep flowing ⇒ the iris
-per-frame setup is the carrier and §0.5 stands; corrupt shaders-OFF ⇒ §0.5 is dead and the fault is
-in the cross-view camera/geometry math itself, which the D23 driver would share.
+### §0.6 THE SHADERS A/B — RAN (leg 2, same client, K-toggle). §0.5 SURVIVES.
+User: *"no problem with shaders off, only shaders on is fucked."* Both legs are config-proven and
+BOTH exercised the cross-view path, so the clean leg is a measurement and not an absence:
+
+| leg | RENDERED rows | renderer | dest driver | witnesses | result |
+|---|---|---|---|---|---|
+| shaders **OFF** | 16 | `RendererUsingStencil` | `BASE-DECOMPOSED x2` | `renderLevel=NO is0=NO f1=NO` | **clean** |
+| shaders **ON** | 20 | `IrisCompatOn262Renderer` | `D23-FALLBACK x1` | `renderLevel=NO is0=NO f1=NO` | **exploded** |
+
+**The apparent confound dissolves.** The two legs select different renderers, but the two
+`invokeWorldRendering` branches call the IDENTICAL line —
+`MyGameRenderer.renderWorldNew(worldRenderInfo, Runnable::run)` (`IrisCompatOn262Renderer`'s D23
+branch and `PortalRenderer.invokeWorldRendering`). **The dest-render code is byte-identical across
+the A/B.** The only thing that changed is whether a shaderpack's programs are active. That isolates
+the carrier to *the pack's programs drawing this decomposed render without iris's per-frame setup* —
+i.e. §0.5 — rather than to the cross-view camera/geometry math, which both legs share and which is
+clean in one of them.
+
+Residual, honestly stated: the legs also differ in dest-render COUNT (x2 vs x1). That bears on how
+many dest passes run, not on which driver code executes, so it does not touch the conclusion.
+
+### §0.7 THE FIX DIRECTION IS NOW LICENSED (§3 instrument 4's precondition is met)
+The census confirmed the D23 fallback is what runs, so §3's "make the cross-view frame use the same
+compat machinery the normal frame uses" is now evidence-backed rather than speculative. The
+structural asymmetry to exploit: the full-pipeline driver runs ONE direct 8-arg
+`LevelRenderer.render()` so iris's woven hooks re-enter NATURALLY (the whole IS1 design), while the
+D23 fallback never calls it. The fallback's own stated reason — *"a full-pipeline render would
+clobber the main target mid-frame"* — distinguishes its two layer-0 callers: real for
+`GuiPortalRendering` (a mid-frame render into another target), but on a cross-view frame the main
+target IS what we are painting, because this call REPLACES the frame. Whether that reasoning is
+sound is for the fix design to verify against the code, not to assume.
 
 ---
 
