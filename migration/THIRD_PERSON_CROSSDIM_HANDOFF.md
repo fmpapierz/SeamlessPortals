@@ -1,8 +1,74 @@
 # TP-XDIM HANDOFF — third-person cross-dimension camera + shaders = corrupted render
 
-**Status: OPEN, NOT STARTED.** Reported by the user 2026-07-28, immediately after the seam
-hand arc closed. Branch `iris-on/is5-shadow`, worktree
+**Status: OPEN — census BUILT and its FIRST LEG RUN (2026-07-28). §0 below supersedes §1's
+"unmeasured" list and §2's sub-claim 4.** Branch `iris-on/is5-shadow`, worktree
 `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`.
+
+---
+
+## §0 LEG 1 — THE CENSUS RAN (2026-07-28, commit `bdd8b62`, `-PtpXdimCensus=true`)
+
+**Config proof (all gates green — this leg is adjudicable):** `[1/3] seamlessportals.tpXdimCensus
+= true` AND `[2/3] TP_XDIM_CENSUS_LEVER = true`; one `ARMED` line; `entityPortalsFlag=true`;
+`TARGET ACQUIRED at f=10203`; **10,488 frames classified, 272 emitted rows, 3,894 on-target
+(third-person cross-dim) frames.** Control frames (ordinary first person) print
+`renderLevel=YES(x1) is0=YES(x1) f1=YES:flagON` — the witnesses are alive, which is what licenses
+reading a NO on a target row.
+
+### §0.1 CONFIRMED, WITHOUT A SINGLE EXCEPTION (272/272 emitted RENDERED rows)
+```
+renderLevel=NO   is0=NO(sessionAnchorFrames=3608..4193)   f1=NO
+invoke=D23-FALLBACK x1        bobbedProj=NULLED        portalLayerAtEnd=0
+```
+§2 sub-claims **1, 2 and 3 hold**: vanilla `renderLevel` never runs, the IS0 anchor never fires
+(and `sessionAnchorFrames` climbing proves the anchor is woven and alive, so that NO is a
+measurement and not a "never woven" artifact), the AFTER_TRANSLUCENT_TERRAIN driver never fires,
+and the dest world ALWAYS goes through the D23 decomposed fallback — `FULL-PIPELINE` never once.
+
+### §0.2 SUB-CLAIM 4 IS REFUTED — the pipeline is NOT foreign and NOTHING leaks
+Measured on a cross-dim target frame (nether → overworld):
+```
+irisPre       = [pipeline=IrisRenderingPipeline@36f76cf5  irisCurrentDim=minecraft:the_nether]
+irisDuring    = [pipeline=IrisRenderingPipeline@36f76cf5  irisCurrentDim=minecraft:overworld](inCrossView=yes)
+irisDuringEnd = [pipeline=IrisRenderingPipeline@36f76cf5  irisCurrentDim=minecraft:overworld]
+irisPost      = [pipeline=IrisRenderingPipeline@36f76cf5  irisCurrentDim=minecraft:the_nether]
+```
+The pipeline OBJECT is identical throughout and `irisPost` is correctly the source dim. Nothing is
+left foreign, so there was never a slot to restore. What IS true is the mirror image of the
+prediction: **the DEST world is rasterized through the SOURCE dimension's pipeline** — iris's
+`preparePipeline` never runs because it hangs off the `LevelRenderer.render` this path skips.
+
+### §0.3 THE TRIGGER IS NOT CROSS-DIM (user, with screenshots)
+> "happens on same dim and dif dim portals when camera is on opposite dim to player"
+
+The discriminator is the census's `cameraPastAperture=YES` — **the camera being on the far side of
+the portal from the player** — NOT the dimension pair. Same-dim frames take the identical bare D23
+path (`renderLevel=NO is0=NO f1=NO invoke=D23-FALLBACK`, 3,697 such frames this leg) and corrupt
+identically. Since a same-dim portal's pipeline is trivially correct, **the wrong-dimension-pipeline
+reading in §0.2 cannot be the carrier of the defect.** Do not spend the next session on it.
+
+### §0.4 WHAT THE CORRUPTION IS (classified from the user's four screenshots)
+A **geometry / vertex-transform explosion**, not a colour, depth, stale-frame or wrong-dim-content
+fault. Real terrain textures (grass, stone, redstone dust are all legible) smeared into enormous
+triangular spikes radiating from the camera. Decisive detail: in one shot **the sky renders
+perfectly** (clean blue gradient + sun quad) while every piece of terrain explodes — so the
+composite, the blit and the sky path are healthy and the fault is in the TERRAIN VERTEX TRANSFORM.
+No GL errors are logged on these frames: the draws are legal, they transform wrong.
+
+### §0.5 THE REFINED HYPOTHESIS (to test, not to assume)
+On a cross-view frame the decomposed driver draws terrain through iris's gbuffer programs while
+iris's per-frame setup — `beginLevelRendering` and everything it uploads (gbuffer model-view /
+projection, chunk offsets, the per-frame uniform block) — **never ran, because it hangs off the
+`LevelRenderer.render` that this path replaces.** The vertex shader therefore transforms with stale
+or uninitialised values. This explains same-dim and cross-dim equally, and explains sky-fine /
+terrain-exploded.
+
+### §0.6 THE NEXT MEASUREMENT (specified, cheap, decisive)
+**The shaders A/B — handoff §3 instrument 2, still NOT RUN** (`grep -c "class=RENDERED.*shaders=OFF"`
+= 0 for leg 1). Toggle the pack with **K** in the same client; the census stamps `shaders=` on every
+row so each leg self-identifies. Clean shaders-OFF while `RENDERED` rows keep flowing ⇒ the iris
+per-frame setup is the carrier and §0.5 stands; corrupt shaders-OFF ⇒ §0.5 is dead and the fault is
+in the cross-view camera/geometry math itself, which the D23 driver would share.
 
 ---
 
