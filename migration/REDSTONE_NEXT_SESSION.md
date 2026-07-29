@@ -35,6 +35,15 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
+## ★★ NEXT ENGAGEMENT IS NOT REDSTONE — see `migration/CART_RENDER_RIDE_HANDOFF.md`
+
+Two user-reported defects found live 2026-07-28 AFTER (d) landed, which **invert across the two
+topologies**: SAME-DIM portals lose the empty cart from the window as it crosses (terrain still
+draws), while CROSS-DIM portals break RIDING on teleport (forced dismount, or the player spazzes
+in place over a sometimes-blank background). Rendering defect in the same-dim path, riding defect
+in the cross-dim path; two independent investigations. Starter prompt:
+`migration/CART_RENDER_RIDE_PROMPT.md`.
+
 ## WHERE THINGS STAND (2026-07-28, latest session)
 
 - **★★ (d) MINECART TRAVERSAL ACROSS THE SEAM — LANDED AND GATED (2026-07-28, this session).**
