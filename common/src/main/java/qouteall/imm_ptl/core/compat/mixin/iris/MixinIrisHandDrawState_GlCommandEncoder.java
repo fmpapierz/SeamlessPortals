@@ -28,6 +28,12 @@ public class MixinIrisHandDrawState_GlCommandEncoder {
         if (!HandDrawStateDump.ENABLED || !cir.getReturnValueZ()) {
             return;
         }
+        if (qouteall.imm_ptl.core.render.IrisCompatPaste.STAMP_DRAWING) {
+            // IS5-STAMP-EAT: the stamp's own draw — read its executed state here, the only
+            // point that is provably the state the draw runs under.
+            HandDrawStateDump.onStampDrawSetup();
+            return;
+        }
         try {
             net.irisshaders.iris.pathways.HandRenderer hr =
                 net.irisshaders.iris.pathways.HandRenderer.INSTANCE;
