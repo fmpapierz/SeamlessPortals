@@ -176,6 +176,26 @@ public class ServerTeleportationManager {
             com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity, msg);
         }
     }
+
+    /**
+     * RS (d): dump every term of the ridden-carry placement, because the arrival height is
+     * {@code player.position() + attachment} and nothing else — so when a ridden cart lands off
+     * the rail, exactly one of those two terms is wrong and this line says which. Probe-gated.
+     */
+    private static void cartCarryProbe(ServerPlayer player, Entity vehicle, String where) {
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
+            || !(vehicle instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart)) {
+            return;
+        }
+        Vec3 attach = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
+        LOGGER.info(
+            "[RS-CART] CARRY-TERMS {} playerPos={} playerEye={} eyeHeight={} pose={} riding={}"
+                + " attachment={} => vehiclePos would be {}",
+            where, player.position(), player.getEyePosition(), player.getEyeHeight(),
+            player.getPose(), player.getVehicle() != null, attach,
+            player.position().add(attach)
+        );
+    }
     
     private static Stream<Entity> getEntitiesToTeleport(Portal portal) {
         return portal.level().getEntitiesOfClass(
@@ -369,6 +389,11 @@ public class ServerTeleportationManager {
         ServerLevel fromWorld = (ServerLevel) player.level();
         ServerLevel toWorld = server.getLevel(dimensionTo);
         
+        if (player.getVehicle() != null) {
+            cartCarryProbe(player, player.getVehicle(), "before-player-move ("
+                + (player.level().dimension() == dimensionTo ? "same-dim" : "cross-dim") + ")");
+        }
+
         if (player.level().dimension() == dimensionTo) {
             McHelper.setEyePos(player, newEyePos, newEyePos);
             McHelper.updateBoundingBox(player);
@@ -376,16 +401,27 @@ public class ServerTeleportationManager {
         else {
             changePlayerDimension(player, fromWorld, toWorld, newEyePos);
         }
+
+        if (player.getVehicle() != null) {
+            cartCarryProbe(player, player.getVehicle(), "after-player-move/before-adjustVehicle");
+        }
         
         McHelper.adjustVehicle(player);
 
         // RS (d) instrument: the SAME-DIMENSION ridden crossing has no changePlayerDimension
         // branch at all — the cart is carried purely by adjustVehicle above, which places it at
-        // the player's new position plus the offset sampled from its current (possibly already
-        // corrupted) near-level position.
+        // player.position() + the passenger's ATTACHMENT vector (see the corrected note in
+        // changePlayerDimension: the cart's own position is discarded, so the arrival height is
+        // the player's arrival height plus the attachment, and nothing else).
         if (player.getVehicle() != null) {
             cartProbe(player.getVehicle(), "VEHICLE-CARRIED (player teleport, "
                 + (fromWorld == toWorld ? "same-dim via adjustVehicle" : "cross-dim") + ")");
+            cartCarryProbe(player, player.getVehicle(),
+                fromWorld == toWorld ? "same-dim/after-adjustVehicle" : "cross-dim/after-adjustVehicle");
+            // Always-on (not probe-gated): the placement itself, for gates to judge. Physics
+            // snaps an off-rail arrival back within a tick, so this is the only race-free record.
+            com.warwa.seamlessportals.passthrough.SeamCartContinuity.recordVehicleCarry(
+                player.getVehicle().getId(), player.getVehicle().position());
         }
 
         // reset the "authentic" player position as the current position
@@ -510,10 +546,16 @@ public class ServerTeleportationManager {
         toWorld.addDuringTeleport(player);
         
         if (vehicle != null) {
-            // RS (d) instrument: this is where a RIDDEN cart is carried, and the offset below is
-            // computed from the vehicle's CURRENT near-level position — so a cart that derailed
-            // during the player's client-first crossing window carries that corruption across.
-            cartProbe(vehicle, "VEHICLE-CARRY-BEGIN (cross-dim, offset sampled here)");
+            // RS (d) instrument: this is where a RIDDEN cart is carried. NOTE, corrected against
+            // the bytecode after a review caught the first version of this comment stating the
+            // opposite: getVehicleOffsetFromPassenger returns the PASSENGER'S ATTACHMENT VECTOR
+            // (McHelper:309-313 -> Entity.getVehicleAttachmentPoint -> the passenger's own
+            // EntityAttachment.VEHICLE), NOT a difference of live positions. The vehicle's
+            // near-level position is therefore DISCARDED, not carried: the cart is placed purely
+            // at player + attachment. A cart that derailed mid-crossing does not drag its
+            // corrupted Y across — but nor does a correct one contribute anything, which is why
+            // the arrival height is entirely the PLAYER's arrival height plus the attachment.
+            cartProbe(vehicle, "VEHICLE-CARRY-BEGIN (cross-dim; cart pos discarded, attachment used)");
             Vec3 offset = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
             Vec3 vehiclePos = player.position().add(offset);
             vehicle = teleportVehicleAcrossDimensions(

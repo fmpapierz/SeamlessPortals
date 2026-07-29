@@ -107,13 +107,14 @@ for AT MOST ONE behavior tick. `comeOffTrack` fires before the teleport only on 
 hands the teleport. The full tick-by-tick traces are in the RS-CART SAMPLE/EVT lines
 (`-PseamCartProbe`).
 
-- **RIDDEN carts (cross-dim obsidian) measured CLEAN** (`rsCartLegRiddenProbe`, probe-gated): the
-  real player mounts, rides through, and the cart arrives in the nether still ridden, on rails,
-  rolled +9 cells, ZERO `comeOffTrack`. This matters because a ridden cart never uses the
-  entity pipeline at all — `startTeleportingRegularEntity` skips it on the vehicle/player-cluster
-  gate and the cart is carried by the PLAYER's client-first crossing — so the "≤1 stranded tick"
-  bound the one-cell reach is sized for does not apply to it by construction. Single-player only;
-  the multiplayer-latency version of that window is the first thing to watch live.
+- **RIDDEN carts now arrive ON THE RAIL, exactly** (`rsCartLegRiddenProbe` cross-dim +
+  `rsCartLegRiddenSameDimProbe` same-dim, both probe-gated): player mounts, rides through, cart
+  arrives still ridden, on rails, zero `comeOffTrack`, and
+  `arrivalErrorVsRidingHeight=+0.0000`. Getting there took TWO fixes and a correction of my own
+  first write-up — see the ★ RIDDEN section below. A ridden cart never uses the entity pipeline
+  at all (`startTeleportingRegularEntity` skips it on the vehicle/player-cluster gate; the cart
+  is carried by the PLAYER's client-first crossing), so the "≤1 stranded tick" bound the one-cell
+  reach is sized for does not apply to it by construction.
 
 **The mechanism** (`SeamCartContinuity` + 3 mixins): a seam-framed READ bridge, never a state
 copy — every `Level.getBlockState` in `OldMinecartBehavior` (6 javap-counted sites: tick,
@@ -132,7 +133,14 @@ past the plane" is not one condition:
 |---|---|---|---|
 | **depth** — the owner must be a bound seam cell | the cell past THAT has no seam owner, so a never-teleporting cart derails at cell 2, vanilla-like | (the master) | by construction |
 | **direction** — `crossingOnly`: only `step == binding.crossDir()` may answer | `continuationToward` answers BOTH axis directions on COINCIDENT (the far world's CO-LOCATED approach cell — a fallback (b)'s SHAPE resolver legitimately wants); read as PHYSICAL PRESENCE it conjures rails in FRONT of the plane | `-PdisableSeamCartCrossOnly` | adversarial panel, two independent lenses, before commit |
-| **occupancy** — the STRADDLE TEST: the cart's own AABB must intersect the seam cell | direction alone is not enough on a BI-FACED portal, and **every obsidian frame is a four-entity cluster**: each face's own `crossDir` points the opposite way, so both axis directions pass the direction test for one binding or the other. A cart resting one cell clear of the aperture over open air HOVERED on the far world's track | `-PdisableSeamCartStraddle` | `rsCartLegPhantomRail` — the gate written for the panel's finding caught the member of the family that survived the panel's own fix |
+| **occupancy** — the MID-CROSSING MARK: the cart's own CENTRE must have been inside that seam cell within the last 10 ticks | direction alone is not enough on a BI-FACED portal, and **every obsidian frame is a four-entity cluster**: each face's own `crossDir` points the opposite way, so both axis directions pass the direction test for one binding or the other. A cart resting one cell clear of the aperture over open air HOVERED on the far world's track | `-PdisableSeamCartStraddle` | `rsCartLegPhantomRail` — the gate written for the panel's finding caught the member of the family that survived the panel's own fix |
+
+The occupancy guard is HISTORY, not geometry, and both halves of that were paid for: a cart
+stranded mid-crossing and a cart parked beside a portal occupy the same cell and satisfy the same
+direction test — only one was ever ON the seam (hence the mark); and the mark reads the cart's
+CENTRE, not its box, because a 0.98-wide box reaches 0.49 into the neighbouring cell (hence the
+half-block phantom band the panel found). The grace does not widen the reach: the DEPTH bound
+still demands the queried cell be the immediate neighbour of a bound seam cell.
 
 ⚠ **The direction guard has no fixture of its own.** Its reproduction needs a COINCIDENT
 SINGLE-FACED portal with a STRADDLING cart reading backward; RS-CART-C's obsidian frame is
@@ -156,6 +164,58 @@ VEHICLE-CARRY lines that time a ridden crossing, and bridge-hit lines). ⚠ The 
 resolution reads are BRACKETED out of the counters (`inProbeRead`) — unbracketed, the instrument
 would satisfy the gates' own coverage assertion, which is the fifth member of this engagement's
 false-reading family.
+
+### ★ THE RIDDEN CROSSING — two fixes, and a correction of my own first reading
+
+**The user's live round (2026-07-28) is the source of truth here, and it split the ridden path
+from the empty one cleanly.** Their 40km same-dim pair at `(3,104,0)→(10,19,40000)`:
+
+- **EMPTY carts: eight crossings, both directions, ZERO derails, every arrival at exactly
+  `y=…063` — rail riding height.** (d) working, nothing to do.
+- **RIDDEN carts: every arrival at `y=…250`** — 0.1875 high, five out of five, both directions.
+
+**Fix 1 — the ridden window (mine).** The first build required the cart to still be TOUCHING the
+seam cell at the instant of the read. A ridden crossing takes ~3 ticks (client detect → payload →
+server), by which time the cart has travelled ~1.6 blocks and cleared the cell by 0.10 — so the
+bridge went quiet one tick early and the cart derailed at the seam. Replaced by a MID-CROSSING
+MARK: the cart's own CENTRE having been inside that seam cell within {@code GRACE_TICKS}=10.
+⚠ The mark is set from the cart's centre, deliberately NOT its collision box — a minecart is 0.98
+wide, so a box test admitted any cart whose centre came within 0.49 of the boundary, a half-block
+band inside a cell the cart never leaves, and the hover gate passed that build **by 0.02 blocks of
+spawn placement** (adversarial panel round 2). RS-CART-C now spawns 0.30 from the boundary,
+INSIDE that old band, so it fails against the old rule.
+
+**Fix 2 — the arrival height (SHARED MACHINERY, user-authorised 2026-07-28: "change shared
+vehicle-crossing machinery as part of (d) to make it totally seamless").**
+`McHelper.getVehicleOffsetFromPassenger` returned only `passenger.getVehicleAttachmentPoint`,
+but vanilla places a rider at
+`vehicle.getPassengerRidingPosition(passenger) − passenger.getVehicleAttachmentPoint(vehicle)`
+(26.2 `Entity.positionRider:2380`), and `getPassengerRidingPosition` is the vehicle's position
+PLUS the vehicle's own passenger-attachment offset. Inverting needs BOTH terms:
+`vehiclePos = passengerPos + passengerVehicleAttach − vehiclePassengerAttach`. The missing term
+is exactly the 0.1875. Measured proof in the `CARRY-TERMS` probe line: the rider's real offset
+from the cart is **0.4125** while the returned attachment was **0.6**.
+⚠ **This spans every ridden vehicle** — boats, horses, striders — on BOTH the client and server
+crossing paths, which is why it is lever-gated (`-PdisableSeamVehicleAttach`) and why it needed
+the user's word rather than my judgement.
+
+⚠ **A CORRECTION WORTH KEEPING, AND IT BIT TWICE.** I first reported the cross-dim ridden arm as
+landing correctly at `72.0625` and concluded the hop was same-dim-only. It was not: that reading
+was taken ~70 ticks after arrival, by which time the cart had FALLEN back onto the rail. The
+`CARRY-TERMS` line shows the cross-dim carry placing it at `72.250` too. **A settled reading is
+not an arrival reading.** The first repair — latching the first POLLED position after arrival —
+was still wrong, and its own inversion caught it: an off-rail arrival is snapped back by
+`moveAlongTrack` within ONE tick, so even a 2-tick poll read `100.0625` while the carry had
+plainly placed the cart at `100.25`. **The gate now asserts the PLACEMENT itself**
+(`SeamCartContinuity.lastVehicleCarry`, recorded always-on at the carry site) and inverts
+cleanly: `+0.0000` with the fix, `+0.1875` without — with `firstPolledY=100.0625` in BOTH rows,
+preserved in the log as the evidence that the polled form could not have failed. Third time this
+engagement has paid for *hook the last thing the engine mutates, not what it looks like
+afterwards*.
+
+Two comments I wrote in `ServerTeleportationManager` also stated the opposite of what the code
+does (claiming the cart's near-level position is carried across, when it is discarded and only
+the attachment is used); the panel caught both and they are corrected in place.
 
 ### The adversarial panel round (2026-07-28) — what it caught, and what its own fix missed
 
@@ -606,7 +666,8 @@ red). The full matrix remains mandatory before a commit.
 | `-PapertureTeardownTest -PrsOnly -PdisableSeamCartRail` | (d) master inversion — RS-CART-B reproduces the measured halt (cart off-rail, epsilon below the far rail line, stopped); RS-CART-A still passes (COINCIDENT works stock) |
 | `-PapertureTeardownTest -PrsOnly -PdisableSeamCartStraddle` | (d) occupancy inversion — RS-CART-C reproduces the HOVER (cart resting one cell clear of the aperture rides the far world's rail: dropped 0.038 vs 1.100, bridgeReads 249 vs 5) |
 | `-PapertureTeardownTest -PrsOnly -PdisableSeamCartCrossOnly` | (d) direction lever — all cart arms still pass; the straddle test independently covers RS-CART-C's bi-faced fixture, so this row proves the lever is wired, not that the guard is exercised (see the ⚠ above) |
-| `… -PrsOnly -PseamCartProbe` | arms RS-CART-D, the RIDDEN measurement (report-only; moves the real player and restores them) plus every SAMPLE/EVT/COME-OFF-TRACK/bridge-hit line |
+| `… -PrsOnly -PseamCartProbe` | arms RS-CART-D (cross-dim ridden) and RS-CART-E (SAME-DIM ridden, the user's own topology, which ASSERTS the arrival height) plus every SAMPLE/EVT/COME-OFF-TRACK/CARRY-TERMS/bridge-hit line. Both move the real player and restore them in a `finally` |
+| `… -PrsOnly -PseamCartProbe -PdisableSeamVehicleAttach` | ridden-carry inversion — RS-CART-E reproduces the arrival hop (the vehicle's own passenger-attachment offset above riding height) |
 
 Iteration tip: add `-PrsOnly` to any RS-focused configuration (~3.5 min instead of ~6+). The five
 configurations run green on 2026-07-27 before commit were: rows 1–5 of this table (rows 1–2 as full

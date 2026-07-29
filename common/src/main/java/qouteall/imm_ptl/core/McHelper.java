@@ -306,10 +306,38 @@ public class McHelper {
      * {@link Entity#positionRider(Entity)}
      * TODO fix for non-default gravity
      */
+    /**
+     * The vector to add to a PASSENGER's position to get where its VEHICLE must sit — the exact
+     * inverse of vanilla's own rider placement.
+     *
+     * <p>RS (d) FIX, 2026-07-28, user-authorised. {@code Entity.positionRider} (26.2 Entity:2380)
+     * places a rider at
+     * {@code vehicle.getPassengerRidingPosition(passenger) - passenger.getVehicleAttachmentPoint(vehicle)},
+     * and {@code getPassengerRidingPosition} is the vehicle's position PLUS the vehicle's own
+     * passenger-attachment offset. Inverting that needs BOTH terms:
+     * <pre>  vehiclePos = passengerPos + passengerVehicleAttach - vehiclePassengerAttach</pre>
+     * This method previously returned only the first attachment, dropping the second — so every
+     * ridden vehicle carried through a portal was placed too HIGH by the vehicle's own passenger
+     * offset. Measured on a minecart: the rider's real offset from the cart is 0.4125, the
+     * returned attachment was 0.6, and every ridden arrival landed 0.1875 above rail riding
+     * height (user's live round, 2026-07-28: {@code y=…250} instead of {@code …063}, five out of
+     * five, both directions, cross-dim and same-dim alike). The cart then fell back onto the rail,
+     * which is why it read as a small hop rather than a break.
+     *
+     * <p>Not minecart-specific: the same omission shifted boats, horses and every other ridden
+     * vehicle by their own attachment offsets. Computed from the live entities rather than
+     * hard-coded, so it stays correct for entity types with different attachments.
+     */
     public static Vec3 getVehicleOffsetFromPassenger(Entity vehicle, Entity passenger) {
-        Vec3 vehicleAttachmentPoint = passenger.getVehicleAttachmentPoint(vehicle);
-        
-        return vehicleAttachmentPoint;
+        Vec3 passengerVehicleAttach = passenger.getVehicleAttachmentPoint(vehicle);
+        if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_SEAM_VEHICLE_ATTACH) {
+            return passengerVehicleAttach;   // lever: the pre-fix one-term offset
+        }
+        Vec3 vehiclePassengerAttach =
+            vehicle.getPassengerRidingPosition(passenger).subtract(vehicle.position());
+
+        return passengerVehicleAttach.subtract(vehiclePassengerAttach);
     }
     
     public static void adjustVehicle(Entity entity) {

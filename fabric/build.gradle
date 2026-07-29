@@ -181,6 +181,8 @@ loom {
             if (project.findProperty('disableSeamCartRail') == 'true') { vmArg('-Dseamlessportals.disableSeamCartRail=true') }
             if (project.findProperty('disableSeamCartCrossOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamCartCrossOnly=true') }
             if (project.findProperty('disableSeamCartStraddle') == 'true') { vmArg('-Dseamlessportals.disableSeamCartStraddle=true') }
+            // RS (d) SHARED-MACHINERY FIX (user-authorised): the ridden-vehicle carry offset.
+            if (project.findProperty('disableSeamVehicleAttach') == 'true') { vmArg('-Dseamlessportals.disableSeamVehicleAttach=true') }
             // RS (d) PROBE LEVER — DEFAULT-OFF. The minecart-crossing instrument (recon §5.5).
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
             // RS-ONLY suite mode (gametest-side skip of the crossing/teleport legs) — also exposed
@@ -370,6 +372,7 @@ loom {
             if (project.findProperty('disableSeamCartRail') == 'true') { vmArg('-Dseamlessportals.disableSeamCartRail=true') }
             if (project.findProperty('disableSeamCartCrossOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamCartCrossOnly=true') }
             if (project.findProperty('disableSeamCartStraddle') == 'true') { vmArg('-Dseamlessportals.disableSeamCartStraddle=true') }
+            if (project.findProperty('disableSeamVehicleAttach') == 'true') { vmArg('-Dseamlessportals.disableSeamVehicleAttach=true') }
             // RS (d) PROBE LEVER — DEFAULT-OFF. Arms the minecart-crossing instrument's extra
             // logging (SAMPLE/EVT/COME-OFF-TRACK/bridge-hit lines) in the RS-CART gates.
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }

@@ -14,6 +14,8 @@ import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -113,6 +115,31 @@ public final class SeamCartContinuity {
      */
     private static boolean inProbeRead = false;
 
+    /**
+     * How long a cart stays "mid-crossing" after it last straddled a seam cell.
+     *
+     * <p>THE STRADDLE TEST ALONE IS TOO STRICT FOR A RIDDEN CART, and the user's own live round
+     * proved it (2026-07-28, 40km same-dim pair at (3,104,0)→(10,19,40000)). An EMPTY cart is
+     * teleported by the entity pipeline within one tick and never leaves the seam cell: eight
+     * crossings, zero derails, every arrival at exactly rail riding height. A RIDDEN cart is
+     * skipped by that pipeline entirely and waits for its rider's client-first crossing to
+     * round-trip — measured at 3 ticks, during which the cart travelled to 1.59 blocks past the
+     * seam cell's origin. Its box had cleared the seam cell by 0.10, the bridge went quiet, and
+     * it derailed for one tick before the carry.
+     *
+     * <p>The grace does NOT widen the reach: the DEPTH bound still requires the queried cell to be
+     * the immediate neighbour of a bound seam cell, so a cart two cells out gets nothing whatever
+     * its mark says. The grace only removes the SUB-CELL position requirement inside that one
+     * cell, for a cart that has already been established as crossing.
+     */
+    private static final int GRACE_TICKS = 10;
+
+    /** Per-cart "I am mid-crossing this seam" mark. Server-thread confined, evicted each tick. */
+    private record CrossingMark(long ownerCell, String dimension, long tick) {}
+
+    private static final Map<Integer, CrossingMark> CROSSING = new HashMap<>();
+    private static final AtomicLong GRACE_SERVED = new AtomicLong();
+
     /** Brackets a probe's own resolution reads out of the gated counters. See {@link #inProbeRead}. */
     public static boolean beginProbeRead() {
         boolean prev = inProbeRead;
@@ -132,9 +159,41 @@ public final class SeamCartContinuity {
         return BRIDGE_HITS.get();
     }
 
+    public static long graceServedCount() {
+        return GRACE_SERVED.get();
+    }
+
+    /**
+     * The position a ridden vehicle was PLACED at by the crossing, per cart id — always-on
+     * (not probe-gated), because it is the only race-free way to judge the arrival.
+     *
+     * <p>Polling the cart's position after arrival cannot do it: an arriving cart that lands off
+     * riding height is snapped back by {@code moveAlongTrack} within ONE tick, so a gate that
+     * samples even two ticks later reads a corrected value and passes. That is exactly how the
+     * first version of the ridden-arrival inversion failed to reproduce a defect the
+     * {@code CARRY-TERMS} log line showed plainly — the same "assert the last thing the engine
+     * mutates, not what it looks like afterwards" rule that this engagement has now paid for
+     * three times.
+     */
+    private static final Map<Integer, net.minecraft.world.phys.Vec3> LAST_CARRY = new HashMap<>();
+
+    public static void recordVehicleCarry(int entityId, net.minecraft.world.phys.Vec3 placedAt) {
+        if (LAST_CARRY.size() > 64) {
+            LAST_CARRY.clear();   // gametest/live bound; this is diagnostics, not state
+        }
+        LAST_CARRY.put(entityId, placedAt);
+    }
+
+    @Nullable
+    public static net.minecraft.world.phys.Vec3 lastVehicleCarry(int entityId) {
+        return LAST_CARRY.get(entityId);
+    }
+
     public static String counters() {
         return "SeamCartContinuity{bridgeReads=" + BRIDGE_READS.get()
-            + ", bridgeHits=" + BRIDGE_HITS.get() + "}";
+            + ", bridgeHits=" + BRIDGE_HITS.get()
+            + ", graceServed=" + GRACE_SERVED.get()
+            + ", marks=" + CROSSING.size() + "}";
     }
 
     /**
@@ -170,6 +229,9 @@ public final class SeamCartContinuity {
             if (server == null || !server.isSameThread()) {
                 return local;
             }
+            if (cart != null) {
+                markIfOnSeam(src, cart);
+            }
             for (Direction d : HORIZONTALS) {
                 BlockPos owner = pos.relative(d.getOpposite());
                 if (!SeamRegistry.sectionHasSeam(level, owner)) {
@@ -185,7 +247,7 @@ public final class SeamCartContinuity {
                 // crossDir points the other way, and a cart resting one cell clear of the
                 // aperture floats on the far world's track. Measured, not reasoned:
                 // RS-CART-C caught exactly that with the direction narrowing already in place.
-                if (!straddles(cart, owner)) {
+                if (!midCrossing(src, cart, owner)) {
                     continue;
                 }
                 if (!inProbeRead) {
@@ -241,14 +303,82 @@ public final class SeamCartContinuity {
      * <p>A null cart declines: the two wrapped call sites both supply one, so null means an
      * unattributed caller, and an unattributed read cannot be shown to be a crossing.
      */
-    private static boolean straddles(@Nullable AbstractMinecart cart, BlockPos owner) {
+    /**
+     * Record that {@code cart} is OCCUPYING a seam cell right now — its own centre is inside one.
+     * Called once per resolution, before any direction is considered.
+     *
+     * <p><b>Why the centre and not the collision box.</b> The first build tested
+     * {@code cart.getBoundingBox().intersects(AABB(seamCell))}, which sounds equivalent and is
+     * not: a minecart is 0.98 wide, so its box reaches 0.49 past its centre, and a cart AT REST
+     * in the approach cell overlapped the seam cell whenever its centre came within 0.49 of the
+     * boundary — a half-block band, inside a cell the cart never leaves, in which the whole
+     * bridge fired on a cell entirely in FRONT of the plane. The hovering-cart gate passed that
+     * build by 0.02 blocks of spawn placement (adversarial panel, round 2). A centre is either
+     * in the cell or it is not.
+     */
+    private static void markIfOnSeam(ServerLevel level, AbstractMinecart cart) {
+        BlockPos cartCell = cart.blockPosition();
+        if (!SeamRegistry.sectionHasSeam(level, cartCell)
+            || SeamRegistry.lookup(level, cartCell) == null) {
+            return;
+        }
+        CROSSING.put(cart.getId(), new CrossingMark(
+            cartCell.asLong(), level.dimension().identifier().toString(), level.getGameTime()));
+    }
+
+    /**
+     * Is this cart mid-crossing THIS seam cell? True iff its own centre has been inside that seam
+     * cell within the last {@link #GRACE_TICKS} ticks.
+     *
+     * <p>History, not geometry, is what separates the two states that position alone cannot: a
+     * cart stranded mid-crossing and a cart merely sitting next to a portal occupy the same cell
+     * and, on a BI-FACED portal, satisfy the same direction test. Only one of them was ever ON
+     * the seam. A cart that never entered a seam cell therefore never gets an answer, at any
+     * distance and at any sub-cell position — which is what makes the hovering-cart gate a real
+     * verdict rather than a near miss.
+     *
+     * <p>The grace does not widen the reach: the DEPTH bound still demands that the queried cell
+     * be the immediate neighbour of a bound seam cell, so a cart two cells out gets nothing
+     * whatever its mark says. It removes only the requirement that the cart still be touching the
+     * seam cell at the instant of the read — the requirement the user's own ridden crossing
+     * broke by 0.10 of a block.
+     */
+    private static boolean midCrossing(ServerLevel level, @Nullable AbstractMinecart cart,
+                                       BlockPos owner) {
         if (AperturePassthroughLever.DISABLE_SEAM_CART_STRADDLE) {
             return true;   // lever: reproduce the hover on demand (rsCartLegPhantomRail)
         }
         if (cart == null) {
             return false;
         }
-        return cart.getBoundingBox().intersects(new AABB(owner));
+        CrossingMark mark = CROSSING.get(cart.getId());
+        if (mark == null
+            || mark.ownerCell() != owner.asLong()
+            || !mark.dimension().equals(level.dimension().identifier().toString())) {
+            return false;
+        }
+        long age = level.getGameTime() - mark.tick();
+        if (age < 0 || age > GRACE_TICKS) {
+            return false;
+        }
+        if (age > 0 && !inProbeRead) {
+            GRACE_SERVED.incrementAndGet();
+        }
+        return true;
+    }
+
+    /**
+     * Evict stale crossing marks. Registered on {@code END_SERVER_TICK} beside the other
+     * continuity classes; the map only ever holds carts that touched a seam in the last
+     * {@link #GRACE_TICKS} ticks, so it is small by construction — but a cart that is removed
+     * mid-crossing would otherwise leave an entry behind forever.
+     */
+    public static void onServerTickEnd(net.minecraft.server.MinecraftServer server) {
+        if (CROSSING.isEmpty()) {
+            return;
+        }
+        long now = server.overworld().getGameTime();
+        CROSSING.entrySet().removeIf(e -> now - e.getValue().tick() > GRACE_TICKS);
     }
 
     /**

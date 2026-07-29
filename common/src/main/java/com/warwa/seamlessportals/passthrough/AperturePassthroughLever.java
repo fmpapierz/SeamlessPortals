@@ -524,6 +524,27 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamCartStraddle");
 
     /**
+     * Restores the OLD (one-term) ridden-vehicle carry offset —
+     * {@code -Dseamlessportals.disableSeamVehicleAttach=true}.
+     *
+     * <p>With the fix ON (default), {@code McHelper.getVehicleOffsetFromPassenger} returns the
+     * true inverse of vanilla's rider placement,
+     * {@code passengerVehicleAttach - vehiclePassengerAttach}. With it OFF, the pre-2026-07-28
+     * behaviour returns: only the first term, so a ridden vehicle carried through a portal is
+     * placed too HIGH by the vehicle's own passenger-attachment offset — 0.1875 for a minecart,
+     * measured five out of five in the user's live round, both directions, cross-dim and
+     * same-dim alike.
+     *
+     * <p>⚠ This lever spans SHARED vehicle machinery: the same helper carries boats, horses and
+     * every other ridden vehicle across a portal, on both the client and server paths. It is
+     * user-authorised (2026-07-28, "change shared vehicle-crossing machinery as part of (d) to
+     * make it totally seamless") and lever-gated so the widening stays reversible and
+     * A/B-attributable, per the rule that paid for commit {@code 7766010}.
+     */
+    public static final boolean DISABLE_SEAM_VEHICLE_ATTACH =
+        Boolean.getBoolean("seamlessportals.disableSeamVehicleAttach");
+
+    /**
      * RS (d) minecart-crossing instrument ({@code -Dseamlessportals.seamCartProbe=true},
      * DEFAULT-OFF): per-tick SAMPLE lines per watched cart, COME-OFF-TRACK event lines with the
      * failing resolution cell, teleport-path EVT lines (queued / skip reasons / run) from
