@@ -86,7 +86,20 @@ treat it as UNCONFIRMED, not fact.
 Both shipped hand fixes stay (harmless, verifier-passed, band intact); the hand symptom itself
 is UNCHANGED and OPEN.
 
-### §00z THE HAND ARC — ROOT-CAUSED AND FIXED (2026-07-28). READ THIS FIRST.
+### §00z THE HAND ARC — CLOSED, USER-CONFIRMED LIVE (2026-07-28: *"ITS FINALLY FIXED"*).
+
+**Shipped DEFAULT ON:** the sign-corrected hand bracket (`glDepthRange(0.0, 0.0005)`) + the
+stamp's NEAR FLOOR (`max(z, -0.998w)` = window depth 0.001). A/B levers:
+`-PdisableHandSeamDepthBracket`, `-PdisableStampHandDepthCap`. Both the hand AND the window's
+full-FOV coverage at the seam are user-verified.
+
+**Floor tuning is load-bearing — do not widen it.** The first floor (window 0.005) fixed the
+hand but caused a live regression: under LEQUAL it also loses to REAL geometry nearer than
+~10 cm, which at a crossing is the portal frame/doorway around the camera, so the window
+stopped filling the FOV and its region shrank/shifted with camera panning. The floor must
+clear the HAND and nothing else: 0.001 floor vs a hand pinned into [0, 0.0005] leaves ~8000
+representable 24-bit steps of margin while requiring real geometry to be within ~5 cm before
+it can occlude the window.
 
 **TWO independent eaters, both ours, both from the same wrong belief: that this depth buffer is
 reversed-Z/GEQUAL. It is NOT — the hand pass proves small-is-near/LEQUAL (hand 0.5546 beats
