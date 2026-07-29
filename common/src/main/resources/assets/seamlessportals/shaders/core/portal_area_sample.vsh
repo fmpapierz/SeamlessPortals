@@ -32,12 +32,22 @@ void main() {
     // scene 0.9945). Capping the far side cannot stop a near-plane-clamped fragment. The
     // correct guard is a NEAR FLOOR: keep every stamp fragment at window depth >= 0.005
     // (NDC z >= -0.99), which is
-    //   * ALWAYS behind the IS5-HAND bracket's hand (remapped into [0, 0.001]) => the hand can
+    //   * ALWAYS behind the IS5-HAND bracket's hand (remapped into [0, 0.0005]) => the hand can
     //     never be overpainted, at any crossing distance; the two fixes compose by design, and
     //   * still in front of everything the window must replace (scene behind the portal sits
     //     at ~0.98), so window content and the C4-SEAM band fix are unaffected.
+    //
+    // FLOOR VALUE — TIGHT BY NECESSITY (live-corrected 2026-07-28). The first floor was
+    // window depth 0.005, which under LEQUAL also loses to REAL geometry nearer than ~10 cm:
+    // at a crossing that is the portal frame / doorway blocks around the camera, so the window
+    // stopped painting wherever near geometry was in view and its covered region shrank and
+    // shifted as the camera panned (user-observed regression: "the window moves and changes
+    // shape"). The floor must clear the HAND and nothing else, so it now sits at window depth
+    // 0.001 (NDC -0.998) against a hand pinned into [0, 0.0005]: a 0.0005 margin is ~8000
+    // representable steps on a 24-bit depth buffer, while real scene geometry must be within
+    // ~5 cm (essentially at the near plane) before it can occlude the window.
     // w > 0 for every vertex here (the S14.36 CPU clip keeps only in-front-of-camera
     // geometry), so the max() is well-formed.
-    gl_Position.z = max(gl_Position.z, -0.99 * gl_Position.w);
+    gl_Position.z = max(gl_Position.z, -0.998 * gl_Position.w);
     vertexColor = Color;
 }

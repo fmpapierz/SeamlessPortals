@@ -72,7 +72,7 @@ public final class IrisHandSeamDepthBracket {
      * [0.0, WIN_HI]: under LEQUAL the hand then wins against all stored content, which was
      * the design intent from the start.
      */
-    private static final double WIN_HI = 0.001;
+    private static final double WIN_HI = 0.0005;
 
     private static boolean armed = false;
     private static boolean announced = false;
