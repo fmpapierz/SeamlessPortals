@@ -11,9 +11,14 @@
 > FULL-PIPELINE dest core was missing the DECOMPOSED core's Step 10.10
 > (`onBeforeTranslucentRendering`), which is why shaders-OFF already worked (M0 gate). Fix = the
 > twin, dispatched after `render()` returns.
-> **3. The crashes were never portal code** — a Temurin 25.0.2 C2 JIT defect (5 victims, 4 in the
-> portal occlusion-query path). Resolved at the root by pinning the toolchain to Zulu 25.0.4
-> (`d1fce7c`); all five `CompileCommand` excludes then deleted (`8b96a3e`).
+> **3. The crashes were never portal code** — a C2 JIT defect (6 victims, 5 in the portal
+> occlusion-query / `doRenderPortal` region). **NOT vendor-specific and NOT resolved**: victim #6
+> crashed on Zulu 25.0.4 too, so the JDK theory is dead (`c258873`) and the `CompileCommand` excludes
+> — which were briefly deleted on a CONFOUNDED clean run that still had them active — are restored.
+> The toolchain pin to Zulu (`d1fce7c`) is kept only as a newer patch level, not as a fix. Full
+> record + the recognition signature: memory `temurin-c2-jit-crash`.
+> **4. The first-person seam window shape-shift** — FIXED `7fd747a`, user-confirmed both ways. The
+> stamp's near floor ran PER VERTEX and tilted the interpolated depth plane. See §9.
 >
 > **The closing A/B (`-PdisableCrossViewReverseWindow=true`), both directions:**
 >
