@@ -269,6 +269,45 @@ public class IPGlobal {
     public static final boolean CROSS_VIEW_SUPPRESS_UNDER_PACK_LEVER =
         Boolean.getBoolean("seamlessportals.crossViewSuppressUnderPack");
 
+    // ===== XWIN — THE REVERSE WINDOW INSIDE THE CROSS VIEW, DEFAULT ON (2026-07-29) ===========
+    // USER-REPORTED right after the sibling fix above landed: "when the camera is in opposite dim
+    // of player, the portal window does not show, so you only see the opposite dim and no player".
+    // Ledgered gap #7 of that fix. The DECOMPOSED dest core has always had the slot that draws
+    // portals inside a dest render (SecondaryWorldRenderCore Step 10.10) — which is why a
+    // SHADERS-OFF cross view already shows the window (M0 gate, live-confirmed by the user
+    // 2026-07-29: "the window is there with shaders off"). The FULL-PIPELINE core has no such slot:
+    // everything happens inside its one LevelRenderer.render() call, and the compat renderer's
+    // window pass is driven only by the IS0 anchor, which injects inside GameRenderer.renderLevel —
+    // the method a cross-view frame elides. IP had no gap at all: its cross-view invoke body was a
+    // recursive renderLevel(), which re-fired its own portal hooks with client.level == the dest.
+    // THE FIX adds the full-pipeline twin of Step 10.10, at the only correct point for the compat
+    // renderer (after render(), because its workhorse snapshots the FINISHED frame).
+    // DEFAULT ON: window-less is the DEFECT, not a conservative baseline, and shaders-OFF already
+    // behaves the fixed way — so ON is the parity direction, not the novel one. Blast radius is
+    // exactly the frames broken today; every other frame short-circuits on one boolean.
+    // Pass this to force the pre-fix route and REPRODUCE the missing window —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+    public static final boolean CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableCrossViewReverseWindow");
+
+    /** XWIN confirm-counter: cross-view frames on which the portal pass was actually entered.
+     *
+     *  <p>DELIBERATELY PRIVATE, for the SAME reason as the IS0 anchor counter above:
+     *  RunConfigReport's [2/3] sweep prints every PUBLIC static scalar on this class under "lever
+     *  constants", and that block is emitted synchronously by RunConfigReport.noteArmedFrame —
+     *  which the cross-view invoke branch already fired EARLIER in this same frame. A public field
+     *  would therefore print 0 in the very block meant to prove the route was taken. That exact bug
+     *  is one commit old (2f9d7b8). Render-thread plain int. */
+    private static int crossViewReverseWindowPasses = 0;
+
+    public static void noteCrossViewReverseWindowPass() {
+        crossViewReverseWindowPasses++;
+    }
+
+    public static int getCrossViewReverseWindowPasses() {
+        return crossViewReverseWindowPasses;
+    }
+
     /** MONOTONIC count of frames on which the IS0 post-main anchor fired. Written ONLY by
      *  MixinGameRenderer_IPPostLevelAnchor (gated on the lever above), read as a DELTA by
      *  TpXdimFrameCensus at GameRenderer.render TAIL — the "did the anchor fire this frame"

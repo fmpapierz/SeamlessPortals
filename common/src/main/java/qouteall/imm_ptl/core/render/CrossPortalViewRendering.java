@@ -64,7 +64,10 @@ public class CrossPortalViewRendering {
      *
      * <p>Consumers: (1) {@code IrisCompatOn262Renderer.invokeWorldRendering} — the D23 split;
      * (2) the Fabric AFTER_TRANSLUCENT_TERRAIN driver; (3)
-     * {@code PerEntityClipBracket.onMainPassBeforeTranslucentTerrain}. (2) and (3) exist because
+     * {@code PerEntityClipBracket.onMainPassBeforeTranslucentTerrain}; and (4) XWIN —
+     * {@code SecondaryWorldRenderCore.maybeRunCrossViewPortalPass}, the ONLY consumer that reads
+     * the latch POSITIVELY (it fires the reverse-window pass precisely because this is a cross-view
+     * frame, where the IS0 anchor cannot). (2) and (3) exist because
      * fabric level-render events RE-FIRE inside a real nested renderLevel (the doubly-load-bearing
      * guard documented at {@code IrisCompatOn262Renderer.onBeforeTranslucentRendering}) — under the
      * DECOMPOSED cross-view driver no framegraph runs and neither event fires at all, so honoring
