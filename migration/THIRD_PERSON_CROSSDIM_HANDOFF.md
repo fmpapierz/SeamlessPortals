@@ -285,3 +285,58 @@ trySetup hook — the pattern to copy for any new draw-time probe) · `-PhandSub
 Shipped hand fixes (DEFAULT ON, do not disturb): the hand depth bracket
 `glDepthRange(0, 0.0005)` (`-PdisableHandSeamDepthBracket`) and the stamp NEAR FLOOR
 `max(z, -0.998w)` (`-PdisableStampHandDepthCap`). Their values are load-bearing — §00z.
+
+---
+
+## §9 IS5-XCUT — THE FIRST-PERSON SEAM WINDOW SHAPE-SHIFT (CLOSED 2026-08-01, `7fd747a`)
+
+Reported by the user in the same message that confirmed the cross-view explosion fixed. User-
+confirmed BOTH ways: *"no more shape changing, hand is fine, window fills correctly"* and, on the
+repro lever, *"shape changing is back"*.
+
+**Cause.** The stamp's near floor ran PER VERTEX
+(`gl_Position.z = max(gl_Position.z, -0.998 * gl_Position.w)`). Depth interpolates SCREEN-AFFINE, so
+clamping per vertex computes `L[max(z,c)]` where the correct value is `max(L[z],c)` — it TILTS the
+interpolated depth plane rather than clamping it. The S14.36 CPU clip leaves one aperture vertex
+~0.1 mm from the eye (true NDC z ~ -1e3); flooring that one vertex skews the whole plane, and the
+error is affine in screen space ⇒ a STRAIGHT boundary, pinned at the unfloored vertices (pivoting
+about a corner) and SWEEPING as the clipped vertex slides with camera rotation.
+
+**Fix.** Move the floor to the fragment stage: `gl_FragDepth = max(gl_FragCoord.z, 0.001)`, in new
+siblings `portal_area_sample_floor.fsh` / `portal_area_solid_floor.fsh`. Same depth, same clamp
+magnitude — only where it is computed, so §00z (hand) and IS5-SEAM (coverage) are preserved by
+construction. A/B: `-PdisableXcutFragFloor`.
+
+### §9.1 THE ATTRIBUTION TABLE — two legs, zero new code, a whole family eliminated
+| leg | depth test | floor | swept cut |
+|---|---|---|---|
+| baseline | ON | ON | PRESENT |
+| `-PdebugStampSolid -PdisableStampDepthTest` | OFF | ON | GONE (raw footprint = clean stable rect) |
+| `-PdisableStampHandDepthCap` | ON | OFF | GONE |
+The cut needed BOTH ⇒ the floor is the carrier and the aperture GEOMETRY is innocent. The CPU clip,
+the mesh and the projection were never touched by the fix.
+
+### §9.2 ★ MEASURE THE DEPTH CONVENTION — DO NOT INFER IT, NOT EVEN FROM BYTECODE
+`GlDevice` genuinely calls `glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE)` — verified by javap. From
+that it follows that the near floor could never bind, that the §00z tuning was a placebo, and that
+`-PdisableStampHandDepthCap` is a null lever. **All three are false at runtime.** The draw measured
+`clipDepthMode=NEGATIVE_ONE_TO_ONE` (39/39) and `range=[0,1]` (26/26, across both floor-ON and
+floor-OFF legs); something — most plausibly iris — sets it back before the stamp. Two
+`glGetInteger` reads at `GlCommandEncoder.trySetup` RETURN refuted a confident, fully-argued,
+bytecode-grounded conclusion in a single run. Those reads are now permanent in
+`StampExecStateProbe`. Corollary also measured: the hand's `glDepthRange(0, 0.0005)` bracket is
+SEQUENTIAL with the stamp, not nested around it.
+
+### §9.3 THE STANDING WARNING THIS ARC EARNED
+Five leads died here and ALL FIVE WERE MINE: the near-floor dismissal (a too-coarse
+"distance can't respond to rotation" argument — a per-VERTEX clamp is rotation-sensitive because the
+clipped vertex moves), the aperture clip as cause (disabling it made things WORSE — it was a
+mitigation), the degenerate-w/guard-band story, the ZERO_TO_ONE claim, and (earlier in the session)
+the JDK theory for the C2 crashes. The unifying error every time: **reasoning from something that
+FELT like ground truth — an intuition, a code comment, bytecode, a clean run — instead of reading
+state at the draw.**
+
+And three instruments were lying when this arc reached them: a probe aimed where the target wasn't,
+a sentinel matching a string no shipped shader contains (so every leg carried a false anomaly), and
+a counter that printed `0` inside the very block meant to prove it had run. **Verify the instrument
+before believing the instrument.**
