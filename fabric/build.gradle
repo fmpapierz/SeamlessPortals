@@ -99,17 +99,62 @@ loom {
             client()
             setConfigName('Fabric Client')
             runDir('runs/client')
-            // NOTE (2026-08-01): five -XX:CompileCommand=exclude rows lived here from 2026-07-18
-            // to 2026-08-01, mitigating a Temurin 25.0.2 HotSpot C2 crash (five victims:
-            // PortalRenderInfo::renderAndDecideVisibility, IOWorker::storePendingChunk,
-            // GlQueryObject::performQuery, and both halves of the testShouldRenderPortal lambda —
-            // four of the five in the portal occlusion-query path). Each row's own comment said
-            // "remove when a fixed JDK lands". One has: the toolchain now pins Zulu 25.0.4+7
-            // (gradle.properties jdkVendor), and a portal-heavy session that previously crashed at
-            // ~3 min ran clean. Rows deleted to recover JIT optimization on the render path.
-            // IF THAT CRASH SIGNATURE EVER RETURNS — C2 CompilerThread, frame jvm.dll+0x73238f,
-            // all-jvm.dll native frames, zero Java frames, in hs_err_pid*.log — restore them from
-            // git history (the commit that removed them names all five) rather than re-deriving.
+            // S19 live-round crash (2026-07-18, hs_err_pid318288): EXCEPTION_ACCESS_VIOLATION
+            // inside jvm.dll on "C2 CompilerThread2" while JIT-compiling
+            // PortalRenderInfo::renderAndDecideVisibility — a Temurin 25.0.2 HotSpot C2
+            // compiler defect (pure jvm.dll frames; not the render thread, not the driver,
+            // not mod logic; fired ~when the method crossed the tier-4 threshold after a few
+            // portal teleports). Surgical mitigation: exclude that ONE method from JIT
+            // compilation (runs interpreted/C1 — negligible, it's a small dispatch method).
+            // Re-test on future JDK updates; remove when a fixed Temurin lands.
+            // (The crossing gametest run carries the same flag — same JVM, same hot method;
+            // without it the suite gate could go flaky on the same defect.)
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // IS0 probe-round crash (2026-07-20, hs_err_pid248404): the SAME Temurin 25.0.2
+            // C2-CompilerThread jvm.dll EXCEPTION_ACCESS_VIOLATION class, new victim method
+            // (CompileTask = vanilla IOWorker::storePendingChunk, during world save; crash on
+            // CompilerThread0, not any game thread — not mod logic, not the IS0 probes). Same
+            // surgical mitigation, same removal condition as the exclude above.
+            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // THIRD victim of the same Temurin 25.0.2 C2 defect (hs_err_pid962536, 2026-07-26 23:42):
+            // EXCEPTION_ACCESS_VIOLATION reading 0x2c, Current thread = "C2 CompilerThread0", problematic
+            // frame V [jvm.dll+0x73238f], Current CompileTask = GlQueryObject::performQuery. Pure
+            // jvm.dll frames on the COMPILER thread with no game thread and no mod frame involved —
+            // the established signature, and distinct from the IS0 native-heap-corruption class which
+            // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
+            // condition: drop all three when a fixed Temurin lands.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
+            // Temurin 25.0.2 C2 JIT DEFECT — 4th victim (2026-08-01). EXCEPTION_ACCESS_VIOLATION on
+            // "C2 CompilerThread0", problematic frame V [jvm.dll+0x73238f], native frames ALL
+            // jvm.dll, ZERO Java frames. The 2026-07-26 crash log has the SAME thread and the SAME
+            // frame offset — a JVM compiler bug, not mod code. Victim this time:
+            //   C2:999868 69246 4 IrisCompatOn262Renderer$$Lambda/0x...::run (12 bytes)
+            // i.e. the occlusion-query Runnable at IrisCompatOn262Renderer:607, passed to
+            // PortalRenderInfo::renderAndDecideVisibility — which is ALREADY excluded above as an
+            // earlier victim of this same defect. C2 simply moved to the lambda inside it.
+            // Surfaced by a rotated-portal teleport, which made the lambda hot enough to compile;
+            // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
+            // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
+            // 5th victim (2026-08-01, SAME session, crash #2 with the row above already active and
+            // PROVEN on the live process command line): C2 moved one hop IN.
+            //   C2:182445 64733 4 IrisCompatOn262Renderer::lambda$testShouldRenderPortal$0 (16 bytes)
+            // A lambda exists as TWO compilable things: the $$Lambda proxy's bridge (run) and the
+            // SYNTHETIC BODY (lambda$<method>$N) on the enclosing class. The row above excludes only
+            // the proxy, so C2 simply compiled the body instead. Excluding every lambda of this
+            // class closes the pair, and with renderAndDecideVisibility + performQuery above it the
+            // whole portal occlusion-query region is now off-limits to C2 — which is where 4 of the
+            // 5 victims have been. Trailing wildcard on the METHOD name this time, not the class.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*')
+            // 6th victim (2026-08-01) — and the one that DISPROVED the JDK theory. Crashed on
+            // ZULU 25.0.4+7, not Temurin: Current thread "C2 CompilerThread0", frame
+            // V [jvm.dll+0x741a7f] (a different offset only because it is a different build),
+            // all-jvm.dll native frames, zero Java frames, at 299s elapsed. Victim:
+            //   C2:299084 64652 ! 4 IrisCompatOn262Renderer::doRenderPortal (215 bytes)
+            // THE DEFECT IS NOT VENDOR-SPECIFIC. The excludes are the real mitigation; the
+            // toolchain pin to Zulu is kept only because a newer patch level is defensible on
+            // general grounds, NOT because it fixes this.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::doRenderPortal')
             // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
@@ -191,9 +236,50 @@ loom {
             client()
             setConfigName('Fabric Client + Sodium')
             runDir('runs/client-sodium')
-            // The five Temurin 25.0.2 C2 CompileCommand excludes were removed here on 2026-08-01
-            // when the toolchain moved to Zulu 25.0.4 — see the note in the `client` block above.
-            // THIS is the block that reproduces it if it ever returns (it needs a shaderpack).
+            // Same Temurin 25.0.2 HotSpot C2 defect mitigation as the `client` run above
+            // (EXCEPTION_ACCESS_VIOLATION JIT-compiling PortalRenderInfo::renderAndDecideVisibility).
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // + the second victim method (IS0 probe round, hs_err_pid248404 — see the client run).
+            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // THIRD victim of the same Temurin 25.0.2 C2 defect (hs_err_pid962536, 2026-07-26 23:42):
+            // EXCEPTION_ACCESS_VIOLATION reading 0x2c, Current thread = "C2 CompilerThread0", problematic
+            // frame V [jvm.dll+0x73238f], Current CompileTask = GlQueryObject::performQuery. Pure
+            // jvm.dll frames on the COMPILER thread with no game thread and no mod frame involved —
+            // the established signature, and distinct from the IS0 native-heap-corruption class which
+            // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
+            // condition: drop all three when a fixed Temurin lands.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
+            // Temurin 25.0.2 C2 JIT DEFECT — 4th victim (2026-08-01). EXCEPTION_ACCESS_VIOLATION on
+            // "C2 CompilerThread0", problematic frame V [jvm.dll+0x73238f], native frames ALL
+            // jvm.dll, ZERO Java frames. The 2026-07-26 crash log has the SAME thread and the SAME
+            // frame offset — a JVM compiler bug, not mod code. Victim this time:
+            //   C2:999868 69246 4 IrisCompatOn262Renderer$$Lambda/0x...::run (12 bytes)
+            // i.e. the occlusion-query Runnable at IrisCompatOn262Renderer:607, passed to
+            // PortalRenderInfo::renderAndDecideVisibility — which is ALREADY excluded above as an
+            // earlier victim of this same defect. C2 simply moved to the lambda inside it.
+            // Surfaced by a rotated-portal teleport, which made the lambda hot enough to compile;
+            // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
+            // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
+            // 5th victim (2026-08-01, SAME session, crash #2 with the row above already active and
+            // PROVEN on the live process command line): C2 moved one hop IN.
+            //   C2:182445 64733 4 IrisCompatOn262Renderer::lambda$testShouldRenderPortal$0 (16 bytes)
+            // A lambda exists as TWO compilable things: the $$Lambda proxy's bridge (run) and the
+            // SYNTHETIC BODY (lambda$<method>$N) on the enclosing class. The row above excludes only
+            // the proxy, so C2 simply compiled the body instead. Excluding every lambda of this
+            // class closes the pair, and with renderAndDecideVisibility + performQuery above it the
+            // whole portal occlusion-query region is now off-limits to C2 — which is where 4 of the
+            // 5 victims have been. Trailing wildcard on the METHOD name this time, not the class.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*')
+            // 6th victim (2026-08-01) — and the one that DISPROVED the JDK theory. Crashed on
+            // ZULU 25.0.4+7, not Temurin: Current thread "C2 CompilerThread0", frame
+            // V [jvm.dll+0x741a7f] (a different offset only because it is a different build),
+            // all-jvm.dll native frames, zero Java frames, at 299s elapsed. Victim:
+            //   C2:299084 64652 ! 4 IrisCompatOn262Renderer::doRenderPortal (215 bytes)
+            // THE DEFECT IS NOT VENDOR-SPECIFIC. The excludes are the real mitigation; the
+            // toolchain pin to Zulu is kept only because a newer patch level is defensible on
+            // general grounds, NOT because it fixes this.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::doRenderPortal')
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -593,10 +679,53 @@ loom {
             property('fabric.client.gametest', 'true')
             property('fabric.client.gametest.modid', project.mod_id)
             property('seamlessportals.gametest.only', 'crossing')
-            // The five Temurin 25.0.2 C2 CompileCommand excludes were removed here on 2026-08-01
-            // (toolchain now Zulu 25.0.4) — see the `client` block. One of them was kept partly to
-            // stop THIS 8-leg gate going flaky on the JVM defect, so if the suite ever starts
-            // failing intermittently with a jvm.dll C2 crash, that is the first thing to check.
+            // Same Temurin C2 mitigation as the client run above (verify wf_b94c1d5e-5f8:
+            // same JVM + the suite teleports enough to heat the method — without this the
+            // 8-leg gate could go flaky on the same JVM defect).
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
+            // + the second victim method (IS0 probe round, hs_err_pid248404: CompilerThread0
+            // died JIT-compiling IOWorker::storePendingChunk during the suite's world saves —
+            // same jvm.dll defect class, not mod logic; see the client run's note).
+            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // THIRD victim of the same Temurin 25.0.2 C2 defect (hs_err_pid962536, 2026-07-26 23:42):
+            // EXCEPTION_ACCESS_VIOLATION reading 0x2c, Current thread = "C2 CompilerThread0", problematic
+            // frame V [jvm.dll+0x73238f], Current CompileTask = GlQueryObject::performQuery. Pure
+            // jvm.dll frames on the COMPILER thread with no game thread and no mod frame involved —
+            // the established signature, and distinct from the IS0 native-heap-corruption class which
+            // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
+            // condition: drop all three when a fixed Temurin lands.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
+            // Temurin 25.0.2 C2 JIT DEFECT — 4th victim (2026-08-01). EXCEPTION_ACCESS_VIOLATION on
+            // "C2 CompilerThread0", problematic frame V [jvm.dll+0x73238f], native frames ALL
+            // jvm.dll, ZERO Java frames. The 2026-07-26 crash log has the SAME thread and the SAME
+            // frame offset — a JVM compiler bug, not mod code. Victim this time:
+            //   C2:999868 69246 4 IrisCompatOn262Renderer$$Lambda/0x...::run (12 bytes)
+            // i.e. the occlusion-query Runnable at IrisCompatOn262Renderer:607, passed to
+            // PortalRenderInfo::renderAndDecideVisibility — which is ALREADY excluded above as an
+            // earlier victim of this same defect. C2 simply moved to the lambda inside it.
+            // Surfaced by a rotated-portal teleport, which made the lambda hot enough to compile;
+            // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
+            // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
+            // 5th victim (2026-08-01, SAME session, crash #2 with the row above already active and
+            // PROVEN on the live process command line): C2 moved one hop IN.
+            //   C2:182445 64733 4 IrisCompatOn262Renderer::lambda$testShouldRenderPortal$0 (16 bytes)
+            // A lambda exists as TWO compilable things: the $$Lambda proxy's bridge (run) and the
+            // SYNTHETIC BODY (lambda$<method>$N) on the enclosing class. The row above excludes only
+            // the proxy, so C2 simply compiled the body instead. Excluding every lambda of this
+            // class closes the pair, and with renderAndDecideVisibility + performQuery above it the
+            // whole portal occlusion-query region is now off-limits to C2 — which is where 4 of the
+            // 5 victims have been. Trailing wildcard on the METHOD name this time, not the class.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*')
+            // 6th victim (2026-08-01) — and the one that DISPROVED the JDK theory. Crashed on
+            // ZULU 25.0.4+7, not Temurin: Current thread "C2 CompilerThread0", frame
+            // V [jvm.dll+0x741a7f] (a different offset only because it is a different build),
+            // all-jvm.dll native frames, zero Java frames, at 299s elapsed. Victim:
+            //   C2:299084 64652 ! 4 IrisCompatOn262Renderer::doRenderPortal (215 bytes)
+            // THE DEFECT IS NOT VENDOR-SPECIFIC. The excludes are the real mitigation; the
+            // toolchain pin to Zulu is kept only because a newer patch level is defensible on
+            // general grounds, NOT because it fixes this.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::doRenderPortal')
             // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
             // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
             vmArg('-XX:-OmitStackTraceInFastThrow')
