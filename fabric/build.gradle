@@ -124,6 +124,18 @@ loom {
             // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
             // condition: drop all three when a fixed Temurin lands.
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
+            // Temurin 25.0.2 C2 JIT DEFECT — 4th victim (2026-08-01). EXCEPTION_ACCESS_VIOLATION on
+            // "C2 CompilerThread0", problematic frame V [jvm.dll+0x73238f], native frames ALL
+            // jvm.dll, ZERO Java frames. The 2026-07-26 crash log has the SAME thread and the SAME
+            // frame offset — a JVM compiler bug, not mod code. Victim this time:
+            //   C2:999868 69246 4 IrisCompatOn262Renderer$$Lambda/0x...::run (12 bytes)
+            // i.e. the occlusion-query Runnable at IrisCompatOn262Renderer:607, passed to
+            // PortalRenderInfo::renderAndDecideVisibility — which is ALREADY excluded above as an
+            // earlier victim of this same defect. C2 simply moved to the lambda inside it.
+            // Surfaced by a rotated-portal teleport, which made the lambda hot enough to compile;
+            // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
+            // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
             // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
@@ -218,6 +230,18 @@ loom {
             // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
             // condition: drop all three when a fixed Temurin lands.
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
+            // Temurin 25.0.2 C2 JIT DEFECT — 4th victim (2026-08-01). EXCEPTION_ACCESS_VIOLATION on
+            // "C2 CompilerThread0", problematic frame V [jvm.dll+0x73238f], native frames ALL
+            // jvm.dll, ZERO Java frames. The 2026-07-26 crash log has the SAME thread and the SAME
+            // frame offset — a JVM compiler bug, not mod code. Victim this time:
+            //   C2:999868 69246 4 IrisCompatOn262Renderer$$Lambda/0x...::run (12 bytes)
+            // i.e. the occlusion-query Runnable at IrisCompatOn262Renderer:607, passed to
+            // PortalRenderInfo::renderAndDecideVisibility — which is ALREADY excluded above as an
+            // earlier victim of this same defect. C2 simply moved to the lambda inside it.
+            // Surfaced by a rotated-portal teleport, which made the lambda hot enough to compile;
+            // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
+            // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -633,6 +657,18 @@ loom {
             // shows victim VARIETY rather than one method. Same surgical mitigation, same removal
             // condition: drop all three when a fixed Temurin lands.
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery')
+            // Temurin 25.0.2 C2 JIT DEFECT — 4th victim (2026-08-01). EXCEPTION_ACCESS_VIOLATION on
+            // "C2 CompilerThread0", problematic frame V [jvm.dll+0x73238f], native frames ALL
+            // jvm.dll, ZERO Java frames. The 2026-07-26 crash log has the SAME thread and the SAME
+            // frame offset — a JVM compiler bug, not mod code. Victim this time:
+            //   C2:999868 69246 4 IrisCompatOn262Renderer$$Lambda/0x...::run (12 bytes)
+            // i.e. the occlusion-query Runnable at IrisCompatOn262Renderer:607, passed to
+            // PortalRenderInfo::renderAndDecideVisibility — which is ALREADY excluded above as an
+            // earlier victim of this same defect. C2 simply moved to the lambda inside it.
+            // Surfaced by a rotated-portal teleport, which made the lambda hot enough to compile;
+            // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
+            // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
             // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
             // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
             vmArg('-XX:-OmitStackTraceInFastThrow')
