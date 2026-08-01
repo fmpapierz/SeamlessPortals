@@ -223,6 +223,9 @@ public final class TpXdimFrameCensus {
      *  indistinguishable from the pre-existing own-portal-loop branch in exactly the rows that
      *  prove the fix took effect. */
     private static int invokeXview = 0;
+    /** XWIN: how many times the cross-view portal pass was entered this frame. >1 would mean a
+     *  recursion guard failed, so this is a COUNT and not a boolean on purpose. */
+    private static int xwinPasses = 0;
     private static boolean invokeInsideCrossView = false;
     private static boolean insideCrossViewNow = false;
     private static String glState = null;
@@ -464,6 +467,23 @@ public final class TpXdimFrameCensus {
     }
 
     /**
+     * XWIN: the cross-view portal pass (the full-pipeline core's Step-10.10 twin) was entered.
+     * Counted, not flagged — more than one per frame means a recursion guard failed, and that is
+     * the single cheapest tell for the whole mechanism.
+     */
+    public static void noteXWinPass() {
+        if (!IPGlobal.TP_XDIM_CENSUS_LEVER || disarmed) {
+            return;
+        }
+        try {
+            xwinPasses++;
+        }
+        catch (Throwable t) {
+            disarm(t);
+        }
+    }
+
+    /**
      * @param kind 0 = the IrisCompat D23 layer-0 decomposed fallback, 1 = the IrisCompat
      *             full-pipeline branch, 2 = the base {@code PortalRenderer} decomposed driver
      *             (the stencil family's path, live shaders-OFF), 3 = the CROSS-VIEW layer-0
@@ -652,6 +672,8 @@ public final class TpXdimFrameCensus {
                     + " reentrantSkips=" + f1SkippedReentrant + ")"))
             // --- THE MEASUREMENT
             .append(" | invoke=").append(invokeStr())
+            .append(" xwin=").append(xwinPasses == 0 ? "NO"
+                : (xwinPasses == 1 ? "YES" : ("YES(x" + xwinPasses + " RECURSION-ANOMALY)")))
             .append(" | renderer=").append(rendererName())
             .append(" swActive=").append(shaderpackViewsActive())
             .append(" shaders=").append(shadersOn())
@@ -719,6 +741,9 @@ public final class TpXdimFrameCensus {
             // The fix route's running total, live per window — the RUN CONFIG block only ever
             // snapshots it once, near session start, so it is near-zero there by construction.
             .append(" xviewFullPipelineTotal=").append(IPGlobal.crossViewFullPipelineCount)
+            .append(" xwinPassTotal=").append(IPGlobal.getCrossViewReverseWindowPasses())
+            .append(" xwinLever=").append(
+                IPGlobal.CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER ? "DISABLED(no-window repro)" : "ON")
             .append(" xviewRouteLever=").append(
                 IPGlobal.CROSS_VIEW_FULL_PIPELINE_DISABLED_LEVER ? "DISABLED(pre-fix route)" : "ON");
         out.append("\n  tally:");
@@ -776,6 +801,7 @@ public final class TpXdimFrameCensus {
         invokeFull = 0;
         invokeBase = 0;
         invokeXview = 0;
+        xwinPasses = 0;
         invokeInsideCrossView = false;
         // A throw between notePreRender and notePostRender must not leak into the next frame.
         insideCrossViewNow = false;

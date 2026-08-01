@@ -150,6 +150,14 @@ loom {
             // (explosion SURVIVES it => the cross-view path is not the carrier) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
             if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
         }
         server {
             server()
@@ -177,6 +185,14 @@ loom {
             // (explosion SURVIVES it => the cross-view path is not the carrier) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
             if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
         }
         // S19-E live Sodium/Iris compat run. Sodium/Iris are compileOnly by default (see the
         // dependencies block), so this run only actually LOADS them when the matching runtime
@@ -529,6 +545,14 @@ loom {
             // (explosion SURVIVES it => the cross-view path is not the carrier) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
             if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -573,6 +597,14 @@ loom {
             // (explosion SURVIVES it => the cross-view path is not the carrier) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
             if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
         }
         // S15 entity-crossing smoke on the UNIFIED path (EXECUTION_PLAN §S15,
         // D4.6 — re-run at every later stage). Own run dir: its config is
@@ -873,6 +905,14 @@ loom {
             // (explosion SURVIVES it => the cross-view path is not the carrier) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
             if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
         }
     }
 }

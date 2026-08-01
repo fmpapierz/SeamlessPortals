@@ -498,12 +498,17 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             //    LevelRendering there would re-run the pack's composite chain over the shipped
             //    frame. It KEEPS the decomposed fallback, byte-identical.
             //
-            // DELIBERATE OMISSIONS vs the isInsideOwnRenderPortals branch below — each would be an
-            // ACTIVE DEFECT here, not a missing nicety:
-            //   * anyFullPipelineDestRendered NOT set: it arms the prev-uniform heal in
-            //     onBeforeHandRendering's finally, and that anchor injects INSIDE renderLevel — it
-            //     CANNOT fire on this frame. The flag would survive into the NEXT frame and heal
-            //     against an unrelated pipeline.
+            // DELIBERATE OMISSIONS vs the isInsideOwnRenderPortals branch below. NOTE (XWIN,
+            // 2026-07-29): onBeforeHandRendering DOES now run on a cross-view frame — not from the
+            // IS0 anchor (which still cannot fire; it injects inside GameRenderer.renderLevel), but
+            // from SecondaryWorldRenderCore.maybeRunCrossViewPortalPass, the full-pipeline twin of
+            // the decomposed core's Step 10.10, dispatched AFTER this render() returns. The
+            // omissions below all still stand, on the restated ground that THIS dest render IS the
+            // frame's main render and the pass that treats it as such runs after it:
+            //   * anyFullPipelineDestRendered NOT set here: the prev-uniform heal is armed by the
+            //     WINDOW's own nested invoke (the branch below) and consumed by the same
+            //     onBeforeHandRendering invocation's finally, so the flag can no longer be stranded
+            //     into the next frame — that hazard is CLOSED by XWIN, not opened.
             //   * IrisTemporalTargetGuard.clearForDestPass() NOT called: the guard never save()d
             //     this frame, and this render IS the main view — zeroing its own TAA history would
             //     be a self-inflicted ghost.

@@ -65,6 +65,7 @@ import qouteall.imm_ptl.core.render.context_management.FogRendererContext;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
 import qouteall.imm_ptl.core.render.context_management.RenderStates;
 import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
+import qouteall.imm_ptl.core.render.renderer.PortalRenderer;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -2030,6 +2031,90 @@ public class SecondaryWorldRenderCore {
             DrawCallTrace.record("<<< renderDestWorldFullPipeline dim=" + destDim.identifier()
                 + " " + DrawCallTrace.mvTop());
         }
+
+        // ===== XWIN — THE CROSS-VIEW PORTAL PASS (the full-pipeline core's missing Step-10.10) ==
+        // The DECOMPOSED core has always had this slot, at :1180
+        //     IPCGlobal.renderer.onBeforeTranslucentRendering(destViewMatrix);
+        // which is why a SHADERS-OFF cross-view frame already draws the reverse window (the stencil
+        // family renders portals in that hook — LIVE-CONFIRMED by the M0 gate, 2026-07-29: "the
+        // window is there with shaders off"). The full-pipeline core has NO such slot — everything
+        // happens inside its one render() call — so on a shaders-ON cross-view frame no portal
+        // window is drawn at all and the player, being in the other dimension, is simply invisible
+        // (user-reported after 4be60e0; ledgered gap #7 of that fix). THIS IS THAT TWIN, at the only
+        // correct point for the compat renderer: AFTER render(), because its workhorse snapshots the
+        // FINISHED frame, stamps the portal area, and blits back.
+        //
+        // Placed after the try/finally, deliberately:
+        //   * every pass-scoped probe bracket is CLOSED here (ClipDiscriminator / ShadowEmptiness /
+        //     ShadowAlias endPass, ActSeedProbe.endPortal) — those are single-slot statics, so the
+        //     window's own beginPass/beginPortal must NEST, not interleave; at the render() INVOKE
+        //     slot each inner endPass would close the outer's window and silently corrupt every
+        //     diagnostic this arc depends on;
+        //   * stencil and clip are hard-neutralized (the raw GL_CLIP_DISTANCE0 kill included, which
+        //     exists because the per-draw uploaders re-assert it with raw glEnable so
+        //     disableClipping() can no-op) — the window's nested pass arms its own from scratch;
+        //   * client.level / levelRenderer / mainCamera / lightmap / sodium context are STILL DEST
+        //     (switchAndRenderTheWorldFullPipeline's finally restores them and has not run) — the
+        //     same load-bearing property ActSeedProbe.endPortal's javadoc documents for this slot;
+        //   * destDrawViewMatrix is in scope (declared outside the try) and is the EXACT object
+        //     handed to render() as arg 5.
+        // LEDGER (accepted, not a defect): the Globals UBO was restored to the SOURCE camera before
+        // this point. The aperture and occlusion-query draws carry their own matrices and write no
+        // color or depth, and the nested window render re-runs its own Step 8.
+        maybeRunCrossViewPortalPass(destDrawViewMatrix);
+    }
+
+    /**
+     * XWIN gate — fires the portal pass exactly ONCE per cross-portal-view frame, on the LAYER-0
+     * dest render only.
+     *
+     * <p><b>Reach.</b> {@code renderDestWorldFullPipeline} is only ever entered from
+     * {@code IrisCompatOn262Renderer.invokeWorldRendering} (the cross-view layer-0 branch and the
+     * nested own-portal-loop branch) via {@code MyGameRenderer.renderWorldFullPipeline}. The
+     * shaders-OFF stencil family and {@code GuiPortalRendering} both route to the DECOMPOSED
+     * {@code renderWorldNew} and never enter this method — so this gate is structurally unreachable
+     * outside shaders-ON, and byte-inert on every other frame after one static boolean read.
+     *
+     * <p><b>The hook PAIR, in normal-frame order</b> — capture, then draw. This is not two ideas:
+     * it is exactly what a normal frame runs (the Fabric AFTER_TRANSLUCENT_TERRAIN driver sets
+     * {@code passingModelView}; the IS0 anchor then consumes it), and what the decomposed core's
+     * Step 10.10 already does for its own family. For {@code IrisCompatOn262Renderer} the first
+     * call's entire effect is {@code passingModelView = mv} plus a stencil-disable belt — and that
+     * assignment is LOAD-BEARING: the F1 driver is skipped on a cross-view frame, so without it the
+     * field still holds the LAST NORMAL FRAME's SOURCE-space matrix, and the cull frustum, the
+     * aperture mesh, the occlusion query and the stamp would every one of them be wrong.
+     *
+     * <p><b>The matrix is threaded, never re-read.</b> On a cross-dim frame {@code sharedState} is
+     * false, so the MAIN {@code gameRenderState}'s {@code cameraRenderState} still holds the SOURCE
+     * camera — re-reading it would hand a dest-world portal the source view rotation. This is the
+     * {@code render()} argument itself; iris ALIASES it as {@code gbufferModelView}, hence the
+     * defensive copies.
+     *
+     * <p><b>Recursion.</b> {@code !isRendering()} is the floor: the cross-view latch stays TRUE
+     * through the window's own nested render, so only the layer-0 pass gets through. Three
+     * IP-verbatim belts back it up ({@code onBeforeHandRendering}'s guard,
+     * {@code doRenderPortal}'s guard, and {@code renderPortalContent}'s maxPortalLayer test).
+     */
+    private static void maybeRunCrossViewPortalPass(Matrix4f destDrawViewMatrix) {
+        if (IPGlobal.CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER) {
+            return; // A/B leg: reproduces today's no-window frame byte-for-byte
+        }
+        if (!CrossPortalViewRendering.isRenderingCrossPortalView()) {
+            return; // a normal frame — the IS0 anchor owns the pass
+        }
+        if (PortalRendering.isRendering()) {
+            return; // THE RECURSION FLOOR — this is the window's own nested render
+        }
+        PortalRenderer renderer = IPCGlobal.renderer;
+        if (renderer == null) {
+            return;
+        }
+        // ORDER IS LOAD-BEARING (the 2f9d7b8 lesson): count BEFORE any call that can emit the
+        // once-per-session RunConfigReport block, or the counter proving this ran prints 0 in it.
+        IPGlobal.noteCrossViewReverseWindowPass();
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteXWinPass();
+        renderer.onBeforeTranslucentRendering(new Matrix4f(destDrawViewMatrix)); // capture
+        renderer.onBeforeHandRendering(new Matrix4f(destDrawViewMatrix));        // draw
     }
 
     // One-shot latch for the §2.1-1 FRD isolation assert log.
