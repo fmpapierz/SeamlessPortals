@@ -172,7 +172,17 @@ public final class StampExecStateProbe {
             }
             if (vshId != 0) {
                 vshSource = GL20.glGetShaderSource(vshId);
-                capPresent = vshSource != null && vshSource.contains("0.5 * gl_Position.w");
+                // STALE SENTINEL FIXED 2026-08-01: this matched "0.5 * gl_Position.w", the FAR-side
+                // cap from the pre-§00z shader. That cap was replaced by the NEAR FLOOR
+                // "max(gl_Position.z, -0.998 * gl_Position.w)" and the old string occurs ZERO times
+                // in any shipped shader — so capPresent was ALWAYS false while the emit line below
+                // declares "EXPECTED ... CAP-IN-SOURCE=true", i.e. every -PstampExecProbe leg
+                // reported a false "the floor is missing from the bound shader" anomaly. Match the
+                // floor that actually ships, and match on the OPERATOR + CONSTANT rather than the
+                // whole line so whitespace edits cannot silently re-break it.
+                capPresent = vshSource != null
+                    && vshSource.contains("-0.998")
+                    && vshSource.contains("gl_Position.w");
                 vshInfo = "vshId=" + vshId + " srcLen="
                     + (vshSource == null ? "READ-FAILED" : vshSource.length())
                     + " CAP-IN-SOURCE=" + (vshSource == null ? "UNMEASURED" : capPresent);
