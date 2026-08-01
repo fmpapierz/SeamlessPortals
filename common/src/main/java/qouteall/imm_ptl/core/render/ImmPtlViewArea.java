@@ -490,6 +490,30 @@ public class ImmPtlViewArea extends ViewArea {
         }
     }
 
+    /**
+     * ⚠ THIS LOOKUP WRAPS. It is BOUNDED to the current preset's window: a query outside it
+     * {@code positiveModulo}s onto a live section at congruent-mod-W but COMPLETELY DIFFERENT
+     * coordinates, and — unlike {@link #getRenderSection(long)} — there is no exact-node guard to
+     * turn that into a null. Vanilla's {@code RotatingSectionStorage} guarantees in-window ⇒ exact
+     * match, else null; this override does not.
+     *
+     * <p><b>It has already cost one shipped defect.</b> The dest-pass entity visibility gate
+     * resolved through here, and because the preset is re-centred on the dest camera for CROSS-DIM
+     * only ({@code SecondaryWorldRenderCore:663}), a far SAME-DIM destination folded onto a section
+     * beside the player — normally UNCOMPILED — so EVERY entity in that portal window was culled
+     * while its terrain drew fine. Measured 2026-08-01: an entity at section (0,1,2500) resolving
+     * here to (0,1,0), with 189,210 of 201,525 gate calls disagreeing with the exact lookup.
+     * Fixed in {@code LevelRendererEntityVisibilityMixin} by reading {@link #rawGet} instead.
+     *
+     * <p><b>If you are about to call this, read {@link #rawGet} first.</b> Any consumer that can
+     * query a position outside ±renderDistance chunks of the CURRENT preset centre wants
+     * {@code rawGet} (exact, unbounded, non-creating) or {@link #rawFetch} (same, creates on
+     * demand) — not this. This method is kept wrapping on purpose: adding the guard here would
+     * return null out of window, which for the entity gate meant the entity stayed culled, i.e. it
+     * makes that consumer WORSE, not better. The remaining in-tree callers are vanilla's own
+     * {@code LevelRenderer.isSectionCompiledAndVisible} (whose portal-pass use is redirected by the
+     * mixin above) and {@code LightSectionDump}, a debug dump.
+     */
     // NOTE it may be accessed from another thread
     @Nullable
     @Override

@@ -58,6 +58,7 @@ public final class CartWindowProbe {
     private static long gateFalse;
     private static long disagreements;
     private static long flipped;      // wrap said "cull", exact says "keep" — entities being eaten
+    private static long aliasedKept;  // ...and the fixed lookup was the one actually used
     private static long wrapNull;
     private static long exactNull;
 
@@ -76,7 +77,7 @@ public final class CartWindowProbe {
      */
     public static void onDestGate(
         BlockPos pos, @Nullable RenderSection wrap, @Nullable RenderSection exact,
-        boolean wrapVerdict, boolean exactVerdict
+        boolean wrapVerdict, boolean exactVerdict, boolean useExact
     ) {
         gateCalls++;
         if (!exactVerdict) {
@@ -98,6 +99,14 @@ public final class CartWindowProbe {
         if (!wrapVerdict && exactVerdict) {
             flipped++;
             lastVerdict = "ALIASED@compiled";
+            // THE INVERTING COUNTER. `flipped` counts cases where the wrap lookup would have culled
+            // an entity the exact lookup keeps — it is identical in both lever directions, because
+            // the probe computes BOTH lookups regardless. What differs is which verdict was USED,
+            // so this counts the entities the fix actually rescued: == flipped with the fix on,
+            // and 0 with -PdisableDestEntitySectionExact. That is what lets a gate leg invert.
+            if (useExact) {
+                aliasedKept++;
+            }
         }
         else if (!exactVerdict) {
             lastVerdict = "CULL@exact-uncompiled";
@@ -163,6 +172,15 @@ public final class CartWindowProbe {
         return disagreements;
     }
 
+    /**
+     * Entities the fix actually rescued this session — {@code flipped} restricted to calls where
+     * the fixed lookup was the one used. Equals {@code flipped} with the fix on, and 0 under
+     * {@code -PdisableDestEntitySectionExact}. The inverting quantity for a Defect A gate.
+     */
+    public static long aliasedKept() {
+        return aliasedKept;
+    }
+
     public static String lastVerdict() {
         return lastVerdict;
     }
@@ -170,6 +188,7 @@ public final class CartWindowProbe {
     public static String counters() {
         return "gateCalls=" + gateCalls + " exactFalse=" + gateFalse
             + " disagree=" + disagreements + " flipped=" + flipped
+            + " aliasedKept=" + aliasedKept
             + " wrapNull=" + wrapNull + " exactNull=" + exactNull;
     }
 
@@ -179,6 +198,7 @@ public final class CartWindowProbe {
         gateFalse = 0;
         disagreements = 0;
         flipped = 0;
+        aliasedKept = 0;
         wrapNull = 0;
         exactNull = 0;
         lastEmitMs = 0;

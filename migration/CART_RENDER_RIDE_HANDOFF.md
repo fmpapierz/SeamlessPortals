@@ -1,3 +1,31 @@
+# CART RENDER + RIDE — ✅ BOTH DEFECTS CLOSED 2026-08-01, USER-CONFIRMED LIVE
+
+> **★★ THIS FILE IS THE ORIGINAL BRIEF AND IS NOW HISTORY. Read the resolution first — two of
+> its central claims were WRONG, and acting on them would have wasted the round.**
+>
+> | | what the brief predicted | what it actually was |
+> |---|---|---|
+> | **A (same-dim render)** | the fade-gate bypass is not set for the same-dim entity pass | **FALSE** — `SecondaryWorldRenderCore:2350` already sets `isDestExtracting` there. The surviving half of the gate was the COMPILED-section test, resolving through `ViewArea.getRenderSectionAt`, which WRAPS modulo the preset grid. A far same-dim destination aliased onto a section beside the player. **Not cart-specific: every entity in the window was culled.** |
+> | **B (cross-dim ride)** | the vehicle-attach change, or a passenger-link desync | **NEITHER.** The ride link was never broken and nothing dismounted the player. A vehicle carried through a portal kept a relative-move `VecDeltaCodec` base from before the carry, so the first `MoveEntity$Pos` after arrival decoded to source coordinates and `InterpolationHandler` stranded the rider mid-air. The (d) attach change is **EXONERATED**. |
+>
+> **Fixes:** `ImmPtlViewArea.rawGet` on the entity gate (`-PdisableDestEntitySectionExact`);
+> `Entity.syncPacketPositionCodec` at BOTH carry sites — `moveClientEntityAcrossDimension`
+> (cross-dim) and `McHelper.adjustVehicle` (same-dim, client only)
+> (`-PdisableCrossDimPositionCodecSync`).
+>
+> **⚠ THE SAME-DIM SITE WAS THE ONE THAT MATTERED AND THE EASIEST TO MISS:** a same-dim crossing
+> never enters `moveClientEntityAcrossDimension` (`teleportPlayer` gates it on
+> `fromDimension != toDimension`), so fixing only the cross-dim site left the user's own topology
+> broken. `adjustVehicle` had cancelled interpolation correctly for years and still failed —
+> **the cancel only clears what exists at that instant; without a rebase the next packet re-arms
+> it.**
+>
+> **Gates:** RS-CART-D/E gained a CLIENT arm (RS-CART-D previously asserted *nothing* — it logged
+> a measurement and threw only on setup failure, so it could not have gone red). RS-CART-F now
+> covers Defect A. Commit `b89a923` + hygiene follow-up. Everything below is the original brief.
+
+---
+
 # CART RENDER + RIDE — HANDOFF (opened 2026-07-28, after (d) landed)
 
 **Branch `redstone/passthrough`**, worktree

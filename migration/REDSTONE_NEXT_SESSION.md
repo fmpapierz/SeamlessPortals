@@ -35,7 +35,47 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
-## ★★ NEXT ENGAGEMENT IS NOT REDSTONE — see `migration/CART_RENDER_RIDE_HANDOFF.md`
+## ★★ (e) BOTH CART DEFECTS CLOSED — 2026-08-01, USER-CONFIRMED LIVE (`b89a923` + hygiene)
+
+Full record in `migration/CART_RENDER_RIDE_HANDOFF.md`, whose top banner lists where the original
+brief was WRONG. Summary:
+
+- **DEFECT A — a far SAME-DIM portal window lost EVERY entity, not just carts.** The dest-pass
+  entity visibility gate resolved through `ViewArea.getRenderSectionAt`, which on `ImmPtlViewArea`
+  wraps `positiveModulo` into the current preset with **no exact-node guard**, and the preset is
+  re-centred on the dest camera for CROSS-DIM only (`SecondaryWorldRenderCore:663`). Measured:
+  entity at section `(0,1,2500)` resolving to `(0,1,0)` — the player's own section — 189,210 of
+  201,525 gate calls disagreeing, 6,026 verdicts flipped. Fix: read `ImmPtlViewArea.rawGet`
+  (exact, unbounded). Lever `-PdisableDestEntitySectionExact`, gated by **RS-CART-F**.
+- **DEFECT B — a ridden crossing stranded the player, at TWO carry sites.** A carried vehicle kept
+  a relative-move `VecDeltaCodec` base from before the carry, so the first `MoveEntity$Pos` after
+  arrival decoded to source coordinates and `InterpolationHandler` lerped the rider across the
+  gap — frozen mid-air 13,000 blocks along the line between the endpoints, escapable only by
+  `/kill`. **The ride link was never broken; nothing dismounted the player.** Fix:
+  `Entity.syncPacketPositionCodec` at `moveClientEntityAcrossDimension` AND `McHelper.adjustVehicle`.
+  Lever `-PdisableCrossDimPositionCodecSync`.
+
+**★ THE RULE, AND THE TRAP.** A vehicle teleported by a portal must have its relative-move base
+rebased, and **cancelling interpolation is not sufficient** — the cancel clears only what exists
+at that instant; without a rebase the next packet re-arms it. `adjustVehicle` had cancelled
+correctly for years and still failed. And a SAME-DIM crossing never enters
+`moveClientEntityAcrossDimension` (`teleportPlayer` gates it on `fromDimension != toDimension`),
+so a cross-dim-only fix leaves the user's own topology broken.
+
+**★ THE (d) VEHICLE-ATTACH CHANGE IS EXONERATED** — answered without a dedicated launch, by
+dumping both offset forms in the `CARRY-TERMS` probe line every crossing.
+
+**★ RS-CART-D ASSERTED NOTHING.** Not "its assertions read server state" — it had none: a
+MEASUREMENT log line and a throw only on setup failure. Both ridden legs now carry a CLIENT arm
+(outcome + a base drift LATCHED at the carry, because read post-hoc that quantity is overwritten
+by every position packet — the first version of the arm was a blocker that called a working
+inversion "dead code").
+
+⚠ **Five instrument defects were found and fixed on the way, each costing a live round** — see the
+HAZARDS list. They share one shape: the probe was scoped to the case expected, not the case being
+looked at.
+
+## ★★ PREVIOUS ENGAGEMENT BRIEF (now history) — `migration/CART_RENDER_RIDE_HANDOFF.md`
 
 Two user-reported defects found live 2026-07-28 AFTER (d) landed, which **invert across the two
 topologies**: SAME-DIM portals lose the empty cart from the window as it crosses (terrain still
@@ -1079,6 +1119,42 @@ Hypotheses as they stood before the measurement, with their verdicts:
 to mechanism. One probe run, on a fixture that put the destination beyond render distance, settled it.
 
 ## HAZARDS EARNED THE HARD WAY — do not rediscover
+
+- **★★ SCOPE A PROBE TO THE CASE YOU ARE LOOKING AT, NOT THE ONE YOU EXPECT.** Five instrument
+  defects on 2026-08-01, one shape, one live round each:
+  1. **armed on the wrong path** — `SeamRideProbe` armed in `changePlayerDimension`, which a
+     same-dim crossing never calls; 472 real crossings, zero lines;
+  2. **crashed the game** — the jump hook called `Entity.getId()` inside `setPosRaw`, which
+     `Entity.<init>` reaches BEFORE the id exists: `IllegalStateException` in
+     `handleAddEntity`, **client disconnected**. Compare entity IDENTITY, never an id, anywhere
+     reachable from a constructor;
+  3. **window-gated the cause but not the effect** — the ejecting packet went unrecorded while
+     the dismount it caused was recorded. *The failure need not happen inside the window you
+     opened for it*;
+  4. **the rate limiter ate the evidence** — one shared 400-event budget; 1,351 per-tick SAMPLE
+     lines starved the single `SET-PASSENGERS` line the round existed to capture. Rare events
+     need their own reserve, not a shared budget;
+  5. **hooked the aftermath inside the gate meant to enforce not doing that** — the client arm
+     read `getPositionCodec().getBase()` 40 ticks after the crossing; vanilla rebases it on every
+     position packet, so it read ~0 with the fix OFF while the rider was stranded 13,863 blocks
+     away, and the gate declared the lever "dead code". **Latch at the write.**
+  Checklist before shipping a probe: does it fire on the stack you are already looking at; can it
+  throw during construction/removal; can routine volume starve the rare line; is the quantity you
+  assert on still true when you read it?
+- **★ ASSERT THE FIXTURE'S PRECONDITION, NOT JUST ITS OUTCOME.** RS-CART-F's `flipped > 0` check
+  caught two fixtures that would otherwise have passed for the wrong reason: one where the portal
+  was never rendered (player aimed at the BACK face — `gateCalls=0`), and one where the aliased
+  section happened to be COMPILED so nothing was ever culled (`disagree=120, flipped=0`). ⚠ In
+  that second state a PIXEL gate would have photographed a perfectly visible cart and reported a
+  confident PASS, because under those conditions the fix genuinely was not needed.
+- **`setOrientationAndSize((1,0,0),(0,1,0))` gives a +Z normal** — the front face is visible only
+  from +Z. Two separate legs have now aimed at the back face and rendered nothing. Make test
+  portals BI-FACED (`PortalManipulation.createFlippedPortal` at the same origin) rather than
+  relying on getting the cross product right.
+- **The wrap in `ImmPtlViewArea.getRenderSectionAt` PRESERVES the section-Y index** — only X/Z
+  fold. So an aliased query lands at the destination's own Y near the player, and whether it is
+  COMPILED (defect invisible) or UNCOMPILED (defect fires) depends on the Y offset, not the
+  horizontal distance.
 
 - **★ VERIFY MIXIN WRAP TARGETS AGAINST THE BYTECODE, NOT THE DECOMPILE.** `javap -c -p -classpath
   %USERPROFILE%\.gradle\caches\fabric-loom\minecraftMaven\net\minecraft\minecraft-merged-deobf\26.2\minecraft-merged-deobf-26.2.jar <class>`
