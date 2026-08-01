@@ -136,6 +136,16 @@ loom {
             // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
             // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
+            // 5th victim (2026-08-01, SAME session, crash #2 with the row above already active and
+            // PROVEN on the live process command line): C2 moved one hop IN.
+            //   C2:182445 64733 4 IrisCompatOn262Renderer::lambda$testShouldRenderPortal$0 (16 bytes)
+            // A lambda exists as TWO compilable things: the $$Lambda proxy's bridge (run) and the
+            // SYNTHETIC BODY (lambda$<method>$N) on the enclosing class. The row above excludes only
+            // the proxy, so C2 simply compiled the body instead. Excluding every lambda of this
+            // class closes the pair, and with renderAndDecideVisibility + performQuery above it the
+            // whole portal occlusion-query region is now off-limits to C2 — which is where 4 of the
+            // 5 victims have been. Trailing wildcard on the METHOD name this time, not the class.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*')
             // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
@@ -242,6 +252,16 @@ loom {
             // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
             // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
+            // 5th victim (2026-08-01, SAME session, crash #2 with the row above already active and
+            // PROVEN on the live process command line): C2 moved one hop IN.
+            //   C2:182445 64733 4 IrisCompatOn262Renderer::lambda$testShouldRenderPortal$0 (16 bytes)
+            // A lambda exists as TWO compilable things: the $$Lambda proxy's bridge (run) and the
+            // SYNTHETIC BODY (lambda$<method>$N) on the enclosing class. The row above excludes only
+            // the proxy, so C2 simply compiled the body instead. Excluding every lambda of this
+            // class closes the pair, and with renderAndDecideVisibility + performQuery above it the
+            // whole portal occlusion-query region is now off-limits to C2 — which is where 4 of the
+            // 5 victims have been. Trailing wildcard on the METHOD name this time, not the class.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*')
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -669,6 +689,16 @@ loom {
             // the rotation is the trigger, NOT the cause. Lambda class names carry an unstable hex
             // suffix, so this must be a trailing-wildcard prefix match, not an exact name.
             vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run')
+            // 5th victim (2026-08-01, SAME session, crash #2 with the row above already active and
+            // PROVEN on the live process command line): C2 moved one hop IN.
+            //   C2:182445 64733 4 IrisCompatOn262Renderer::lambda$testShouldRenderPortal$0 (16 bytes)
+            // A lambda exists as TWO compilable things: the $$Lambda proxy's bridge (run) and the
+            // SYNTHETIC BODY (lambda$<method>$N) on the enclosing class. The row above excludes only
+            // the proxy, so C2 simply compiled the body instead. Excluding every lambda of this
+            // class closes the pair, and with renderAndDecideVisibility + performQuery above it the
+            // whole portal occlusion-query region is now off-limits to C2 — which is where 4 of the
+            // 5 victims have been. Trailing wildcard on the METHOD name this time, not the class.
+            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*')
             // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
             // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
             vmArg('-XX:-OmitStackTraceInFastThrow')
