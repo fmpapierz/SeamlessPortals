@@ -566,6 +566,12 @@ public class CrossingSmoke implements FabricClientGameTest {
                 rsCartLegRiddenProbe(context, py);
                 rsCartLegRiddenSameDimProbe(context);
             }
+            // RS-CART-F — DEFECT A: entities in a FAR same-dim portal window. Probe-gated because
+            // its assertions read CartWindowProbe's counters, which only accumulate when the probe
+            // computes both lookups.
+            if (AperturePassthroughLever.CART_WINDOW_PROBE) {
+                rsCartWindowEntityGate(context);
+            }
 
             // RS SEAM-CLIP GATE (renderer) — the suite's first PIXEL gate. Since the 2026-07-27
             // user decision the clip is DEFAULT OFF (fractional model chosen instead): the
@@ -5527,14 +5533,17 @@ public class CrossingSmoke implements FabricClientGameTest {
                 com.warwa.seamlessportals.passthrough.SeamRideProbe.lastCarryBaseDrift();
             int carrySamples =
                 com.warwa.seamlessportals.passthrough.SeamRideProbe.carrySamples();
+            double speed = clientCart.getDeltaMovement().length();
             return new String[] {"OK",
                 "riding=" + riding + " cartPos=" + cartPos
                     + " riderGap=" + String.format(java.util.Locale.ROOT, "%.3f", riderGap)
+                    + " cartSpeed=" + String.format(java.util.Locale.ROOT, "%.3f", speed)
                     + " carryBaseDrift(latched)="
                     + String.format(java.util.Locale.ROOT, "%.3f", carryDrift)
                     + " carrySamples=" + carrySamples,
                 String.valueOf(riding), String.valueOf(carryDrift),
-                String.valueOf(riderGap), String.valueOf(carrySamples)};
+                String.valueOf(riderGap), String.valueOf(carrySamples),
+                String.valueOf(speed)};
         });
         if (report == null || "COVERAGE".equals(report[0])) {
             return "COVERAGE FAILED: " + (report == null ? "computeOnClient returned null"
@@ -5545,6 +5554,7 @@ public class CrossingSmoke implements FabricClientGameTest {
         double carryDrift = Double.parseDouble(report[3]);
         double riderGap = Double.parseDouble(report[4]);
         int carrySamples = Integer.parseInt(report[5]);
+        double speed = Double.parseDouble(report[6]);
 
         // COVERAGE FIRST: without an observed client-side carry, neither arm below judged anything.
         if (carrySamples == 0) {
@@ -5557,11 +5567,16 @@ public class CrossingSmoke implements FabricClientGameTest {
                 return "the CLIENT is not riding the cart after the crossing (server said it was)";
             }
             // THE OUTCOME THE RIDER SEES. Measured 0.412 (the attachment offset) with the fix and
-            // 13863.613 without it, so a 1-block threshold separates them by four orders of
-            // magnitude.
-            if (riderGap > 1.0) {
+            // 13863.613 without it, so the threshold separates them by four orders of magnitude.
+            // Scaled with the cart's speed rather than fixed at 1.0: the client cart is
+            // non-authoritative, so while it is MOVING its position legitimately trails the base
+            // each packet sets (updateInterval 3 ticks x DEFAULT_INTERPOLATION_STEPS 3), and a
+            // fixed tolerance is a latent spurious red on a fixture that samples mid-roll.
+            double gapTolerance = 1.0 + 6.0 * speed;
+            if (riderGap > gapTolerance) {
                 return "the CLIENT's player is " + riderGap + " blocks from the cart it is"
-                    + " riding — the rider has been dragged off the carry position";
+                    + " riding (tolerance " + gapTolerance + " at speed " + speed + ") — the rider"
+                    + " has been dragged off the carry position";
             }
             // THE MECHANISM, latched at the carry. Deterministic: the rebase either happened or
             // it did not.
@@ -5587,6 +5602,221 @@ public class CrossingSmoke implements FabricClientGameTest {
         SeamlessPortalsConstants.LOGGER.info(LOG + "★ RS-CART CLIENT ARM: inversion reproduced the"
             + " stale base at the carry (latched drift {}, riderGap {})", carryDrift, riderGap);
         return null;
+    }
+
+    /**
+     * RS-CART-F (probe-gated) — DEFECT A: does a FAR same-dimension portal window keep its
+     * entities? Closes the coverage gap the {@code build.gradle} comment used to claim was already
+     * closed.
+     *
+     * <p><b>What it asserts, and why in this shape.</b> The defect is that
+     * {@code LevelExtractor.isEntityVisible}'s trailing compiled-section test resolved through
+     * {@code ViewArea.getRenderSectionAt}, which wraps modulo the preset grid; for a same-dim
+     * destination outside that window it answered about an unrelated section near the player,
+     * normally UNCOMPILED, so every entity in the window was culled while its terrain drew.
+     *
+     * <p>A pixel arm is the obvious instinct and is a trap here: it needs the aliased section to
+     * be uncompiled AND the destination outside the window AND the sampled patch to land on the
+     * entity, and a fixture missing any of those photographs a wall and calls it proof. So this
+     * asserts the gate's own decisions instead, which are exact:
+     * <ul>
+     *   <li>COVERAGE — {@code gateCalls > 0}: the dest-pass entity gate actually ran.</li>
+     *   <li>PRECONDITION — {@code flipped > 0}: at least one entity was in a section whose WRAPPED
+     *       lookup said "uncompiled, cull" while its EXACT lookup said "compiled, keep". That is
+     *       the defect condition itself, asserted rather than assumed — if the fixture fails to
+     *       produce it the leg says so instead of passing.</li>
+     *   <li>OUTCOME — {@code aliasedKept > 0} with the fix, {@code == 0} under
+     *       {@code -PdisableDestEntitySectionExact}. Both lookups are computed in both directions,
+     *       so what inverts is which verdict was USED: the entities the fix rescued.</li>
+     * </ul>
+     *
+     * <p>Destination is +400 blocks and 80 blocks DOWN. The Y drop is load-bearing: a horizontal
+     * offset alone aliases onto open-air sections near the player, which the occlusion graph
+     * compiles to empty meshes ({@code mesh != UNCOMPILED}), and the defect would not reproduce.
+     */
+    private static void rsCartWindowEntityGate(ClientGameTestContext context) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        final int bx = 9600, by = 100, bz = 9600;
+        final int ddz = 400;
+        // The Y is chosen so the ALIAS lands where the client never meshes. The wrap folds X/Z into
+        // the preset window but PRESERVES the section-Y index, so the aliased section sits at the
+        // destination's own Y near the player. First build used dy=20 (section-Y 1, ~80 blocks
+        // below a y=100 player): measured gateCalls=120, disagree=120 — the aliasing fired every
+        // time — but flipped=0, because those shallow sections are still within the occlusion
+        // graph's reach and get COMPILED, so both lookups answered "keep" and nothing was culled.
+        // dy=-60 puts the alias at section-Y -4, ~160 blocks below the player and far outside the
+        // 6-chunk render distance, which the BFS never queues.
+        final int dy = -60;
+        final BlockPos cellD = new BlockPos(bx, dy, bz + ddz);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Integer> cartId = new AtomicReference<>(null);
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+        try {
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run forceload add " + (bx - 16) + " " + (bz - 16)
+                    + " " + (bx + 16) + " " + (bz + 16),
+                "execute in minecraft:overworld run forceload add " + (bx - 16) + " "
+                    + (bz + ddz - 16) + " " + (bx + 16) + " " + (bz + ddz + 16),
+                // near platform
+                inDim("minecraft:overworld", fill(bx - 6, by - 1, bz - 8, bx + 6, by - 1, bz + 4)),
+                "execute in minecraft:overworld run fill " + (bx - 6) + " " + by + " " + (bz - 8)
+                    + " " + (bx + 6) + " " + (by + 6) + " " + (bz + 4) + " minecraft:air",
+                // destination chamber, 80 blocks lower
+                inDim("minecraft:overworld",
+                    fill(bx - 6, dy - 1, bz + ddz - 6, bx + 6, dy - 1, bz + ddz + 8)),
+                "execute in minecraft:overworld run fill " + (bx - 6) + " " + dy + " "
+                    + (bz + ddz - 6) + " " + (bx + 6) + " " + (dy + 6) + " " + (bz + ddz + 8)
+                    + " minecraft:air"
+            ));
+            context.waitTicks(20);
+
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.getChunk(bx >> 4, bz >> 4);
+                ow.getChunk(bx >> 4, (bz + ddz) >> 4);
+                qouteall.imm_ptl.core.portal.Portal p =
+                    qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE.create(
+                        ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                if (p == null) {
+                    failure.set("portal create returned null");
+                    return;
+                }
+                p.setOriginPos(new Vec3(bx + 0.5, by + 1.5, bz + 0.5));
+                p.setDestinationDimension(Level.OVERWORLD);
+                p.setDestination(new Vec3(bx + 0.5, dy + 1.5, bz + ddz + 0.5));
+                p.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 5, 5);
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(p);
+                // BI-FACED, so the leg does not depend on which way the normal came out.
+                // setOrientationAndSize((1,0,0),(0,1,0)) yields a +Z normal, i.e. the front face is
+                // only visible from +Z — and the first build stood the player at -Z looking at the
+                // BACK face, rendered nothing, and reported gateCalls=0. That is the same mistake
+                // rsCartLegRiddenSameDimProbe's own comment records ("straight into the portal's
+                // BACK face"). A flipped twin at the same origin removes the dependency entirely
+                // rather than making the fixture author get the cross product right.
+                qouteall.imm_ptl.core.McHelper.spawnServerEntity(
+                    qouteall.imm_ptl.core.portal.PortalManipulation.createFlippedPortal(
+                        p, qouteall.imm_ptl.core.portal.Portal.ENTITY_TYPE));
+
+                // The entity the window must show, parked just past the destination plane.
+                var cart = EntityTypes.MINECART.create(
+                    ow, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                if (cart == null) {
+                    failure.set("minecart create returned null");
+                    return;
+                }
+                cart.snapTo(bx + 0.5, dy + 0.1, bz + ddz + 3.5, 0f, 0f);
+                ow.addFreshEntity(cart);
+                cartId.set(cart.getId());
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-CART-F SETUP FAILED: " + failure.get());
+            }
+            context.waitTicks(30);
+
+            // Stand in front of the near plane looking through it (+Z is yaw 0).
+            runCommands(context, List.of(
+                "execute in minecraft:overworld run tp @p " + (bx + 0.5) + " " + by + " "
+                    + (bz - 5.5) + " 0 0"));
+            context.waitTicks(60);
+
+            // Reset AFTER staging so the counters describe only this leg's frames — a leg that
+            // inherits another's counters cannot assert coverage.
+            context.runOnClient(mc ->
+                com.warwa.seamlessportals.render.CartWindowProbe.reset());
+            context.waitTicks(80);
+
+            long gateCalls = context.computeOnClient(mc ->
+                com.warwa.seamlessportals.render.CartWindowProbe.gateCalls());
+            long flipped = context.computeOnClient(mc ->
+                com.warwa.seamlessportals.render.CartWindowProbe.flipped());
+            long aliasedKept = context.computeOnClient(mc ->
+                com.warwa.seamlessportals.render.CartWindowProbe.aliasedKept());
+            String counters = context.computeOnClient(mc ->
+                com.warwa.seamlessportals.render.CartWindowProbe.counters());
+            SeamlessPortalsConstants.LOGGER.info(LOG + "★ RS-CART-F MEASUREMENT: {}", counters);
+
+            if (gateCalls == 0) {
+                throw new AssertionError(LOG + "RS-CART-F COVERAGE FAILED: the dest-pass entity"
+                    + " visibility gate never ran — the portal was not rendered, so nothing here"
+                    + " judged anything (" + counters + ")");
+            }
+            if (flipped == 0) {
+                throw new AssertionError(LOG + "RS-CART-F FIXTURE FAILED: no entity was in a"
+                    + " section whose wrapped lookup disagreed with the exact one, so the aliasing"
+                    + " condition this leg exists to test was never present. Do NOT read this as a"
+                    + " pass: the destination must be outside the ViewArea preset window AND its"
+                    + " aliased section must be UNCOMPILED (" + counters + ")");
+            }
+            if (!AperturePassthroughLever.DISABLE_DEST_ENTITY_SECTION_EXACT) {
+                if (aliasedKept == 0) {
+                    throw new AssertionError(LOG + "RS-CART-F FAILED: " + flipped + " entity"
+                        + " verdicts were reachable only through the exact lookup, but NONE was"
+                        + " kept — the far same-dim window is dropping its entities again ("
+                        + counters + ")");
+                }
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-F PASS (fix ON — {} aliased"
+                    + " entity verdicts rescued)", aliasedKept);
+            }
+            else {
+                if (aliasedKept != 0) {
+                    throw new AssertionError(LOG + "RS-CART-F INVERSION FAILED: with"
+                        + " -PdisableDestEntitySectionExact the wrapped lookup should decide, so"
+                        + " no aliased entity should be kept — but " + aliasedKept + " were ("
+                        + counters + ")");
+                }
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-F PASS (lever ON — the far"
+                    + " same-dim window dropped all {} aliased entity verdicts, defect"
+                    + " reproduced)", flipped);
+            }
+        }
+        finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    Integer id = cartId.get();
+                    if (id != null) {
+                        Entity e = ow.getEntity(id);
+                        if (e != null) {
+                            e.discard();
+                        }
+                    }
+                    for (var portal : ow.getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(bx - 12, dy - 12, bz - 12,
+                            bx + 12, by + 12, bz + ddz + 12), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                context.runOnClient(mc ->
+                    com.warwa.seamlessportals.render.CartWindowProbe.reset());
+                if (prevDim != null) {
+                    runCommands(context, List.of("execute in " + prevDim + " run tp @p "
+                        + prevPos.x + " " + prevPos.y + " " + prevPos.z));
+                    context.waitTicks(20);
+                }
+                runCommands(context, List.of(
+                    "execute in minecraft:overworld run fill " + (bx - 6) + " " + (by - 1) + " "
+                        + (bz - 8) + " " + (bx + 6) + " " + (by + 6) + " " + (bz + 4)
+                        + " minecraft:air",
+                    "execute in minecraft:overworld run fill " + (bx - 6) + " " + (dy - 1) + " "
+                        + (bz + ddz - 6) + " " + (bx + 6) + " " + (dy + 6) + " "
+                        + (bz + ddz + 8) + " minecraft:air",
+                    "execute in minecraft:overworld run forceload remove " + (bx - 16) + " "
+                        + (bz - 16) + " " + (bx + 16) + " " + (bz + 16),
+                    "execute in minecraft:overworld run forceload remove " + (bx - 16) + " "
+                        + (bz + ddz - 16) + " " + (bx + 16) + " " + (bz + ddz + 16)
+                ));
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-CART-F cleanup failed — later legs"
+                    + " may see leftover staging", t);
+            }
+        }
     }
 
     /**

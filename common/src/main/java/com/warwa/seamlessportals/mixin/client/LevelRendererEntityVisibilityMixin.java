@@ -149,7 +149,8 @@ public class LevelRendererEntityVisibilityMixin {
                     wrap != null && wrap.getSectionMesh()
                         != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED,
                     exact != null && exact.getSectionMesh()
-                        != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
+                        != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED,
+                    useExact);
             }
 
             cir.setReturnValue(verdict);

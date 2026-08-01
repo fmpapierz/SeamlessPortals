@@ -388,8 +388,18 @@ public class McHelper {
         // The player/vehicle delta stayed exactly (0, 0.4125, 0) throughout — the ride was never
         // broken and no dismount was involved. The rider was simply carried to a nonsense
         // interpolated position and stranded there.
-        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever
-            .DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
+        //
+        // CLIENT ONLY, and the gate is meaning rather than safety. adjustVehicle runs on BOTH
+        // sides, but syncPacketPositionCodec writes Entity.packetPositionCodec, which is
+        // client-DECODE state: 26.2's ServerEntity keeps its own private VecDeltaCodec and never
+        // reads this one (javap; the only readers of Entity.getPositionCodec are
+        // ClientPacketListener and Entity itself). The server-side call was therefore inert — it
+        // read as if it did something and did not. The server needs no equivalent: when a carry
+        // pushes its own encoded delta outside the packet's short range, ServerEntity.sendChanges
+        // falls back to an absolute ClientboundEntityPositionSyncPacket by itself.
+        if (vehicle.level().isClientSide()
+            && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                .DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
             vehicle.syncPacketPositionCodec(
                 newVehiclePos.x(), newVehiclePos.y(), newVehiclePos.z());
         }
