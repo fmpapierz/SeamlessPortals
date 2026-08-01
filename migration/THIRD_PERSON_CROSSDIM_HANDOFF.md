@@ -1,5 +1,37 @@
 # TP-XDIM HANDOFF — third-person cross-dimension camera + shaders = corrupted render
 
+> ## ARC CLOSED (2026-08-01) — both defects fixed, both A/B-proven in BOTH directions
+> **1. The whole-screen terrain vertex-transform explosion** — FIXED `4be60e0`, user-confirmed
+> *"the nasty artifact is gone"*. Cause: `CrossPortalViewRendering` replaces `renderLevel`, so the
+> dest world went through the DECOMPOSED driver, which never calls `LevelRenderer.render` — hence
+> none of iris's per-frame gbuffer setup ran while the pack's programs still substituted. Fix =
+> split the D23 layer-0 fallback BY CALLER so the frame-replacing cross view gets a real
+> `LevelRenderer.render`. A rewrite to match IP, whose cross-view body was a nested `renderLevel`.
+> **2. No portal window inside the cross view** — FIXED `9cf9d46`, user-confirmed. Cause: the
+> FULL-PIPELINE dest core was missing the DECOMPOSED core's Step 10.10
+> (`onBeforeTranslucentRendering`), which is why shaders-OFF already worked (M0 gate). Fix = the
+> twin, dispatched after `render()` returns.
+> **3. The crashes were never portal code** — a Temurin 25.0.2 C2 JIT defect (5 victims, 4 in the
+> portal occlusion-query path). Resolved at the root by pinning the toolchain to Zulu 25.0.4
+> (`d1fce7c`); all five `CompileCommand` excludes then deleted (`8b96a3e`).
+>
+> **The closing A/B (`-PdisableCrossViewReverseWindow=true`), both directions:**
+>
+> | leg | window on screen | `xwin` | `invoke` |
+> |---|---|---|---|
+> | fix ON | present | `YES` 107/107 | `XVIEW-FULL x1` **+ `FULL-PIPELINE x1`** |
+> | repro | gone | `NO` 458/458 | `XVIEW-FULL x1` alone |
+>
+> The second render disappearing IS the window pass not running. The explosion did NOT return on the
+> repro leg (`xviewRouteLever=ON`), proving the two fixes are independent rather than entangled.
+>
+> **STILL OPEN, next in the user's order:** the first-person near-seam window shifting with camera
+> panning — measured NOT to be this path (0 of 146 first-person frames entered it). See memory
+> `firstperson-seam-window-panning-open`. Then: the MB bloom-ring commission, and the sharp-window
+> polish re-audit.
+>
+> Everything below is the arc's working record, kept for its method lessons.
+
 **Status: OPEN — census BUILT and its FIRST LEG RUN (2026-07-28). §0 below supersedes §1's
 "unmeasured" list and §2's sub-claim 4.** Branch `iris-on/is5-shadow`, worktree
 `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`.
