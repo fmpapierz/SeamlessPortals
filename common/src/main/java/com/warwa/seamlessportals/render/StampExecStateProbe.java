@@ -137,6 +137,21 @@ public final class StampExecStateProbe {
         int drawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
         IntBuffer viewport = BufferUtils.createIntBuffer(16);
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
+        // ===== THE DEPTH CONVENTION, MEASURED ON THIS GPU AT THE DRAW (2026-08-01) ==============
+        // Every NDC-arithmetic argument in this project's depth work has assumed z in [-1,1]. A
+        // javap of GlDevice on the 26.2 jar shows glClipControl(0x8CA1 GL_LOWER_LEFT, 0x935F
+        // GL_ZERO_TO_ONE) whenever GL_ARB_clip_control is present — i.e. z in [0,1], for which the
+        // stamp's near floor max(z, -0.998w) can NEVER bind (anything in front of the near plane
+        // already has z_clip >= 0 > -0.998w). That would make a shipped, "load-bearing" fix inert.
+        // Bytecode says what MC WOULD do; these two reads say what THIS GPU IS doing, at the draw.
+        // GL_CLIP_ORIGIN=0x935C, GL_CLIP_DEPTH_MODE=0x935D; values: GL_LOWER_LEFT=0x8CA1(36001),
+        // GL_UPPER_LEFT=0x8CA2(36002), GL_NEGATIVE_ONE_TO_ONE=0x935E(37726), GL_ZERO_TO_ONE=0x935F
+        // (37727). Two integer queries, no readback, no sync. If ARB_clip_control is absent the
+        // enum is invalid and the driver raises GL_INVALID_ENUM — drained and reported, never
+        // silently folded into the state error below.
+        int clipOrigin = GL11.glGetInteger(0x935C);
+        int clipDepthMode = GL11.glGetInteger(0x935D);
+        int clipCtlErr = GL11.glGetError();
         int stateErr = GL11.glGetError();
 
         String vshInfo = "prog=0";
@@ -176,6 +191,9 @@ public final class StampExecStateProbe {
             + " func=0x" + Integer.toHexString(depthFunc) + "(" + funcName(depthFunc) + ")"
             + " writeMask=" + depthMask
             + " clamp=" + depthClamp
+            + " | clipDepthMode=" + clipDepthName(clipDepthMode)
+            + " clipOrigin=" + clipOriginName(clipOrigin)
+            + " clipCtlErr=0x" + Integer.toHexString(clipCtlErr)
             + String.format(" range=[%.4f,%.4f]", range.get(0), range.get(1))
             + " drawFbo=" + drawFbo
             + " viewport=" + viewport.get(0) + "," + viewport.get(1) + ","
@@ -189,6 +207,33 @@ public final class StampExecStateProbe {
         if (fullDump && vshSource != null) {
             LOGGER.info(P + "vertex shader SOURCE as compiled by the driver (prog=" + prog
                 + "):\n" + vshSource);
+        }
+    }
+
+    /**
+     * The depth-range convention this GPU is actually clipping against — the fact every NDC
+     * argument in this project's depth work has silently assumed. ZERO_TO_ONE means clip-space z
+     * in [0,1] and the near test is {@code z >= 0}, NOT {@code z >= -w}: under it the stamp's
+     * near floor {@code max(z, -0.998w)} can never bind for anything in front of the near plane.
+     * Loud sentinel on an unexpected value — this must never read as a plausible default.
+     */
+    private static String clipDepthName(int v) {
+        switch (v) {
+            case 0x935E: return "NEGATIVE_ONE_TO_ONE(z in [-1,1] — the assumption most of this"
+                + " project's depth comments were written under)";
+            case 0x935F: return "ZERO_TO_ONE(z in [0,1] — near test is z>=0, so a -0.998w floor"
+                + " CANNOT bind in front of the near plane)";
+            case 0: return "UNREADABLE(0 — query failed or ARB_clip_control absent; see clipCtlErr)";
+            default: return "UNREADABLE(unexpected 0x" + Integer.toHexString(v) + ")";
+        }
+    }
+
+    private static String clipOriginName(int v) {
+        switch (v) {
+            case 0x8CA1: return "LOWER_LEFT";
+            case 0x8CA2: return "UPPER_LEFT";
+            case 0: return "UNREADABLE(0 — query failed or ARB_clip_control absent)";
+            default: return "UNREADABLE(unexpected 0x" + Integer.toHexString(v) + ")";
         }
     }
 
