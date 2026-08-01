@@ -136,9 +136,49 @@ public class IrisCompatPaste {
      * siblings — the axes stay comparable). Reported on the IS5-RC STAMP PIPELINE line.
      */
     private static Identifier stampVertexShaderId() {
+        // IS5-XCUT (2026-08-01): the floor moved to the FRAGMENT stage, so the DEFAULT vertex
+        // shader is now the floor-free "nocap" one. Only the -PdisableXcutFragFloor reproduction
+        // leg goes back to the per-vertex floor, and only when the hand-cap lever is not ALSO
+        // asking for no floor at all. Applying both would floor twice.
         return Identifier.fromNamespaceAndPath("seamlessportals",
-            qouteall.imm_ptl.core.IPGlobal.STAMP_HAND_DEPTH_CAP_DISABLED_LEVER
-                ? "core/portal_area_sample_nocap" : "core/portal_area_sample");
+            vertexFloorActive() ? "core/portal_area_sample" : "core/portal_area_sample_nocap");
+    }
+
+    /** True only on the -PdisableXcutFragFloor reproduction leg: the OLD per-vertex floor. */
+    private static boolean vertexFloorActive() {
+        return qouteall.imm_ptl.core.IPGlobal.XCUT_FRAG_FLOOR_DISABLED_LEVER
+            && !qouteall.imm_ptl.core.IPGlobal.STAMP_HAND_DEPTH_CAP_DISABLED_LEVER;
+    }
+
+    /** True in the shipped default: the floor is applied PER FRAGMENT. */
+    private static boolean fragmentFloorActive() {
+        return !qouteall.imm_ptl.core.IPGlobal.XCUT_FRAG_FLOOR_DISABLED_LEVER
+            && !qouteall.imm_ptl.core.IPGlobal.STAMP_HAND_DEPTH_CAP_DISABLED_LEVER;
+    }
+
+    /**
+     * IS5-XCUT — the stamp FRAGMENT shader, selected once at registration. The floor now lives
+     * here (per-fragment) instead of in the vertex shader; see portal_area_sample_floor.fsh for
+     * the derivation, the units, and the three-leg attribution.
+     *
+     * <p>THE THREE COHERENT STATES, so both pre-existing levers keep their meaning:
+     * <ul>
+     *   <li><b>default</b> — vsh=nocap + fsh=*_floor: floor applied PER FRAGMENT (the fix);</li>
+     *   <li><b>-PdisableXcutFragFloor</b> — vsh=capped + fsh=plain: the OLD per-vertex floor,
+     *       byte-identical to the behaviour that produced the swept cut (the A/B repro);</li>
+     *   <li><b>-PdisableStampHandDepthCap</b> — vsh=nocap + fsh=plain: NO floor anywhere, which
+     *       is what that lever has always meant (the hand-arc A/B). It wins over the row above,
+     *       so the two levers together still give "no floor" rather than a contradiction.</li>
+     * </ul>
+     * Every stamp pipeline — shipped and diagnostic — goes through here, so the axes stay
+     * comparable: a solid leg must differ from a sample leg by the fragment OUTPUT alone, never by
+     * which depth boundary is in force.
+     *
+     * @param basePath {@code core/portal_area_sample} or {@code core/portal_area_solid}
+     */
+    private static Identifier stampFragmentShaderId(String basePath) {
+        return Identifier.fromNamespaceAndPath("seamlessportals",
+            fragmentFloorActive() ? basePath + "_floor" : basePath);
     }
 
     static {
@@ -167,7 +207,7 @@ public class IrisCompatPaste {
             RenderPipeline portalAreaSample = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/portal_area_sample"))
                 .withVertexShader(stampVertexShaderId()) // IS5-HAND: capped by default, lever-swapped
-                .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withFragmentShader(stampFragmentShaderId("core/portal_area_sample"))
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
@@ -193,7 +233,7 @@ public class IrisCompatPaste {
                 .withLocation(Identifier.fromNamespaceAndPath(
                     "seamlessportals", "pipeline/portal_area_sample_nodepthwrite"))
                 .withVertexShader(stampVertexShaderId()) // IS5-HAND: capped by default, lever-swapped
-                .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample"))
+                .withFragmentShader(stampFragmentShaderId("core/portal_area_sample"))
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
@@ -336,7 +376,7 @@ public class IrisCompatPaste {
             var builder = RenderPipeline.builder()
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/" + pipelinePath))
                 .withVertexShader(stampVertexShaderId()) // IS5-HAND: same axis as the shipped pair
-                .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", fragmentShaderPath))
+                .withFragmentShader(stampFragmentShaderId(fragmentShaderPath))
                 .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)

@@ -189,6 +189,14 @@ loom {
             // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
             if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         server {
             server()
@@ -224,6 +232,14 @@ loom {
             // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
             if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         // S19-E live Sodium/Iris compat run. Sodium/Iris are compileOnly by default (see the
         // dependencies block), so this run only actually LOADS them when the matching runtime
@@ -615,6 +631,14 @@ loom {
             // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
             if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -667,6 +691,14 @@ loom {
             // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
             if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         // S15 entity-crossing smoke on the UNIFIED path (EXECUTION_PLAN §S15,
         // D4.6 — re-run at every later stage). Own run dir: its config is
@@ -1006,6 +1038,14 @@ loom {
             // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
             if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
     }
 }

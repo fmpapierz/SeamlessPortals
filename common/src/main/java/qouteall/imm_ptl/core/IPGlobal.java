@@ -290,6 +290,32 @@ public class IPGlobal {
     public static final boolean CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableCrossViewReverseWindow");
 
+    // ===== IS5-XCUT — THE NEAR FLOOR MOVES TO THE FRAGMENT STAGE, DEFAULT ON (2026-08-01) =====
+    // USER-REPORTED: first person, close to the seam, FEET PLANTED — the portal window's outline is
+    // cut by a straight line that SWEEPS as the camera pans, pivoting about a corner; content
+    // inside is correct; stops ~half a block out.
+    // CAUSE, attributed by three user-verified legs (each config-proven in the log):
+    //     depth ON  + floor ON  -> cut PRESENT  (baseline)
+    //     depth OFF + floor ON  -> cut GONE     (raw footprint is a clean stable rectangle =>
+    //                                            the aperture GEOMETRY is innocent)
+    //     depth ON  + floor OFF -> cut GONE     (vsh=NOCAP, probe CAP-IN-SOURCE=false x14)
+    // The cut needs BOTH => the PER-VERTEX floor is the carrier. Depth interpolates screen-affine,
+    // so clamping per VERTEX computes L[max(z,c)] instead of max(L[z],c): it TILTS the interpolated
+    // depth plane. The S14.36 CPU clip leaves one aperture vertex ~0.1 mm from the eye (true NDC z
+    // ~ -1e3); flooring that one vertex skews the whole plane, and the error is affine in screen
+    // space => a straight boundary, pinned at the unfloored vertices, sweeping with rotation.
+    // FIX: apply the floor PER FRAGMENT (gl_FragDepth = max(gl_FragCoord.z, 0.001)) — a true clamp,
+    // which cannot tilt a plane. Same depth the vertex floor targeted: NDC -0.998 -> window 0.001
+    // under the MEASURED glDepthRange(0,1) and clipDepthMode=NEGATIVE_ONE_TO_ONE at the stamp draw.
+    // DEFAULT ON: every frame in the affected set is measurably wrong today, and the clamp's
+    // magnitude is unchanged — only where it is computed. The hand protection §00z shipped is
+    // preserved (window still pinned to 0.001, behind the hand's [0, 0.0005] bracket) and no
+    // aperture geometry is cut, so the IS5-SEAM coverage fix cannot regress either.
+    // Pass this to force the OLD per-vertex floor back and REPRODUCE the swept cut —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+    public static final boolean XCUT_FRAG_FLOOR_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableXcutFragFloor");
+
     /** XWIN confirm-counter: cross-view frames on which the portal pass was actually entered.
      *
      *  <p>DELIBERATELY PRIVATE, for the SAME reason as the IS0 anchor counter above:
