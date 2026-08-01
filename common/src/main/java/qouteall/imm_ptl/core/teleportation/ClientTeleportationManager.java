@@ -339,7 +339,18 @@ public class ClientTeleportationManager {
         
         Entity vehicle = player.getVehicle();
         Vec3 oldVehiclePos = vehicle != null ? vehicle.position() : null;
-        
+
+        // (e) DEFECT-B instrument, armed HERE rather than only in changePlayerDimension.
+        // The 2026-08-01 round proved the first placement wrong: a SAME-DIM crossing never calls
+        // changePlayerDimension (see the fromDimension != toDimension gate below), so the probe
+        // recorded ZERO lines across 472 real crossings. This is the entry point BOTH topologies
+        // share, so arming here covers same-dim and cross-dim alike.
+        if (vehicle != null) {
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.armForCrossing(
+                player.level().dimension().identifier().toString(),
+                toDimension.identifier().toString(), vehicle);
+        }
+
         Vec3 thisTickEyePos = McHelper.getEyePos(player);
         Vec3 lastTickEyePos = McHelper.getLastTickEyePos(player);
         
@@ -382,9 +393,21 @@ public class ClientTeleportationManager {
         PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
             player, newThisTickEyePos, newLastTickEyePos, RenderStates.getPartialTick()
         );
-        
+
         McHelper.adjustVehicle(player);
-        
+
+        // (e) instrument: the CLIENT's post-crossing ride state, read after adjustVehicle — the
+        // last thing the client mutates on this path. On the SAME-DIM path this is the ONLY
+        // vehicle handling there is (no dismount, no recreate, no re-mount), so if the link is
+        // already broken here the cause is upstream of the crossing entirely.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.event("CLIENT-TELEPORT-DONE",
+            "sameDim=" + (fromDimension == toDimension)
+                + " vehicle=" + (player.getVehicle() == null
+                    ? "NULL(dismounted)" : String.valueOf(player.getVehicle().getId()))
+                + " playerPos=" + player.position()
+                + " vehiclePos=" + (player.getVehicle() == null
+                    ? "-" : player.getVehicle().position().toString()));
+
         //because the teleportation may happen before rendering
         //but after pre render info being updated
         RenderStates.updatePreRenderInfo(partialTick);
@@ -460,12 +483,26 @@ public class ClientTeleportationManager {
     public static void changePlayerDimension(
         LocalPlayer player, ClientLevel fromWorld, ClientLevel toWorld, Vec3 newEyePos
     ) {
+        // (e) DEFECT-B instrument: arm BEFORE the three preconditions below, deliberately. One
+        // recon candidate for the user's "white/blank background" is precisely a SECOND
+        // changePlayerDimension aborting on one of these Validates mid-cutover (client.level and
+        // the renderer already re-pointed, gameRenderer.setLevel not yet) — armed here, the
+        // window's own SAMPLE lines record that half-swapped state instead of going silent.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.armForCrossing(
+            fromWorld.dimension().identifier().toString(),
+            toWorld.dimension().identifier().toString(),
+            player.getVehicle());
+
         Validate.isTrue(!WorldRenderInfo.isRendering());
         Validate.isTrue(!FrontClipping.isClippingEnabled);
         Validate.isTrue(!PacketRedirectionClient.getIsProcessingRedirectedMessage());
-        
+
         Entity vehicle = player.getVehicle();
         player.unRide();
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.event("UNRIDE",
+            "heldVehicle=" + (vehicle == null ? "null" : String.valueOf(vehicle.getId()))
+                + " playerVehicleNow="
+                + (player.getVehicle() == null ? "null" : String.valueOf(player.getVehicle().getId())));
         
         ResourceKey<Level> toDimension = toWorld.dimension();
         ResourceKey<Level> fromDimension = fromWorld.dimension();
@@ -551,6 +588,17 @@ public class ClientTeleportationManager {
         if (vehicle != null) {
             Vec3 offset = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
             Vec3 vehiclePos = player.position().add(offset);
+            // (e) instrument: dump BOTH offset forms in the same line, so the §0 A/B question
+            // ("is the 2026-07-28 two-term attachment fix implicated in the ridden defect?") is
+            // answered numerically without spending a separate launch on the lever. The two-term
+            // form is what ships; the one-term form is what -PdisableSeamVehicleAttach restores.
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.event("CARRY-TERMS",
+                "offsetUsed=" + offset
+                    + " oneTerm=" + player.getVehicleAttachmentPoint(vehicle)
+                    + " vehiclePassengerAttach="
+                    + vehicle.getPassengerRidingPosition(player).subtract(vehicle.position())
+                    + " playerPos=" + player.position()
+                    + " vehiclePosTarget=" + vehiclePos);
             moveClientEntityAcrossDimension(
                 vehicle, toWorld,
                 vehiclePos
@@ -560,7 +608,16 @@ public class ClientTeleportationManager {
                 player.position().add(offset),
                 McHelper.lastTickPosOf(player).add(offset)
             );
-            player.startRiding(vehicle, true, false);
+            // The boolean return is IP-discarded; capture it. Entity.startRiding returns false
+            // early on !couldAcceptPassenger or !type.canSerialize (javap: 26.2 Entity.startRiding
+            // (Entity,ZZ)Z), so a silent false here would produce exactly the reported symptom
+            // with nothing in any existing log to show for it.
+            boolean remounted = player.startRiding(vehicle, true, false);
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.onRemount(vehicle, remounted);
+        }
+        else {
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.event("NO-VEHICLE",
+                "crossing carried no vehicle");
         }
         
         Helper.log(String.format(
@@ -608,6 +665,47 @@ public class ClientTeleportationManager {
         oldWorld.removeEntity(entity.getId(), Entity.RemovalReason.CHANGED_DIMENSION);
         ((IEEntity) entity).ip_setWorld(newWorld);
         entity.setPos(newPos.x, newPos.y, newPos.z);
+
+        // (e) DEFECT B — REBASE THE RELATIVE-MOVE CODEC AND DROP THE STALE INTERPOLATION.
+        //
+        // Measured 2026-08-01, ridden cross-dim crossing, cart id=2396:
+        //   t+0  cart placed in the nether at (40000.5, 68.0625, 0.710)      [this method]
+        //   t+2  cart at (56.5, 68.0625, 8.910) via ClientPacketListener.handleMoveEntity
+        //          < ClientboundMoveEntityPacket$Pos < PacketRedirectionClient.handleRedirectedPacket
+        //   t+7  dragged back by handleEntityPositionSync, then lerped to (26586, …) by
+        //          InterpolationHandler.interpolate < OldMinecartBehavior.tick — partway along the
+        //          40,000-block gap. The player, riding it, is dragged with it: the reported
+        //          "spazzing in place", ending stranded and only escapable with /kill.
+        //
+        // The packet was correctly redirected and the entity correctly resolved — the DECODE was
+        // wrong. ClientboundMoveEntityPacket.Pos carries relative deltas, and the absolute position
+        // comes from the entity's VecDeltaCodec base (javap: handleMoveEntity reads
+        // Entity.getPositionCodec()). setPos does NOT touch that base, and vanilla only ever
+        // rebases it from ABSOLUTE packets (add-entity / position-sync / teleport). So an entity
+        // moved across dimensions here kept a base from the SOURCE dimension, and the destination
+        // tracker's first relative move decoded to source coordinates.
+        //
+        // Why it bites the ridden path specifically: an entity crossing on its own is RECREATED on
+        // the client from an absolute add-entity packet (fresh base), whereas a ridden vehicle is
+        // MOVED as the existing client object by this method — and IP's own add-entity guard
+        // (MixinClientPacketListener: skip when the existing entity has passengers) deliberately
+        // cancels the very packet that would otherwise have rebased it. That is exactly why empty
+        // and entity-ridden carts cross cleanly while a player-ridden cart does not.
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
+            entity.syncPacketPositionCodec(newPos.x, newPos.y, newPos.z);
+            // A teleport must not be interpolated from where the entity used to be. Same rule
+            // McHelper.adjustVehicle already applies at its own carry site; this method had no
+            // equivalent, and the trace above shows the interpolation actively lerping across the
+            // gap for several ticks after each bad packet.
+            net.minecraft.world.entity.InterpolationHandler interpolation = entity.getInterpolation();
+            if (interpolation != null) {
+                interpolation.cancel();
+            }
+        }
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.recordCarryBaseDrift(
+            entity, newPos.x, newPos.y, newPos.z);
+
         ((IEEntity) entity).ip_unsetRemoved();
         newWorld.addEntity(entity);
         Validate.isTrue(!entity.isRemoved());

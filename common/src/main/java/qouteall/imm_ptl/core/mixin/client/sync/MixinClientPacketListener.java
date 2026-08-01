@@ -11,6 +11,7 @@ import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
 import net.minecraft.resources.ResourceKey;
@@ -153,6 +154,19 @@ public abstract class MixinClientPacketListener implements IEClientPlayNetworkHa
         CallbackInfo ci
     ) {
         Entity entity_1 = this.level.getEntity(entityPassengersSetS2CPacket_1.getVehicle());
+        // (e) DEFECT-B instrument. The recon's enabling condition is that the crossing player is
+        // NEVER sent a SetPassengers for the recreated vehicle, which is what makes a client-side
+        // eject permanent. This records every one that DOES arrive during a crossing window, so
+        // "it never came" is proven by an absence in a channel that demonstrably fires, rather
+        // than assumed from an empty log.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.onSetPassengers(
+            entityPassengersSetS2CPacket_1.getVehicle(),
+            entityPassengersSetS2CPacket_1.getPassengers(),
+            Minecraft.getInstance().player == null
+                ? -1 : Minecraft.getInstance().player.getId(),
+            Minecraft.getInstance().player == null
+                || Minecraft.getInstance().player.getVehicle() == null
+                ? -1 : Minecraft.getInstance().player.getVehicle().getId());
         if (entity_1 == null) {
             if (!isReProcessingPassengerPacket) {
                 Helper.log("Re-processed riding packet");
@@ -241,10 +255,58 @@ public abstract class MixinClientPacketListener implements IEClientPlayNetworkHa
 
         Entity existingEntity = level.getEntity(entityId);
 
-        if (existingEntity != null && !existingEntity.getPassengers().isEmpty()) {
+        boolean cancelled = existingEntity != null && !existingEntity.getPassengers().isEmpty();
+        // (e) DEFECT-B instrument: this guard is the ONLY thing standing between the recreated
+        // server vehicle's spawn packet and ClientLevel.addEntity's implicit
+        // removeEntity(id, DISCARDED) -> Entity.setRemoved -> getPassengers().forEach(stopRiding).
+        // Record whether it fired, so a crossing that survives the ADD path but dies anyway points
+        // the finger at the REMOVE path below — which has no such guard.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.onAddEntity(
+            entityId,
+            entityId == com.warwa.seamlessportals.passthrough.SeamRideProbe.watchedVehicleId(),
+            cancelled);
+
+        if (cancelled) {
             LOGGER.warn("[ImmPtl] Entity already exists and has passengers when accepting add-entity packet. Ignoring. {} {}", existingEntity, packet);
             ci.cancel();
         }
+    }
+
+    /**
+     * (e) DEFECT-B instrument — the UNGUARDED half of the pair above.
+     *
+     * <p>{@code handleAddEntity} is guarded against destroying a ridden client entity;
+     * {@code handleRemoveEntities} is not, anywhere in this tree, and vanilla's own handler
+     * explicitly NOTICES the player-as-passenger case (it records {@code removedPlayerVehicleId})
+     * and removes the entity anyway. Since the crossing player is never sent a
+     * {@code SetPassengers} for the recreated vehicle, an eject on this path is permanent. This
+     * injection is READ-ONLY and non-cancellable: it measures whether that packet actually arrives
+     * during a ridden crossing before anything is built to stop it.
+     *
+     * <p>Target javap-verified on {@code minecraft-merged-deobf-26.2.jar}:
+     * {@code public void handleRemoveEntities(ClientboundRemoveEntitiesPacket)}, accessor
+     * {@code public IntList getEntityIds()}.
+     */
+    @Inject(
+        method = "Lnet/minecraft/client/multiplayer/ClientPacketListener;handleRemoveEntities(Lnet/minecraft/network/protocol/game/ClientboundRemoveEntitiesPacket;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V",
+            shift = At.Shift.AFTER
+        )
+    )
+    private void seamlessportals$traceRemoveEntities(
+        ClientboundRemoveEntitiesPacket packet, CallbackInfo ci
+    ) {
+        if (!com.warwa.seamlessportals.passthrough.SeamRideProbe.windowOpen()) {
+            return;
+        }
+        int watched = com.warwa.seamlessportals.passthrough.SeamRideProbe.watchedVehicleId();
+        packet.getEntityIds().forEach((int id) -> {
+            Entity e = level.getEntity(id);
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.onRemoveEntities(
+                id, id == watched, e != null && !e.getPassengers().isEmpty());
+        });
     }
 
 //    // It uses `this.level` which is not correct when switched (the lambda captures this)

@@ -364,9 +364,43 @@ public class McHelper {
         McHelper.setPosAndLastTickPos(
             vehicle, newVehiclePos, newVehicleLastTickPos
         );
-        
+
+        // (e) DEFECT B, SAME-DIM ARM — rebase the relative-move codec here too.
+        //
+        // This is the SAME-DIM carry site, and it is the one the cross-dim fix in
+        // moveClientEntityAcrossDimension does not reach: a same-dimension crossing never calls
+        // that method (ClientTeleportationManager.teleportPlayer gates it on
+        // fromDimension != toDimension), so the identical stale-base defect survived there.
+        //
+        // The cancel() above was already right and was already necessary — but it is not
+        // sufficient, because it only clears the interpolation that exists AT THIS INSTANT.
+        // Without a rebase, the next ClientboundMoveEntityPacket$Pos decodes its deltas against a
+        // VecDeltaCodec base from BEFORE the 40,000-block carry, and the resulting garbage position
+        // re-arms the interpolation that was just cancelled.
+        //
+        // Measured 2026-08-01, same-dim ridden crossing, cart id=1422:
+        //   t+464  adjustVehicle carries the cart to (10.87, 19.06, 40000.5)      [correct]
+        //   t+464  InterpolationHandler.interpolate -> (-33.20, 4.40, 53360.83)   [garbage]
+        //   t+466  Entity.snapTo (position sync) -> (149.07, 63.06, -80.5)
+        //   t+466  InterpolationHandler.interpolate -> (103.80, 48.40, 13279.83)
+        //   t+480..t+542  player FROZEN at (103.80, 47.98, 13279.83), mid-air, 13k blocks along
+        //                 the line between the two portal endpoints, until they used /kill.
+        // The player/vehicle delta stayed exactly (0, 0.4125, 0) throughout — the ride was never
+        // broken and no dismount was involved. The rider was simply carried to a nonsense
+        // interpolated position and stranded there.
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
+            vehicle.syncPacketPositionCodec(
+                newVehiclePos.x(), newVehiclePos.y(), newVehiclePos.z());
+        }
+        // Latch the base drift HERE, at the carry. Read post-hoc it is meaningless — vanilla
+        // rebases the codec on every position packet — and a gate that sampled it 30 ticks later
+        // reported "the lever is dead code" while the defect was reproducing in the same run.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.recordCarryBaseDrift(
+            vehicle, newVehiclePos.x(), newVehiclePos.y(), newVehiclePos.z());
+
         vehicle.setDeltaMovement(currVelocity);
-        
+
     }
     
     public static LevelChunk getServerChunkIfPresent(

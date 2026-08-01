@@ -185,6 +185,15 @@ loom {
             if (project.findProperty('disableSeamVehicleAttach') == 'true') { vmArg('-Dseamlessportals.disableSeamVehicleAttach=true') }
             // RS (d) PROBE LEVER — DEFAULT-OFF. The minecart-crossing instrument (recon §5.5).
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
+            // RS (e) DEFECT A — restores the WRAP-AROUND section lookup on the dest-pass entity
+            // visibility gate (the same-dim window loses its entities at any real distance).
+            if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
+            // RS (e) PROBE LEVERS — DEFAULT-OFF. A: the dest-pass entity gate. B: the CLIENT-side
+            // ride trace across a cross-dim crossing (the server-side SeamCartProbe cannot see it).
+            // RS (e) DEFECT B — restores the stale relative-move base on a cross-dim client move.
+            if (project.findProperty('disableCrossDimPositionCodecSync') == 'true') { vmArg('-Dseamlessportals.disableCrossDimPositionCodecSync=true') }
+            if (project.findProperty('cartWindowProbe') == 'true') { vmArg('-Dseamlessportals.cartWindowProbe=true') }
+            if (project.findProperty('seamRideProbe') == 'true') { vmArg('-Dseamlessportals.seamRideProbe=true') }
             // RS-ONLY suite mode (gametest-side skip of the crossing/teleport legs) — also exposed
             // here so a live client run can carry it for symmetry, though only the gametest reads it.
             if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
@@ -376,6 +385,21 @@ loom {
             // RS (d) PROBE LEVER — DEFAULT-OFF. Arms the minecart-crossing instrument's extra
             // logging (SAMPLE/EVT/COME-OFF-TRACK/bridge-hit lines) in the RS-CART gates.
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
+            // RS (e) DEFECT A inversion lever + the two (e) probe levers.
+            // ⚠ NO GATE LEG CONSUMES disableDestEntitySectionExact. Defect A is covered by LIVE
+            // evidence only (2026-08-01: user-confirmed, with a zombie-in-a-minecart control that
+            // removes despawn as a confound; probe logged the aliasing in coordinates — entity at
+            // section (0,1,2500) resolving via the wrap to (0,1,0), 189,210/201,525 gate calls
+            // disagreeing, 6,026 verdicts flipped from cull to keep). This row therefore proves
+            // only that the lever is WIRED — a suite pass under it is NOT evidence the fix works.
+            // Writing that leg (RS-CART-F) is a queued item; it needs a same-dim destination
+            // outside the ViewArea preset window AND at a Y whose aliased section is UNCOMPILED,
+            // and a fixture missing either precondition passes for the wrong reason.
+            if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
+            // RS (e) DEFECT B — restores the stale relative-move base on a cross-dim client move.
+            if (project.findProperty('disableCrossDimPositionCodecSync') == 'true') { vmArg('-Dseamlessportals.disableCrossDimPositionCodecSync=true') }
+            if (project.findProperty('cartWindowProbe') == 'true') { vmArg('-Dseamlessportals.cartWindowProbe=true') }
+            if (project.findProperty('seamRideProbe') == 'true') { vmArg('-Dseamlessportals.seamRideProbe=true') }
             // RS-ONLY suite mode: skip the crossing/teleport legs (thrown items, hurt cow, pearl,
             // far-dest leg 7, leg 5's world reopen); portal staging, 6a/6b and every RS gate still
             // run. The full suite stays the default and is required before a commit.

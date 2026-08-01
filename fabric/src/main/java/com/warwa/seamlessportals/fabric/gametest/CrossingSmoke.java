@@ -5416,6 +5416,33 @@ public class CrossingSmoke implements FabricClientGameTest {
                         offs);
                 }
             });
+
+            // ===== RS-CART-D CLIENT ARM (the (e) requirement) ===================================
+            // Until now this leg ASSERTED NOTHING about the outcome — it logged a MEASUREMENT line
+            // and threw only on setup failure, so it could not have gone red no matter what the
+            // crossing did. That is why it reported stillRidden=true onRails=true advance=9.01 for
+            // the very crossing the user watched break: not merely because its assertions read
+            // server state, but because it had none. Both halves are fixed here — the arm asserts,
+            // and it asserts on the CLIENT.
+            //
+            // COVERAGE FIRST: playerCrossed was polled in a bounded loop above and then only
+            // LOGGED. Without this throw, a run where the crossing never happened reaches the arm
+            // with a stationary ridden cart on the NEAR side — which satisfies riding, riderGap and
+            // a zero carry drift trivially. RS-CART-E asserts its crossing server-side before its
+            // arm; RS-CART-D did not, so the arm could have passed on a no-crossing run.
+            if (!playerCrossed.get()) {
+                throw new AssertionError(LOG + "RS-CART-D FAILED: the ridden player never reached "
+                    + binding.destDim().identifier() + " — the crossing under test did not happen,"
+                    + " so the client arm would be judging a cart still on the near side");
+            }
+            String clientVerdict = clientRiddenArmVerdict(context, cartId.get());
+            if (clientVerdict != null) {
+                throw new AssertionError(LOG + "RS-CART-D CLIENT ARM FAILED: " + clientVerdict);
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-D PASS ({})",
+                AperturePassthroughLever.DISABLE_CROSS_DIM_POSITION_CODEC_SYNC
+                    ? "codec rebase OFF — the stale relative-move base reproduced on demand"
+                    : "codec rebase ON — the client rider arrived with the cart");
         }
         finally {
             try {
@@ -5460,6 +5487,106 @@ public class CrossingSmoke implements FabricClientGameTest {
                 SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-CART-D cleanup failed", t);
             }
         }
+    }
+
+    /**
+     * The (e) CLIENT ARM shared by RS-CART-D (cross-dim) and RS-CART-E (same-dim): assert on the
+     * side of the wire the rider's eyes are on.
+     *
+     * <p>Returns {@code null} on pass, or the failure text. Lever-aware: with
+     * {@code -PdisableCrossDimPositionCodecSync} it asserts the OPPOSITE — that the stale base is
+     * reachable again — so a green run cannot mean "the defect never existed here".
+     *
+     * <p>Reads {@code Entity.getPositionCodec().getBase()} (javap: {@code VecDeltaCodec.getBase}
+     * is public) on the CLIENT's own copy of the cart. That base is what
+     * {@code ClientPacketListener.handleMoveEntity} decodes relative-move deltas against, so a
+     * stale one is precisely the precondition for the 40,000-block yank that stranded the rider.
+     */
+    private static String clientRiddenArmVerdict(ClientGameTestContext context, Integer cartId) {
+        if (cartId == null) {
+            return "COVERAGE FAILED: no cart id — the client arm judged nothing";
+        }
+        String[] report = context.computeOnClient(mc -> {
+            if (mc.player == null || mc.level == null) {
+                return new String[] {"COVERAGE", "no client player/level"};
+            }
+            Entity clientCart = mc.level.getEntity(cartId);
+            if (clientCart == null) {
+                return new String[] {"COVERAGE",
+                    "the client has no entity with id " + cartId + " — the arm cannot judge"};
+            }
+            Vec3 cartPos = clientCart.position();
+            Vec3 playerPos = mc.player.position();
+            boolean riding = mc.player.getVehicle() != null
+                && mc.player.getVehicle().getId() == cartId.intValue();
+            double riderGap = playerPos.distanceTo(cartPos);
+            // LATCHED at the carry, not read here. A live read of getPositionCodec().getBase() is
+            // worthless post-hoc: vanilla rebases it on every position packet, so it measured ~0
+            // with the fix OFF while the rider was stranded 13,863 blocks away.
+            double carryDrift =
+                com.warwa.seamlessportals.passthrough.SeamRideProbe.lastCarryBaseDrift();
+            int carrySamples =
+                com.warwa.seamlessportals.passthrough.SeamRideProbe.carrySamples();
+            return new String[] {"OK",
+                "riding=" + riding + " cartPos=" + cartPos
+                    + " riderGap=" + String.format(java.util.Locale.ROOT, "%.3f", riderGap)
+                    + " carryBaseDrift(latched)="
+                    + String.format(java.util.Locale.ROOT, "%.3f", carryDrift)
+                    + " carrySamples=" + carrySamples,
+                String.valueOf(riding), String.valueOf(carryDrift),
+                String.valueOf(riderGap), String.valueOf(carrySamples)};
+        });
+        if (report == null || "COVERAGE".equals(report[0])) {
+            return "COVERAGE FAILED: " + (report == null ? "computeOnClient returned null"
+                : report[1]);
+        }
+        SeamlessPortalsConstants.LOGGER.info(LOG + "★ RS-CART CLIENT ARM: {}", report[1]);
+        boolean riding = Boolean.parseBoolean(report[2]);
+        double carryDrift = Double.parseDouble(report[3]);
+        double riderGap = Double.parseDouble(report[4]);
+        int carrySamples = Integer.parseInt(report[5]);
+
+        // COVERAGE FIRST: without an observed client-side carry, neither arm below judged anything.
+        if (carrySamples == 0) {
+            return "COVERAGE FAILED: no client-side portal carry was recorded, so the arm has"
+                + " nothing to judge — the crossing did not go through a carry site on the client";
+        }
+
+        if (!AperturePassthroughLever.DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
+            if (!riding) {
+                return "the CLIENT is not riding the cart after the crossing (server said it was)";
+            }
+            // THE OUTCOME THE RIDER SEES. Measured 0.412 (the attachment offset) with the fix and
+            // 13863.613 without it, so a 1-block threshold separates them by four orders of
+            // magnitude.
+            if (riderGap > 1.0) {
+                return "the CLIENT's player is " + riderGap + " blocks from the cart it is"
+                    + " riding — the rider has been dragged off the carry position";
+            }
+            // THE MECHANISM, latched at the carry. Deterministic: the rebase either happened or
+            // it did not.
+            if (carryDrift > 0.001) {
+                return "the carried cart's relative-move base was " + carryDrift + " blocks from"
+                    + " its carry position AT THE CARRY — the rebase did not happen, and the next"
+                    + " MoveEntity packet would decode its deltas against that stale base";
+            }
+            return null;
+        }
+
+        // Lever ON: the pre-fix behaviour must be reachable, or this arm proves nothing.
+        // Assert on the LATCHED drift, which the carry sets deterministically. Do NOT assert on
+        // riderGap here: the stranding needs a relative-move packet to land in the window after
+        // the carry, which is a race — it reproduced at 13863.613 on 2026-08-01, but a gate that
+        // demanded it would flake.
+        if (carryDrift <= 1.0) {
+            return "INVERSION FAILED: with -PdisableCrossDimPositionCodecSync the carried cart's"
+                + " relative-move base should still hold its PRE-CARRY position at the moment of"
+                + " the carry, but the latched drift is only " + carryDrift + " — either the"
+                + " fixture stopped exercising the carry path or the lever is dead code";
+        }
+        SeamlessPortalsConstants.LOGGER.info(LOG + "★ RS-CART CLIENT ARM: inversion reproduced the"
+            + " stale base at the carry (latched drift {}, riderGap {})", carryDrift, riderGap);
+        return null;
     }
 
     /**
@@ -5742,6 +5869,26 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (verdict.get() != null) {
                 throw new AssertionError(LOG + "RS-CART-E FAILED: " + verdict.get());
             }
+
+            // ===== RS-CART-E CLIENT ARM (the (e) requirement) ===================================
+            // Everything above reads SERVER state, and a server-side assertion cannot see the
+            // symptom the user reported: on 2026-08-01 this exact crossing reported
+            // stillRidden=true onRails=true server-side while the CLIENT stranded the rider at an
+            // interpolated point 13,000 blocks along the line between the two portal endpoints.
+            //
+            // Asserted here, on the client:
+            //   (1) THE OUTCOME the rider sees — still riding, and standing where the server says
+            //       they are rather than somewhere along a lerp.
+            //   (2) THE MECHANISM the fix installs — the carried vehicle's relative-move base
+            //       equals its position. This is the deterministic half: the stranding itself is a
+            //       RACE (it needs a relative-move packet to land in the window after the carry),
+            //       so an outcome-only gate could pass on a lucky run. The codec base is exact,
+            //       inverts cleanly under the lever, and is the precondition the stranding needs.
+            String clientVerdict = clientRiddenArmVerdict(context, cartId.get());
+            if (clientVerdict != null) {
+                throw new AssertionError(LOG + "RS-CART-E CLIENT ARM FAILED: " + clientVerdict);
+            }
+
             SeamlessPortalsConstants.LOGGER.info(LOG + "RS-CART-E PASS ({})",
                 AperturePassthroughLever.DISABLE_SEAM_VEHICLE_ATTACH
                     ? "attach fix OFF — the ridden arrival hop reproduced on demand"
