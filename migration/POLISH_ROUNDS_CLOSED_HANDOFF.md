@@ -126,3 +126,39 @@ shadowProbe, debugTintStamp…) per `PORTAL_VIEW_POLISH_HANDOFF.md` §1.
 
 ## §5 FRESH-SESSION PROMPT
 `migration/POLISH_NEXT_SESSION_PROMPT.md` — paste verbatim.
+
+---
+
+## §6 SHARP-WINDOW RE-AUDIT — RAN 2026-08-01, ALL FIVE CLEAN
+
+The whole polish queue was originally adjudicated while the portal window was BLURRED by the MB
+smear (closed `32aa3cc`, *"FINALLY NOT BLURRY"*). Since a blur hides exactly the defect classes
+those verdicts turned on — high-frequency, edge-localised and sub-pixel — the accepted-cost rows
+were re-checked against a sharp window.
+
+Selection principle: re-test the verdicts that rested on FINE DETAIL, not the ones that rested on
+presence/absence (a blur never hid "is the cow there"). The five re-checked, and the user's verdict
+on each: **all clean.**
+
+1. **Phantom in-window hand** (§3 ledger: *"the nested dest render RE-RENDERS THE TRANSLUCENT HAND …
+   unreported by the user so far"*) — the strongest candidate, since a faint translucent ghost is
+   precisely what a blur erases. NOT OBSERVED sharp.
+2. **The ≤2px FXAA/sharpen crop edge** (accepted cost) — a 2-pixel artifact accepted against a
+   blurred window was an unfalsifiable acceptance. NOT OBSERVED sharp.
+3. **Bloom dimming at the window edge** (accepted as "correct occlusion physics") — edge phenomenon,
+   verdict formed blurry. Holds.
+4. **In-window ACT bounce = source-translated** (accepted cost). Holds.
+5. **Scaled-portal stale gbufferProjection** (round-1 §3 leftover; independently re-derived by the
+   IS5-XCUT recon as a one-frame projection lag). NOT OBSERVED.
+
+### §6.1 THE CAVEAT THAT KEEPS THIS HONEST
+Two of the five have TRIGGER CONDITIONS that a normal look does not exercise, so their "clean" is
+weaker than the other three and should not be quoted as a closed finding:
+- **#5 can only manifest while the FOV is ANIMATING** (sprint start/stop, bow zoom, speed effects) —
+  at constant FOV the stale projection equals the live one and the defect is *mechanically unable*
+  to appear. A clean look at constant FOV measures nothing about it.
+- **#4 needs a coloured emitter (lava / glowstone) positioned so its bounce falls inside the
+  window** — with no such emitter in view the check has no target.
+This is the same "a probe pointed at nothing reports clean" rule the instrument work in this arc
+kept re-earning, applied to a human observer. Items 1-3 do not have this problem: their trigger is
+simply "look at a portal window", which was satisfied.
