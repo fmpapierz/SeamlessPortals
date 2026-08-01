@@ -84,6 +84,24 @@ public final class AperturePassthroughInit {
         qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
             () -> com.warwa.seamlessportals.render.SeamClipRenderer.onEndClientTick(
                 net.minecraft.client.Minecraft.getInstance()));
+        // (e) DEFECT-B ride sampler. Same ordering guarantee. Costs one boolean test per tick
+        // outside a crossing window (SeamRideProbe.windowOpen), and the window is opened only by
+        // an actual client-side dimension change and closed after SeamRideProbe.WINDOW_TICKS.
+        qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(() -> {
+            if (!SeamRideProbe.windowOpen()) {
+                return;
+            }
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            net.minecraft.world.entity.Entity player = mc == null ? null : mc.player;
+            net.minecraft.world.entity.Entity vehicle = player == null ? null : player.getVehicle();
+            int watched = SeamRideProbe.watchedVehicleId();
+            SeamRideProbe.onEndClientTick(
+                player, vehicle,
+                mc == null || mc.level == null
+                    ? "null" : mc.level.dimension().identifier().toString(),
+                mc != null && mc.level != null && watched >= 0
+                    && mc.level.getEntity(watched) != null);
+        });
 
         // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
         // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was

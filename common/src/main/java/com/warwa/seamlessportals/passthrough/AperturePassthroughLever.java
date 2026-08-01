@@ -555,6 +555,104 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_CART_PROBE =
         Boolean.getBoolean("seamlessportals.seamCartProbe");
 
+    // ============================================================================================
+    // STEP (e) — THE TWO 2026-07-28 CART DEFECTS: same-dim window rendering + cross-dim riding.
+    // ============================================================================================
+
+    /**
+     * Restores the WRAP-AROUND section lookup on the dest-pass entity visibility gate —
+     * {@code -Dseamlessportals.disableDestEntitySectionExact=true}.
+     *
+     * <p>With the fix ON (default), {@link
+     * com.warwa.seamlessportals.mixin.client.LevelRendererEntityVisibilityMixin} resolves the
+     * queried section by EXACT coordinates through {@code ImmPtlViewArea.rawGet} — the unbounded,
+     * coord-pinned column map — which is the shape that mixin's own S15 comment already cites
+     * ("IP's exact shape: rawGet + compiled != UNCOMPILED"). With it OFF, the pre-fix call returns:
+     * {@code ViewArea.getRenderSectionAt(BlockPos)}, which on {@link
+     * qouteall.imm_ptl.core.render.ImmPtlViewArea} applies {@code positiveModulo} into the CURRENT
+     * PRESET array with no exact-node guard (the hazard ledgered in that file's own
+     * {@code getRenderSection(long)} note: "getRenderSectionAt (BlockPos-keyed) shares the wrap
+     * hazard — ledgered for the S20 audit, not changed here").
+     *
+     * <p>⚠ THE DEFECT IT CLOSES IS NOT MINECART-SPECIFIC AND NOT SEAM-SPECIFIC — it is
+     * DISTANCE-dependent. The preset window is re-centred on the dest camera for CROSS-DIM only
+     * ({@code SecondaryWorldRenderCore:663}, {@code if (!sharedState && viewArea != null)}, whose
+     * comment explains that moving it same-dim would corrupt the main frame). So for a SAME-DIM
+     * pair whose destination lies outside ±renderDistance chunks of the player, the gate is
+     * answered by an unrelated section near the player — normally UNCOMPILED — and EVERY entity in
+     * that window is culled. Window TERRAIN is unaffected because terrain discovery goes through
+     * {@code ImmPtlViewArea.rawFetch}, which is unbounded. That is exactly the user's 2026-07-28
+     * report: the cart vanishes as it crosses a 40 km same-dim seam while the terrain keeps drawing.
+     *
+     * <p>⚠ DO NOT "fix" this by adding the exact-node guard to {@code getRenderSectionAt} itself:
+     * that returns null for an out-of-window query, the gate then answers false, and the cart stays
+     * culled. The read has to go to the UNBOUNDED map, not merely be made honest about the bounded
+     * one.
+     */
+    public static final boolean DISABLE_DEST_ENTITY_SECTION_EXACT =
+        Boolean.getBoolean("seamlessportals.disableDestEntitySectionExact");
+
+    /**
+     * Restores the pre-fix behaviour at BOTH portal carry sites —
+     * {@code -Dseamlessportals.disableCrossDimPositionCodecSync=true}.
+     *
+     * <p>Covers {@code ClientTeleportationManager.moveClientEntityAcrossDimension} (the CROSS-DIM
+     * carry) and {@code McHelper.adjustVehicle} (the SAME-DIM carry). One rule, two sites: a
+     * vehicle that has just been carried through a portal must not keep a relative-move base from
+     * where it used to be. The same-dim site was missed by the first build precisely because a
+     * same-dimension crossing never enters {@code moveClientEntityAcrossDimension} — the
+     * {@code fromDimension != toDimension} gate skips it — so the identical defect survived there
+     * and stranded the rider at an interpolated point 13,000 blocks along the line between the two
+     * portal endpoints.
+     *
+     * <p>With the fix ON (default), an entity moved across dimensions on the client has its
+     * relative-move base rebased ({@code Entity.syncPacketPositionCodec}) and its interpolation
+     * cancelled. With it OFF, the measured 2026-08-01 defect returns: a player-ridden minecart
+     * crossing into the nether is yanked to SOURCE-dimension coordinates by the first
+     * {@code ClientboundMoveEntityPacket$Pos} after arrival (relative deltas decoded against a
+     * stale {@code VecDeltaCodec} base), dragged back by the next absolute position sync, and
+     * lerped across the 40,000-block gap in between — with the rider carried along and ultimately
+     * stranded, escapable only by {@code /kill}.
+     *
+     * <p>⚠ SCOPE: this method carries every entity the client moves across a dimension, so the
+     * rebase is not minecart-specific. It is nonetheless the narrow correct rule — an entity that
+     * has just been teleported must not have a delta base from where it used to be — and vanilla
+     * applies exactly this rule wherever it sets an absolute position from a packet.
+     */
+    public static final boolean DISABLE_CROSS_DIM_POSITION_CODEC_SYNC =
+        Boolean.getBoolean("seamlessportals.disableCrossDimPositionCodecSync");
+
+    /**
+     * The (e) DEFECT-A instrument ({@code -Dseamlessportals.cartWindowProbe=true}, DEFAULT-OFF):
+     * client-side, logs the dest-pass entity visibility gate. Emits a line only when the WRAP and
+     * EXACT section lookups DISAGREE (the aliasing itself, with both resolved section nodes and
+     * both mesh states), plus one summary line per second carrying the gate call/false/disagree
+     * counts and the same-dim extract count. Rate-limited by construction — see
+     * {@link com.warwa.seamlessportals.render.CartWindowProbe}; the 2026-07-28 live round caught a
+     * probe emitting 96% of a 46k-line log, which is why every new instrument here states its
+     * limiter.
+     */
+    public static final boolean CART_WINDOW_PROBE =
+        Boolean.getBoolean("seamlessportals.cartWindowProbe");
+
+    /**
+     * The (e) DEFECT-B instrument ({@code -Dseamlessportals.seamRideProbe=true}, DEFAULT-OFF):
+     * CLIENT-side ride trace across a cross-dim crossing. The existing {@link SeamCartProbe}
+     * channel is entirely server-side and therefore structurally blind to the reported symptom
+     * (forced dismount / player spazzing in place) — the fourth time this engagement has paid for
+     * <em>assert the outcome on the side of the wire the user's eyes are on</em>.
+     *
+     * <p>Records: every client-side {@code Entity.removeVehicle} on the local player with its
+     * cause, every {@code startRiding} write and its DISCARDED return value, the passenger-bearing
+     * entity packets ({@code handleRemoveEntities} — which has no guard anywhere in this tree —
+     * {@code handleAddEntity} and its IP guard, {@code handleSetEntityPassengersPacket}), and a
+     * per-tick sample of the player/vehicle link for a bounded window around a dimension change.
+     * Limiter: armed ONLY for {@link com.warwa.seamlessportals.passthrough.SeamRideProbe#WINDOW_TICKS}
+     * ticks around a crossing, and only for the local player's own vehicle cluster.
+     */
+    public static final boolean SEAM_RIDE_PROBE =
+        Boolean.getBoolean("seamlessportals.seamRideProbe");
+
     /**
      * RS-ONLY SUITE MODE ({@code -Dseamlessportals.rsOnly=true}, DEFAULT-OFF) — the recorded
      * proposal from 2026-07-26: the user has flagged the suite as slow, and the RS gates are a small

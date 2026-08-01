@@ -94,11 +94,65 @@ public class LevelRendererEntityVisibilityMixin {
                 cir.setReturnValue(false);
                 return;
             }
+
+            // (e) DEFECT A — THE SAME-DIM WINDOW LOSES ITS ENTITIES AT ANY REAL DISTANCE.
+            //
+            // The compiled-section term above is right to keep; the LOOKUP it was using was not.
+            // ViewArea.getRenderSectionAt(BlockPos) on ImmPtlViewArea (:496) applies
+            // positiveModulo into the CURRENT PRESET array and has NO exact-node guard — the
+            // hazard that file's own getRenderSection(long) already documents at :551-553
+            // ("getRenderSectionAt (BlockPos-keyed) shares the wrap hazard — ledgered for the S20
+            // audit, not changed here"). The preset is re-centred on the dest camera for CROSS-DIM
+            // ONLY (SecondaryWorldRenderCore:663 gates repositionCamera on !sharedState, because
+            // same-dim shares the main renderer's grid and moving it would corrupt the main
+            // frame). So for a SAME-DIM destination outside ±renderDistance chunks of the player —
+            // the user's 40 km pair — every query aliased onto an unrelated section near the
+            // player, which is normally UNCOMPILED, and LevelExtractor.isEntityVisible culled
+            // EVERY entity in the window. Window terrain was unaffected the whole time because
+            // VisibleSectionDiscovery reads through ImmPtlViewArea.rawFetch, which is unbounded —
+            // hence "terrain fine, cart gone", the user's exact 2026-07-28 report.
+            //
+            // Fix: resolve by EXACT coordinates through the unbounded coord-pinned column map.
+            // That is IP's ip_isChunkCompiled shape, which THIS METHOD'S OWN comment above already
+            // cites (rawGet + compiled != UNCOMPILED) — the code had simply drifted from it.
+            // ⚠ NOT the same as adding the exact-node guard to getRenderSectionAt: that returns
+            // null out of window, the gate answers false, and the entity stays culled. The read
+            // has to reach the UNBOUNDED map, not merely be honest about the bounded one.
+            boolean useExact =
+                !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                    .DISABLE_DEST_ENTITY_SECTION_EXACT
+                && viewArea instanceof qouteall.imm_ptl.core.render.ImmPtlViewArea;
+            boolean probe = com.warwa.seamlessportals.render.CartWindowProbe.armed();
+
+            net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection exact = null;
+            net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection wrap = null;
+            if ((useExact || probe)
+                && viewArea instanceof qouteall.imm_ptl.core.render.ImmPtlViewArea ipViewArea) {
+                exact = ipViewArea.rawGet(
+                    net.minecraft.core.SectionPos.blockToSectionCoord(blockPos.getX()),
+                    net.minecraft.core.SectionPos.blockToSectionCoord(blockPos.getY()),
+                    net.minecraft.core.SectionPos.blockToSectionCoord(blockPos.getZ()));
+            }
+            if (!useExact || probe) {
+                wrap = viewArea.getRenderSectionAt(blockPos);
+            }
+
             net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection section =
-                viewArea.getRenderSectionAt(blockPos);
-            cir.setReturnValue(section != null
+                useExact ? exact : wrap;
+            boolean verdict = section != null
                 && section.getSectionMesh()
-                    != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
+                    != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED;
+
+            if (probe) {
+                com.warwa.seamlessportals.render.CartWindowProbe.onDestGate(
+                    blockPos, wrap, exact,
+                    wrap != null && wrap.getSectionMesh()
+                        != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED,
+                    exact != null && exact.getSectionMesh()
+                        != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
+            }
+
+            cir.setReturnValue(verdict);
         }
     }
 }
