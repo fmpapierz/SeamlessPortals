@@ -334,6 +334,80 @@ public class IPGlobal {
         return crossViewReverseWindowPasses;
     }
 
+    // ===== IS5-REC — RECURSIVE PORTAL LAYERS, SHADERS ON (2026-08-02) =========================
+    // MEASURED BASELINE (c493fb2, reverse pair, first person, laggy overlay never fired, 381 rows):
+    //     shaders ON   renderer=IrisCompatOn262Renderer  invoke=FULL-PIPELINE x1  maxPortalDepth=1
+    //     shaders OFF  renderer=RendererUsingStencil     invoke=BASE-DECOMPOSED x2 maxPortalDepth=2
+    // User-confirmed visually in both directions: "with shaders on, the recursive portal doesnt show
+    // at all, with shaders off, the recursive portal show correctly". So this is PARITY work against
+    // a measured number, not a new capability.
+    //
+    // WHY IP'S OWN MECHANISM COULD NOT BE ADOPTED: IP recursed by re-entering the nested
+    // renderLevel's hooks, and masked each layer with a stencil blitted FBO->FBO via
+    // RenderTarget.frameBufferId. Neither exists here — the IS0 anchor injects into
+    // GameRenderer.renderLevel while the nested dest render calls LevelRenderer.render directly
+    // (SecondaryWorldRenderCore:1905, so the anchor fires once per frame — measured is0=YES(x1) on
+    // 381/381 baseline rows), and frameBufferId is gone on 26.2 (IP's held IrisPortalRenderer has
+    // those blit blocks COMMENTED OUT at :152/:210). The dispatch is therefore a new per-layer entry
+    // point at the full-pipeline core's tail, and the masking stays the stencil-free D20 stamp.
+
+    /** A/B lever: reproduces the pre-IS5-REC one-layer behaviour byte-for-byte on command.
+     *  {@code -PdisableIrisPortalRecursion=true}. Every fix in this project must be provable in BOTH
+     *  directions, and "it looks better" has passed on a no-op here before. */
+    public static final boolean IRIS_PORTAL_RECURSION_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableIrisPortalRecursion");
+
+    /**
+     * The shaders-ON recursion bound, SEPARATE from {@link #maxPortalLayer} (=5) on purpose.
+     *
+     * <p>Layer n shaders-ON is a full PACK-SHADED world render — gbuffer, shadow pass and the whole
+     * composite chain — which is a categorically heavier unit than the stencil family's layer n.
+     * Reusing 5 would multiply the frame's heaviest work by five on a path nobody has cost yet (the
+     * only per-pass number in this tree is explicitly voided pending re-measurement,
+     * MyGameRenderer:418-421).
+     *
+     * <p>2 is chosen because it is exactly parity for the measured baseline geometry, not as a
+     * placeholder: a REVERSE PAIR reaches exactly depth 2 shaders-OFF, and it is cut there by
+     * {@code isInvalidRecursionRendering}, which requires a stack of >=2 — so at [A] candidate B is
+     * admitted and at [A,B] candidate A is rejected. That cut happens in shouldSkipRenderingPortal,
+     * BEFORE any aperture is drawn, so shaders-OFF shows terrain with the portal simply absent —
+     * which is also what a bound of 2 produces here. Parity is therefore EXACT for this geometry,
+     * terminal appearance included. Raising it is a MEASUREMENT-GATED decision (sweep dpMs), not a
+     * taste one. -PirisMaxPortalLayer=N.
+     */
+    public static int irisMaxPortalLayer =
+        Integer.getInteger("seamlessportals.irisMaxPortalLayer", 2);
+
+    /** Belt against a pathological scene (many portals x many layers) turning one frame into an
+     *  unbounded pack-shaded render tree. Counted per FRAME across all layers, not per layer.
+     *  -PirisMaxDestRenders=N. */
+    public static int irisMaxDestRenders =
+        Integer.getInteger("seamlessportals.irisMaxDestRenders", 6);
+
+    /** The bound actually enforced. {@code min} with {@link PortalRendering#getMaxPortalLayer()} so
+     *  the engine bound still dominates AND so {@code RenderStates.isLaggy} — which silently
+     *  collapses that to 1 as mirror-room lag protection — keeps working shaders-ON. */
+    public static int effectiveIrisMaxPortalLayer() {
+        int engineBound = qouteall.imm_ptl.core.render.context_management.PortalRendering
+            .getMaxPortalLayer();
+        return Math.min(irisMaxPortalLayer, engineBound);
+    }
+
+    /** MONOTONIC count of nested portal passes dispatched (layer >= 1). DELIBERATELY NOT routed
+     *  through {@code TpXdimFrameCensus.noteXWinPass}: that counter prints
+     *  "YES(xN RECURSION-ANOMALY)" above 1, so reusing it would make a CORRECT deep cross-view frame
+     *  adjudicate as broken — an existing pre-registered criterion declaring a working fix a defect,
+     *  which this project has already done once. */
+    private static int nestedPortalLayerPasses = 0;
+
+    public static void noteNestedPortalLayerPass() {
+        nestedPortalLayerPasses++;
+    }
+
+    public static int getNestedPortalLayerPasses() {
+        return nestedPortalLayerPasses;
+    }
+
     /** MONOTONIC count of frames on which the IS0 post-main anchor fired. Written ONLY by
      *  MixinGameRenderer_IPPostLevelAnchor (gated on the lever above), read as a DELTA by
      *  TpXdimFrameCensus at GameRenderer.render TAIL — the "did the anchor fire this frame"

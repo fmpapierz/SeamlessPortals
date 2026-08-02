@@ -108,6 +108,14 @@ public final class IrisTemporalTargetGuard {
      *  integer-vs-float format selection; restore() reads only indices 1..6.) */
     private static final List<int[]> savedList = new ArrayList<>();
 
+    /** IS5-REC belt witnesses (see {@link #save()}). Pre-registered at 0 on every leg. */
+    private static int reentrantSaveRefusals = 0;
+    private static boolean reentrantSaveLogged = false;
+
+    public static int getReentrantSaveRefusals() {
+        return reentrantSaveRefusals;
+    }
+
     /** IS5-G once-only log latches (the clear fires per-portal-per-frame — an unlatched per-frame
      *  render-thread log is the known ~130ms log4j-stall class). */
     private static boolean clearFailLogged = false;
@@ -179,6 +187,32 @@ public final class IrisTemporalTargetGuard {
      */
     public static boolean save() {
         if (!IPGlobal.isIrisTemporalGuardActive() || !COPY_SUPPORTED) {
+            return false;
+        }
+        // IS5-REC RE-ENTRANCY BELT. save() is single-slot: :192 below does savedList.clear(), so a
+        // second save() before the matching restore() would DISCARD the outermost (clean) history
+        // and later "restore" the polluted one — a self-inflicted permanent ghost that would look
+        // like a pack bug, not like a portal bug.
+        //
+        // The IS5-REC recursion design cannot reach this: the nested per-layer pass
+        // (IrisCompatOn262Renderer.renderNestedPortalLayer) deliberately omits the guard entirely,
+        // leaving save/restore owned by the once-per-frame layer-0 anchor. So this belt is expected
+        // to be DEAD CODE — it exists so that if a future change relocates the dispatch or adds a
+        // second entry point, the failure is LOUD here instead of silent and cosmetic three
+        // subsystems away. reentrantSaveRefusals is pre-registered at 0.
+        if (!savedList.isEmpty()) {
+            reentrantSaveRefusals++;
+            if (!reentrantSaveLogged) {
+                reentrantSaveLogged = true;
+                LOGGER.warn(
+                    "[IS5-REC] IrisTemporalTargetGuard.save() re-entered while {} targets were "
+                        + "already saved (portal layer {}). REFUSING, so the outermost history "
+                        + "survives. This means a nested portal pass reached a frame-scoped "
+                        + "singleton it must not own — see renderNestedPortalLayer's javadoc.",
+                    savedList.size(),
+                    qouteall.imm_ptl.core.render.context_management.PortalRendering.getPortalLayer()
+                );
+            }
             return false;
         }
         try {

@@ -2062,6 +2062,95 @@ public class SecondaryWorldRenderCore {
         // this point. The aperture and occlusion-query draws carry their own matrices and write no
         // color or depth, and the nested window render re-runs its own Step 8.
         maybeRunCrossViewPortalPass(destDrawViewMatrix);
+
+        // ===== IS5-REC — THE NESTED PORTAL LAYER (recursive portal views, shaders ON) ===========
+        // ADDED AFTER the XWIN call, which is left BYTE-UNTOUCHED. That is deliberate: the reverse
+        // window landed days ago (9cf9d46), is DEFAULT ON and user-visible, and restructuring its
+        // gate in the same commit that has to prove recursion would put a working feature inside the
+        // blast radius of a leg that must attribute a single change.
+        maybeRunNestedPortalLayer(destDrawViewMatrix);
+    }
+
+    /**
+     * IS5-REC — dispatch the portal pass for the layer this dest render just produced, so a portal
+     * seen INSIDE a portal window renders its own destination instead of flat pass-through.
+     *
+     * <p><b>Why here, and not by re-entering the anchor.</b> IP recursed by re-entering the nested
+     * {@code renderLevel}'s own hooks. On 26.2 that is structurally impossible: the IS0 anchor
+     * injects into {@code GameRenderer.renderLevel} while the nested dest render calls
+     * {@code destRenderer.render(...)} directly ({@link #renderDestWorldFullPipeline} ~:1905), a
+     * different method — so the anchor's bytecode is never reached and it fires exactly once per
+     * frame (MEASURED: {@code is0=YES(x1)} on 381/381 baseline census rows). The nested pass needs
+     * its own entry point, and this is the only correct place for it.
+     *
+     * <p><b>Why THIS slot specifically</b> — the same properties {@link #maybeRunCrossViewPortalPass}
+     * documents, and they are what make recursion safe rather than merely possible:
+     * <ul>
+     *   <li>{@code client.level}, {@code levelRenderer}, {@code mainCamera} and the sodium context
+     *       are STILL DEST ({@code switchAndRenderTheWorldFullPipeline}'s finally has not run). This
+     *       is decisive: {@code getPortalsToRender} enumerates {@code client.level}, so anywhere the
+     *       context has been restored would enumerate the WRONG WORLD's portals.</li>
+     *   <li>The core's own finally has ALREADY closed — shared camera state, entity states, clip
+     *       (including the raw {@code GL_CLIP_DISTANCE0} kill) and all four single-slot probe
+     *       brackets. So a nested layer inherits nothing it would have to save, and for the
+     *       same-dim case layer 1's shared-state save/restore pair CLOSES before layer 2 opens its
+     *       own. Sequential, never overlapping — which is why the frame-scoped singletons need no
+     *       stack discipline at this slot.</li>
+     *   <li>{@code destDrawViewMatrix} is the EXACT object handed to {@code render()} as arg 5.
+     *       Threaded, never re-read: on a cross-dim pass the main {@code cameraRenderState} still
+     *       holds the SOURCE camera, so re-reading it would hand a dest-world portal the source view
+     *       rotation. Copied defensively because iris ALIASES that argument as
+     *       {@code gbufferModelView}.</li>
+     * </ul>
+     *
+     * <p><b>Unreachable shaders-OFF by construction</b>, not by promise:
+     * {@code MyGameRenderer.renderWorldFullPipeline} has exactly two call sites, both inside
+     * {@code IrisCompatOn262Renderer}. The stencil family and {@code GuiPortalRendering} route to
+     * {@code renderWorldNew} and never enter this method — so the shaders-OFF oracle stays a clean
+     * control leg across the whole A/B.
+     *
+     * <p><b>What this must NOT do.</b> Only {@code doRenderPortal}'s guard is relaxed for recursion.
+     * The F1 ({@code AFTER_TRANSLUCENT_TERRAIN}) and F2 ({@code BEFORE_TRANSLUCENT_TERRAIN}) Fabric
+     * listeners RE-FIRE inside every nested full-pipeline render, and their {@code isRendering()}
+     * early-returns are LOAD-BEARING, not defensive — MEASURED on the baseline: shaders-ON rows read
+     * {@code f1=YES:flagON(fired=2 reentrantSkips=1)}, exactly one skip per nested render, while
+     * shaders-OFF (decomposed, no re-fire) reads {@code fired=1 reentrantSkips=0}. If those guards
+     * were ever relaxed as a concept, F1 would run {@code switchToCorrectRenderer} +
+     * {@code prepareRendering} + {@code onBeforeTranslucentRendering(destPose)} +
+     * {@code finishRendering} inside every nested render — a second, unindexed portal dispatch that
+     * also overwrites {@code passingModelView} with the dest pose.
+     */
+    private static void maybeRunNestedPortalLayer(Matrix4f destDrawViewMatrix) {
+        if (IPGlobal.IRIS_PORTAL_RECURSION_DISABLED_LEVER) {
+            return; // A/B leg: reproduces the one-layer frame byte-for-byte
+        }
+        int layer = PortalRendering.getPortalLayer();
+        if (layer == 0) {
+            return; // layer 0 belongs to the IS0 anchor (or, on a cross-view frame, to XWIN above)
+        }
+        if (CrossPortalViewRendering.isRenderingCrossPortalView()) {
+            // STAGE 3 SCOPE LIMIT, lifted in its own later stage together with moving the
+            // CROSS_VIEW_REVERSE_WINDOW lever off the head of maybeRunCrossViewPortalPass. Those two
+            // are ONE change: that lever is tested FIRST there, so lifting this exclusion while it
+            // still guards the whole method would make -PdisableCrossViewReverseWindow silently kill
+            // recursion too, entangling two independent A/Bs.
+            return;
+        }
+        if (layer >= IPGlobal.effectiveIrisMaxPortalLayer()) {
+            return; // the shaders-ON depth bound (also collapses to 1 under RenderStates.isLaggy)
+        }
+        if (RenderStates.getRenderedPortalNum() >= IPGlobal.irisMaxDestRenders) {
+            return; // per-frame pack-shaded render budget
+        }
+        PortalRenderer renderer = IPCGlobal.renderer;
+        if (renderer == null) {
+            return;
+        }
+        // ORDER IS LOAD-BEARING (the 2f9d7b8 lesson): count BEFORE any call that can emit the
+        // once-per-session RunConfigReport block, or the counter whose job is to prove this ran
+        // prints 0 inside that very block.
+        IPGlobal.noteNestedPortalLayerPass();
+        renderer.renderNestedPortalLayer(new Matrix4f(destDrawViewMatrix));
     }
 
     /**
