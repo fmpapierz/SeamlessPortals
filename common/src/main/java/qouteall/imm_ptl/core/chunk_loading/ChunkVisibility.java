@@ -163,14 +163,40 @@ public class ChunkVisibility {
             );
         }
         else {
+            // IS5-REACH — nested levels get the SAME distance graduation as the first level.
+            //
+            // This used to be a flat loadDistance / 4 with no graduation at all, while the LAYER-1
+            // loader (getGeneralDirectPortalLoader) uses getDirectLoadingDistance: full view
+            // distance within 5 blocks, 2/3 within 15, 1/3 beyond. At view distance 32 that is 32
+            // chunks for layer 1 against a permanent 8 for everything below it — four times
+            // shallower, and standing right against the portal did not change it. Looking down a
+            // chain, layer 1 reached the horizon while every deeper level was a ~128-block island of
+            // terrain ending at a chunk boundary.
+            //
+            // IT ALSO MADE indirectLoadingRadiusCap INERT FOR DEEP LEVELS, which is the part most
+            // likely to mislead: the radius is min(target, min(perfCap, indirectLoadingRadiusCap)),
+            // and with target fixed at loadDistance/4 = 8 the cap of 32 could never bind. Raising
+            // that setting to its maximum did nothing. With the graduated target it binds again and
+            // the setting means what it says.
+            //
+            // The distance is measured from the player position TRANSFORMED into this portal's own
+            // world (threaded in as transformedPos), which is the correct analog of "how far the
+            // player is from the portal" one layer down — the same value the renderer culls on.
+            //
+            // COST: this is a real increase. Each level can now hold up to a full view-distance
+            // square instead of a quarter one, multiplied by the chain length. Hence the toggle,
+            // and hence the caps above it still applying.
+            int target = IPGlobal.deepPortalLoadingReach
+                ? getDirectLoadingDistance(
+                    loadDistance, portal.getDistanceToNearestPointInPortal(transformedPos))
+                : loadDistance / 4;
+
             return new ChunkLoader(
                 new DimensionalChunkPos(
                     portal.getDestDim(),
                     ChunkPos.containing(BlockPos.containing(portal.getDestPos()))
                 ),
-                getCappedLoadingDistance(
-                    portal, player, loadDistance / 4
-                )
+                getCappedLoadingDistance(portal, player, target)
             );
         }
     }
