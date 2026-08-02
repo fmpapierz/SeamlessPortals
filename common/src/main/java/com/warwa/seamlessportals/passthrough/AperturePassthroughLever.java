@@ -665,5 +665,95 @@ public final class AperturePassthroughLever {
     public static final boolean RS_ONLY =
         Boolean.getBoolean("seamlessportals.rsOnly");
 
+    // ============================================================================================
+    // THE FRACTIONAL SEAM MODEL — genuine partial blocks: geometry, collision and state ending at
+    // the plane. Spec: migration/FRACTIONAL_DESIGN.md (user decisions 2026-08-02).
+    // Sequencing (decision C): GATE -> STORAGE -> COLLISION -> render flip LAST. These levers are
+    // declared with the GATE so it is lever-aware from its first run, before any fix exists.
+    // ============================================================================================
+
+    /**
+     * MASTER OFF-SWITCH for the fractional seam model —
+     * {@code -Dseamlessportals.disableSeamFractional=true}.
+     *
+     * <p>With the fix ON (default), a mirror-admitted seam cell's block is genuinely divided by the
+     * portal plane: {@link SeamFractional#active()} answers true once the model is built and every
+     * arm consults it. With it OFF, seam blocks are whole cubes in both dimensions — today's
+     * behaviour, and the thing {@code rsSeamCollisionGate} currently asserts.
+     *
+     * <p>⚠ THIS LEVER IS DECLARED AHEAD OF ITS FIX, DELIBERATELY. The gate is built first
+     * (decision C) and must be able to state which truth it is asserting from its very first run;
+     * a gate whose expectation is hardcoded is "actively wrong in whichever configuration it was
+     * not written for" (the house rule earned at {@code rsPlayerPlaceBracketGate}). Until front 3
+     * lands, {@link SeamFractional#CUT_IMPLEMENTED} keeps {@code active()} false in BOTH lever
+     * positions and the gate says so in its log line rather than passing vacuously and silently.
+     */
+    public static final boolean DISABLE_SEAM_FRACTIONAL =
+        Boolean.getBoolean("seamlessportals.disableSeamFractional");
+
+    /**
+     * TIER (i) half of the model — movement, raytracing and block picking
+     * ({@code -Dseamlessportals.disableSeamFractionalCollision=true}).
+     *
+     * <p>The 3-arg {@code BlockStateBase.getCollisionShape(level, pos, ctx)}
+     * ({@code BlockBehaviour.java:669-671}) has NO cache branch even for an empty context, so the
+     * entity-movement funnel ({@code BlockCollisions:93} → {@code EntityCollisionContext:64}),
+     * {@code ClipContext.Block.COLLIDER} and block picking are all fully hookable and cannot be
+     * defeated. Separate from {@link #DISABLE_SEAM_FRACTIONAL_SUPPORT} on purpose: it isolates
+     * "does the player walk into the far half" from "does the world agree the block is partial",
+     * which are different failures with different causes.
+     */
+    public static final boolean DISABLE_SEAM_FRACTIONAL_COLLISION =
+        Boolean.getBoolean("seamlessportals.disableSeamFractionalCollision");
+
+    /**
+     * TIER (ii) half of the model — support, redstone conduction and suffocation
+     * ({@code -Dseamlessportals.disableSeamFractionalSupport=true}).
+     *
+     * <p>These read the PER-BLOCKSTATE cache ({@code isFaceSturdy} :867-868,
+     * {@code isCollisionShapeFullBlock} :871-872, 2-arg {@code getCollisionShape} :665-666), which
+     * is built once against {@code EmptyBlockGetter}/{@code BlockPos.ZERO} and has no position slot
+     * to vary over — so this half must intercept AHEAD of the {@code cache != null} ternary.
+     *
+     * <p>⚠ AND AT THE PREDICATE SEAM TOO. {@code isRedstoneConductor}/{@code isSuffocating} are
+     * per-block {@code StatePredicate} fields carrying {@code (state, level, pos)}; ~34 vanilla
+     * blocks override them, so intercepting only {@code isCollisionShapeFullBlock} silently misses
+     * every one. {@code Blocks.SOUL_SAND} is the witness the gate uses: partial collision shape
+     * (14/16), {@code getBlockSupportShape} overridden back to a full block, and both predicates
+     * forced true — see {@code FRACTIONAL_DESIGN.md} §4a.
+     */
+    public static final boolean DISABLE_SEAM_FRACTIONAL_SUPPORT =
+        Boolean.getBoolean("seamlessportals.disableSeamFractionalSupport");
+
+    /**
+     * ⚠ EXPERIMENT LEVER, DEFAULT-OFF AND DELIBERATELY NOT A FIX LEVER —
+     * {@code -Dseamlessportals.seamSupportUnion=true}. Needs the user's word before it could ever
+     * become the default; see {@code FRACTIONAL_DESIGN.md} §5.
+     *
+     * <p>User decision 2026-08-02 (B) was that a partial block reports PARTIAL everywhere gameplay
+     * looks — so rails pop off a partial support block, and that is the shipped default. This lever
+     * exposes the other defensible reading of "partial" AT A SEAM specifically: a COINCIDENT or
+     * FRACTIONAL cell is, in {@link SeamMap}'s own words, "one physical slot seen from two sides",
+     * so a rail laid across the seam rests on the UNION of the two halves — a whole cube — while
+     * collision still genuinely ends at the plane.
+     *
+     * <p>That reading is not an invention: {@code Blocks.SOUL_SAND} ships exactly it (§4a). The
+     * lever exists so the choice is made on one live run instead of on argument. For cells with no
+     * counterpart (query-only bindings) partial reporting stands under BOTH readings and the rail
+     * correctly pops.
+     */
+    public static final boolean SEAM_SUPPORT_UNION =
+        Boolean.getBoolean("seamlessportals.seamSupportUnion");
+
+    /**
+     * The fractional-model instrument ({@code -Dseamlessportals.seamFractionalProbe=true},
+     * DEFAULT-OFF): 1 Hz-latched per-frame summary, log prefix {@code [SEAM FRAC]} (distinct from
+     * the clip's {@code [SEAM CLIP]} and the iris session's {@code IS5-SEAM}). Limiter: one latched
+     * summary per second, never a per-query line — the (e) round lost a rare event to a shared
+     * 400-line budget and collision queries are the highest-volume call site in the game.
+     */
+    public static final boolean SEAM_FRACTIONAL_PROBE =
+        Boolean.getBoolean("seamlessportals.seamFractionalProbe");
+
     private AperturePassthroughLever() {}
 }

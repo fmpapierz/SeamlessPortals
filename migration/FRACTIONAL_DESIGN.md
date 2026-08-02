@@ -115,11 +115,38 @@ Consequences that matter for decision A:
 - **CARPET is not in the blast radius** — `CarpetBlock.canSurvive` is `!level.isEmptyBlock(pos.below())`,
   no support test. The handoff's example list is wrong on that one.
 
-⚠ **CONTESTED, TO BE SETTLED BY MEASUREMENT, NOT ARGUMENT.** Two independent source traces
-(`VoxelShape.calculateFace:221-234` → `SliceShape`) say `getFaceShape(UP)` of a half-height box is
-`Shapes.empty()`, which would mean a bottom slab supports nothing. That contradicts observed game
-behaviour. **The support gate (§7 arm 2) measures this on day one.** No design decision here rests on
-resolving it by reading.
+### 1.3a ★ SETTLED BY MEASUREMENT 2026-08-02 — and it changes how decision B should be read
+
+The question flagged as contested — two source traces (`VoxelShape.calculateFace:221-234` →
+`SliceShape`) said `getFaceShape(UP)` of a half-height box is `Shapes.empty()`, i.e. a bottom slab
+supports nothing, contradicting remembered game behaviour — **has been measured, at outcome level,
+with coverage asserted.** `rsSeamCollisionGate` arm 2, live run:
+
+```
+bottom slab at BlockPos{-3994,-57,-3994}:
+  predicate isFaceSturdy RIGID=false CENTER=false
+  OUTCOME on a real placed slab (placed=true) rail.canSurvive=false torch.canSurvive=false
+```
+
+**Predicate and outcome AGREE. The source traces were right.** In this build a bottom slab does not
+support a rail or a torch on its top face. (The contrary recollection was of older versions and does
+not apply here.) Three consequences:
+
+1. **A HORIZONTAL cut is strictly worse than a vertical one.** A vertical cut at least keeps CENTER
+   alive to `f ≥ 9/16`; a horizontal bottom-half cut zeroes the UP face shape outright, so
+   *everything* resting on a floor-portal seam cell pops, not just rails.
+2. **★ Decision B is NOT a special-case breakage — it is the rule every partial block already
+   follows.** "A partial block does not support things" is the engine's existing, uniform behaviour.
+   Rails popping off a fractional seam cell is therefore consistent with slabs, not an exception
+   carved out for portals. That is a real point in decision B's favour and it was not available when
+   the decision was taken.
+3. **And it names the exact mechanism the §5 union lever needs.** The way vanilla makes a partial
+   block still support things is to override `getBlockSupportShape` back to `Shapes.block()` —
+   precisely what `SOUL_SAND` does (§4a). So the union reading is not a new code path; it is one
+   override on the tier-(i) hook that is already being built.
+
+⚠ Worth a live look regardless: if slabs really do not carry rails in this build, that is a vanilla
+property the user may want to see confirmed with their own eyes before we build on it.
 
 ### 1.4 "There is NO collision gate anywhere" — **true, and it understates the exposure**
 
@@ -336,9 +363,46 @@ movement filter.
 
 ---
 
+## §4a ★ THE VANILLA TEMPLATE — `SOUL_SAND` already is what this model needs
+
+Found 2026-08-02 while building the gate. **`Blocks.SOUL_SAND` ships every piece of the tier-(i)/(ii)
+split, decoupled deliberately, in vanilla:**
+
+```java
+// SoulSandBlock.java:15, 27-33      — collision is PARTIAL (14/16 high) …
+private static final VoxelShape SHAPE = Block.column(16.0, 0.0, 14.0);
+protected VoxelShape getCollisionShape(...)     { return SHAPE; }
+// … while SUPPORT is explicitly restored to WHOLE:
+protected VoxelShape getBlockSupportShape(...)  { return Shapes.block(); }
+
+// Blocks.java:2050-2052             — and both predicates are overridden back to true:
+.isRedstoneConductor(Blocks::always).isViewBlocking(Blocks::always).isSuffocating(Blocks::always)
+```
+
+Three consequences, each load-bearing:
+
+1. **Collision and support ARE decouplable, first-class.** The handoff's *"`getBlockSupportShape`
+   defaults to the collision shape, so support and collision cannot be decoupled"* is true only of the
+   **default**. Vanilla overrides it deliberately, and rails/torches do sit on soul sand.
+2. **It is the exact shape of §5's union reading**, already shipped and load-bearing in the base game
+   — partial collision, whole support, whole conduction. That materially strengthens the union option
+   from "a defensible alternative" to "the vanilla-sanctioned pattern for this exact situation".
+3. **It is the ideal arm-3 witness.** Its cached `isCollisionShapeFullBlock` is **false** (14/16 is not
+   a full cube), yet `isRedstoneConductor` returns **true** because the predicate is overridden. So a
+   side table that intercepts only `isCollisionShapeFullBlock` **demonstrably misses it** — §4's ~34
+   overriding blocks stop being an abstract warning and become a one-block regression test.
+
+⇒ The gate uses `SOUL_SAND` alongside `STONE` in arm 3 precisely so the predicate seam is covered and
+not merely asserted about.
+
+---
+
 ## §5 THE SUPPORT RULE
 
 **Decision B says a partial block reports partial. Rails pop.** That is the shipped default.
+
+⚠ **§4a materially strengthens the alternative below** — the "union" reading is not a novel invention,
+it is `SOUL_SAND`'s shipped behaviour. Worth re-reading before the live round.
 
 ⚠ **OPEN — NEEDS THE USER'S WORD BEFORE IT COULD EVER BECOME DEFAULT.** There is a second defensible
 reading of "partial" *at a seam specifically*: a COINCIDENT/FRACTIONAL cell is, in `SeamMap`'s own
@@ -463,13 +527,37 @@ with explicit file lists; push every commit.
 
 ---
 
-## §11 THE OFFSET MEASUREMENT — corrected, still worth running
+## §11 THE OFFSET MEASUREMENT — ★ RUN 2026-08-02, FOR THE FIRST TIME EVER
 
 Per §1.6, run **only** the exact-only lever, RS-only:
 ```
 .\gradlew.bat :fabric:runCrossingGametest -PapertureTeardownTest=true -PrsOnly=true -PdisableSeamExactOnly=true
 ```
-**Expect green, and treat green as "the fixture cannot discriminate", not as "offset works".** A
-discriminating fixture needs a REVERSE portal at the offset destination — the only configuration where
-`resolveDestCell`'s projection diverges from `SeamMap.mirrorCell`. Building that fixture is the honest
-version of "half a day here sizes the offset job".
+
+**RESULT — a clean A/B off one line of the seam-map gate's own coverage report:**
+
+| run | registry cross-checks | policy-declined query-only | phase/continuation checks |
+|---|---|---|---|
+| default | 42 | **9** | **33** |
+| `-PdisableSeamExactOnly` | 42 | **0** | **42** |
+
+**All legs pass in both.** Three things this establishes, and one it explicitly does not:
+
+1. **The lever is live and its effect is exactly the documented one.** Nine cells that the exact-only
+   policy declines become mirror-admitted — portal A's aperture, the suite's own OFFSET fixture
+   (`CrossingSmoke.java:1061`, "portal A's dest hangs a half-block off in Y").
+2. **The causal chain in §1.6 is confirmed by the +9.** Phase/continuation checks run only for
+   admitted bindings, and they rise by exactly the number of cells that stopped being declined — so
+   a decline really does take those cells out of the (b)/(c)/(d) surface wholesale, not merely make
+   them "query-only".
+3. **★ THE HANDOFF'S PREDICTED RED DID NOT FIRE.** `CrossingSmoke.java:1094` stayed green, exactly as
+   §1.6 predicted: portal A is one-way, so `resolveDestCell` returns `SeamMap.mirrorCell` verbatim
+   and the gate compares a pure function against itself.
+4. **⚠ WHAT IT DOES NOT ESTABLISH: that offset seams work.** Green here means *the fixture cannot
+   discriminate the offset destination arithmetic*, which is the §1.6 prediction confirmed, not a
+   pass. Nine cells being admitted says nothing about whether they are admitted to the RIGHT cells.
+
+**So the honest sizing answer is unchanged and now evidenced:** a discriminating fixture needs a
+REVERSE portal at the offset destination — the only configuration where `resolveDestCell`'s
+projection diverges from `SeamMap.mirrorCell`. That fixture does not exist and building it is the
+real content of "half a day here sizes the offset job".
