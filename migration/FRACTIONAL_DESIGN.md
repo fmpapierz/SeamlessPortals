@@ -278,6 +278,57 @@ silently takes the `DISJOINT` branch is the off-by-one-cell failure `SeamMap.jav
 
 ---
 
+## ★★ §2a THE OBJECT MODEL — user, 2026-08-02 (third round). THIS IS THE TARGET.
+
+The seam does not MIRROR a block. It **divides one block across a dimension boundary**, conserving
+material, and the pieces remain **one logical object**.
+
+**Worked example, the user's own (.3 source plane / .21 destination remainder):**
+
+```
+SOURCE dim          |  DESTINATION dim
+  cell S            |    cell D0        cell D1
+  [0.0 .. 0.3]      |    [0.79 .. 1.0]  [0.0 .. 0.49]
+   0.3 of material  |     0.21          + 0.49          = 0.7
+                    ^ plane
+  total material across both dimensions = 1.0 exactly
+```
+
+- **ONE LOGICAL OBJECT.** Those three fragments are one block. Break any fragment → the whole object
+  goes and drops **one** item. One shared `BlockState` — a rail's shape/connection is one answer, not
+  three. Power it anywhere → the whole object is powered. **Object identity spans two dimensions.**
+- **NO DUPLICATION.** The 0.7 exists in the destination only. It must not also be solid in the source
+  beyond the plane. Killing that "invisible solid far half" is the point of the whole model.
+- **★ AT MOST TWO DESTINATION FRAGMENTS**, provable: the crossing thickness is `< 1` and the
+  remainder after the first cell is `< 1`, so the run can never reach a third cell. The model is
+  1-to-≤2, not 1-to-N. *(map finding, `binding-and-registry`)*
+- **OFFSET BUILDING CONTINUES.** The next block placed against that 0.49 face continues from 0.49 —
+  `[0.49, 1.0]` of D1 and `[0.0, 0.49]` of D2 — i.e. a **shifted lattice** downstream of the seam.
+
+### §2a.1 USER DECISIONS, this round
+
+| question | **decision** |
+|---|---|
+| a destination fragment lands where a native block already sits | **REFUSE THE WHOLE PLACEMENT** — but only if the object cannot place *in full*. Nothing is destroyed, material is never partially conserved. |
+| how far the shifted lattice propagates | **only while ADJACENT to seam-owned material.** A fresh placement in open destination space snaps back to the cell grid. |
+
+**★ The overlap decision collapses the write path's hardest problem.** The map named co-occupancy —
+a cell holding 0.49 of seam material *and* 0.51 of the destination's own native block — as the thing
+`setBlock` categorically cannot express, since Minecraft stores one `BlockState` per `BlockPos`. A
+native vanilla block occupies its **whole** cell, so under all-or-nothing placement that case is
+**refused and therefore never arises.** What remains is fragment-vs-fragment co-occupancy — disjoint
+intervals at the same phase, which is exactly the offset-building case and is well behaved.
+
+⚠ **The cost of that decision, stated once:** a player clicking in the source can have a placement
+refused by something in the destination they cannot see. That is the price of "nothing is destroyed
+and material is always conserved", and it is the right trade — but it needs feedback, or it reads as
+the game being broken.
+
+⚠ **"Adjacent" needs a precise definition before front 2.** Face-adjacent to a fragment? Sharing the
+shifted phase along the crossing axis? Within the seam's column set? Left open here deliberately.
+
+---
+
 ## §3 STORAGE — the side table
 
 **Decision B: position-keyed side table.** The two alternatives are dead, not merely disfavoured:
@@ -435,6 +486,31 @@ whose head is in the removed part is in space that is empty in their own dimensi
 wrong live, `-PdisableSeamSuffocationUnion` flips suffocation to follow the cut. Flagged, not decided
 by me.
 
+### §5.1 ★ THE FAR-END SUPPORT EDGE IS A FORCED BINARY CHOICE — not an engineering problem
+
+I previously proposed "accept the edge for v1 and revisit". The map settled that it is **not
+revisitable**: it is a property of vanilla's API, not of our implementation.
+
+`getBlockSupportShape` returns a full 3D `VoxelShape`, so the *geometry* of "material only over
+`x ∈ [0, 0.49]`" is perfectly representable. But **every consumer immediately collapses it to one
+boolean per `(Direction, SupportType)`**, there are exactly three `SupportType`s
+(`SupportType.java:11-35`), and the thing being supported is itself addressed by an **integer
+`BlockPos`** (`BaseRailBlock.java:59-60`: `canSupportRigidBlock(level, pos.below())`). No API accepts
+a sub-cell coordinate and no consumer could supply one.
+
+And for a fragment stopping short of the face, `calculateFace` slices an unfilled voxel and returns
+`Shapes.empty()` — so all three types answer false.
+
+**So there are exactly two possible worlds, and one must be chosen:**
+
+1. rails/torches/levers **pop off every fractional seam cell**, or
+2. they **attach over air** at the far end of every fragment run.
+
+The user chose the soul-sand rule ⇒ **(2)**. Forcing `getBlockSupportShape` back to `Shapes.block()`
+asserts material across the far fragment's genuine air. **That is the accepted cost of the decision,
+recorded here so it is never re-litigated as a bug.** The only third path — fractionalising the
+supported block too — reintroduces the identical problem one cell further out.
+
 ⚠ **OPEN — NEEDS THE USER'S WORD BEFORE IT COULD EVER BECOME DEFAULT.** There is a second defensible
 reading of "partial" *at a seam specifically*: a COINCIDENT/FRACTIONAL cell is, in `SeamMap`'s own
 words, *"one physical slot seen from two sides"*. A rail laid across the seam rests on the **union**
@@ -542,6 +618,90 @@ DISJOINT on the other, making mirroring one-directional); column pairing going 3
 lateral offset (`SeamMap.enumerateColumns`, `MIN_OVERLAP 0.5`); `resolveDestCell` diverging between
 client and server when the far ClientLevel is cold; and five never-exercised subsystems switching on
 at once.
+
+---
+
+## ★★ §8b BLAST RADIUS — 8-area map, 2026-08-02, all grounded file:line
+
+### The two CATEGORICAL blockers — mechanisms that cannot do the job, not edits that are large
+
+**1. ★ THE TERMINATING CUT FACE. The shipped clip renderer cannot render a fragment. At all.**
+
+`gl_ClipDistance` is a rasterisation clip: it discards fragments and **generates no cap face**. Today
+that is invisible *only* because the single cut is always the portal plane, whose far side is
+definitionally supplied by the other dimension through the window — `SEAM_CLIP_DESIGN.md` §1a's whole
+ray argument turns on that.
+
+A fragment's **deep end** sits at an arbitrary depth inside the destination, with no portal, no window
+and no stencil there. A destination-side observer walking around it sees **an open hollow shell from
+every angle**, and no arrangement of clip planes can ever close it.
+
+Also, secondarily: a two-sided interval needs **two** half-spaces, and `out float gl_ClipDistance[1];`
+is declared in all three shader injectors — the array is *sized to one*.
+
+⇒ **The render front must move to compile-time quad clamping** (intersection of half-spaces is native,
+cap quads are constructible, the dirtying arm already exists) **or to real partial block models.**
+The "sleeper" §1.8 dismissed on Sodium grounds is now the *only* viable vanilla-path mechanism, and
+its cost was over-priced: 26.2's `BakedQuad` exposes unpacked `Vector3fc` positions with public
+`UVPair.pack/unpackU/unpackV`, so UV re-interpolation is cheap.
+
+*Easier than feared:* the dest pass's AMBIENT inner clip already derives from the true portal plane
+(`new Plane(otherSideState.position(), otherSideState.getNormal())`), so it cuts at an arbitrary
+destination offset **today, with no change**.
+
+**2. ★ SUPPORT IS A FORCED BINARY** — see §5.1. Not engineerable; chosen.
+
+### What breaks, by area
+
+- **Data model.** 31 production lines read `destPos()`/`destDim()`; 12 sites branch on
+  `isMirrorable()` (literally the null test on the two components that break). `destPos` must become
+  an ordered fragment list.
+- **★ The second fragment is invisible to the index.** It sits one cell deeper than any portal's
+  aperture cell, so it is absent from `seamCells` and `sectionsWithSeams` entirely — the whole hot
+  path misses it.
+- **★ `SeamMap.STEP = 0.25` overshoots a kept thickness of 0.21** and binds a cell the plane never
+  intersects. A concrete arithmetic bug for small fractions, independent of everything else.
+- **★ `phaseOf`'s 0.25 window splits one physical seam.** A .3 source plane is COINCIDENT while a .21
+  destination plane is DISJOINT, so the two halves take **different branches in five places** —
+  mirroring is one-directional before any fragment arithmetic runs.
+- **The rounding is doubly lossy.** `SeamMap.onPlane` discards the through-axis distance and
+  `STEP` is a constant — so the source's kept thickness and the destination's own plane offset,
+  *exactly the two numbers the model is built from*, never enter the computation.
+- **(b)/(c)/(d) die together, from one root.** All three resolve "what is across" through two types —
+  `SeamBinding.destPos` and `SeamShadow.toFar` — both **bijections whose existence is guaranteed by
+  the EXACT policy the model must delete**. `RailState.hasConnection`'s integer X/Z equality (the
+  precise coincidence `SeamShadow` was designed to satisfy) stops holding under a non-integer
+  through-axis translation. The model does not degrade the mapping; it removes the precondition under
+  which a mapping exists.
+- **Client sync needs a new carrier.** Fragment *geometry* is derivable on both sides with no packet
+  (the same bind handler is registered on both tick signals) — but a fragment's *existence* comes
+  from a placement, and **a 0.21-deep fragment is not any `BlockState`**, so neither vanilla's block
+  update nor the mod's `RemoteBlockUpdatePayload` can describe it. The same missing thing must be
+  invented three times: in-memory value type, packet, and `SavedData`.
+- **Teardown has no structure that can hold the record.** Reconstituting a fragment needs
+  `{source dim, source cell, axis, interval, state}` reconciled across two dimensions whose teardown
+  events can be separated by a 30-retry-then-give-up gap or a server restart. `SeamJournal` is a
+  position plus one boolean (and lossy at 4096); `SeamFrameLink` is two positions and a dimension key;
+  `mirrorCreatedCells` dies with the `Level`.
+- **★ The gate I shipped this session is already stale, twice.** `rsSeamCollisionGate` encodes the
+  SUPERSEDED decision B (support follows the cut ⇒ rails pop) rather than the soul-sand rule, and its
+  fixture is an ignited obsidian frame whose plane is `blockCoord + 0.5` **by construction**, so it
+  can never measure an arbitrary fraction. It also only runs under `-PapertureTeardownTest=true`.
+- **The discriminating fixture cannot be staged, admitted, made symmetric, or checked** — four
+  independent reasons (§11 covers the fourth). `-PdisableSeamExactOnly` re-admits offset seams
+  *through the greatest-overlap rounding the model replaces*, so running under it measures the OLD
+  behaviour.
+
+### What is FREE — worth knowing before anyone over-budgets
+
+- **`Shapes` handles arbitrary fractions exactly.** `Shapes.create`'s `findBits` returns −1 and falls
+  back to `ArrayVoxelShape` with literal coordinate lists — no quantization. `Shapes.or` /
+  `joinUnoptimized` compose N fragments plus a native shape. **`Shapes.collide` minimises over shapes
+  independently, so fragments in adjacent cells compose into a continuous surface automatically.**
+- **Bindings are derived-never-persisted** — no save migration for the binding change.
+- **The 3-arg `getCollisionShape` has no cache branch**, so movement, raytracing and picking are
+  fully hookable and cannot be defeated.
+- **At most two destination fragments** (§2a) — the model is 1-to-≤2, not 1-to-N.
 
 ---
 
