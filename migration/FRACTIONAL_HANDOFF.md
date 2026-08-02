@@ -5,6 +5,18 @@
 matrix green, everything pushed.** Opened 2026-08-01, **by explicit user decision** after (e)
 closed both cart defects.
 
+> **★★★ §0 IS SUPERSEDED — 2026-08-02. The design panel ran; both gating questions are ANSWERED.
+> Read `migration/FRACTIONAL_DESIGN.md` FIRST.** Decisions: (A) **genuine arbitrary fraction**;
+> (B) **position-keyed side table, cut applies to collision AND support/conduction**, occlusion/
+> lighting deferred to polish; (C) **gate → storage → collision → render flip LAST**.
+> ⚠ **SIX factual claims in this file are CORRECTED there** — §0.1's "unreachable by policy" (false:
+> a 0.3 plane is admitted, binned COINCIDENT and silently mis-cut TODAY), §1's "the pop is ONE
+> expression" (half wrong), §2's support reason (inverted — RIGID needs the PERIMETER, and a
+> position-keyed cut makes rails FLOAT, not pop), §2's is5-shadow "sync FIRST" (no conflict today),
+> §5's "nobody has ever run either lever" (the phase gate HAS been run green), and §1's Sodium
+> "sleeper" (backwards). Where the two files disagree, `FRACTIONAL_DESIGN.md` is right and carries
+> the evidence. Everything below stays as scoping material.
+
 > **★★ USER DECISION 2026-08-01: FRACTIONAL FIRST.** A survey recommended (c) step 2 (wire/dust)
 > instead; the user chose fractional. That alternative is fully briefed at
 > `migration/REDSTONE_C2_HANDOFF.md` and stays available. **The survey's case against fractional is
