@@ -184,6 +184,28 @@ public class ChunkVisibility {
     ) {
         PerformanceLevel perfLevel = ImmPtlChunkTracking.getPlayerInfo(player).performanceLevel;
         int visiblePortalRangeChunks = PerformanceLevel.getVisiblePortalRangeChunks(perfLevel);
+
+        // IS5-WDIST — TIE THE DESTINATION LOADING RANGE TO THE WINDOW RENDER DISTANCE.
+        //
+        // This is how far from the player a portal gets a destination chunk loader at all. Default
+        // 8 chunks = 128 blocks (PerformanceLevel:42). The portal WINDOW's own visibility range is a
+        // separate gate (the entity-tracking range in MixinTrackedEntity), and when the two
+        // disagree the frame renders with nothing inside it: USER-MEASURED as a window that stayed
+        // visible but went BLANK from ~146 blocks and only refilled back inside ~127.
+        //
+        // So above 0 they are ONE number: the destination loads exactly as far as the window can be
+        // seen. At 0 this is inert and the original 8-chunk range stands — which is consistent
+        // BECAUSE the vanilla window gate stops at ~88 blocks, comfortably inside it. Neither mode
+        // can produce a blank window; only mixing them could, which is what this removes.
+        //
+        // The perf level still wins when it is WORSE than the configured value: a struggling client
+        // drops to 3 or 1 chunk (PerformanceLevel:46-51) and this must not override that protection
+        // upward. Hence min() with the configured value rather than a bare assignment — raising the
+        // setting asks for more reach on a healthy client, not for the degradation path disabled.
+        int configuredWindowChunks = IPGlobal.portalWindowRenderDistance;
+        if (configuredWindowChunks > 0 && perfLevel == PerformanceLevel.good) {
+            visiblePortalRangeChunks = configuredWindowChunks;
+        }
         int indirectVisiblePortalRangeChunks = PerformanceLevel.getIndirectVisiblePortalRangeChunks(perfLevel);
         
         ChunkLoader playerDirectLoader = playerDirectLoader(player);

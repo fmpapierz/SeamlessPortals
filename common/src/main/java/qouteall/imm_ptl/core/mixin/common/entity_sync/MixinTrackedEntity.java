@@ -210,20 +210,31 @@ public abstract class MixinTrackedEntity implements IETrackedEntity {
         //
         // Portals only, and only when the setting is non-default: at 0 this block is inert and every
         // entity keeps its vanilla tracking exactly as before.
-        if (entity instanceof qouteall.imm_ptl.core.portal.Portal) {
-            // 0 = "follow the render distance", and it now DOES. That claim was previously false:
-            // getRenderRange() computed renderDistance * 16 (512 blocks at RD 32), but this gate
-            // capped portals at 5 chunks long before that value could matter, so the window always
-            // vanished at ~88 blocks whatever anyone configured. USER-MEASURED at "about 89 blocks
-            // regardless of the settings i choose", which is exactly 5 * 16 + 8. The default is the
-            // server's load distance rather than a constant, so it tracks the render distance the
-            // way the setting has always claimed to.
-            int configured = qouteall.imm_ptl.core.IPGlobal.portalWindowRenderDistance;
-            int chunks = configured > 0
-                ? configured
-                : qouteall.imm_ptl.core.McHelper.getLoadDistanceOnServer(
-                    ((ServerLevel) entity.level()).getServer());
-            rangeBlocks = Math.max(rangeBlocks, chunks * 16);
+        // IS5-WDIST: 0 = ORIGINAL BEHAVIOUR, any explicit value = WINDOW AND CONTENT TIED.
+        //
+        // At 0 this block is inert and the vanilla gate stands: Portal.clientTrackingRange(6) = 96
+        // blocks, tested as distanceToSource * 16 + 8 <= range, so the window stops at ~88 blocks.
+        // That is deliberately INSIDE ChunkVisibility's 8-chunk (128-block) destination-loading
+        // range, which is why the original never showed a blank window — the window died before its
+        // content did.
+        //
+        // An earlier revision made 0 mean "follow the render distance". That was reverted at the
+        // user's direction after it produced exactly the artifact the two ranges disagreeing
+        // predicts: USER-MEASURED, the frame stayed visible out to ~512 blocks while the destination
+        // stopped loading at 128, so the window went BLANK from ~146 blocks out and only refilled
+        // coming back inside ~127 (the ~19-block band is chunk granularity — the loader search is a
+        // chunk-aligned Chebyshev square, so the flip point depends on where in the chunk each of
+        // you sits, and the diagonal reaches further than the axis).
+        //
+        // Above 0, ChunkVisibility's visiblePortalRangeChunks follows this SAME value, so the
+        // destination loads exactly as far as the window can be seen. One number, no gap, in either
+        // mode. The cost of that is real and lands on whoever raises it: destinations loading for
+        // portals up to 32 chunks away is why IP capped this at 8 to begin with.
+        if (qouteall.imm_ptl.core.IPGlobal.portalWindowRenderDistance > 0
+            && entity instanceof qouteall.imm_ptl.core.portal.Portal
+        ) {
+            rangeBlocks = Math.max(
+                rangeBlocks, qouteall.imm_ptl.core.IPGlobal.portalWindowRenderDistance * 16);
         }
         // Effectively-final copy for the lambdas below (the widen above reassigns).
         final int effectiveRange = rangeBlocks;
