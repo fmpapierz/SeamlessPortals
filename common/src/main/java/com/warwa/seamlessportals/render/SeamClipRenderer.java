@@ -12,6 +12,7 @@ import com.warwa.seamlessportals.mixin.client.ViewAreaInvokerMixin;
 import com.warwa.seamlessportals.passthrough.AperturePassthroughLever;
 import com.warwa.seamlessportals.passthrough.SeamIndexHolder;
 import com.warwa.seamlessportals.passthrough.SeamMap;
+import com.warwa.seamlessportals.passthrough.SeamOccupancy;
 import com.warwa.seamlessportals.passthrough.SeamRegistry;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -331,10 +332,35 @@ public final class SeamClipRenderer {
             double side = f.getStepX() * (camPos.x - center.x)
                 + f.getStepY() * (camPos.y - center.y)
                 + f.getStepZ() * (camPos.z - center.z);
-            Direction keptDir = side >= 0 ? f : f.getOpposite();
-            boolean clipThis =
-                Math.abs(side) >= ADJUSTMENT                          // near-plane crossing guard
-                    && cameraSideWindowPossible(e.getValue(), center, camPos);
+
+            // ★ THE KEPT HALF COMES FROM THE OBJECT, NOT THE CAMERA — FRACTIONAL_DESIGN.md §2a.0.
+            //
+            // This line used to be `keptDir = side >= 0 ? f : f.getOpposite()`, i.e. keep whichever
+            // half the camera is on. That is the walk-around swap the user declined on 2026-07-27,
+            // and once collision started reading the recorded owner half the two disagreed outright:
+            // you could walk into a half you could still see, and the block appeared to jump sides
+            // as you circled the portal while its collision stayed put.
+            //
+            // Occupancy is recorded at placement from the crosshair hit point, so it is
+            // view-INDEPENDENT by construction. A cell with no recorded owner keeps today's
+            // behaviour (drawn whole) rather than guessing a side, matching keptShape exactly.
+            byte owned = SeamOccupancy.occupancyOf(level, pos);
+            Direction keptDir;
+            if (owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE) {
+                keptDir = Direction.get(
+                    owned == SeamOccupancy.HALF_POSITIVE
+                        ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                    f.getAxis());
+            } else {
+                // No owner, or BOTH halves owned (two objects meeting at the plane ⇒ materially a
+                // whole cube). Either way there is nothing to cut here.
+                keptDir = f;
+            }
+            boolean cutThisCell =
+                owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE;
+            boolean clipThis = cutThisCell
+                && Math.abs(side) >= ADJUSTMENT                       // near-plane crossing guard
+                && cameraSideWindowPossible(e.getValue(), center, camPos);
             if (activePlane != null && !onPlane(center, f, activePlane)) {
                 // Unrelated cell inside a dest pass. Wholly on the ambient CLIPPED (camera) side:
                 // every fragment would be discarded — skip the tessellation outright. Straddling:

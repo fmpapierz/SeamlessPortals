@@ -4697,6 +4697,37 @@ public class CrossingSmoke implements FabricClientGameTest {
     }
 
     /**
+     * ★ Claim an owner half on BOTH sides — the renderer reads the CLIENT's copy.
+     *
+     * <p>{@link com.warwa.seamlessportals.passthrough.SeamOccupancy} is per-{@code Level}, and a real
+     * placement populates both sides for free because {@code BlockItem.place} runs on the client for
+     * prediction as well as on the server. A gametest's {@code writeAsPlayer} is a raw
+     * {@code setBlock} on the server only, so the client's map stays empty — and the seam clip runs
+     * on the render thread against {@code mc.level}. The first fix for the pixel gate claimed
+     * server-side alone and still failed with {@code cellsDrawn=48 ownPlaneDraws=0}: every cell drew,
+     * none of them clipped, because the client had no owner recorded.
+     *
+     * <p>⚠ This is the fixture standing in for a mechanism that does not exist yet. Occupancy from
+     * OTHER players, or from before you joined, or from before a reload, still has no carrier — the
+     * packet and {@code SavedData} recorded as required in {@code FRACTIONAL_DESIGN.md} §3.
+     */
+    private static void claimOwnerHalfBothSides(
+        ClientGameTestContext context, BlockPos cell, byte half
+    ) {
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow != null) {
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cell, half);
+            }
+        });
+        context.runOnClient(mc -> {
+            if (mc.level != null) {
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(mc.level, cell, half);
+            }
+        });
+    }
+
+    /**
      * The collision extent of one cell along one axis, measured THROUGH THE REAL FUNNEL
      * ({@code getBlockCollisions} → {@code BlockCollisions:93} → the 3-arg
      * {@code CollisionContext.getCollisionShape}). Deliberately not the 2-arg cached accessor, which
@@ -7358,7 +7389,21 @@ public class CrossingSmoke implements FabricClientGameTest {
                 ServerLevel ow = server.getLevel(Level.OVERWORLD);
                 writeAsPlayer(ow, goldCell,
                     net.minecraft.world.level.block.Blocks.GOLD_BLOCK.defaultBlockState());
+                // ★ CLAIM THE OWNER HALF — a precondition since 2026-08-02, not a weakening of the
+                // assertion. The clip no longer picks the kept half from the CAMERA (that was the
+                // walk-around swap the user declined); it reads the half recorded when the block was
+                // PLACED. writeAsPlayer is a raw setBlock and records nothing, so without this the
+                // cell has no owner, the clip correctly declines to cut it, and the gate fails with
+                // farGold=1.0 — which is exactly what it did on the first run after the change.
+                //
+                // POSITIVE z is the half this fixture keeps, and that is not a guess: nearZ is
+                // defined as planeZ + 0.25 (the calibration point, expected GOLD) and farZ as
+                // planeZ - 0.4 (expected NOT gold), so the kept side is the +z one by construction.
             });
+            // BOTH SIDES — the clip runs on the render thread against mc.level, and a server-only
+            // claim leaves the client with no owner (measured: cellsDrawn=48, ownPlaneDraws=0).
+            claimOwnerHalfBothSides(context, goldCell,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
             boolean recompiled = false;
             for (int i = 0; i < 40 && !recompiled; i++) {
                 context.waitTicks(5);
@@ -7514,6 +7559,10 @@ public class CrossingSmoke implements FabricClientGameTest {
                 writeAsPlayer(ow, goldCell,
                     net.minecraft.world.level.block.Blocks.GOLD_BLOCK.defaultBlockState());
             });
+            // Same precondition as the pixel gate, and on BOTH sides: the clip reads the owner half
+            // recorded at PLACEMENT from mc.level, and a raw setBlock records nothing anywhere.
+            claimOwnerHalfBothSides(context, goldCell,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
             context.waitTicks(40);
 
             // The arc: player feet positions walking around the +X side of the portal.

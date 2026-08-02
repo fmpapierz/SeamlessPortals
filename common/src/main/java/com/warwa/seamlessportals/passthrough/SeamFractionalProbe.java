@@ -35,14 +35,24 @@ public final class SeamFractionalProbe {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    /** Its own reserve: the rare, interesting line is never crowded out by the common one. */
-    private static final int DECISION_BUDGET = 40;
+    /**
+     * ★ PER-VERDICT BUDGETS, not one shared pool.
+     *
+     * <p>The first build used a single 40-line budget and it was consumed entirely by {@code NO CUT}
+     * lines for ordinary pre-existing blocks — so on the live round the {@code CLAIM} and {@code CUT}
+     * lines the round existed to capture were starved, and I had to infer from their absence. That
+     * is precisely the limiter defect the (e) session recorded (1,351 routine SAMPLE lines starving
+     * one SET-PASSENGERS line), reproduced by the person who wrote it down. Each verdict now has its
+     * own reserve, so the common case cannot crowd out the rare one.
+     */
+    private static final int BUDGET_PER_VERDICT = 25;
     private static final long SUMMARY_NANOS = 1_000_000_000L;
 
     private static final AtomicLong calls = new AtomicLong();
     private static final AtomicLong seamCellHits = new AtomicLong();
     private static final AtomicLong cutsApplied = new AtomicLong();
-    private static final AtomicLong decisionsLogged = new AtomicLong();
+    private static final java.util.concurrent.ConcurrentHashMap<String, AtomicLong> budgets =
+        new java.util.concurrent.ConcurrentHashMap<>();
     private static final AtomicLong lastSummary = new AtomicLong();
 
     /** Every {@code keptShape} entry, whether or not it is a seam cell. Counter only. */
@@ -57,10 +67,11 @@ public final class SeamFractionalProbe {
      */
     public static void onSeamCell(BlockPos pos, String verdict, String detail) {
         seamCellHits.incrementAndGet();
-        if (decisionsLogged.get() >= DECISION_BUDGET) {
+        AtomicLong used = budgets.computeIfAbsent(verdict, k -> new AtomicLong());
+        if (used.get() >= BUDGET_PER_VERDICT) {
             return;
         }
-        decisionsLogged.incrementAndGet();
+        used.incrementAndGet();
         LOGGER.info("[SEAM FRAC] cell {} -> {} | {}", pos, verdict, detail);
     }
 
