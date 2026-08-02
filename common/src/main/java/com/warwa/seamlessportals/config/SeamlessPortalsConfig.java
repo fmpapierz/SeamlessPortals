@@ -36,6 +36,33 @@ public class SeamlessPortalsConfig {
     private boolean projectilePassThrough = true;
     private int cameraSmoothingTicks = 5;
 
+    // ===== IS5-REC — recursive portal views WITH A SHADERPACK ON =============================
+    /**
+     * How many portal layers deep a portal-inside-a-portal renders when an iris shaderpack is
+     * ACTIVE. Default 5, matching the engine's shaders-OFF bound, user-decided 2026-08-02 after the
+     * depth-5 leg came back mechanically clean (maxPortalDepth=5, deferredPeak=4, guards in step,
+     * zero budget cuts, no anomalies).
+     *
+     * <p>SEPARATE knob from the shaders-OFF depth on purpose: layer <i>n</i> shaders-ON is a full
+     * pack-shaded world render — gbuffer, shadow pass, the whole composite chain — so it is a
+     * categorically heavier unit than a stencil-family layer. 1 = one layer, i.e. the behaviour
+     * before this feature (a portal seen inside a portal is flat pass-through).
+     */
+    private int irisRecursionDepth = 5;
+
+    /**
+     * OFF by default (user-decided 2026-08-02). When ON, the shaders-ON recursion depth is reduced
+     * automatically while the frame rate is low.
+     *
+     * <p>This exists because the engine's own mirror-room lag protection CANNOT cover this case:
+     * {@code RenderStates.updateIsLaggy} only looks at the frame rate once more than 10 dest renders
+     * happened in the previous frame, and a deep single chain produces about one render per layer —
+     * five or six, never eleven. So a depth-5 chain can make frames arbitrarily expensive without
+     * that guard ever arming. MEASURED: the depth-5 leg reported {@code isLaggy=false} on all 166
+     * rows, which proves only that the gate could not fire, not that the frame rate was fine.
+     */
+    private boolean irisRecursionLagGuard = false;
+
     private SeamlessPortalsConfig() {
         portalConfigs.put(PortalType.NETHER, new PortalTypeConfig(true));
         portalConfigs.put(PortalType.END, new PortalTypeConfig(true));
@@ -107,6 +134,13 @@ public class SeamlessPortalsConfig {
                 if (unb != null) INSTANCE.unboundedClientChunkStore = Boolean.parseBoolean(unb.trim());
                 String spec = props.getProperty("speculativePrewarm");
                 if (spec != null) INSTANCE.speculativePrewarm = Boolean.parseBoolean(spec.trim());
+                String ird = props.getProperty("irisRecursionDepth");
+                if (ird != null) {
+                    try { INSTANCE.setIrisRecursionDepth(Integer.parseInt(ird.trim())); }
+                    catch (NumberFormatException nfe) { /* keep default */ }
+                }
+                String irlg = props.getProperty("irisRecursionLagGuard");
+                if (irlg != null) INSTANCE.irisRecursionLagGuard = Boolean.parseBoolean(irlg.trim());
                 // Entity-portal migration master switch (D3). Seed the load-time flag from the same
                 // file the mixin plugin reads, so the two never disagree within a session. seedIfUnset
                 // is a no-op if the plugin already resolved it (read-once semantics).
@@ -137,6 +171,8 @@ public class SeamlessPortalsConfig {
             props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
             props.setProperty("speculativePrewarm", String.valueOf(INSTANCE.speculativePrewarm));
             props.setProperty("entityPortals", String.valueOf(isEntityPortals()));
+            props.setProperty("irisRecursionDepth", String.valueOf(INSTANCE.irisRecursionDepth));
+            props.setProperty("irisRecursionLagGuard", String.valueOf(INSTANCE.irisRecursionLagGuard));
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"
@@ -153,7 +189,19 @@ public class SeamlessPortalsConfig {
                     + "# entityLoadDistance: chunks around the dest portal within which destination\n"
                     + "#   entities are streamed so they show + move in the portal view. \"max\" (default)\n"
                     + "#   = the render distance; a smaller number limits it (fewer entities/packets).\n"
-                    + "#   Edit and restart to change.");
+                    + "#   Edit and restart to change.\n"
+                    + "# irisRecursionDepth: how many portal layers deep a portal-inside-a-portal\n"
+                    + "#   renders WHEN A SHADERPACK IS ON (1..5, default 5). Each extra layer is a\n"
+                    + "#   FULL pack-shaded world render (gbuffer + shadow pass + composite chain), so\n"
+                    + "#   this is much more expensive per layer than the shaders-off equivalent.\n"
+                    + "#   Set to 1 for the old behaviour: a portal seen inside a portal is flat\n"
+                    + "#   pass-through. Applies live; no restart needed.\n"
+                    + "# irisRecursionLagGuard: false (default) = the depth above is always used.\n"
+                    + "#   true = drop to fewer layers automatically while the frame rate is low. The\n"
+                    + "#   engine's own mirror-room lag protection CANNOT cover deep recursion (it only\n"
+                    + "#   checks the frame rate after >10 destination renders in a frame, and a deep\n"
+                    + "#   single chain makes about one per layer), so this is the only automatic\n"
+                    + "#   protection for this case.");
             }
         } catch (Exception e) {
             com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
@@ -187,6 +235,16 @@ public class SeamlessPortalsConfig {
     public PortalTypeConfig getPortalConfig(PortalType type) {
         return portalConfigs.get(type);
     }
+
+    public int getIrisRecursionDepth() { return irisRecursionDepth; }
+
+    public void setIrisRecursionDepth(int depth) {
+        this.irisRecursionDepth = Math.max(1, Math.min(5, depth));
+    }
+
+    public boolean isIrisRecursionLagGuard() { return irisRecursionLagGuard; }
+
+    public void setIrisRecursionLagGuard(boolean on) { this.irisRecursionLagGuard = on; }
 
     public int getMaxPortalRenderDepth() { return maxPortalRenderDepth; }
     public void setMaxPortalRenderDepth(int depth) { this.maxPortalRenderDepth = Math.max(0, Math.min(3, depth)); }
