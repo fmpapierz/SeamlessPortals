@@ -329,9 +329,6 @@ public final class SeamClipRenderer {
             // pass's ambient plane.
             Vec3 center = Vec3.atCenterOf(pos);
             Direction f = binding.srcFacing();
-            double side = f.getStepX() * (camPos.x - center.x)
-                + f.getStepY() * (camPos.y - center.y)
-                + f.getStepZ() * (camPos.z - center.z);
 
             // ★ THE KEPT HALF COMES FROM THE OBJECT, NOT THE CAMERA — FRACTIONAL_DESIGN.md §2a.0.
             //
@@ -358,9 +355,20 @@ public final class SeamClipRenderer {
             }
             boolean cutThisCell =
                 owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE;
-            boolean clipThis = cutThisCell
-                && Math.abs(side) >= ADJUSTMENT                       // near-plane crossing guard
-                && cameraSideWindowPossible(e.getValue(), center, camPos);
+            // ★ BOTH CAMERA-DERIVED GUARDS ARE GONE — user live round 6, and FRACTIONAL_DESIGN.md
+            // §1.2 predicted exactly this once the cut stopped being camera-derived:
+            //
+            // - the NEAR-PLANE guard (|side| >= ADJUSTMENT) existed because the old camera-side
+            //   flip was degenerate when the camera sat on the plane. It made the cell draw WHOLE
+            //   for the crossing frame — measured live as "a block half flashes for a millisecond
+            //   while crossing the seam": the empty half, drawn for one frame. The owned-half plane
+            //   is fixed; nothing degenerates at any camera distance; the guard was pure defect.
+            // - cameraSideWindowPossible existed so a single-faced portal seen from behind would
+            //   not lose a half that no window could supply. Under the owner-half model the far
+            //   half is GENUINELY ABSENT — there is nothing to supply — so the cut is correct from
+            //   every viewpoint, windows or none, and the whole-block fallback was one more way to
+            //   flash the empty half.
+            boolean clipThis = cutThisCell;
             if (activePlane != null && !onPlane(center, f, activePlane)) {
                 // Unrelated cell inside a dest pass. Wholly on the ambient CLIPPED (camera) side:
                 // every fragment would be discarded — skip the tessellation outright. Straddling:
@@ -510,12 +518,21 @@ public final class SeamClipRenderer {
 
     /**
      * The outer-clip view-space plane for one bracketed group. Kept half-space (world):
-     * {@code n·(P − planePoint) + ADJUSTMENT ≥ 0} with n = {@code keptDir} (points to the camera
-     * side; the +ADJUSTMENT overlap past the plane mirrors the dest pass's −ADJUSTMENT inner
-     * clip, so the two cuts overlap by ~0.02 instead of leaving a slit). Before-model-view
-     * (camera-relative) constant: {@code c = n·(cam − planePoint) + ADJUSTMENT}; view-space
-     * normal by the COLUMN-FORM rotate {@code M·n} (anti-fix guard: never mulTranspose — S11-A),
-     * with the S13-L inverse-transpose fallback under a scaled model-view.
+     * {@code n·(P − planePoint) − ADJUSTMENT ≥ 0} with n = {@code keptDir} (points INTO the owned
+     * half). Before-model-view (camera-relative) constant:
+     * {@code c = n·(cam − planePoint) − ADJUSTMENT}; view-space normal by the COLUMN-FORM rotate
+     * {@code M·n} (anti-fix guard: never mulTranspose — S11-A), with the S13-L inverse-transpose
+     * fallback under a scaled model-view.
+     *
+     * <p>★ THE EPSILON FLIPPED SIGN with the owner-half model — user live round 6. The original
+     * {@code +ADJUSTMENT} pushed the cut 0.01 PAST the plane so the two passes' halves would
+     * overlap instead of leaving a slit — correct when the far region always held the mirrored
+     * half's material, which covered the overhang. Under the owner-half model the far region can be
+     * genuinely EMPTY, and that 0.01 of block skin poking into it is visible from the empty side as
+     * "a tiny border sliver of the block right on the seam" (the user's exact words). Pulling the
+     * cut back 0.01 INSIDE the owned half removes the sliver, and no slit opens in the window view:
+     * the dest pass's inner clip arms at {@code −ADJUSTMENT} (content kept from plane−0.01 onward),
+     * so the window's crossing half meets this cut at exactly plane−0.01.
      */
     private static FrontClipping.Snapshot outerPlaneSnapshot(
         PlaneKey key, Vec3 camPos, Matrix4f modelView
@@ -529,7 +546,7 @@ public final class SeamClipRenderer {
         double px = key.keptDir().getAxis() == Direction.Axis.X ? planeCoord : camPos.x;
         double py = key.keptDir().getAxis() == Direction.Axis.Y ? planeCoord : camPos.y;
         double pz = key.keptDir().getAxis() == Direction.Axis.Z ? planeCoord : camPos.z;
-        double c = nx * (camPos.x - px) + ny * (camPos.y - py) + nz * (camPos.z - pz) + ADJUSTMENT;
+        double c = nx * (camPos.x - px) + ny * (camPos.y - py) + nz * (camPos.z - pz) - ADJUSTMENT;
 
         Matrix3f linear = new Matrix3f(modelView);
         float det = linear.determinant();
