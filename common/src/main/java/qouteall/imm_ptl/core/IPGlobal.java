@@ -351,6 +351,15 @@ public class IPGlobal {
     // those blit blocks COMMENTED OUT at :152/:210). The dispatch is therefore a new per-layer entry
     // point at the full-pipeline core's tail, and the masking stays the stencil-free D20 stamp.
 
+    /**
+     * IS5-TERM A/B lever — restores the pre-fix behaviour: the portal at the recursion bound draws
+     * its black aperture mesh with no content painted over it, i.e. a solid black box.
+     * {@code -PdrawTerminalPortalAsBlack=true}. Shaders-OFF (stencil family) only; the shaders-ON
+     * compat renderer never drew it.
+     */
+    public static final boolean debugDrawTerminalPortalAsBlack =
+        Boolean.getBoolean("seamlessportals.drawTerminalPortalAsBlack");
+
     /** A/B lever: reproduces the pre-IS5-REC one-layer behaviour byte-for-byte on command.
      *  {@code -PdisableIrisPortalRecursion=true}. Every fix in this project must be provable in BOTH
      *  directions, and "it looks better" has passed on a no-op here before. */

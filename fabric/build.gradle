@@ -194,6 +194,8 @@ loom {
             // and the depth sweep / exact one-layer behavioural repro:
             //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -244,6 +246,8 @@ loom {
             // and the depth sweep / exact one-layer behavioural repro:
             //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -650,6 +654,8 @@ loom {
             // and the depth sweep / exact one-layer behavioural repro:
             //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -717,6 +723,8 @@ loom {
             // and the depth sweep / exact one-layer behavioural repro:
             //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -1071,6 +1079,8 @@ loom {
             // and the depth sweep / exact one-layer behavioural repro:
             //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
