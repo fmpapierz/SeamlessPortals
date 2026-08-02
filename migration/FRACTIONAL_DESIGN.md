@@ -305,7 +305,61 @@ SOURCE dim          |  DESTINATION dim
 - **OFFSET BUILDING CONTINUES.** The next block placed against that 0.49 face continues from 0.49 —
   `[0.49, 1.0]` of D1 and `[0.0, 0.49]` of D2 — i.e. a **shifted lattice** downstream of the seam.
 
-### §2a.1 USER DECISIONS, this round
+### ★★ §2a.0 THE OWNER HALF — user, 2026-08-02 (live round). THE BUG THIS FIXES.
+
+**Vocabulary, so this stops being ambiguous:**
+
+| term | meaning |
+|---|---|
+| **seam cell** | a block-slot the plane passes through. One per dimension: **S** and **D**. |
+| **half** | the plane splits a seam cell in two. |
+| **face A / face B** | an obsidian portal is BI-FACED — two portal entities on the same plane with opposite normals, **both in the same dimension**. This is the whole source of the ambiguity. |
+| **approach side** | which side of the plane you stand on. Both approach sides of S are in the source dimension. |
+| **owner half** | which half of S belongs to the source dimension **for a given object**. |
+| **the object** | one logical block: its fragments in S plus its fragments in D. |
+
+**★ THE LIVE DEFECT (2026-08-02).** `SeamFractional.cuttingBinding` returned the *first* COINCIDENT
+mirror-admitted binding. A bi-faced portal gives a cell **two** bindings with opposite facings, so the
+kept half was decided by storage order and nothing consulted the placement. Probe evidence:
+
+```
+cell {x=5,y=150,z=31} -> CUT | keeping 0.5 on the SOUTH side   (×36)
+cell {x=0,y=95, z=1}  -> CUT | keeping 0.5 on the NORTH side   (×4)
+```
+
+The user placed from the north approach side and the object kept the **south** half — so from the
+north they saw the block occupying the *far* half. Exactly the reported symptom, and not a rendering
+artefact.
+
+**⇒ THE OWNER HALF IS A PROPERTY OF THE OBJECT, NOT OF THE CELL.** It cannot be derived from the
+binding at all; it must be recorded when the block is placed.
+
+**User decisions, this round:**
+
+| question | **decision** |
+|---|---|
+| how the owner half is decided | **the side of the plane the CROSSHAIR RAY HIT POINT falls on.** Not the player's eyes (leaning through the portal would flip it) and not the clicked block (the floor and frame straddle and cannot answer). |
+| can BOTH halves be occupied | **YES — two independent objects share the cell**, one per half, each with its own material across the seam, each breaking independently. |
+| must the object look continuous | **YES — one unbroken block.** The D fragment must line up seamlessly with the source half through the window. This pins where D fragments land. |
+| breaking | **the whole object goes and ONE item drops**, on the side the crosshair pointed when you broke. |
+
+**What falls out of this, self-consistently** — worth stating because it makes several earlier
+questions answer themselves:
+
+- Place from side A ⇒ object owns half-A ⇒ **half-B is empty**.
+- From side B you therefore see **nothing**, walk into the empty half, and **cross the portal** —
+  because there is no material there to stop you. No special case needed.
+- Collision is unchanged from vanilla in feel: approaching from side A you stop at the object's near
+  face, exactly as with a whole block.
+
+**⚠ STRUCTURAL CONSEQUENCE:** occupancy must be keyed by **(cell, half)**, not by cell. `seamCells`
+is keyed by cell alone and `mirrorCreatedCells` is a bare set — neither can express two owners in one
+slot. And unlike the cut geometry, **owner-half occupancy is NOT derivable from portal geometry** —
+it comes from a placement — so it needs a packet and a `SavedData`, per §3.
+
+---
+
+### §2a.1 USER DECISIONS, earlier this session
 
 | question | **decision** |
 |---|---|

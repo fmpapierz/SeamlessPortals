@@ -254,11 +254,38 @@ public final class SeamFractional {
     public static net.minecraft.world.phys.shapes.VoxelShape keptShape(
         BlockGetter level, BlockPos pos, net.minecraft.world.phys.shapes.VoxelShape original
     ) {
+        boolean probe = AperturePassthroughLever.SEAM_FRACTIONAL_PROBE;
+        if (probe) {
+            SeamFractionalProbe.onCall();
+            SeamFractionalProbe.tickSummary();
+        }
         if (!collisionActive() || original.isEmpty()) {
             return null;
         }
+        // ★ PROBE THE DECISION, NOT JUST THE OUTCOME. When the answer is "no cut" the REASON is the
+        // whole diagnostic — "did nothing" and "never ran" must not look the same in a live log.
+        SeamRegistry.SeamCell seamForProbe = probe && level instanceof net.minecraft.world.level.Level lp
+            ? SeamRegistry.lookup(lp, pos) : null;
         SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
         if (binding == null) {
+            if (seamForProbe != null) {
+                StringBuilder why = new StringBuilder();
+                for (SeamRegistry.SeamBinding b : seamForProbe.bindings()) {
+                    if (b == null) {
+                        continue;
+                    }
+                    why.append("[facing=").append(b.srcFacing())
+                        .append(" mirrorable=").append(b.isMirrorable())
+                        .append(" phase=").append(b.phase())
+                        .append(" cut=").append(b.cut() == null ? "NULL" : "present")
+                        .append(" destPos=").append(b.destPos()).append("] ");
+                }
+                SeamFractionalProbe.onSeamCell(pos, "NO CUT",
+                    "is a seam cell but no binding qualified. bindings: " + why);
+            } else if (probe && level instanceof net.minecraft.world.level.Level) {
+                // Not a seam cell at all — counted, never logged per-call (volume).
+                return null;
+            }
             return null;
         }
         SeamRegistry.SeamCut cut = binding.cut();
@@ -268,7 +295,19 @@ public final class SeamFractional {
         // Nothing to do at the degenerate ends: a whole cell stays whole, and an empty one would
         // make the block vanish rather than be cut, which is a different (and wrong) behaviour.
         if (kept >= 1.0 - EPS || kept <= EPS) {
+            if (probe) {
+                SeamFractionalProbe.onSeamCell(pos, "NO CUT",
+                    "degenerate kept thickness " + kept + " (offset=" + off + " facing=" + facing
+                        + ") — the plane is on a cell face, so nothing straddles");
+            }
             return null;
+        }
+        if (probe) {
+            SeamFractionalProbe.onSeamCell(pos, "CUT",
+                "keeping " + kept + " on the " + facing + " side (planeOffset=" + off
+                    + ", level=" + (level instanceof net.minecraft.world.level.Level lv2
+                        ? (lv2.isClientSide() ? "CLIENT" : "SERVER") : "?") + ")");
+            SeamFractionalProbe.onCut();
         }
         boolean positive = facing.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         double lo = positive ? off : 0.0;
