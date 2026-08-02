@@ -76,9 +76,17 @@ Run the client:
 
 ## THE QUEUE AFTER THIS
 
-1. **The C2 JIT defect** (memory `temurin-c2-jit-crash`). Six victims, five in the portal
-   occlusion-query / `doRenderPortal` region; crashes on BOTH Temurin 25.0.2 and Zulu 25.0.4, so it
-   is a CODE-SHAPE problem, not a vendor one. Six `-XX:CompileCommand=exclude` rows are the current
-   mitigation and are load-bearing — **a seventh exclude is not the answer.** NOTE the overlap: this
-   recursion arc will touch `doRenderPortal`, which is victim #6.
+1. **The C2 JIT defect** (memory `temurin-c2-jit-crash`; report draft
+   `migration/C2_JIT_BUG_REPORT.md`). Diagnosed: the chain compiles into ONE unit of 300-600 inlined
+   methods and C2 dies at a fixed point (every crash faults reading `0x2c`, `RAX=0`), on BOTH
+   Temurin 25.0.2 and Zulu 25.0.4 — a code-shape problem, not a vendor one.
+   **The fix is prepared and DELIBERATELY DEFERRED until after your recursion work** (user decision):
+   one `dontinline` flag on `ViewAreaRenderer::renderPortalArea` replacing all six excludes. Full
+   rationale, the two false-negative traps, and the possible offline reproducer are in the handoff's
+   §7 — read that block before touching it.
+   **DURING YOUR ARC: keep the six `-XX:CompileCommand=exclude` rows exactly as they are.** They are
+   the working mitigation; deleting them has already gone wrong once (`8b96a3e`, reverted `c258873`).
+   And if a new `hs_err_pid*.log` appears while you work, KEEP IT and note which method
+   `Current CompileTask` names — your arc restructures `doRenderPortal`, which is victim #6, so any
+   change in the crash is free evidence about the mechanism.
 2. **The MB bloom-ring commission** — `MB_SMEAR_HANDOFF` §1c, one look with Motion Blur explicitly ON.
