@@ -528,6 +528,11 @@ public class CrossingSmoke implements FabricClientGameTest {
             // <=2 proof, orientation symmetry and contiguity. Cheap; asserts nothing about
             // mirroring, placement or rendering — those are separate fronts with separate falsifiers.
             rsFragmentArithmeticGate(context);
+            // And the same geometry against REAL portals — the arithmetic sweep would stay green
+            // with the plane offset derived at the wrong SIGN, because it never asks a portal
+            // anything. Obsidian frames are mid-block by construction, so a COINCIDENT binding must
+            // compute ~0.5; that is this leg's load-bearing assertion.
+            rsFragmentBindingGate(context);
 
             // RS (b) RAIL LEGS — rails CONNECTING across the seam (REDSTONE_B_SPEC.md §9, adapted).
             // After the seam-map gate on purpose: these consume the primitive it just proved, so a
@@ -4689,6 +4694,191 @@ public class CrossingSmoke implements FabricClientGameTest {
                 + " D1[0.0,0.49]=0.49); {} decompositions swept, {} of them two-fragment; material"
                 + " conserved, <=2 proven, orientations symmetric, all intervals in-cell and"
                 + " contiguous.", checked, twoFragmentCases);
+    }
+
+    /**
+     * ★ THE FRAGMENT BINDING GATE — connects the pure arithmetic to REAL portal geometry.
+     *
+     * <p>{@link #rsFragmentArithmeticGate} proves the decomposition is self-consistent on synthetic
+     * numbers. That is necessary and not sufficient: it would stay green if
+     * {@code SeamFractional.planeOffsetOf} derived the offset with the wrong SIGN, because the sweep
+     * never asks a real portal anything. This leg closes that gap by asserting against portals the
+     * suite actually built.
+     *
+     * <p><b>The load-bearing assertion is #3.</b> An obsidian frame's plane is mid-block BY
+     * CONSTRUCTION ({@code IntBox.getCenterVec} → {@code (l+h+1)/2}), so every COINCIDENT binding
+     * must compute {@code srcPlaneOffset ≈ 0.5}. If the {@code 0.5 − d·nA} derivation has its sign
+     * backwards, a portal facing one way still yields 0.5 while one facing the other yields −0.5 or
+     * 1.5 — invisible to the synthetic sweep, caught here. That is exactly the class of error the
+     * javadoc's "worked both ways" note exists for, and this is its falsifier.
+     *
+     * <p>Asserts: every binding carries a cut; every {@code srcPlaneOffset} lies in {@code (0,1)};
+     * COINCIDENT bindings are within ε of the cell centre; and where a destination is known, the
+     * decomposition conserves material and produces at most two fragments. Fails VACUOUS if it
+     * examined no bindings — a scan-based gate that saw nothing is not a passing gate
+     * ({@code getEntitiesOfClass} silently skips unloaded chunks, which has bitten this suite before).
+     */
+    private static void rsFragmentBindingGate(ClientGameTestContext context) {
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+
+        runOnServer(context, server -> {
+            int examined = 0;
+            int coincident = 0;
+            int withDestination = 0;
+            int twoFragment = 0;
+            double minOff = Double.POSITIVE_INFINITY;
+            double maxOff = Double.NEGATIVE_INFINITY;
+
+            for (ServerLevel level : server.getAllLevels()) {
+                var holder = (com.warwa.seamlessportals.passthrough.SeamIndexHolder) level;
+                var cells = holder.seamlessportals$seamCells();
+                for (var entry : cells.long2ObjectEntrySet()) {
+                    BlockPos cell = BlockPos.of(entry.getLongKey());
+                    for (var binding : entry.getValue().bindings()) {
+                        if (binding == null) {
+                            continue;
+                        }
+                        examined++;
+                        var cut = binding.cut();
+                        if (cut == null) {
+                            failure.set("a binding at " + cell + " in " + level.dimension()
+                                + " carries NO CUT. bind() must populate it for every binding — the"
+                                + " fractional model cannot divide a block it has no plane for.");
+                            return;
+                        }
+                        double off = cut.srcPlaneOffset();
+                        minOff = Math.min(minOff, off);
+                        maxOff = Math.max(maxOff, off);
+                        if (off < -1.0e-6 || off > 1.0 + 1.0e-6) {
+                            failure.set("srcPlaneOffset=" + off + " at " + cell + " is outside [0,1]."
+                                + " The plane must fall within the cell it was bound for; a value"
+                                + " outside means planeOffsetOf's derivation or the cell choice is"
+                                + " wrong. facing=" + binding.srcFacing()
+                                + " phase=" + binding.phase());
+                            return;
+                        }
+                        // ★ THE CROSS-CHECK, stated in the MODEL's own terms rather than as a raw
+                        // offset range — the two phases make opposite predictions about how much
+                        // material crosses, so asserting both directions catches a convention error
+                        // that either one alone would let through.
+                        //
+                        // ⚠ AN EARLIER BUILD OF THIS GATE ASSERTED off IN (0,1) AND WENT RED on a
+                        // perfectly correct DISJOINT binding (off = 0.0 at facing=south). DISJOINT
+                        // means the plane lies ON the cell boundary — 0.0 is the right answer there,
+                        // and the ASSERTION was wrong, not the code. Recorded because that is the
+                        // house failure mode: a gate whose expectation is narrower than the truth.
+                        double kept = com.warwa.seamlessportals.passthrough.SeamFractional
+                            .keptThickness(binding.srcFacing(), off);
+                        double cross = com.warwa.seamlessportals.passthrough.SeamFractional
+                            .crossingThickness(binding.srcFacing(), off);
+                        if (binding.phase()
+                            == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT) {
+                            coincident++;
+                            // COINCIDENT = the plane BISECTS this cell, so BOTH sides get material.
+                            // On an obsidian frame (mid-block by construction) this pins ~0.5, which
+                            // is what makes it a sign check: a flipped derivation yields -0.5 or 1.5.
+                            if (Math.abs(off - 0.5) > 0.25 + 1.0e-6) {
+                                failure.set("a COINCIDENT binding at " + cell + " computed"
+                                    + " srcPlaneOffset=" + off + ", but COINCIDENT means the plane is"
+                                    + " within 0.25 of the cell CENTRE, so it must lie in"
+                                    + " [0.25,0.75]. planeOffsetOf disagrees with phaseOf — one of"
+                                    + " them has its sign or its reference point wrong. facing="
+                                    + binding.srcFacing());
+                                return;
+                            }
+                            if (kept <= 1.0e-6 || cross <= 1.0e-6) {
+                                failure.set("a COINCIDENT binding at " + cell + " keeps " + kept
+                                    + " and crosses " + cross + " — one of them is zero, so nothing"
+                                    + " actually straddles. COINCIDENT means the plane bisects the"
+                                    + " cell and BOTH sides must get material. offset=" + off
+                                    + " facing=" + binding.srcFacing());
+                                return;
+                            }
+                        } else {
+                            // DISJOINT = the plane lies on this cell's FACE, so nothing straddles:
+                            // the source keeps the whole cell and zero crosses. This is the
+                            // complementary half of the cross-check, and it is what caught the
+                            // wrong assertion above.
+                            if (Math.abs(kept - 1.0) > 1.0e-6 || cross > 1.0e-6) {
+                                failure.set("a DISJOINT binding at " + cell + " keeps " + kept
+                                    + " and crosses " + cross + ", but DISJOINT means the plane is on"
+                                    + " the cell FACE — nothing straddles, so the source must keep"
+                                    + " the WHOLE cell and cross exactly 0. offset=" + off
+                                    + " facing=" + binding.srcFacing() + ". Either the offset"
+                                    + " convention or the facing convention is inverted.");
+                                return;
+                            }
+                        }
+                        if (cut.hasDestination() && binding.destPos() != null) {
+                            withDestination++;
+                            var frags = com.warwa.seamlessportals.passthrough.SeamFractional
+                                .destinationFragments(binding);
+                            if (frags.size() > 2) {
+                                failure.set("a real binding at " + cell + " decomposed into "
+                                    + frags.size() + " fragments (>2): " + frags);
+                                return;
+                            }
+                            if (frags.size() == 2) {
+                                twoFragment++;
+                            }
+                            double total = com.warwa.seamlessportals.passthrough.SeamFractional
+                                .totalLength(frags);
+                            if (Math.abs(total - cross) > 1.0e-6) {
+                                failure.set("material not conserved on a REAL binding at " + cell
+                                    + ": crossing thickness " + cross + " but fragments hold " + total
+                                    + " (srcOffset=" + off + " destOffset=" + cut.destPlaneOffset()
+                                    + " destFacing=" + cut.destFacing() + ") => " + frags);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            // ★ LEVER-AWARE, AND IT INVERTS. Under the master off-switch nothing binds at all, so
+            // demanding coverage would be asserting the feature is on while the user turned it off —
+            // which is how a gate ends up red for the right reason at the wrong time. The correct
+            // expectation there is the OPPOSITE one, and asserting it is worth more than skipping:
+            // it proves -PdisableAperturePassthrough really does stop every bind, rather than
+            // leaving stale bindings behind for the fragment layer to read.
+            if (AperturePassthroughLever.DISABLED) {
+                if (examined != 0) {
+                    failure.set("*** REGRESSION *** aperture passthrough is DISABLED, so no seam"
+                        + " binding should exist anywhere — but " + examined + " were found. The"
+                        + " master lever is not stopping bind(), and the fractional model would be"
+                        + " reading cuts the user switched off.");
+                }
+                return;
+            }
+            // COVERAGE — a scan that examined nothing proves nothing.
+            if (examined == 0) {
+                failure.set("VACUOUS — no seam bindings were examined in any level. The scan saw"
+                    + " nothing, so every assertion above was skipped.");
+                return;
+            }
+            if (coincident == 0) {
+                failure.set("VACUOUS — " + examined + " bindings examined but NONE were COINCIDENT,"
+                    + " so the sign check against real mid-block obsidian geometry never ran. That"
+                    + " check is the only reason this leg exists.");
+                return;
+            }
+            detail.set("examined=" + examined + " coincident=" + coincident
+                + " withDestination=" + withDestination + " twoFragment=" + twoFragment
+                + " srcPlaneOffset range=[" + String.format("%.4f", minOff)
+                + ", " + String.format("%.4f", maxOff) + "]");
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS FRAGMENT BINDING GATE FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS FRAGMENT BINDING GATE PASS — {}. {}",
+            AperturePassthroughLever.DISABLED
+                ? "INVERSION: passthrough disabled and NO binding exists anywhere, so the master"
+                    + " lever cleanly stops every bind"
+                : "the cut is derived from real portal geometry and agrees with phaseOf",
+            detail.get());
     }
 
     /**
