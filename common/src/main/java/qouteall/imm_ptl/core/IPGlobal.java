@@ -490,6 +490,20 @@ public class IPGlobal {
      */
     public static boolean deepPortalLoadingReach = true;
 
+    /**
+     * IS5-KEEP — how long a portal-loaded chunk stays resident after nothing is watching it, in
+     * GENERATIONS of {@code ImmPtlChunkTracking.updateInterval} (13 ticks each).
+     *
+     * <p>Default 4 = about 2.6 seconds, IP's original. Raising it stops destination chunks being
+     * re-streamed every time you glance away from a portal and back. <b>Negative = never unload
+     * while the player is online</b>, which also disables the adaptive shrink that would otherwise
+     * cancel the setting the moment it started working.
+     *
+     * <p>Live value, written by {@code IPConfig.onConfigChanged}. Costs server memory in proportion
+     * to how much world stays resident.
+     */
+    public static int chunkUnloadDelayGenerations = 4;
+
     /** Above this, {@link #warnIfDeepRecursion} logs the VRAM arithmetic once per changed pair. */
     public static final int DEEP_RECURSION_WARN_AT = 8;
 

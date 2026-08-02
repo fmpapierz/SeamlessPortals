@@ -319,24 +319,56 @@ public class ImmPtlChunkTracking {
         }
     }
     
+    /**
+     * How many GENERATIONS a chunk survives after nothing is watching it any more.
+     *
+     * <p>One generation is {@link #updateInterval} = 13 ticks, so the shipped default of 4 is about
+     * 2.6 seconds. The consumer is the {@code generationCounter - record.lastWatchGeneration >
+     * delayUnloadGenerations} test above: raising this keeps portal-destination chunks resident
+     * after you look away, so glancing back and forth does not re-stream them.
+     *
+     * <p>IS5-KEEP — now configurable ({@code IPGlobal.chunkUnloadDelayGenerations}):
+     * <ul>
+     *   <li><b>negative</b> = never unload while the player is online. The adaptive shrink below is
+     *       skipped entirely, because it would otherwise defeat the setting the moment retention did
+     *       its job: keeping chunks longer IS what pushes the loaded count past its thresholds.</li>
+     *   <li><b>above the default</b> = honoured as asked, adaptive shrink also skipped — the player
+     *       has explicitly accepted the memory cost, and shrinking it back would make the setting
+     *       appear to do nothing exactly when it started working.</li>
+     *   <li><b>default or lower</b> = IP's original behaviour, adaptive shrink intact.</li>
+     * </ul>
+     */
     // unload chunks earlier if the player loads many chunks
     private static int getDelayUnloadGenerationForPlayer(ServerPlayer player) {
+        int configured = IPGlobal.chunkUnloadDelayGenerations;
+
+        if (configured < 0) {
+            // Indefinite. Not Integer.MAX_VALUE: generationCounter is an int that increments every
+            // 13 ticks and the test is a SUBTRACTION, so a max-value delay would overflow into
+            // negative and start unloading everything. A large finite value cannot.
+            return Integer.MAX_VALUE / 4;
+        }
+
+        if (configured > defaultDelayUnloadGenerations) {
+            return configured;
+        }
+
         PlayerChunkLoading playerInfo = getPlayerInfo(player);
         if (playerInfo == null) {
-            return defaultDelayUnloadGenerations;
+            return configured;
         }
-        
+
         int loadedChunks = playerInfo.loadedChunks;
-        
+
         if (loadedChunks > 2000) {
             return 1;
         }
-        
+
         if (loadedChunks > 1200) {
             return 2;
         }
-        
-        return defaultDelayUnloadGenerations;
+
+        return configured;
     }
     
     private static Object2ObjectOpenHashMap<ResourceKey<Level>, LongOpenHashSet> refreshAdditionalChunkLoaders(MinecraftServer server) {

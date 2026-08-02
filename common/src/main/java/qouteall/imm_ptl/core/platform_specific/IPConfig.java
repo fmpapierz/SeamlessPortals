@@ -115,6 +115,18 @@ public class IPConfig implements ConfigData {
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     public boolean deepPortalLoadingReach = true;
+
+    /**
+     * IS5-KEEP — how long portal-loaded chunks stay resident after nothing is watching them, in
+     * units of 13 ticks. Default 4 (~2.6 s), IP's original. Negative = never unload while the player
+     * is online.
+     *
+     * <p>Unbounded in the GUI on purpose so Cloth renders a TYPED field rather than a slider — the
+     * useful range spans "a couple of seconds" to "indefinite" and no slider covers that sensibly.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int chunkUnloadDelayGenerations = 4;
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     // DEFAULT FLIPPED TO FALSE (2026-08-02, user decision). When this engages it clamps portal
@@ -319,6 +331,7 @@ public class IPConfig implements ConfigData {
         portalWindowRenderDistance = Mth.clamp(portalWindowRenderDistance, 0, 32);
         IPGlobal.portalWindowRenderDistance = portalWindowRenderDistance;
         IPGlobal.deepPortalLoadingReach = deepPortalLoadingReach;
+        IPGlobal.chunkUnloadDelayGenerations = chunkUnloadDelayGenerations;
         IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;
