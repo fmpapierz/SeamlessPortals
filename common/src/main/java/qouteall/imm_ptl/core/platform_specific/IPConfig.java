@@ -21,10 +21,51 @@ public class IPConfig implements ConfigData {
     
     // client visible configs
     
+    // IS5-REC (2026-08-02): @ConfigEntry.BoundedDiscrete(min = 0, max = 10) REMOVED. Cloth renders a
+    // bounded int as a SLIDER and an unbounded one as a TYPED FIELD, and the bound was the only
+    // thing preventing values like 20 or 100 — which the user explicitly asked for. Free-typed here
+    // and in config/immersive_portals.json.
+    //
+    // THIS IS THE ENGINE BOUND and the single source of truth for it. A parallel
+    // seamlessportals.properties knob was briefly added and is now DELETED: onConfigChanged below
+    // writes IPGlobal.maxPortalLayer from IPModMain.init, which runs AFTER
+    // SeamlessPortalsConfig.loadFrom, so the other knob was overwritten every boot while its file
+    // kept reporting the value the user set. Two writers, one static, no arbitration — do not
+    // reintroduce one.
     @ConfigEntry.Category("client")
-    @ConfigEntry.BoundedDiscrete(min = 0, max = 10)
     @ConfigEntry.Gui.Tooltip
     public int maxPortalLayer = 5;
+
+    /**
+     * IS5-REC — recursion depth WHEN AN IRIS SHADERPACK IS ON. Separate from
+     * {@link #maxPortalLayer} because a shaders-ON layer is a FULL pack-shaded world render
+     * (gbuffer + shadow pass + composite chain), a categorically heavier unit than a stencil layer.
+     * 1 = the pre-feature behaviour (a portal seen inside a portal is flat pass-through).
+     *
+     * <p>CAPPED BY {@link #maxPortalLayer}: the engine refuses to render portal content past that
+     * ({@code PortalRenderer.renderPortalContent}), so raising this alone does nothing — raise both.
+     *
+     * <p>VRAM: each layer a scene ACTUALLY REACHES allocates its own full-screen colour+depth target
+     * (~16.6 MB at 1920x1080, ~66 MB at 3840x2160). Allocation is lazy, so a high value costs
+     * nothing until such a scene exists; a genuinely 100-deep one would hold ~1.7 GB at 1080p.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int irisRecursionDepth = 5;
+
+    /**
+     * IS5-REC — OFF by default (user-decided 2026-08-02). Reduces the shaders-ON recursion depth
+     * automatically while the frame rate is low.
+     *
+     * <p>Exists because the engine's own mirror-room protection CANNOT cover deep recursion:
+     * {@code RenderStates.updateIsLaggy} only consults the frame rate once >10 dest renders happened
+     * in the previous frame, and a deep SINGLE chain makes about one render per layer — five or six,
+     * never eleven. MEASURED: the depth-5 leg reported {@code isLaggy=false} on all 166 rows, which
+     * proves only that the gate could not fire, not that the frame rate was fine.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public boolean irisRecursionLagGuard = false;
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     public boolean lagAttackProof = true;
@@ -196,6 +237,15 @@ public class IPConfig implements ConfigData {
         IPGlobal.enableMirrorCreation = enableMirrorCreation;
         IPGlobal.doCheckGlError = doCheckGlError;
         IPGlobal.maxPortalLayer = maxPortalLayer;
+        // IS5-REC. The -P dev lever PINS the depth for A/B legs, so the config must not overwrite it
+        // — a lever that stops governing halfway through a run is how three legs of this project got
+        // voided. Clamped to a resource ceiling, not a taste one: see the field's VRAM note.
+        if (!IPGlobal.IRIS_MAX_LAYER_PINNED_BY_LEVER) {
+            IPGlobal.irisMaxPortalLayer =
+                Math.max(1, Math.min(IPGlobal.IRIS_RECURSION_DEPTH_CEILING, irisRecursionDepth));
+        }
+        IPGlobal.irisRecursionLagGuard = irisRecursionLagGuard;
+        IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;
         IPGlobal.netherPortalFindingRadius = portalSearchingRange;

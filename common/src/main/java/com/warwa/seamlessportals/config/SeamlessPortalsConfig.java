@@ -35,44 +35,12 @@ public class SeamlessPortalsConfig {
     private boolean projectilePassThrough = true;
     private int cameraSmoothingTicks = 5;
 
-    // ===== IS5-REC — recursive portal views WITH A SHADERPACK ON =============================
-    /**
-     * How many portal layers deep a portal-inside-a-portal renders when an iris shaderpack is
-     * ACTIVE. Default 5, matching the engine's shaders-OFF bound, user-decided 2026-08-02 after the
-     * depth-5 leg came back mechanically clean (maxPortalDepth=5, deferredPeak=4, guards in step,
-     * zero budget cuts, no anomalies).
-     *
-     * <p>SEPARATE knob from the shaders-OFF depth on purpose: layer <i>n</i> shaders-ON is a full
-     * pack-shaded world render — gbuffer, shadow pass, the whole composite chain — so it is a
-     * categorically heavier unit than a stencil-family layer. 1 = one layer, i.e. the behaviour
-     * before this feature (a portal seen inside a portal is flat pass-through).
-     */
-    private int irisRecursionDepth = 5;
-
-    /**
-     * How many portal layers deep a portal-inside-a-portal renders with NO shaderpack (the stencil
-     * renderer family). Feeds {@link qouteall.imm_ptl.core.IPGlobal#maxPortalLayer}, which is the
-     * ENGINE bound: {@code PortalRenderer.renderPortalContent} refuses to render content past it, so
-     * it also caps {@link #irisRecursionDepth} — raising the shader depth alone does nothing.
-     *
-     * <p>REPLACES the former {@code maxPortalRenderDepth}, which was a live slider in the config
-     * screen with NO consumer anywhere in the tree: nothing outside its own getter/setter ever read
-     * it, so moving it changed nothing. This one is wired.
-     */
-    private int vanillaRecursionDepth = qouteall.imm_ptl.core.IPGlobal.maxPortalLayer;
-
-    /**
-     * OFF by default (user-decided 2026-08-02). When ON, the shaders-ON recursion depth is reduced
-     * automatically while the frame rate is low.
-     *
-     * <p>This exists because the engine's own mirror-room lag protection CANNOT cover this case:
-     * {@code RenderStates.updateIsLaggy} only looks at the frame rate once more than 10 dest renders
-     * happened in the previous frame, and a deep single chain produces about one render per layer —
-     * five or six, never eleven. So a depth-5 chain can make frames arbitrarily expensive without
-     * that guard ever arming. MEASURED: the depth-5 leg reported {@code isLaggy=false} on all 166
-     * rows, which proves only that the gate could not fire, not that the frame rate was fine.
-     */
-    private boolean irisRecursionLagGuard = false;
+    // IS5-REC NOTE: the shaders-ON recursion depth, the vanilla depth and the deep-recursion lag
+    // guard deliberately DO NOT live here. They live in IPConfig (config/immersive_portals.json +
+    // the Mod Menu screen that actually opens at the default flag). A parallel copy existed here
+    // briefly and was deleted: IPConfig.onConfigChanged writes IPGlobal.maxPortalLayer from
+    // IPModMain.init, which runs AFTER loadFrom below, so this copy was overwritten every boot
+    // while this file kept reporting the value the user set. Do not reintroduce it.
 
     private SeamlessPortalsConfig() {
         portalConfigs.put(PortalType.NETHER, new PortalTypeConfig(true));
@@ -137,24 +105,6 @@ public class SeamlessPortalsConfig {
                         catch (NumberFormatException nfe) { /* keep default */ }
                     }
                 }
-                String vrd = props.getProperty("vanillaRecursionDepth");
-                if (vrd != null) {
-                    try { INSTANCE.setVanillaRecursionDepth(Integer.parseInt(vrd.trim())); }
-                    catch (NumberFormatException nfe) { /* keep default */ }
-                }
-                String en = props.getProperty("enablePortalRendering");
-                if (en != null) INSTANCE.setEnablePortalRendering(Boolean.parseBoolean(en.trim()));
-                String unb = props.getProperty("unboundedClientChunkStore");
-                if (unb != null) INSTANCE.unboundedClientChunkStore = Boolean.parseBoolean(unb.trim());
-                String spec = props.getProperty("speculativePrewarm");
-                if (spec != null) INSTANCE.speculativePrewarm = Boolean.parseBoolean(spec.trim());
-                String ird = props.getProperty("irisRecursionDepth");
-                if (ird != null) {
-                    try { INSTANCE.setIrisRecursionDepth(Integer.parseInt(ird.trim())); }
-                    catch (NumberFormatException nfe) { /* keep default */ }
-                }
-                String irlg = props.getProperty("irisRecursionLagGuard");
-                if (irlg != null) INSTANCE.irisRecursionLagGuard = Boolean.parseBoolean(irlg.trim());
                 // Entity-portal migration master switch (D3). Seed the load-time flag from the same
                 // file the mixin plugin reads, so the two never disagree within a session. seedIfUnset
                 // is a no-op if the plugin already resolved it (read-once semantics).
@@ -180,13 +130,10 @@ public class SeamlessPortalsConfig {
                 INSTANCE.autoRenderDistance ? "auto" : String.valueOf(INSTANCE.portalRenderDistance));
             props.setProperty("entityLoadDistance",
                 INSTANCE.entityLoadDistanceChunks < 0 ? "max" : String.valueOf(INSTANCE.entityLoadDistanceChunks));
-            props.setProperty("vanillaRecursionDepth", String.valueOf(INSTANCE.vanillaRecursionDepth));
             props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
             props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
             props.setProperty("speculativePrewarm", String.valueOf(INSTANCE.speculativePrewarm));
             props.setProperty("entityPortals", String.valueOf(isEntityPortals()));
-            props.setProperty("irisRecursionDepth", String.valueOf(INSTANCE.irisRecursionDepth));
-            props.setProperty("irisRecursionLagGuard", String.valueOf(INSTANCE.irisRecursionLagGuard));
             try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(file)) {
                 props.store(out,
                     " Seamless Portals config\n"
@@ -204,28 +151,13 @@ public class SeamlessPortalsConfig {
                     + "#   entities are streamed so they show + move in the portal view. \"max\" (default)\n"
                     + "#   = the render distance; a smaller number limits it (fewer entities/packets).\n"
                     + "#   Edit and restart to change.\n"
-                    + "# vanillaRecursionDepth: how many portal layers deep a portal-inside-a-portal\n"
-                    + "#   renders with NO shaderpack (0.." + MAX_RECURSION_DEPTH + ", default 5).\n"
-                    + "#   This is the ENGINE bound and it also CAPS irisRecursionDepth below —\n"
-                    + "#   raising the shader depth alone does nothing, because the engine refuses to\n"
-                    + "#   render portal content past this value. Type any number you like.\n"
-                    + "# irisRecursionDepth: the same thing WHEN A SHADERPACK IS ON (1.."
-                    + MAX_RECURSION_DEPTH + ", default 5).\n"
-                    + "#   Each extra layer is a FULL pack-shaded world render (gbuffer + shadow pass\n"
-                    + "#   + composite chain), so it is far more expensive per layer than the\n"
-                    + "#   shaders-off equivalent. Set to 1 for the old behaviour: a portal seen\n"
-                    + "#   inside a portal is flat pass-through. Applies live; no restart needed.\n"
-                    + "#   VRAM NOTE: with shaders on, each layer a scene ACTUALLY REACHES allocates\n"
-                    + "#   its own full-screen colour+depth target (~16.6 MB at 1920x1080, ~66 MB at\n"
-                    + "#   3840x2160). Allocation is lazy, so a high setting costs nothing until such\n"
-                    + "#   a scene exists — but a genuinely 100-deep scene would hold ~1.7 GB at 1080p.\n"
-                    + "#   Depths above " + DEEP_RECURSION_WARN_AT + " log a warning with the arithmetic.\n"
-                    + "# irisRecursionLagGuard: false (default) = the depth above is always used.\n"
-                    + "#   true = drop to fewer layers automatically while the frame rate is low. The\n"
-                    + "#   engine's own mirror-room lag protection CANNOT cover deep recursion (it only\n"
-                    + "#   checks the frame rate after >10 destination renders in a frame, and a deep\n"
-                    + "#   single chain makes about one per layer), so this is the only automatic\n"
-                    + "#   protection for this case.");
+                    + "# PORTAL RECURSION DEPTH IS NOT CONFIGURED HERE. maxPortalLayer (no\n"
+                    + "#   shaderpack), irisRecursionDepth (with a shaderpack) and\n"
+                    + "#   irisRecursionLagGuard all live in config/immersive_portals.json, and in\n"
+                    + "#   the Mod Menu config screen. They were briefly duplicated into this file\n"
+                    + "#   and removed again: that copy was applied BEFORE the one in\n"
+                    + "#   immersive_portals.json, so it was silently overwritten on every launch\n"
+                    + "#   while this file kept reporting whatever had been set.");
             }
         } catch (Exception e) {
             com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
@@ -260,65 +192,6 @@ public class SeamlessPortalsConfig {
         return portalConfigs.get(type);
     }
 
-    /**
-     * The hard ceiling on either recursion depth. Not a taste limit — a resource one.
-     *
-     * <p>The iris compat renderer allocates ONE full-screen colour+depth target PER LAYER
-     * ({@code IrisCompatOn262Renderer.deferredFor}). At 1920x1080 that is roughly 16.6 MB a layer, so
-     * depth 128 is about 2.1 GB of VRAM, and about 8.5 GB at 3840x2160. The array grows LAZILY, so a
-     * high setting costs nothing until a scene actually recurses that deep — but if one does, it is
-     * allocated for real. 128 is chosen as "absurdly high but not instantly fatal on a 24 GB card";
-     * {@link #DEEP_RECURSION_WARN_AT} is where the log starts saying so.
-     */
-    public static final int MAX_RECURSION_DEPTH = 128;
-
-    /** Above this, {@link #warnIfDeep} logs the VRAM arithmetic once per changed value. */
-    public static final int DEEP_RECURSION_WARN_AT = 8;
-
-    public int getIrisRecursionDepth() { return irisRecursionDepth; }
-
-    public void setIrisRecursionDepth(int depth) {
-        this.irisRecursionDepth = Math.max(1, Math.min(MAX_RECURSION_DEPTH, depth));
-        warnIfDeep("irisRecursionDepth (shaderpack ON)", this.irisRecursionDepth);
-    }
-
-    public int getVanillaRecursionDepth() { return vanillaRecursionDepth; }
-
-    /**
-     * Sets the no-shaderpack depth AND pushes it into {@link qouteall.imm_ptl.core.IPGlobal#maxPortalLayer},
-     * which is where the engine actually reads it. Writing only the config field would recreate
-     * exactly the dead-knob defect this setting replaces.
-     */
-    public void setVanillaRecursionDepth(int depth) {
-        this.vanillaRecursionDepth = Math.max(0, Math.min(MAX_RECURSION_DEPTH, depth));
-        qouteall.imm_ptl.core.IPGlobal.maxPortalLayer = this.vanillaRecursionDepth;
-        warnIfDeep("vanillaRecursionDepth (no shaderpack)", this.vanillaRecursionDepth);
-    }
-
-    private static int lastWarnedDepth = -1;
-
-    /**
-     * One line per changed value — loud enough to explain a VRAM cliff after the fact, quiet enough
-     * not to spam a player who set 40 on purpose. Deliberately does NOT clamp: the value is the
-     * user's decision, this only makes its cost legible.
-     */
-    private static void warnIfDeep(String which, int depth) {
-        if (depth <= DEEP_RECURSION_WARN_AT || depth == lastWarnedDepth) {
-            return;
-        }
-        lastWarnedDepth = depth;
-        com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
-            "[SEAMLESS] {} set to {}. Each layer a scene actually reaches allocates its own"
-                + " full-screen colour+depth target (~16.6 MB at 1920x1080, ~66 MB at 3840x2160),"
-                + " so a scene that truly recurses {} deep would hold ~{} MB of them at 1080p."
-                + " Buffers are allocated lazily, so this costs nothing until such a scene exists —"
-                + " and every layer is also a full pack-shaded world render when shaders are on.",
-            which, depth, depth, depth * 17);
-    }
-
-    public boolean isIrisRecursionLagGuard() { return irisRecursionLagGuard; }
-
-    public void setIrisRecursionLagGuard(boolean on) { this.irisRecursionLagGuard = on; }
 
 
     /**
