@@ -4964,8 +4964,20 @@ public class CrossingSmoke implements FabricClientGameTest {
                 net.minecraft.core.Direction.Axis axis = binding.srcFacing().getAxis();
                 boolean cutExpected =
                     com.warwa.seamlessportals.passthrough.SeamFractional.collisionActive();
-                boolean supportCutExpected =
-                    com.warwa.seamlessportals.passthrough.SeamFractional.supportActive();
+                // ★ THE SOUL-SAND RULE (user decision 2026-08-02, superseding the original
+                // decision B this gate was first written for). Support, rail survival and redstone
+                // conduction report WHOLE whether or not the cut is active — the two halves are one
+                // block seen from two sides, and vanilla already ships exactly this shape in
+                // SOUL_SAND (partial collision, getBlockSupportShape overridden back to a full
+                // cube, both predicates forced true). So these expectations are CONSTANT across
+                // every lever position, and that is the assertion: turning the cut on must NOT
+                // change them. The earlier build tied them to supportActive() and would have gone
+                // green while rails popped.
+                boolean supportCutExpected = false;
+                // Suffocation is the one deliberate divergence from soul sand: it follows THE CUT,
+                // because the removed part is a doorway the player walks through and reporting
+                // whole would damage them for using the portal.
+                boolean suffocationSuppressed = cutExpected;
 
                 // ================= ARM 1 — MOVEMENT (tier i, through the real funnel) =============
                 writeAsPlayer(ow, above, Blocks.AIR.defaultBlockState());
@@ -5000,10 +5012,13 @@ public class CrossingSmoke implements FabricClientGameTest {
                     return;
                 }
                 double span = hi - lo;
-                double expectedSpan = cutExpected
+                // ★ The expectation comes from the binding's OWN cut, not from a hardcoded half.
+                // An earlier build read the SeamFractional.planeOffset stub (which returns 0.5
+                // unconditionally), so it would have passed a portal whose real plane sat anywhere
+                // in the COINCIDENT window — the exact silent mis-cut this model exists to close.
+                double expectedSpan = cutExpected && binding.cut() != null
                     ? com.warwa.seamlessportals.passthrough.SeamFractional.keptThickness(
-                        binding.srcFacing(),
-                        com.warwa.seamlessportals.passthrough.SeamFractional.planeOffset(binding, cell))
+                        binding.srcFacing(), binding.cut().srcPlaneOffset())
                     : 1.0;
                 if (Math.abs(span - expectedSpan) > 1.0E-4) {
                     failure.set("ARM 1 (MOVEMENT) — collision span along " + axis + " at " + cell
@@ -5118,11 +5133,21 @@ public class CrossingSmoke implements FabricClientGameTest {
                 writeAsPlayer(ow, above, Blocks.AIR.defaultBlockState());
                 boolean stoneSuffocates = stone.isSuffocating(ow, cell);
                 boolean stoneConducts = stone.isRedstoneConductor(ow, cell);
-                if (stoneSuffocates == supportCutExpected || stoneConducts == supportCutExpected) {
-                    failure.set("ARM 3 (STONE) — at seam cell " + cell + " isSuffocating="
-                        + stoneSuffocates + " isRedstoneConductor=" + stoneConducts + "; both"
-                        + " expected " + (!supportCutExpected) + ". Default derivation is"
-                        + " isCollisionShapeFullBlock, read from the per-blockstate cache.");
+                // CONDUCTION follows the soul-sand rule: always whole, in every lever position.
+                if (!stoneConducts) {
+                    failure.set("ARM 3 (CONDUCTION) — stone at seam cell " + cell + " reported"
+                        + " isRedstoneConductor=false. Under the soul-sand rule a seam block"
+                        + " conducts as a WHOLE block regardless of the cut, because the two halves"
+                        + " are one block seen from two sides. cutActive=" + cutExpected);
+                    return;
+                }
+                // SUFFOCATION is the deliberate exception and INVERTS with the cut.
+                if (stoneSuffocates == suffocationSuppressed) {
+                    failure.set("ARM 3 (SUFFOCATION) — stone at seam cell " + cell
+                        + " reported isSuffocating=" + stoneSuffocates + ", expected "
+                        + (!suffocationSuppressed) + ". Suffocation follows THE CUT: with the model"
+                        + " active a player standing in the removed part is in a doorway, not in a"
+                        + " wall, and must not take damage. cutActive=" + cutExpected);
                     return;
                 }
                 // THE PREDICATE-SEAM WITNESS. This is a VANILLA invariant, so it is a precondition:
@@ -5154,6 +5179,7 @@ public class CrossingSmoke implements FabricClientGameTest {
 
                 detail.set("cell=" + cell + " axis=" + axis + " facing=" + binding.srcFacing()
                     + " span=" + span + "/" + expectedSpan + " shapes=" + shapesSeen
+                    + " cutActive=" + cutExpected + " keptExpected=" + expectedSpan
                     + " rigid=" + rigid + " railCanSurvive=" + railCanSurvive
                     + " railSurvived=" + railSurvived
                     + " stone[suffocate=" + stoneSuffocates + " conduct=" + stoneConducts + "]"
