@@ -407,10 +407,108 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         CHelper.checkGlError();
     }
 
+    /**
+     * IS5-REC — THE NESTED PER-LAYER PASS. Dispatched by
+     * {@code SecondaryWorldRenderCore.maybeRunNestedPortalLayer} at the tail of a full-pipeline dest
+     * render, where {@code client.level} and the camera are still DEST.
+     *
+     * <p>This is {@link #onBeforeHandRendering}'s PER-LAYER half and nothing else: snapshot the dest
+     * frame the caller just produced, run this layer's portal loop (each portal's own dest render
+     * clobbers the main target, then gets stamped back portal-shaped), and blit the composited
+     * snapshot back to main so the OUTER layer's stamp reads a finished image.
+     *
+     * <p><b>Everything once-per-frame is deliberately ABSENT</b>, and that is what makes the
+     * frame-scoped singletons safe under recursion rather than a stack-discipline problem:
+     * <ul>
+     *   <li>{@link IrisTemporalTargetGuard#save()} / restore — the outermost pass owns the TAA
+     *       history save. An inner save would overwrite the layer-0 snapshot with already-polluted
+     *       targets; an inner restore would hand the rest of the frame a dest-world history.</li>
+     *   <li>{@link IrisShadowCompositeSuppressor} install/uninstall — an inner uninstall would
+     *       un-suppress the pack's shadowcomp flood-fill while the OUTER layer still needs it
+     *       suppressed, which is the IS5-FF lava-light phantom.</li>
+     *   <li>The IS5-PH prev-uniform heal — once per FRAME with the MAIN camera restored, by
+     *       construction. A per-layer heal would tick iris's frame notifier with a dest camera,
+     *       which is the very poisoning the heal exists to undo.</li>
+     *   <li>{@code IrisBobSync.deriveFramePose} and the ActSeedProbe frame bracket — both are
+     *       frame-scoped by definition.</li>
+     * </ul>
+     * All four are still bracketed by the layer-0 {@code onBeforeHandRendering} that encloses this
+     * call, so they remain correctly paired; this method simply never re-enters them.
+     *
+     * <p>{@code destDrawViewMatrix} is threaded straight into the portal loop and
+     * {@code passingModelView} is NEVER touched — that field belongs to the frame's main pass, and
+     * overwriting it here would corrupt the outer layer's cull frustum, aperture mesh, occlusion
+     * query and stamp, all four of which read it.
+     */
+    @Override
+    public void renderNestedPortalLayer(Matrix4f destDrawViewMatrix) {
+        if (client.level == null || client.player == null) {
+            return;
+        }
+        if (!IrisCompatPaste.arePipelinesReady()) {
+            // Same reasoning as the anchor's gate: without working paste pipelines the snapshot
+            // copy no-ops while each nested dest render still clobbers the main target — a
+            // whole-screen dest world, i.e. a wrongly-discriminated corruption mode.
+            return;
+        }
+        RenderTarget mainRT = client.gameRenderer.mainRenderTarget();
+        if (mainRT == null
+            || mainRT.getColorTextureView() == null
+            || mainRT.getDepthTextureView() == null) {
+            return;
+        }
+
+        final int layer = PortalRendering.getPortalLayer();
+        final SecondaryFrameBuffer deferred = deferredFor(layer);
+
+        deferred.prepare();
+        if (deferred.fb == null || deferred.fb.getColorTextureView() == null) {
+            return;
+        }
+
+        // SNAPSHOT this layer's finished dest frame — the same pair the anchor takes at layer 0.
+        // The clear is the belt behind a full overwrite (see the class SIGN NOTE for why the old
+        // reversed-Z rationale for this constant was wrong).
+        RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
+            deferred.fb.getColorTexture(), new Vector4f(1, 0, 0, 0),
+            deferred.fb.getDepthTexture(), 0.0
+        );
+        deferred.fb.copyDepthFrom(mainRT);
+        IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
+
+        ownRenderPortalsDepth++;
+        try {
+            renderPortals(destDrawViewMatrix);
+        } finally {
+            ownRenderPortalsDepth--;
+            GL11.glDisable(GL_STENCIL_TEST);
+            // BLIT-BACK: main now holds this layer's scene WITH its nested portal windows stamped
+            // in. The outer layer's stamp samples main's COLOUR, so this is what makes the nesting
+            // visible. In the finally for the same reason the anchor's is: on a mid-loop throw this
+            // restores the composited snapshot rather than leaving the last nested portal's raw dest
+            // render filling the outer window.
+            IrisCompatPaste.drawStraightCopy(deferred.fb, mainRT);
+        }
+    }
+
     /** §2.2-4 — one layer: occlusion test → push → full-pipeline content → pop → stamp. */
     protected void doRenderPortal(Portal portal, Matrix4f modelView) {
-        if (PortalRendering.isRendering()) {
-            // this renderer only supports one-layer portal (IP-verbatim)
+        // IS5-REC: WAS `if (PortalRendering.isRendering()) return;` — "this renderer only supports
+        // one-layer portal (IP-verbatim)". That early-return was the entire cap, and THIS IS THE
+        // ONLY RECURSION GUARD IN THE COMPAT PATH THAT MAY BE RELAXED.
+        //
+        // The other two — the F1 AFTER_TRANSLUCENT_TERRAIN and F2 BEFORE_TRANSLUCENT_TERRAIN Fabric
+        // listeners — also early-return on isRendering(), and theirs are load-bearing: the nested
+        // full-pipeline render RE-FIRES both events. MEASURED on the c493fb2 baseline, shaders-ON:
+        // f1=YES:flagON(fired=2 reentrantSkips=1), exactly one skip per nested render, versus
+        // fired=1 reentrantSkips=0 shaders-OFF where the decomposed path never re-fires them.
+        // Relaxing those would run a second, unindexed portal dispatch inside every nested render
+        // and overwrite passingModelView with the dest pose. Do not "tidy" them to match this one.
+        //
+        // At the default irisMaxPortalLayer=2 this expression admits layers 0 and 1 and rejects 2+.
+        // With -PirisMaxPortalLayer=1 it is identical to the old isRendering() form, which is what
+        // makes that lever an exact behavioural repro independent of the disable lever.
+        if (PortalRendering.getPortalLayer() >= IPGlobal.effectiveIrisMaxPortalLayer()) {
             return;
         }
 
@@ -496,9 +594,10 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
         // IS5-REC STAGE 2: resolve the deferred buffer we are compositing INTO. We are POST-pop
         // here, so getPortalLayer() names the OUTER layer — the one whose snapshot this portal's
-        // view gets stamped into — not the layer whose content was just rendered. At the committed
-        // default that is 0 and this is the same buffer the pre-refactor field held.
-        final SecondaryFrameBuffer stampTarget = deferredFor(PortalRendering.getPortalLayer());
+        // view gets stamped into — not the layer whose content was just rendered. At layer 0 this is
+        // the same buffer the pre-refactor field held.
+        final int stampLayer = PortalRendering.getPortalLayer();
+        final SecondaryFrameBuffer stampTarget = deferredFor(stampLayer);
 
         // IS5-G ghost-wave discriminator run 2: the dedicated stamp-clamp lever skips ONLY this
         // bracket (the aperture/occlusion-query draws keep their own clamp), splitting sub-cause
@@ -513,8 +612,14 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // black). IS5-HAND extension: also samples the HAND screen region's depth in the
         // SNAPSHOT (deferred) buffer — the stamp-over-hand fix needs the hand slice's measured
         // depth values. Self-disarming; never throws into the pass.
-        com.warwa.seamlessportals.render.SeamDestContentProbe.sample(
-            portal, client.gameRenderer.mainRenderTarget(), stampTarget.fb);
+        // IS5-REC: LAYER 0 ONLY. This is a frame-scoped, self-disarming 1 Hz probe built to answer a
+        // question about the OUTER seam window. Letting nested layers call it would let a deeper
+        // layer consume the 1 Hz slot and file its sample under the outer window's identity — the
+        // probe would keep printing, which is exactly why it would be believed.
+        if (stampLayer == 0) {
+            com.warwa.seamlessportals.render.SeamDestContentProbe.sample(
+                portal, client.gameRenderer.mainRenderTarget(), stampTarget.fb);
+        }
 
         if (!isDebugMode) {
             // THE STAMP (D20): portal-shaped copy main→deferred, snapshot-depth-tested.
@@ -542,7 +647,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
 
         // IS5-HAND-STAGE C: the deferred buffer after this portal's stamp (last capture wins).
-        com.warwa.seamlessportals.render.SeamHandStageDiff.stageC(stampTarget.fb);
+        // IS5-REC: LAYER 0 ONLY — stage C is one slot in a FOUR-STAGE frame diff (A anchor, B
+        // snapshot, C post-stamp, D post-blit) whose other three are emitted once per frame by the
+        // anchor. A nested layer writing C would silently pair a depth-N capture with depth-0's
+        // A/B/D and print a diff of two different images as if it were one frame's evolution.
+        if (stampLayer == 0) {
+            com.warwa.seamlessportals.render.SeamHandStageDiff.stageC(stampTarget.fb);
+        }
 
         // Color-mask restore — cache-coherent via GlStateManager._colorMask(15) (all buffers,
         // 15 = R|G|B|A), the S14.22 idiom (RendererUsingStencil:451). Fable-fold CORRECTION
