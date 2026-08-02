@@ -188,19 +188,58 @@ public class RenderStates {
             if (ClientPerformanceMonitor.getMinimumFps() > 15) {
                 isLaggy = false;
             }
+            else {
+                // KEEP SAYING IT WHILE IT IS TRUE. This is the whole fix: the notice used to be
+                // shown ONCE, on the false->true transition, and vanilla's overlay message expires
+                // after about 3 seconds — while the clamp itself stays on indefinitely. So the
+                // player saw a brief flash and then had portal recursion silently pinned to ONE
+                // layer with nothing on screen to say why. USER-REPORTED after losing time to
+                // exactly that: recursion looked broken, and the cause was this protection firing.
+                showLaggyNotice(false);
+            }
         }
         else {
             if (lastPortalRenderInfos.size() > 10) {
                 if (ClientPerformanceMonitor.getAverageFps() < 8 || ClientPerformanceMonitor.getMinimumFps() < 6) {
-                    // 26.2: Gui.setOverlayMessage moved to the split-out Hud (Hud.java:1225),
-                    // reached via the public field Gui.hud (Gui.java:72).
-                    MyRenderHelper.client.gui.hud.setOverlayMessage(
-                        Component.translatable("imm_ptl.laggy"),
-                        false
-                    );
                     isLaggy = true;
+                    // Animated on the FIRST show only — vanilla's animate flag makes the text pulse,
+                    // which is what catches the eye at the moment the clamp engages. The repeats
+                    // below are steady, because a permanently pulsing message is harder to read than
+                    // a still one and this may now stay up for a long time.
+                    showLaggyNotice(true);
                 }
             }
+        }
+    }
+
+    private static long lastLaggyNoticeMs = 0L;
+
+    /**
+     * Re-issues the "rendering fewer portals" overlay while the lag clamp is engaged.
+     *
+     * <p>Repeat interval is under vanilla's ~60-tick overlay lifetime so the message never blinks
+     * out mid-clamp; the {@code animate} flag is reserved for the first show. Red + bold because the
+     * default styling reads as an incidental status line, and this one is reporting that a feature
+     * the player configured has been overridden.
+     *
+     * <p>26.2: {@code Gui.setOverlayMessage} moved to the split-out {@code Hud} (Hud.java:1225),
+     * reached via the public field {@code Gui.hud} (Gui.java:72).
+     */
+    private static void showLaggyNotice(boolean animate) {
+        long now = System.currentTimeMillis();
+        if (!animate && now - lastLaggyNoticeMs < 2000L) {
+            return;
+        }
+        lastLaggyNoticeMs = now;
+        try {
+            MyRenderHelper.client.gui.hud.setOverlayMessage(
+                Component.translatable("imm_ptl.laggy")
+                    .withStyle(net.minecraft.ChatFormatting.RED, net.minecraft.ChatFormatting.BOLD),
+                animate
+            );
+        }
+        catch (Throwable ignored) {
+            // A HUD notice must never be able to break the render path it is reporting on.
         }
     }
 
