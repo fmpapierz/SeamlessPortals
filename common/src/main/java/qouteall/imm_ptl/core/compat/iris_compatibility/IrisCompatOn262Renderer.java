@@ -75,18 +75,24 @@ import static org.lwjgl.opengl.GL11.GL_STENCIL_TEST;
  * <p><b>D23 layer-0 fallback</b>: {@code CrossPortalViewRendering}/{@code GuiPortalRendering}
  * call {@code prepare/invokeWorldRendering/finish} directly at LAYER 0 — no snapshot context
  * exists there, and a full-pipeline render would clobber the main target MID-frame. The
- * {@code isInsideOwnRenderPortals} latch detects that and falls back to the decomposed
+ * {@code ownRenderPortalsDepth} counter detects that and falls back to the decomposed
  * {@code renderWorldNew} (strictly better than nothing; full fidelity deferred).
  *
- * <p><b>Teardown (mining §8-20 — the world-exit teardown the block era forgot)</b>: the ONE
- * sequential {@link SecondaryFrameBuffer} is destroyed on client cleanup
+ * <p><b>Teardown (mining §8-20 — the world-exit teardown the block era forgot)</b>: EVERY layer's
+ * {@link SecondaryFrameBuffer} is destroyed on client cleanup
  * ({@code IPCGlobal.CLIENT_CLEANUP_EVENT}: disconnect/world-exit) and on renderer switch-away
  * ({@code PortalRenderer.switchRenderer} calls {@link #onSwitchedAway()}), re-created lazily by
  * {@code prepare()} on next use.
  *
- * <p>SIGN NOTE (R5): the deferred clear's depth constant is 0.0 = reversed-Z FAR (the held
- * source's G7 re-expression); the stamp's compare direction lives in
- * {@link IrisCompatPaste} (GEQUAL — derivation there).
+ * <p>SIGN NOTE, CORRECTED (IS5-REC): the old note here read "the deferred clear's depth constant is
+ * 0.0 = reversed-Z FAR". THE REVERSED-Z PREMISE IS WRONG and was measured wrong by the IS5-XCUT arc
+ * — at the draw, {@code clipDepthMode=NEGATIVE_ONE_TO_ONE} (39/39) and {@code range=[0,1]} (26/26),
+ * i.e. small-is-near. {@code GlDevice} genuinely calls {@code glClipControl(LOWER_LEFT,
+ * ZERO_TO_ONE)} — something, most plausibly iris, sets it back before our draws, so BYTECODE IS NOT
+ * GROUND TRUTH HERE. The clear VALUE is unchanged (it is a belt behind a full overwrite); only the
+ * rationale is corrected. The stamp's declared compare lives in {@link IrisCompatPaste}
+ * (GREATER_THAN_OR_EQUAL, depth write on) — and what it ACTUALLY executes is an open question this
+ * arc has deliberately NOT resolved from comments: re-measure it, do not infer it.
  *
  * <p><b>Both-levers precedence (gate-audit ledger, port-note §2.5)</b>: the IS0 anchor fires
  * {@code onBeforeHandRendering} (the full compat pass incl. blit-back) BEFORE the
@@ -111,7 +117,56 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         });
     }
 
-    private final SecondaryFrameBuffer deferredBuffer = new SecondaryFrameBuffer();
+    /**
+     * IS5-REC STAGE 2 — the deferred snapshot buffers, ONE PER PORTAL LAYER.
+     *
+     * <p>Was a single {@code SecondaryFrameBuffer}. The one-layer shape could share it because the
+     * whole snapshot → loop → stamp → blit-back sequence ran once per frame; under recursion layer 2
+     * would clobber layer 1's snapshot mid-frame, which is the structural blocker the handoff names.
+     *
+     * <p>Grown LAZILY by {@link #deferredFor(int)} rather than pre-sized to {@code maxPortalLayer+1}
+     * (IP's {@code IrisPortalRenderer} pre-sizes; that renderer also allocates for depths it can no
+     * longer reach on 26.2). At the committed default only index 0 is ever touched, so this allocates
+     * exactly what the single field did — {@code deferredPeak} is the witness for that claim.
+     *
+     * <p>NOT a per-layer copy of IP's mechanism: IP masked each layer with a stencil blitted FBO→FBO
+     * via {@code RenderTarget.frameBufferId}, which does not exist on 26.2 (those blocks are commented
+     * out in {@code IrisPortalRenderer} :152/:210). The masking here stays the stencil-free D20 stamp.
+     */
+    private SecondaryFrameBuffer[] deferredBuffers = new SecondaryFrameBuffer[0];
+
+    /** Highest layer index for which a deferred buffer has been materialised this session. Census
+     *  gauge: MUST read 0 until the Stage-3 recursion dispatch is armed. */
+    private int deferredPeak = 0;
+
+    /**
+     * The deferred snapshot buffer for {@code layer}, materialising it on first use.
+     *
+     * <p>Callers pass {@link PortalRendering#getPortalLayer()}. NOTE the two distinct reading points:
+     * {@code onBeforeHandRendering} runs OUTSIDE any pushed layer (its own {@code isRendering()} guard
+     * guarantees layer 0), while {@code doRenderPortal}'s stamp block runs POST-pop — so in both places
+     * the value names the layer being composited INTO, not the layer whose content was just rendered.
+     * That is the correct index in both cases and is 0 for both at the committed default.
+     */
+    private SecondaryFrameBuffer deferredFor(int layer) {
+        if (layer >= deferredBuffers.length) {
+            SecondaryFrameBuffer[] grown = new SecondaryFrameBuffer[layer + 1];
+            System.arraycopy(deferredBuffers, 0, grown, 0, deferredBuffers.length);
+            for (int i = deferredBuffers.length; i < grown.length; i++) {
+                grown[i] = new SecondaryFrameBuffer();
+            }
+            deferredBuffers = grown;
+        }
+        if (layer > deferredPeak) {
+            deferredPeak = layer;
+        }
+        return deferredBuffers[layer];
+    }
+
+    /** Census gauge accessor (see {@link #deferredPeak}). */
+    public static int getDeferredPeak() {
+        return Math.max(instance.deferredPeak, debugModeInstance.deferredPeak);
+    }
 
     // IP-verbatim field (the held source's onBeforeTranslucentRendering capture); consumed by
     // the post-main workhorse — set every frame by the F1 AFTER_TRANSLUCENT_TERRAIN driver
@@ -120,9 +175,17 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
     public final boolean isDebugMode;
 
-    // D23 detector: true exactly while THIS renderer's own renderPortals loop is on the stack
+    // D23 detector: non-zero exactly while THIS renderer's own renderPortals loop is on the stack
     // (the only context where the snapshot exists and the full-pipeline clobber is legal).
-    private boolean isInsideOwnRenderPortals = false;
+    //
+    // IS5-REC STAGE 2 — WAS A BOOLEAN, AND THAT IS A LATENT DEFECT UNDER RECURSION, NOT A STYLE
+    // POINT. With a nested portal pass the flag is ALREADY true when the inner pass runs; a boolean
+    // cleared by the inner pass's finally would report FALSE for the OUTER loop's remaining portals,
+    // sending them into the D23 layer-0 fallback (invokeWorldRendering :474) on a shaders-ON frame —
+    // the exact configuration the TP-XDIM census measured as a whole-screen terrain vertex-transform
+    // explosion on 272/272 rows. A depth COUNTER is the fix, and it is landed here, in the inert
+    // stage, so the recursion leg does not have to attribute two changes at once.
+    private int ownRenderPortalsDepth = 0;
 
     /** IS5-PH: set by invokeWorldRendering when a full-pipeline dest render ran this frame; consumed
      *  (once per frame) by onBeforeHandRendering's finally to fire the prev-uniform heal. */
@@ -215,28 +278,43 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // Stencil belt (anchor slot; §6 hazard row 8-2's raw-disable family).
         GL11.glDisable(GL_STENCIL_TEST);
 
+        // IS5-REC STAGE 2: this method's own isRendering() guard above guarantees layer 0 here, so
+        // deferredFor(0) resolves the same single buffer the pre-refactor field held. Read from the
+        // layer stack rather than hardcoded so the Stage-3 nested entry point can share this body.
+        final int passLayer = PortalRendering.getPortalLayer();
+        final SecondaryFrameBuffer deferred = deferredFor(passLayer);
+
         // Deferred-buffer prepare — the auto-resize to the main RT runs BEFORE copyDepthFrom
         // (LOAD-BEARING ordering, port-note §1-E OQ5: copyDepthFrom copies DEST.width x
         // DEST.height and throws if either target lacks depth).
-        deferredBuffer.prepare();
-        if (deferredBuffer.fb == null || deferredBuffer.fb.getColorTextureView() == null) {
+        deferred.prepare();
+        if (deferred.fb == null || deferred.fb.getColorTextureView() == null) {
             return;
         }
 
-        // Held-source G7 re-expression: device-clear the deferred target; depth = 0.0
-        // (R5 reversed-Z FAR). Belt only — the snapshot pair below overwrites the whole target.
+        // Held-source G7 re-expression: device-clear the deferred target. Belt only — the snapshot
+        // pair below overwrites the whole target, so this constant is never the value a stamp tests
+        // against on any non-degenerate path.
+        //
+        // SIGN NOTE, CORRECTED (IS5-REC STAGE 2): the old comment read "depth = 0.0 (R5 reversed-Z
+        // FAR)". The reversed-Z claim is one of the stale comments the IS5-XCUT arc measured as
+        // WRONG — the draw reported clipDepthMode=NEGATIVE_ONE_TO_ONE (39/39) and range=[0,1]
+        // (26/26), i.e. small-is-near. The VALUE is left at 0.0 deliberately and is NOT retuned
+        // here: it is a belt behind a full overwrite, and changing a depth constant in the stage
+        // whose whole claim is inertness would be exactly the two-variable move this project keeps
+        // paying for. Only the false rationale is corrected.
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-            deferredBuffer.fb.getColorTexture(), new Vector4f(1, 0, 0, 0),
-            deferredBuffer.fb.getDepthTexture(), 0.0
+            deferred.fb.getColorTexture(), new Vector4f(1, 0, 0, 0),
+            deferred.fb.getDepthTexture(), 0.0
         );
 
         // SNAPSHOT the finished main frame: depth via copyDepthFrom (replace; D19 — no stencil
         // bits, the stencil-free shape consumes none), color via the STRAIGHT-COPY pass
         // (blitAndBlendToTexture is ALPHA-BLEND — settled OQ5, never on this path).
-        deferredBuffer.fb.copyDepthFrom(mainRT);
-        IrisCompatPaste.drawStraightCopy(mainRT, deferredBuffer.fb);
+        deferred.fb.copyDepthFrom(mainRT);
+        IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
         // IS5-HAND-STAGE B: the snapshot as the compat pass preserved it.
-        com.warwa.seamlessportals.render.SeamHandStageDiff.stageB(deferredBuffer.fb);
+        com.warwa.seamlessportals.render.SeamHandStageDiff.stageB(deferred.fb);
 
         CHelper.checkGlError();
 
@@ -266,7 +344,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // unaffected (the capture IS the object the old code resolved). Null when iris is absent.
         Object preLoopPipelineForHeal = IrisInterface.invoker.capturePipelineForHeal();
 
-        isInsideOwnRenderPortals = true;
+        ownRenderPortalsDepth++;
         try {
             // IS5-FF (§2h lava-light phantom): swap the MAIN pipeline's ShadowRenderer
             // .compositeRenderer to a no-op for the whole portal phase — the k nested per-portal
@@ -279,7 +357,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             IrisShadowCompositeSuppressor.install();
             renderPortals(passingModelView);
         } finally {
-            isInsideOwnRenderPortals = false;
+            ownRenderPortalsDepth--;
             // IS5-FF: put the real shadowcomp composite back before anything else in the finally
             // can throw (the NEXT main frame's own renderShadows must dispatch normally) —
             // verify-fold F1 placement: ahead of the glDisable/blit-back/guard-restore/heal.
@@ -294,7 +372,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // IN THE FINALLY (Fable-fold BLOCKER companion, port-note §2.5): the snapshot was
             // taken unconditionally above, so on a mid-loop throw this restores the composited
             // snapshot instead of leaving the last portal's raw dest render on the main target.
-            IrisCompatPaste.drawStraightCopy(deferredBuffer.fb, mainRT);
+            IrisCompatPaste.drawStraightCopy(deferred.fb, mainRT);
             // IS5-HAND-STAGE D: mainRT after the blit-back — emits the four-stage diff block.
             com.warwa.seamlessportals.render.SeamHandStageDiff.stageD(mainRT);
             // IS5-HAND-LOC stage 3 (postBlit): the frame that ships — closes the survival
@@ -416,6 +494,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             com.warwa.seamlessportals.render.IrisCompositeCensus.disarmWindow();
         }
 
+        // IS5-REC STAGE 2: resolve the deferred buffer we are compositing INTO. We are POST-pop
+        // here, so getPortalLayer() names the OUTER layer — the one whose snapshot this portal's
+        // view gets stamped into — not the layer whose content was just rendered. At the committed
+        // default that is 0 and this is the same buffer the pre-refactor field held.
+        final SecondaryFrameBuffer stampTarget = deferredFor(PortalRendering.getPortalLayer());
+
         // IS5-G ghost-wave discriminator run 2: the dedicated stamp-clamp lever skips ONLY this
         // bracket (the aperture/occlusion-query draws keep their own clamp), splitting sub-cause
         // (b) clamp-wedge-overreach from (a)/(b') — ghost shrinking with the clamp off = (b).
@@ -430,7 +514,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // SNAPSHOT (deferred) buffer — the stamp-over-hand fix needs the hand slice's measured
         // depth values. Self-disarming; never throws into the pass.
         com.warwa.seamlessportals.render.SeamDestContentProbe.sample(
-            portal, client.gameRenderer.mainRenderTarget(), deferredBuffer.fb);
+            portal, client.gameRenderer.mainRenderTarget(), stampTarget.fb);
 
         if (!isDebugMode) {
             // THE STAMP (D20): portal-shaped copy main→deferred, snapshot-depth-tested.
@@ -439,7 +523,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             IrisCompatPaste.stampPortalArea(
                 portal,
                 client.gameRenderer.mainRenderTarget(),
-                deferredBuffer.fb,
+                stampTarget.fb,
                 modelView,
                 getCurrentProjectionMatrix()
             );
@@ -449,7 +533,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // the live-round diagnostic that splits "render() produced nothing" from "stamp/copy
             // defect" (design §1 IS1 discriminators).
             IrisCompatPaste.drawStraightCopy(
-                client.gameRenderer.mainRenderTarget(), deferredBuffer.fb
+                client.gameRenderer.mainRenderTarget(), stampTarget.fb
             );
         }
 
@@ -458,7 +542,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
 
         // IS5-HAND-STAGE C: the deferred buffer after this portal's stamp (last capture wins).
-        com.warwa.seamlessportals.render.SeamHandStageDiff.stageC(deferredBuffer.fb);
+        com.warwa.seamlessportals.render.SeamHandStageDiff.stageC(stampTarget.fb);
 
         // Color-mask restore — cache-coherent via GlStateManager._colorMask(15) (all buffers,
         // 15 = R|G|B|A), the S14.22 idiom (RendererUsingStencil:451). Fable-fold CORRECTION
@@ -471,7 +555,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
 
     @Override
     public void invokeWorldRendering(WorldRenderInfo worldRenderInfo) {
-        if (!isInsideOwnRenderPortals) {
+        if (ownRenderPortalsDepth == 0) {
             // ===== D23 layer-0, SPLIT BY CALLER (TP-XDIM, 2026-07-28) ============================
             // The original D23 comment wrote ONE rule for TWO callers whose contexts are OPPOSITES.
             //
@@ -498,7 +582,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             //    LevelRendering there would re-run the pack's composite chain over the shipped
             //    frame. It KEEPS the decomposed fallback, byte-identical.
             //
-            // DELIBERATE OMISSIONS vs the isInsideOwnRenderPortals branch below. NOTE (XWIN,
+            // DELIBERATE OMISSIONS vs the ownRenderPortalsDepth>0 branch below. NOTE (XWIN,
             // 2026-07-29): onBeforeHandRendering DOES now run on a cross-view frame — not from the
             // IS0 anchor (which still cannot fire; it injects inside GameRenderer.renderLevel), but
             // from SecondaryWorldRenderCore.maybeRunCrossViewPortalPass, the full-pipeline twin of
@@ -558,7 +642,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // sources — otherwise the reused same-dim programs skip the re-upload and the dest terrain is lit with
         // the MAIN camera's uniforms (the direction-dependent fullbright). Facade is a no-op when iris is
         // absent / the lever is off. The after-bump re-freshens the post-anchor hand/GUI programs. This is the
-        // full-pipeline (isInsideOwnRenderPortals==true) dest path only. IP precedent: ExperimentalIrisPortalRenderer.
+        // full-pipeline (ownRenderPortalsDepth>0) dest path only. IP precedent: ExperimentalIrisPortalRenderer.
         IrisInterface.invoker.bumpPerFrameUniformCounter();
         // IS5-G — the dest-pass TAA-history NEUTRALIZATION (the "ghost terrain" fix): clear the
         // guard-SAVED persistent history targets to zero so THIS portal's nested composite reads a
@@ -626,16 +710,26 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
     }
 
-    /** Mining §8-20: destroy the deferred buffer (re-created lazily by prepare() on next use). */
+    /**
+     * Mining §8-20: destroy the deferred buffers (re-created lazily by {@code prepare()} on next
+     * use). IS5-REC STAGE 2: loops EVERY layer's buffer. Missing one here would leak a full-screen
+     * colour+depth target per unfreed layer across every world exit and renderer switch-away — the
+     * §8-20 class of defect this teardown exists to close, reintroduced by the array.
+     */
     public void teardown() {
-        if (deferredBuffer.fb != null) {
-            try {
-                deferredBuffer.fb.destroyBuffers();
-            } catch (Throwable t) {
-                // disposal is best-effort
+        for (SecondaryFrameBuffer buf : deferredBuffers) {
+            if (buf != null && buf.fb != null) {
+                try {
+                    buf.fb.destroyBuffers();
+                } catch (Throwable t) {
+                    // disposal is best-effort
+                }
+                buf.fb = null;
             }
-            deferredBuffer.fb = null;
         }
+        // Drop the array itself so a later session re-grows from empty; deferredPeak is deliberately
+        // NOT reset — it is a session-scoped high-water witness for the census.
+        deferredBuffers = new SecondaryFrameBuffer[0];
         // IS5-P phantom fix: free the static scratch textures (idempotent — shared by both instances).
         try {
             IrisTemporalTargetGuard.teardown();
