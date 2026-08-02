@@ -291,7 +291,37 @@ public final class SeamFractional {
         SeamRegistry.SeamCut cut = binding.cut();
         double off = cut.srcPlaneOffset();
         Direction facing = binding.srcFacing();
-        double kept = keptThickness(facing, off);
+        Direction.Axis axis = facing.getAxis();
+
+        // ★ THE OWNER HALF COMES FROM THE OBJECT, NOT FROM THE BINDING — FRACTIONAL_DESIGN.md §2a.0.
+        // An obsidian portal is BI-FACED, so this cell carries two bindings with opposite facings and
+        // asking one of them "which side is ours" is meaningless. The first build did exactly that
+        // (it took whichever binding was stored first) and the live round caught it at once: a block
+        // placed from the north kept the SOUTH half. Occupancy is recorded at placement from the
+        // crosshair hit point and is the only thing that can answer.
+        byte owned = level instanceof net.minecraft.world.level.Level lvOwn
+            ? SeamOccupancy.occupancyOf(lvOwn, pos) : 0;
+        if (owned == 0) {
+            // No recorded owner — a pre-existing block, or one placed before occupancy was tracked.
+            // Leaving it WHOLE is the safe answer: it is what the player already sees, and guessing
+            // a half is how the far-half-swap defect looked.
+            if (probe) {
+                SeamFractionalProbe.onSeamCell(pos, "NO CUT",
+                    "no recorded owner half (occupancy=0) — pre-existing block, left whole rather"
+                        + " than guessing a side");
+            }
+            return null;
+        }
+        if (owned == SeamOccupancy.BOTH) {
+            // Two objects meeting at the plane: materially a whole cube again.
+            if (probe) {
+                SeamFractionalProbe.onSeamCell(pos, "NO CUT",
+                    "BOTH halves owned — two objects meet at the plane, so the cell is whole");
+            }
+            return null;
+        }
+        boolean positive = owned == SeamOccupancy.HALF_POSITIVE;
+        double kept = positive ? 1.0 - off : off;
         // Nothing to do at the degenerate ends: a whole cell stays whole, and an empty one would
         // make the block vanish rather than be cut, which is a different (and wrong) behaviour.
         if (kept >= 1.0 - EPS || kept <= EPS) {
@@ -304,12 +334,12 @@ public final class SeamFractional {
         }
         if (probe) {
             SeamFractionalProbe.onSeamCell(pos, "CUT",
-                "keeping " + kept + " on the " + facing + " side (planeOffset=" + off
+                "keeping " + kept + " on the " + (positive ? "POSITIVE" : "NEGATIVE") + " "
+                    + axis + " side (owner-half from placement, planeOffset=" + off
                     + ", level=" + (level instanceof net.minecraft.world.level.Level lv2
                         ? (lv2.isClientSide() ? "CLIENT" : "SERVER") : "?") + ")");
             SeamFractionalProbe.onCut();
         }
-        boolean positive = facing.getAxisDirection() == Direction.AxisDirection.POSITIVE;
         double lo = positive ? off : 0.0;
         double hi = positive ? 1.0 : off;
 
@@ -323,6 +353,51 @@ public final class SeamFractional {
         // fraction, so there is no quantization to 1/8ths or 1/16ths here.
         return net.minecraft.world.phys.shapes.Shapes.join(
             original, slab, net.minecraft.world.phys.shapes.BooleanOp.AND);
+    }
+
+    /**
+     * ★ RECORD THE OWNER HALF AT PLACEMENT — the only moment it is knowable.
+     *
+     * <p>User decision 2026-08-02: the half is decided by the side of the plane the <b>crosshair ray
+     * hit point</b> falls on. Not the player's eyes (leaning through the portal would flip it), and
+     * not the clicked block (the floor beneath an aperture and the frame itself both straddle the
+     * plane, so neither can answer).
+     *
+     * <p>Called from the existing {@code BlockItem.place} bracket, which runs on the client
+     * (prediction) as well as the server, so both sides record the same answer from the same hit
+     * point with no packet. That is only true for placements this client made — occupancy for blocks
+     * placed by others, or before joining, still needs the sync recorded as pending in §3.
+     *
+     * <p>No-ops for a cell that is not a mirror-admitted COINCIDENT seam cell.
+     */
+    public static void recordPlacement(
+        net.minecraft.world.level.Level level, BlockPos cell, net.minecraft.world.phys.Vec3 hit
+    ) {
+        if (!active()) {
+            return;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
+        if (binding == null || binding.cut() == null) {
+            return;
+        }
+        double off = binding.cut().srcPlaneOffset();
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        byte half = SeamOccupancy.halfFromHit(hit, cell, axis, off);
+        SeamOccupancy.claim(level, cell, half);
+        if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+            SeamFractionalProbe.onSeamCell(cell, "CLAIM",
+                "placement claimed the " + (half == SeamOccupancy.HALF_POSITIVE ? "POSITIVE"
+                    : "NEGATIVE") + " " + axis + " half from hit " + hit + " (planeOffset=" + off
+                    + ", now=" + SeamOccupancy.occupancyOf(level, cell)
+                    + ", level=" + (level.isClientSide() ? "CLIENT" : "SERVER") + ")");
+        }
+    }
+
+    /** Forget a cell's owner halves — the object was broken or the cell replaced wholesale. */
+    public static void forgetPlacement(net.minecraft.world.level.Level level, BlockPos cell) {
+        if (level != null) {
+            SeamOccupancy.clear(level, cell);
+        }
     }
 
     /**

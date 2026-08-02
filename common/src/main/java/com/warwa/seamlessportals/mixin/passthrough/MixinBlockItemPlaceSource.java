@@ -70,6 +70,18 @@ public abstract class MixinBlockItemPlaceSource {
             SeamWriteContext.pop(seamlessportals$saved);
             seamlessportals$saved = null;
         }
+        // ★ OWNER-HALF CAPTURE (FRACTIONAL_DESIGN.md §2a.0). Recorded at RETURN, not HEAD, so it
+        // only fires for a placement that actually SUCCEEDED — claiming a half for a refused
+        // placement would leave a phantom owner and cut a block that is not there.
+        //
+        // The hit POINT is the authority, per the user's decision: the clicked block cannot answer
+        // (the floor under an aperture and the frame both straddle the plane) and the player's eyes
+        // cannot either (leaning through the portal would flip the side).
+        if (cir.getReturnValue() != null && cir.getReturnValue().consumesAction()
+            && context.getPlayer() != null && SeamlessPortalsConfig.isEntityPortals()) {
+            com.warwa.seamlessportals.passthrough.SeamFractional.recordPlacement(
+                context.getLevel(), context.getClickedPos(), context.getClickLocation());
+        }
     }
 
     /**

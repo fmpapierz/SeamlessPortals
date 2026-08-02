@@ -16,10 +16,30 @@ import org.spongepowered.asm.mixin.Unique;
  * die with it, so no cleanup event is needed for them and a stale index cannot outlive a world.
  */
 @Mixin(Level.class)
-public abstract class SeamIndexHolderMixin implements SeamIndexHolder {
+public abstract class SeamIndexHolderMixin
+    implements SeamIndexHolder, com.warwa.seamlessportals.passthrough.SeamOccupancy.SeamOccupancyHolder {
 
     @Unique
     private final LongOpenHashSet seamlessportals$sectionsWithSeams = new LongOpenHashSet();
+
+    /**
+     * ★ OWNER-HALF OCCUPANCY — which half of a seam cell each object owns
+     * ({@code FRACTIONAL_DESIGN.md} §2a.0). Keyed by (cell, half) via a two-bit mask, because a cell
+     * may hold TWO independent objects — one per half — and a bare per-cell set cannot say that.
+     *
+     * <p>Unlike the other three indices this is NOT derivable from portal geometry: it comes from a
+     * placement, so it needs a packet and a {@code SavedData} to survive relog and reload. Neither
+     * exists yet; until they do this is best-effort per-session state on whichever side saw the
+     * placement, and it dies with the Level like the rest.
+     */
+    @Unique
+    private final it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap seamlessportals$seamOccupancy =
+        new it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap();
+
+    @Override
+    public it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap seamlessportals$seamOccupancy() {
+        return seamlessportals$seamOccupancy;
+    }
 
     @Unique
     private final Long2ObjectOpenHashMap<SeamRegistry.SeamCell> seamlessportals$seamCells =
