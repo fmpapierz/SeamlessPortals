@@ -761,6 +761,20 @@ public class IrisCompatPaste {
         if (distToAperture > SEAM_CENSUS_DIST) {
             return;
         }
+        // IS5-REC — LAYER 0 ONLY. This probe answers a question about the OUTER seam window, is
+        // ALWAYS ON (no lever), and its single 1 Hz slot carries neither a portal id nor a layer.
+        // Under recursion the NESTED stamp reaches it FIRST — the nested dispatch runs inside
+        // renderPortalContent, which precedes the outer stamp — so a nested portal would take the
+        // second's slot and its row would be read as the outer window's. Worse, distToAperture is
+        // computed from the LIVE camera, which at a nested layer is the DEST camera, so for a
+        // reverse pair the mirrored distance passes the proximity gate and the row looks perfectly
+        // plausible. An always-on probe that silently answers about a different portal is exactly
+        // the failure mode this repo has paid for repeatedly, so it is gated rather than enriched;
+        // enriching the line with layer + portal id is the better long-term fix and is left to the
+        // seam arc that owns this instrument.
+        if (qouteall.imm_ptl.core.render.context_management.PortalRendering.getPortalLayer() != 0) {
+            return;
+        }
         long now = System.nanoTime();
         if (now - seamCensusNanos < 1_000_000_000L) {
             return;

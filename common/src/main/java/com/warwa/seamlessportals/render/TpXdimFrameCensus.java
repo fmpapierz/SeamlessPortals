@@ -683,6 +683,19 @@ public final class TpXdimFrameCensus {
             // on every healthy frame; this is the field that answers "how deep did we actually go".
             .append(" maxPortalDepth=").append(maxPortalDepth())
             .append(" deferredPeak=").append(deferredPeak())
+            // IS5-REC. effMax/isLaggy are here because RenderStates.isLaggy silently collapses
+            // getMaxPortalLayer() to 1 (PortalRendering:78-83) — and therefore the shaders-ON
+            // recursion bound with it — with NO witness anywhere in the tree. It arms on
+            // >10 dest renders + low fps, which is precisely the condition a deep-recursion leg
+            // creates, so without this column a depth sweep could silently revert itself to one
+            // layer mid-run and read as "the fix stopped working".
+            .append(" effMaxLayer=").append(effMaxLayer())
+            .append(" isLaggy=").append(safeIsLaggy())
+            .append(" nestedPasses=").append(safeInt(IPGlobal::getNestedPortalLayerPasses))
+            .append(" budgetCuts=").append(safeInt(IPGlobal::getNestedBudgetCuts))
+            .append(" guardRefusals=").append(safeInt(
+                qouteall.imm_ptl.core.compat.iris_compatibility.IrisTemporalTargetGuard
+                    ::getReentrantSaveRefusals))
             .append(" bobbedProj=").append(
                 RenderStates.capturedMainPassBobbedProjection == null ? "NULLED" : "PRESENT")
             .append(" | irisPre=").append(irisPre == null ? "N-A(no cross-view render)" : irisPre)
@@ -1143,6 +1156,34 @@ public final class TpXdimFrameCensus {
                 return Integer.toString(IrisCompatOn262Renderer.getDeferredPeak());
             }
             return "N-A(not the compat renderer)";
+        }
+        catch (Throwable t) {
+            return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /** The bound ACTUALLY enforced this frame, after the isLaggy collapse. */
+    private static String effMaxLayer() {
+        try {
+            return Integer.toString(IPGlobal.effectiveIrisMaxPortalLayer());
+        }
+        catch (Throwable t) {
+            return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    private static String safeIsLaggy() {
+        try {
+            return String.valueOf(RenderStates.isLaggy);
+        }
+        catch (Throwable t) {
+            return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    private static String safeInt(java.util.function.IntSupplier s) {
+        try {
+            return Integer.toString(s.getAsInt());
         }
         catch (Throwable t) {
             return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
