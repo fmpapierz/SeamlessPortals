@@ -101,7 +101,19 @@ public class IPConfig implements ConfigData {
     public int portalWindowRenderDistance = 0;
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
-    public boolean lagAttackProof = true;
+    // DEFAULT FLIPPED TO FALSE (2026-08-02, user decision). When this engages it clamps portal
+    // recursion to ONE layer (PortalRendering.getMaxPortalLayer), which reads as "recursion is
+    // broken" rather than as a protection doing its job — the user lost time to exactly that before
+    // the on-screen notice was made readable. Its trigger also became far easier to hit once
+    // recursion depth became user-settable: it needs >10 destination renders in the previous frame,
+    // which a depth-5 chain never reached but a depth-10 one clears easily.
+    //
+    // WHAT IS GIVEN UP, stated rather than buried: this is the mirror-room lag-attack guard. With it
+    // off, a deliberately hostile build (a room of portals facing each other) can drive a client's
+    // frame rate down with nothing to stop it. That matters on multiplayer servers with untrusted
+    // builders; it does not on a singleplayer or trusted world. Turning it back on restores the
+    // clamp, and it now announces itself for ~5s when it engages.
+    public boolean lagAttackProof = false;
     @ConfigEntry.Category("client")
     public boolean enableCrossPortalSound = true;
     @ConfigEntry.Category("client")
