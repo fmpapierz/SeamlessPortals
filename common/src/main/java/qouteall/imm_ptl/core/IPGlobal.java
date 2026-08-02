@@ -408,6 +408,20 @@ public class IPGlobal {
         return nestedPortalLayerPasses;
     }
 
+    /** MONOTONIC count of nested dest renders REFUSED by the {@link #irisMaxDestRenders} budget.
+     *  Exists because a silent cut is indistinguishable from "there was nothing to render": the
+     *  budget cuts in portal DISTANCE order, so the portals that lose are the far ones, and a window
+     *  simply not filling in looks like a rendering defect rather than a bound doing its job. */
+    private static int nestedBudgetCuts = 0;
+
+    public static void noteNestedBudgetCut() {
+        nestedBudgetCuts++;
+    }
+
+    public static int getNestedBudgetCuts() {
+        return nestedBudgetCuts;
+    }
+
     /** MONOTONIC count of frames on which the IS0 post-main anchor fired. Written ONLY by
      *  MixinGameRenderer_IPPostLevelAnchor (gated on the lever above), read as a DELTA by
      *  TpXdimFrameCensus at GameRenderer.render TAIL — the "did the anchor fire this frame"

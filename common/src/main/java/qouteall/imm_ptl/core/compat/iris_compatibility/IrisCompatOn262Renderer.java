@@ -135,8 +135,23 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
      */
     private SecondaryFrameBuffer[] deferredBuffers = new SecondaryFrameBuffer[0];
 
-    /** Highest layer index for which a deferred buffer has been materialised this session. Census
-     *  gauge: MUST read 0 until the Stage-3 recursion dispatch is armed. */
+    /**
+     * Deepest layer whose nested pass actually COMMITTED a snapshot, THIS FRAME.
+     *
+     * <p>CORRECTED after adversarial review, and the correction matters because this gauge was
+     * presented as the discriminator for "did the nested pass take its own snapshot, or did the
+     * image come from somewhere else". The first version latched inside {@code deferredFor} — i.e.
+     * on the mere ACT OF INDEXING, before {@code prepare()}, before the null bail, and before the
+     * snapshot — and was never reset, so it was a session high-water mark. Two ways that lied:
+     * it read 1 on frames that rendered no portal at all (visible in the fix leg's own tally: six
+     * rows of {@code maxPortalDepth=0(destRenders=0) deferredPeak=1}), and it would have read 1 for
+     * a nested pass that bailed at the null check having snapshotted nothing — the exact failure it
+     * was supposed to catch.
+     *
+     * <p>Now set only AFTER the snapshot pair has run, and reset per frame, so
+     * {@code deferredPeak=N} means "layer N really did snapshot and composite its own buffer this
+     * frame" — which is the claim that was being made of it.
+     */
     private int deferredPeak = 0;
 
     /**
@@ -157,10 +172,14 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             }
             deferredBuffers = grown;
         }
+        return deferredBuffers[layer];
+    }
+
+    /** Called only once a layer's snapshot has actually been taken — see {@link #deferredPeak}. */
+    private void noteDeferredCommitted(int layer) {
         if (layer > deferredPeak) {
             deferredPeak = layer;
         }
-        return deferredBuffers[layer];
     }
 
     /** Census gauge accessor (see {@link #deferredPeak}). */
@@ -282,6 +301,11 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // deferredFor(0) resolves the same single buffer the pre-refactor field held. Read from the
         // layer stack rather than hardcoded so the Stage-3 nested entry point can share this body.
         final int passLayer = PortalRendering.getPortalLayer();
+        // PER-FRAME RESET of the nesting-depth witness (see the deferredPeak javadoc). This method is
+        // the frame's single layer-0 entry point for the compat pass, so resetting here is once per
+        // frame by construction. Without it the gauge is a session high-water latch that keeps
+        // reading 1 long after the player has looked away from every portal.
+        deferredPeak = 0;
         final SecondaryFrameBuffer deferred = deferredFor(passLayer);
 
         // Deferred-buffer prepare — the auto-resize to the main RT runs BEFORE copyDepthFrom
@@ -475,6 +499,8 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         );
         deferred.fb.copyDepthFrom(mainRT);
         IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
+        // The snapshot is COMMITTED — only now does this layer count as having taken its own buffer.
+        noteDeferredCommitted(layer);
 
         ownRenderPortalsDepth++;
         try {
@@ -508,7 +534,33 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // At the default irisMaxPortalLayer=2 this expression admits layers 0 and 1 and rejects 2+.
         // With -PirisMaxPortalLayer=1 it is identical to the old isRendering() form, which is what
         // makes that lever an exact behavioural repro independent of the disable lever.
-        if (PortalRendering.getPortalLayer() >= IPGlobal.effectiveIrisMaxPortalLayer()) {
+        //
+        // THE `layer > 0` CLAUSE IS NOT REDUNDANT — it restores a legal config the bare `>=` broke.
+        // maxPortalLayer=0 is a supported value with defined meaning (PortalRenderer:216-219: "if max
+        // portal layer is 0, the invisible portals will be force rendered"). The OLD guard was
+        // isRendering(), which is FALSE at layer 0, so layer 0 ALWAYS proceeded and the depth cut was
+        // made downstream by renderPortalContent's `getPortalLayer() > getMaxPortalLayer()` — i.e.
+        // the aperture and the occlusion query still ran, only the CONTENT was skipped. A bare
+        // `0 >= 0` here returns before any of that, silently changing what maxPortalLayer=0 does.
+        // Keeping layer 0 unconditional preserves the old behaviour exactly at every bound value.
+        final int curLayer = PortalRendering.getPortalLayer();
+        if (curLayer > 0 && curLayer >= IPGlobal.effectiveIrisMaxPortalLayer()) {
+            return;
+        }
+
+        // IS5-REC — THE PER-FRAME PACK-SHADED RENDER BUDGET, ENFORCED IN THE LOOP.
+        // The dispatch-site check in maybeRunNestedPortalLayer is an ENTRY gate: it runs once, before
+        // the nested pass, so it bounds how many nested LOOPS are entered but not how many renders
+        // each one issues. One layer-0 portal whose destination room holds N portals would enter the
+        // loop at count=1 (under budget) and then issue N more full gbuffer+shadow+composite renders
+        // with nothing re-reading the budget. The only in-loop cap was portalRenderLimit=200, which
+        // is a different order of magnitude from what a pack-shaded render costs.
+        // Gated to layer >= 1 so layer 0 keeps its current unbudgeted behaviour byte-for-byte — this
+        // belt exists for the recursion this arc added, not to retune the shipped one-layer path.
+        if (curLayer > 0
+            && RenderStates.getRenderedPortalNum() >= IPGlobal.irisMaxDestRenders
+        ) {
+            IPGlobal.noteNestedBudgetCut();
             return;
         }
 
