@@ -678,6 +678,9 @@ public final class TpXdimFrameCensus {
             .append(" swActive=").append(shaderpackViewsActive())
             .append(" shaders=").append(shadersOn())
             .append(" portalLayerAtEnd=").append(portalLayer())
+            // THE RECURSION-DEPTH MEASUREMENT. portalLayerAtEnd above is a LEAK detector and reads 0
+            // on every healthy frame; this is the field that answers "how deep did we actually go".
+            .append(" maxPortalDepth=").append(maxPortalDepth())
             .append(" bobbedProj=").append(
                 RenderStates.capturedMainPassBobbedProjection == null ? "NULLED" : "PRESENT")
             .append(" | irisPre=").append(irisPre == null ? "N-A(no cross-view render)" : irisPre)
@@ -1048,9 +1051,70 @@ public final class TpXdimFrameCensus {
         }
     }
 
+    /**
+     * The layer stack size at the census sample point — {@code GameRenderer.render} TAIL.
+     *
+     * <p><b>THIS IS A LEAK DETECTOR, NOT A DEPTH GAUGE — read the name literally.</b> Every
+     * {@code pushPortalLayer} in the mod is matched by a {@code popPortalLayer} in a {@code finally}
+     * (IrisCompatOn262Renderer.doRenderPortal ~:398-405, RendererUsingStencil likewise), and this is
+     * sampled after the whole frame has unwound, so on ANY healthy frame it reads <b>0</b> — shaders
+     * ON and shaders OFF alike, one layer or five. A non-zero value here means a layer was STRANDED
+     * (the silent-portal-death mode doRenderPortal's finally exists to prevent), which is worth
+     * knowing but is a different question.
+     *
+     * <p>For "how deep did this frame actually recurse", use {@link #maxPortalDepth()} below. This
+     * distinction was found the expensive way: the RECURSION_SHADERS_ON handoff instructed taking a
+     * baseline as "portalLayerAtEnd should read 1 shaders-ON and >1 shaders-OFF", which this
+     * instrument can never print. Ask of every probe what input would make it print the guilty
+     * answer.
+     */
     private static String portalLayer() {
         try {
             return Integer.toString(PortalRendering.getPortalLayer());
+        }
+        catch (Throwable t) {
+            return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /**
+     * THE ACTUAL RECURSION-DEPTH GAUGE: the deepest layer stack any dest render reached this frame.
+     *
+     * <p>{@code PortalRendering.onBeginPortalWorldRendering} (PortalRendering.java:94-98) appends a
+     * snapshot of the CURRENT layer stack to {@code RenderStates.portalRenderInfos} on every dest
+     * render, and {@code doRenderPortal} pushes the portal BEFORE calling {@code renderPortalContent}
+     * — so each entry's size IS the depth that render ran at (layer-1 dest render => size 1, a portal
+     * inside a portal => size 2). {@code renderPortalContent} early-returns on
+     * {@code getPortalLayer() > getMaxPortalLayer()} BEFORE recording, so this counts only depths
+     * that actually RENDERED, which is exactly the number the recursion work has to move.
+     *
+     * <p>Live at this sample point: {@code RenderStates.updatePreRenderInfo} resets the list PRE-render
+     * (MinecraftFramePumpMixin:90), so at {@code GameRenderer.render} TAIL it still holds this frame's
+     * records. CAVEAT, stated rather than hidden: that reset is SKIPPED on null-level and mid-packet
+     * player/level-mismatch frames (MinecraftFramePumpMixin:67/81), so across such a frame the list can
+     * carry over and this reads the max of the merged pair. Those frames are transient and the census
+     * classifies them independently, so a carried-over max cannot manufacture depth that never rendered
+     * — it can only attribute real depth to the adjacent frame.
+     *
+     * <p>Emitted as {@code maxPortalDepth=N(destRenders=M)}. Expected baseline: shaders-ON N=1,
+     * shaders-OFF N>1 in front of nested portals. If shaders-OFF also reads 1, the premise that
+     * shaders-OFF already recurses is wrong and the whole engagement needs re-scoping.
+     */
+    private static String maxPortalDepth() {
+        try {
+            // Only the STACK DEPTH of each entry is read, never the portals — a wildcard keeps this
+            // decoupled from the WeakReference element type (and cannot resurrect a cleared referent).
+            java.util.List<? extends java.util.List<?>> infos = RenderStates.portalRenderInfos;
+            if (infos == null || infos.isEmpty()) {
+                return "0(destRenders=0)";
+            }
+            int max = 0;
+            for (java.util.List<?> e : infos) {
+                if (e != null && e.size() > max) {
+                    max = e.size();
+                }
+            }
+            return max + "(destRenders=" + infos.size() + ")";
         }
         catch (Throwable t) {
             return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
