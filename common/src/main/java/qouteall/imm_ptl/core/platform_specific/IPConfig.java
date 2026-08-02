@@ -69,8 +69,16 @@ public class IPConfig implements ConfigData {
 
     /**
      * How far from the player a portal will still render its WINDOW, in chunks. {@code 0} = follow
-     * the vanilla render distance, which is the behaviour this mod has always had and what the
-     * per-entry reset button restores.
+     * the render distance, and what the per-entry reset button restores.
+     *
+     * <p><b>"Follow the render distance" was previously a fiction and is now true.</b>
+     * {@code getRenderRange()} did compute {@code renderDistance * 16} — 512 blocks at render
+     * distance 32 — but the ENTITY TRACKING gate capped portals at 5 chunks
+     * ({@code Portal.clientTrackingRange(6)} = 96 blocks, tested as
+     * {@code distanceToSource * 16 + 8 <= range}), so a portal further than ~88 blocks was never
+     * sent to the client and the window vanished there regardless of any setting. USER-MEASURED as
+     * "about 89 blocks regardless of the settings i choose". {@code MixinTrackedEntity} now widens
+     * that gate for Portal entities to follow this value, defaulting to the server load distance.
      *
      * <p>Consumed by {@code PortalRenderer.getRenderRange}, whose sole consumer is
      * {@code shouldSkipRenderingPortal}: a portal further than this from the camera is culled and
@@ -273,7 +281,15 @@ public class IPConfig implements ConfigData {
         // Clamp on APPLY rather than in the GUI: leaving the field unbounded is what makes Cloth
         // render a typed box instead of a slider, so the clamp has to live here. 0 = follow the
         // vanilla render distance (the shipped default, and what the reset button restores).
-        IPGlobal.portalWindowRenderDistance = Math.max(0, Math.min(32, portalWindowRenderDistance));
+        //
+        // CLAMP IN PLACE, not just into IPGlobal — the same form the bounded ints above use
+        // (indirectLoadingRadiusCap / regularPortalLengthLimit / scaleLimit). AutoConfig runs this
+        // save listener BEFORE serializing, so writing the field back is what makes the GUI box and
+        // immersive_portals.json agree with what the engine actually runs. Clamping only the static
+        // would leave a typed 50 displayed and persisted as 50 forever while the engine ran 32 —
+        // state that disagrees with itself and no line anywhere to reconcile it.
+        portalWindowRenderDistance = Mth.clamp(portalWindowRenderDistance, 0, 32);
+        IPGlobal.portalWindowRenderDistance = portalWindowRenderDistance;
         IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;
