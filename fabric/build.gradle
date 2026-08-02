@@ -196,6 +196,8 @@ loom {
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
             // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
             if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -248,6 +250,8 @@ loom {
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
             // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
             if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -656,6 +660,8 @@ loom {
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
             // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
             if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -725,6 +731,8 @@ loom {
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
             // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
             if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
@@ -1081,6 +1089,8 @@ loom {
             if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
             // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
             if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
             if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
             if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
             // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's

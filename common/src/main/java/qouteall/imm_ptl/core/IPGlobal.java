@@ -360,6 +360,19 @@ public class IPGlobal {
     public static final boolean debugDrawTerminalPortalAsBlack =
         Boolean.getBoolean("seamlessportals.drawTerminalPortalAsBlack");
 
+    /**
+     * IS5-XREC A/B lever — restores the Stage-3 scope limit: no recursion on a CROSS-PORTAL-VIEW
+     * frame (third person with the camera past the aperture), so portals seen inside the reverse
+     * window go flat again. {@code -PdisableCrossViewRecursion=true}.
+     *
+     * <p>Deliberately SEPARATE from {@link #CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER}: that one
+     * governs whether the reverse WINDOW is drawn at all, this one whether portals INSIDE it
+     * recurse. Two independent behaviours, so two independent A/Bs — collapsing them would make each
+     * leg unattributable.
+     */
+    public static final boolean CROSS_VIEW_RECURSION_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableCrossViewRecursion");
+
     /** A/B lever: reproduces the pre-IS5-REC one-layer behaviour byte-for-byte on command.
      *  {@code -PdisableIrisPortalRecursion=true}. Every fix in this project must be provable in BOTH
      *  directions, and "it looks better" has passed on a no-op here before. */
