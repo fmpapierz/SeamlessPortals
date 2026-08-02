@@ -189,7 +189,44 @@ public abstract class MixinTrackedEntity implements IETrackedEntity {
         );
 
         // no need to clamp it with render distance, as we check chunk watch records now
-        int effectiveRange = getEffectiveRange();
+        int rangeBlocks = getEffectiveRange();
+
+        // IS5-WDIST: WITHOUT THIS, THE PORTAL WINDOW RENDER DISTANCE SETTING CANNOT RAISE ANYTHING.
+        //
+        // getEffectiveRange() derives from the EntityType's clientTrackingRange, and Portal declares
+        // 6 chunks (Portal.java:122) = 96 blocks. The gate below is
+        // `rec.distanceToSource * 16 + 8 <= effectiveRange`, so 5 chunks (88) passes and 6 (104)
+        // fails: an ordinary portal more than ~5 chunks away is NEVER SENT TO THE CLIENT. The client
+        // cull that the config feeds (PortalRenderer.getRenderRange) only ever sees portals that
+        // arrived, so every configured value from 6 to 32 behaved identically to 6 — the setting
+        // worked as a reducer and was inert in the direction the user actually asked for. Found by
+        // an adversarial pass hunting exactly this, then confirmed against the tracking gate.
+        //
+        // Widening here rather than raising clientTrackingRange because that is a registration-time
+        // constant and this needs to follow a live config value. The chunk WATCH RECORD remains the
+        // real bound — see the comment directly above: a portal in a chunk the player does not track
+        // has no record at all, so this can never reach past the player's loaded radius. That is
+        // also why the config maximum is 32, the vanilla render-distance maximum.
+        //
+        // Portals only, and only when the setting is non-default: at 0 this block is inert and every
+        // entity keeps its vanilla tracking exactly as before.
+        if (entity instanceof qouteall.imm_ptl.core.portal.Portal) {
+            // 0 = "follow the render distance", and it now DOES. That claim was previously false:
+            // getRenderRange() computed renderDistance * 16 (512 blocks at RD 32), but this gate
+            // capped portals at 5 chunks long before that value could matter, so the window always
+            // vanished at ~88 blocks whatever anyone configured. USER-MEASURED at "about 89 blocks
+            // regardless of the settings i choose", which is exactly 5 * 16 + 8. The default is the
+            // server's load distance rather than a constant, so it tracks the render distance the
+            // way the setting has always claimed to.
+            int configured = qouteall.imm_ptl.core.IPGlobal.portalWindowRenderDistance;
+            int chunks = configured > 0
+                ? configured
+                : qouteall.imm_ptl.core.McHelper.getLoadDistanceOnServer(
+                    ((ServerLevel) entity.level()).getServer());
+            rangeBlocks = Math.max(rangeBlocks, chunks * 16);
+        }
+        // Effectively-final copy for the lambdas below (the widen above reassigns).
+        final int effectiveRange = rangeBlocks;
 
         seenBy.removeIf(connection -> {
             ServerPlayer player = connection.getPlayer();
