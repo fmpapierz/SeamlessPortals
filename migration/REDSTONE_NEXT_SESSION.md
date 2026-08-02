@@ -35,6 +35,31 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
+## ★★ NEXT ENGAGEMENT IS (c) STEP 2 — WIRE/DUST. Brief: `migration/REDSTONE_C2_HANDOFF.md`,
+## starter prompt: `migration/REDSTONE_C2_PROMPT.md`
+
+**Chosen 2026-08-01 over the fractional model, against the (e) session's own initial
+recommendation.** A four-reader survey refuted all three arguments for fractional-first: the
+offset decline only bites WAND-BUILT pairs (obsidian pairs are COINCIDENT+EXACT by construction and
+already carry everything); (e)'s fresh render context sits where fractional is CHEAP, while its
+expensive fronts (collision, state storage) are server-side greenfield; and fractional's renderer
+would build on `SecondaryWorldRenderCore`'s arming semantics — the HOT file in `is5-shadow` — while
+step 2 touches zero render files. Deciding point: **fractional has no spec and its honest first
+step is a design panel**, which is a different kind of session. The fair case against is recorded
+in the handoff's §0 and is real (wire's connection-shape surface must be re-derived once a seam
+cell is partial).
+
+⚠ **Two things before any step-2 code:** the THREE unsigned (c) decisions (step 2 exercises all
+three, and #2 *is* the boundary-plane wire case), and **measuring the offset premise with
+`-PdisableSeamExactOnly` + `-PdisableSeamPhaseGate`, which no gametest has ever run.**
+
+⚠ **A CLAIM IN THIS FILE IS REFUTED:** "widening later is editing two methods in
+`SeamMirrorPolicy`" holds for the WRITE-SOURCE axis only. On the ALIGNMENT axis a decline nulls
+`destPos` **and** clears `seamContinuous`, so an OFFSET seam is dead for (b), (c), (d), frame links
+and the clip renderer — not "query-only" — and flipping it switches five never-exercised
+subsystems on at once, then hits a SECOND independent gate (`SeamMirror.isPhaseGated`) that
+classifies the two sides differently. See `REDSTONE_C2_HANDOFF.md` §1.
+
 ## ★★ (e) BOTH CART DEFECTS CLOSED — 2026-08-01, USER-CONFIRMED LIVE (`b89a923` + hygiene)
 
 Full record in `migration/CART_RENDER_RIDE_HANDOFF.md`, whose top banner lists where the original
