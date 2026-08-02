@@ -4517,6 +4517,106 @@ public class CrossingSmoke implements FabricClientGameTest {
             writeAsPlayer(dest, destPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
         });
 
+        // ★ THE END-TO-END OCCUPANCY ASSERTION — added after FOUR live rounds each died one hop
+        // further down the same pipe (claim ordering → server-only claim → no receiver in the
+        // flag-ON branch → wrong level resolver). Every prior check stopped at "the server did its
+        // part"; this one asserts the CLIENT can answer, which is the thing the user's eyes read.
+        // The real place above ran the real pipe: place → mirror CROSS claim → broadcast →
+        // receiver → ClientWorldLoader resolve. Nothing here stages occupancy by hand.
+        if (failure.get() == null) {
+            AtomicReference<String> e2e = new AtomicReference<>(null);
+            AtomicReference<String> e2eDetail = new AtomicReference<>("");
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+                var b = seam == null ? null : seam.bindings().stream()
+                    .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                    .findFirst().orElse(null);
+                if (b == null) {
+                    e2e.set("no mirrorable binding at " + cell + " for the end-to-end check");
+                    return;
+                }
+                e2eDetail.set(b.destDim().identifier().toString() + "|" + b.destPos().asLong()
+                    + "|" + b.destPos());
+            });
+            if (e2e.get() == null) {
+                // ★ ITS OWN PLACEMENT, not the main body's. Step (2) above ends by airing both
+                // sides — and the break-release added alongside this gate now correctly CLEARS
+                // occupancy on that air write and broadcasts zero. Reading after that cleanup would
+                // fail on hygiene working as intended (caught before it ran, for once: the same
+                // assume-the-starting-state shape as the five earlier gate defects, spotted in
+                // review rather than by a red). So this check drives its own real place.
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    net.minecraft.server.level.ServerPlayer player =
+                        server.getPlayerList().getPlayers().isEmpty()
+                            ? null : server.getPlayerList().getPlayers().get(0);
+                    if (player == null) {
+                        e2e.set("no server player for the end-to-end place");
+                        return;
+                    }
+                    player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
+                        new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.RAIL));
+                    net.minecraft.world.phys.BlockHitResult hit =
+                        new net.minecraft.world.phys.BlockHitResult(
+                            Vec3.atCenterOf(cell), net.minecraft.core.Direction.UP, cell, false);
+                    ((net.minecraft.world.item.BlockItem) net.minecraft.world.item.Items.RAIL)
+                        .place(new net.minecraft.world.item.context.BlockPlaceContext(
+                            new net.minecraft.world.item.context.UseOnContext(
+                                player, net.minecraft.world.InteractionHand.MAIN_HAND, hit)));
+                    if (!ow.getBlockState(cell).is(net.minecraft.world.level.block.Blocks.RAIL)) {
+                        e2e.set("the end-to-end place did not land at " + cell
+                            + " — fixture fault, not a pipe fault");
+                    }
+                });
+                if (e2e.get() != null) {
+                    throw new AssertionError(LOG + "RS PLAYER-PLACE BRACKET GATE (END-TO-END"
+                        + " OCCUPANCY) FAILED: " + e2e.get());
+                }
+                // Give the broadcast a tick to land client-side.
+                context.waitTicks(2);
+                String[] parts = e2eDetail.get().split("\\|");
+                long destKey = Long.parseLong(parts[1]);
+                AtomicReference<Boolean> recorded = new AtomicReference<>(false);
+                AtomicReference<Boolean> sourceRecorded = new AtomicReference<>(false);
+                context.runOnClient(mc -> {
+                    var destDim = net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(parts[0]));
+                    recorded.set(com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                        .isRecordedClientSide(destDim, destKey));
+                    // NOTE: the gametest's place runs on the SERVER thread only — there is no
+                    // client-side prediction here — so the source half reaching mc.level proves the
+                    // PACKET path for the source broadcast too, not the prediction path.
+                    sourceRecorded.set(mc.level != null
+                        && com.warwa.seamlessportals.passthrough.SeamOccupancy
+                            .occupancyOf(mc.level, cell) != 0);
+                });
+                if (!sourceRecorded.get()) {
+                    e2e.set("SOURCE half not recorded on the CLIENT at " + cell + " after a real"
+                        + " BlockItem.place — the client-side claim in the place bracket did not"
+                        + " run or did not stick.");
+                } else if (!recorded.get()) {
+                    e2e.set("CROSSING half not recorded on the CLIENT for dest " + parts[2]
+                        + " in " + parts[0] + " after a real place + mirror. The server claimed it"
+                        + " (or should have) — so the packet, the receiver, or the level resolver"
+                        + " dropped it. This is the exact pipe that failed four live rounds.");
+                }
+            }
+            // Clean up the rail the end-to-end place left, then re-assert emptiness for the next leg.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, cell, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            });
+            if (e2e.get() != null) {
+                throw new AssertionError(LOG + "RS PLAYER-PLACE BRACKET GATE (END-TO-END OCCUPANCY)"
+                    + " FAILED: " + e2e.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "RS PLAYER-PLACE BRACKET GATE — END-TO-END OCCUPANCY PASS: source half on the"
+                    + " client and crossing half reachable client-side ({}).", e2eDetail.get());
+        }
+
         String f = failure.get();
         if (f != null) {
             throw new AssertionError(LOG + "RS PLAYER-PLACE BRACKET GATE FAILED: " + f);

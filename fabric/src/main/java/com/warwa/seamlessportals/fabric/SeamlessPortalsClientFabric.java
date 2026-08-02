@@ -59,6 +59,22 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         // nothing — EXECUTION_PLAN §3 S13 step 5).
         registerPortalEntityRenderers();
 
+        // ★ SEAM OCCUPANCY RECEIVER — UNCONDITIONAL, deliberately ABOVE the flag branch.
+        //
+        // The live 2026-08-02 round found the crossing half claimed on the server with the client
+        // logging "Unknown custom packet payload: seamlessportals:seam_occupancy". Root cause: the
+        // receiver was first registered inside FabricPlatformHelper.registerClientHandlers() — the
+        // BLOCK-ERA driver set, which the flag-ON branch below NEVER CALLS. The payload TYPE was
+        // registered (unconditional in registerPayloads), so the codec decoded fine and vanilla's
+        // ClientPacketListener.handleCustomPayload swallowed it with a warning. The seam is a
+        // flag-ON feature, so its receiver cannot live in the flag-OFF set; registering here covers
+        // both configurations and is harmless flag-OFF (occupancy simply never arrives).
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
+            com.warwa.seamlessportals.network.ModPayloads.SeamOccupancyPayload.TYPE,
+            (payload, context) -> context.client().execute(() ->
+                com.warwa.seamlessportals.passthrough.SeamOccupancyClient.apply(
+                    payload.dimensionId(), payload.packedPos(), (byte) payload.mask())));
+
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) client init — S13 step 4 =====================
             // DEPENDENCY_ORDER §4.2 client init order: the MiscUtilModEntryClient sequence

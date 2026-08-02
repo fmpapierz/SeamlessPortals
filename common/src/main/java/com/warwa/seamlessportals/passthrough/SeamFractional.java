@@ -370,15 +370,15 @@ public final class SeamFractional {
      *
      * <p>No-ops for a cell that is not a mirror-admitted COINCIDENT seam cell.
      */
-    public static void recordPlacement(
+    public static byte recordPlacement(
         net.minecraft.world.level.Level level, BlockPos cell, net.minecraft.world.phys.Vec3 hit
     ) {
         if (!active()) {
-            return;
+            return 0;
         }
         SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
         if (binding == null || binding.cut() == null) {
-            return;
+            return 0;
         }
         double off = binding.cut().srcPlaneOffset();
         Direction.Axis axis = binding.srcFacing().getAxis();
@@ -390,6 +390,74 @@ public final class SeamFractional {
                     : "NEGATIVE") + " " + axis + " half from hit " + hit + " (planeOffset=" + off
                     + ", now=" + SeamOccupancy.occupancyOf(level, cell)
                     + ", level=" + (level.isClientSide() ? "CLIENT" : "SERVER") + ")");
+        }
+        return half;
+    }
+
+    /**
+     * ★ CLAIM THE CROSSING HALF IN THE DESTINATION — the other end of a divided object.
+     *
+     * <p>The source cell records which half the player claimed; this records where the rest of it
+     * went. Together they are one object: the two halves sum to a block and no dimension holds a
+     * whole one. Without this the destination cell has no owner, the shape hook leaves it WHOLE
+     * (correctly — it never guesses), and you get the live 2026-08-02 report: the source half right,
+     * the destination showing a full block from both of its sides.
+     *
+     * <p><b>Which half, and why it is derived rather than read off a facing.</b> The destination
+     * portal is BI-FACED exactly like the source, so {@code cut.destFacing()} names one of two
+     * opposite normals arbitrarily and cannot answer. What CAN answer is the placement: the source
+     * keeps its material on the owned side, so what crosses extends from the plane in the
+     * <em>opposite</em> direction, and mapping that direction through the portal's own rotation
+     * ({@link SeamRegistry#mapDir}) names the destination side the material arrives on — the side you
+     * emerge on walking through, which is the user's decision.
+     *
+     * <p>The resulting arrangement is symmetric and every view of it is consistent: source side A
+     * holds material and destination side A is empty; source side B is empty and destination side B
+     * holds material. Looking through the window from an empty side shows the far world's empty side,
+     * so you see nothing — not because the window is blank, but because what is behind it genuinely
+     * is not there.
+     */
+    public static void claimCrossingHalf(
+        net.minecraft.world.level.Level sourceLevel, BlockPos sourcePos,
+        net.minecraft.world.level.Level destLevel, BlockPos destPos,
+        SeamRegistry.SeamBinding binding
+    ) {
+        if (!active() || sourceLevel == null || destLevel == null || destPos == null) {
+            return;
+        }
+        byte sourceOwned = SeamOccupancy.occupancyOf(sourceLevel, sourcePos);
+        // Only a single-half source object has a crossing half. Nothing owned means we do not know
+        // whose material this is; BOTH owned means two objects already fill the cell and neither
+        // has anything left to send.
+        if (sourceOwned != SeamOccupancy.HALF_POSITIVE
+            && sourceOwned != SeamOccupancy.HALF_NEGATIVE) {
+            return;
+        }
+        Direction ownedDir = Direction.get(
+            sourceOwned == SeamOccupancy.HALF_POSITIVE
+                ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+            binding.srcFacing().getAxis());
+        // What crosses extends the other way, and the portal's rotation carries that direction into
+        // the destination's frame.
+        Direction destDir = SeamRegistry.mapDir(binding, ownedDir.getOpposite());
+        byte destHalf = SeamOccupancy.halfOf(destDir);
+        SeamOccupancy.claim(destLevel, destPos, destHalf);
+        // ★ AND TELL THE CLIENT. SeamMirror is server-only, so without this push the client never
+        // learns which half of the destination holds material and the shape hook — correctly
+        // refusing to guess — draws the cell WHOLE. Measured live 2026-08-02: one CROSS line on the
+        // server thread, none on the client, and a full block visible from both destination sides.
+        SeamOccupancy.broadcast(destLevel, destPos);
+        // The source half is recorded on both sides already (BlockItem.place runs client-side for
+        // prediction), but push it too so a second player watching through the portal agrees.
+        SeamOccupancy.broadcast(sourceLevel, sourcePos);
+        if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+            SeamFractionalProbe.onSeamCell(destPos, "CROSS",
+                "crossing half claimed " + (destHalf == SeamOccupancy.HALF_POSITIVE ? "POSITIVE"
+                    : "NEGATIVE") + " " + destDir.getAxis() + " (source owned "
+                    + (sourceOwned == SeamOccupancy.HALF_POSITIVE ? "POSITIVE" : "NEGATIVE") + " "
+                    + ownedDir.getAxis() + " at " + sourcePos + ", mapped " + ownedDir.getOpposite()
+                    + " -> " + destDir + ", now=" + SeamOccupancy.occupancyOf(destLevel, destPos)
+                    + ")");
         }
     }
 

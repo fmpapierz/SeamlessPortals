@@ -241,6 +241,21 @@ public final class SeamMirror {
         if (applying) {
             return;   // our own write, observed. Not an error — this is the guard doing its job.
         }
+        // ★ BREAK RELEASES OCCUPANCY (FRACTIONAL_DESIGN.md §2a.0). Without this, breaking a seam
+        // block leaves its owner half claimed, and the NEXT block placed in the cell inherits a
+        // stale cut — found while writing the end-to-end gate (forgetPlacement existed with zero
+        // callers). Runs before the policy gates on purpose: whoever removed the block (player,
+        // piston, teardown sweep), a cell that is now AIR holds no object and its occupancy is a
+        // dangling record. The mirrored counterpart clears itself the same way — the break path's
+        // dest.setBlockAndUpdate(AIR) fires this driver on the destination level. Broadcast so
+        // every client's copy clears too; v1 clears the WHOLE cell (per-half breaking of a
+        // two-object cell is front-4 work — vanilla removes the entire blockstate on break).
+        if (newState.isAir() && level instanceof net.minecraft.server.level.ServerLevel) {
+            if (SeamOccupancy.occupancyOf(level, pos) != 0) {
+                SeamOccupancy.clear(level, pos);
+                SeamOccupancy.broadcast(level, pos);
+            }
+        }
         // ★ WHO WROTE THIS? (user decision 2026-07-26 — players only.)
         //
         // Asked here rather than in the mixin because this is the one place that already knows the
@@ -539,6 +554,18 @@ public final class SeamMirror {
         // the refinement guard above requires it — so skipping the add loses nothing.
         if (!refinementOnly) {
             holder.seamlessportals$mirrorCreatedCells().add(destKey);
+            // ★ THE CROSSING HALF (FRACTIONAL_DESIGN.md §2a.0). The mirror writes a whole BlockState
+            // — Minecraft has no other way to put material in a cell — so "half a block" is
+            // expressed by recording WHICH half this object owns here. Without this claim the
+            // destination cell has no owner and the shape hook correctly leaves it WHOLE, which is
+            // exactly the live 2026-08-02 report: the source half was right while the destination
+            // showed a full block from both of its sides.
+            //
+            // WHICH half: the one that makes the object CONTINUOUS. The source keeps the material on
+            // its owned side, so what crosses extends from the plane in the OPPOSITE direction; map
+            // that direction through the portal's own rotation and it names the destination side the
+            // material arrives on — the side you emerge on walking through, per the user's decision.
+            SeamFractional.claimCrossingHalf(sourceLevel, sourcePos, dest, destPos, binding);
         }
         mirroredWrites++;
         probe("mirrored to", destPos, dest, sourcePos, sourceLevel);
