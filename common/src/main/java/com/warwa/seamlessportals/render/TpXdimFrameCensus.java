@@ -9,6 +9,7 @@ import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import qouteall.imm_ptl.core.IPCGlobal;
 import qouteall.imm_ptl.core.IPGlobal;
+import qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer;
 import qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
@@ -681,6 +682,7 @@ public final class TpXdimFrameCensus {
             // THE RECURSION-DEPTH MEASUREMENT. portalLayerAtEnd above is a LEAK detector and reads 0
             // on every healthy frame; this is the field that answers "how deep did we actually go".
             .append(" maxPortalDepth=").append(maxPortalDepth())
+            .append(" deferredPeak=").append(deferredPeak())
             .append(" bobbedProj=").append(
                 RenderStates.capturedMainPassBobbedProjection == null ? "NULLED" : "PRESENT")
             .append(" | irisPre=").append(irisPre == null ? "N-A(no cross-view render)" : irisPre)
@@ -1115,6 +1117,32 @@ public final class TpXdimFrameCensus {
                 }
             }
             return max + "(destRenders=" + infos.size() + ")";
+        }
+        catch (Throwable t) {
+            return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /**
+     * IS5-REC: the highest deferred-buffer LAYER index the iris compat renderer has materialised
+     * this session. The witness for the Stage-2 refactor's inertness claim (per-layer array must
+     * still allocate exactly one buffer until recursion is armed) and, from Stage 3 on, the gauge
+     * that says the nested pass really used its OWN snapshot rather than clobbering layer 0's.
+     *
+     * <p>Reads "N-A" for every other renderer. The {@code instanceof} gate is LOAD-BEARING, not
+     * defensive: {@code IrisCompatOn262Renderer}'s {@code <clinit>} registers a client-cleanup
+     * handler and its own class comment relies on that running "only when the lever first routes
+     * here". An unconditional static call from the census would class-initialize it on every
+     * census-armed run and perturb sessions that never route to the compat renderer at all.
+     * {@code instanceof} does NOT trigger class initialization — the same reasoning
+     * {@code PortalRenderer.switchRenderer} already documents for its teardown branch.
+     */
+    private static String deferredPeak() {
+        try {
+            if (IPCGlobal.renderer instanceof IrisCompatOn262Renderer) {
+                return Integer.toString(IrisCompatOn262Renderer.getDeferredPeak());
+            }
+            return "N-A(not the compat renderer)";
         }
         catch (Throwable t) {
             return "UNREADABLE(" + t.getClass().getSimpleName() + ")";

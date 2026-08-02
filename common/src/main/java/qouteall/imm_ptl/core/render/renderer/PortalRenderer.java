@@ -110,6 +110,33 @@ public abstract class PortalRenderer {
     // will be called when rendering portal
     public void onBeforeHandRendering(Matrix4f modelView) {}
 
+    /**
+     * IS5-REC — the NESTED portal pass, dispatched at the tail of a full-pipeline dest render
+     * ({@code SecondaryWorldRenderCore.maybeRunNestedPortalLayer}) so that a portal seen INSIDE a
+     * portal window renders its own destination instead of flat pass-through.
+     *
+     * <p><b>Why this is a separate hook and not {@code onBeforeHandRendering}.</b> IP recursed by
+     * re-entering the nested {@code renderLevel}'s own hooks. That is structurally impossible here:
+     * the IS0 anchor injects into {@code GameRenderer.renderLevel}, while the nested dest render
+     * calls {@code LevelRenderer.render} directly (SecondaryWorldRenderCore ~:1905), so the anchor's
+     * bytecode is never reached and fires exactly once per frame. The nested pass therefore needs
+     * its own entry point, and it must do ONLY the per-layer work (snapshot / portal loop / stamp /
+     * blit-back) — never the once-per-frame work the anchor owns (the temporal-target save, the
+     * shadow-composite suppressor install, the prev-uniform heal).
+     *
+     * <p>Base body is EMPTY and this is called for the {@code IPCGlobal.renderer} slot, which is
+     * typed {@code PortalRenderer} — every renderer except the iris compat one correctly does
+     * nothing. The shaders-OFF stencil family never even reaches the dispatch site:
+     * {@code renderWorldFullPipeline} has exactly two call sites, both inside
+     * {@code IrisCompatOn262Renderer}, so shaders-OFF is unreachable by construction and stays a
+     * clean control leg.
+     *
+     * @param destDrawViewMatrix the view matrix the nested {@code render()} was driven with — passed
+     *                           through rather than re-read, because on a cross-dim pass the main
+     *                           {@code cameraRenderState} still holds the SOURCE camera.
+     */
+    public void renderNestedPortalLayer(Matrix4f destDrawViewMatrix) {}
+
     // this will NOT be called when rendering portal
     public abstract void prepareRendering();
 
