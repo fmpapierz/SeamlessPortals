@@ -373,6 +373,40 @@ public final class SeamClipRenderer {
                     clipThis = false;
                 }
             } else if (activePlane != null) {
+                // ★ ON-PLANE CELL IN A DEST PASS — THE WINDOW VIEW, and the phantom-half fix
+                // (user live round 5, 2026-08-02). The old rule drew the cell's WHOLE cube under the
+                // ambient inner clip: "show the beyond-plane half through the window". Correct under
+                // the old model, where the far cell held a whole mirrored block — but under the
+                // owner-half model the beyond-plane region can be the EMPTY half. Measured exactly
+                // as the user described from both directions: from dest side A the window showed a
+                // half block carved out of source side B (whose material is all in side A), and the
+                // mirror image from source side B — a half block that "disappears when you teleport
+                // through", because the in-world state was right and only this draw was wrong.
+                //
+                // NO second clip plane is needed: on a COINCIDENT seam the cut plane IS the portal
+                // plane, so the owned half is either wholly on the window's kept side (draw ambient
+                // — the inner clip then trims exactly at the owned boundary) or wholly on the
+                // clipped side (there is nothing beyond the plane to show — draw NOTHING). One
+                // plane evaluation at the owned half's centre decides; kept side is positive, per
+                // whollyOnKeptSide/cornersExtreme.
+                byte ownedOnPlane = SeamOccupancy.occupancyOf(level, pos);
+                if (ownedOnPlane == SeamOccupancy.HALF_POSITIVE
+                    || ownedOnPlane == SeamOccupancy.HALF_NEGATIVE) {
+                    Direction ownedDir = Direction.get(
+                        ownedOnPlane == SeamOccupancy.HALF_POSITIVE
+                            ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                        f.getAxis());
+                    Vec3 halfCenter = center.add(
+                        ownedDir.getStepX() * 0.25, ownedDir.getStepY() * 0.25,
+                        ownedDir.getStepZ() * 0.25);
+                    Vec3 n = activePlane.normal();
+                    Vec3 pp = activePlane.pos();
+                    double ownedSide = n.x * (halfCenter.x - pp.x)
+                        + n.y * (halfCenter.y - pp.y) + n.z * (halfCenter.z - pp.z);
+                    if (ownedSide < 0) {
+                        continue;   // material is entirely on the camera side — nothing to show
+                    }
+                }
                 clipThis = false;       // the active link's own cells: ambient inner clip cuts
             }
             CellDraw draw = new CellDraw(pos, state);
