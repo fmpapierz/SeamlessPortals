@@ -443,6 +443,17 @@ public class IPGlobal {
      *  recursion. */
     public static boolean irisRecursionLagGuard = false;
 
+    /**
+     * How far from the player a portal still renders its WINDOW, in CHUNKS. {@code 0} = follow the
+     * vanilla render distance (the default, and what the config's reset button restores). Clamped
+     * 0..32 by {@code IPConfig.onConfigChanged}; consumed by {@code PortalRenderer.getRenderRange}.
+     *
+     * <p>Not to be confused with the destination LOADING depth
+     * ({@code portalRenderDistance} in seamlessportals.properties). This is how far AWAY the player
+     * can be and still see a window at all; that one is how deep the world behind it is loaded.
+     */
+    public static int portalWindowRenderDistance = 0;
+
     /** Resource ceiling on the shaders-ON depth, not a taste limit: each layer a scene ACTUALLY
      *  REACHES allocates its own full-screen colour+depth target. 128 layers is ~2.1 GB of VRAM at
      *  1080p and ~8.5 GB at 4K. */

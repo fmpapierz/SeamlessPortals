@@ -291,7 +291,22 @@ public abstract class PortalRenderer {
     }
 
     public static double getRenderRange() {
-        double range = client.options.getEffectiveRenderDistance() * 16;
+        // IS5-WDIST (2026-08-02): the BASE distance is now configurable —
+        // IPGlobal.portalWindowRenderDistance, in chunks, 0 = follow the vanilla render distance
+        // (the shipped default, byte-identical to the previous expression, and what the config's
+        // per-entry reset button restores).
+        //
+        // ONLY the base is overridden. Everything below still applies on top, deliberately:
+        //   * the isLaggy / reducedPortalRendering clamp to 16 — that is lag PROTECTION, and a user
+        //     raising the distance is asking for more range, not for the safety net removed;
+        //   * the deep-layer divide, which keeps far mirror recursion from rendering N times;
+        //   * the large-scale portal multiplier and its 32-chunk ceiling.
+        // Overriding the whole method instead would have silently discarded all three.
+        int configuredChunks = IPGlobal.portalWindowRenderDistance;
+        int baseChunks = configuredChunks > 0
+            ? configuredChunks
+            : client.options.getEffectiveRenderDistance();
+        double range = baseChunks * 16;
         if (RenderStates.isLaggy || IPGlobal.reducedPortalRendering) {
             range = 16;
         }
