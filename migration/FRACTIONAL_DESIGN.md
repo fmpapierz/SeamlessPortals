@@ -324,8 +324,41 @@ refused by something in the destination they cannot see. That is the price of "n
 and material is always conserved", and it is the right trade — but it needs feedback, or it reads as
 the game being broken.
 
-⚠ **"Adjacent" needs a precise definition before front 2.** Face-adjacent to a fragment? Sharing the
-shifted phase along the crossing axis? Within the seam's column set? Left open here deliberately.
+### §2a.2 ★ "ADJACENT" — DEFINED, user 2026-08-02
+
+> **The block was placed ON THE FACE of a block that is already offset.**
+
+Placement-time and face-based: decided by the **click**, not by a spatial query about neighbours.
+Three properties fall out of that, all of them desirable:
+
+- **Unambiguous.** The hit block either is seam-owned or it is not. No "how close counts" rule, no
+  tie-breaking, nothing for a player to discover by accident.
+- **Self-propagating.** Each new block is placed on the previous offset block's face and inherits the
+  same phase, so a run continues naturally for as long as the player keeps building along it.
+- **Self-terminating.** Click open space or ordinary terrain and you get ordinary cell-aligned
+  placement. The shifted lattice cannot leak.
+
+**Where it hooks:** `BlockPlaceContext` already carries the clicked face and the hit position. What
+must change is the resolution step — vanilla resolves a click to a `BlockPos`
+(`BlockPlaceContext.java:47-49`); offset placement must resolve it to a **(cell, interval)** pair,
+inheriting the phase of the block that was hit.
+
+**⚠ CONSEQUENCE — the hit outline stops being an accepted residual and becomes LOAD-BEARING.**
+§8 lists "hit outline and crumbling overlay stay full-cube" as an accepted residual. Under
+face-based offset placement that is no longer acceptable: **the player must be able to see and aim at
+the offset face they intend to build on.** A full-cube outline over a 0.49 fragment would make the
+rule unusable — you would be clicking a face that is not where the game drew it.
+
+**And it is achievable.** Both relevant shape getters route to the block with the position available
+and no cache branch (`ClipContext.java:56-59`):
+
+```java
+COLLIDER(BlockBehaviour.BlockStateBase::getCollisionShape),
+OUTLINE(BlockBehaviour.BlockStateBase::getShape),
+```
+
+So picking and outline are both hookable — `getShape` is *not* one of the cache-first trio. The
+outline moves from §8's residual list into front 3's required scope, at no new mechanism cost.
 
 ---
 
