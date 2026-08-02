@@ -35,8 +35,39 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
-## ★★ NEXT ENGAGEMENT IS THE FRACTIONAL SEAM MODEL — **USER DECISION 2026-08-01**
-## Brief: `migration/FRACTIONAL_HANDOFF.md`, starter prompt: `migration/FRACTIONAL_PROMPT.md`
+## ★★★ THE FRACTIONAL PANEL RAN 2026-08-02 — READ `migration/FRACTIONAL_DESIGN.md` FIRST
+## Decisions taken; front 1 (the gate) landed at `c766ce3`. `FRACTIONAL_HANDOFF.md` §0 is SUPERSEDED.
+
+**User decisions 2026-08-02:** (A) genuine **ARBITRARY fraction**; (B) **position-keyed side table,
+cut applies to COLLISION *and* SUPPORT/CONDUCTION** — occlusion/lighting deferred to polish;
+(C) **gate → storage → collision → render flip LAST**.
+
+⚠ **SIX claims in `FRACTIONAL_HANDOFF.md` are CORRECTED** in the design doc, including three
+repeated verbatim in the §0/§2 blocks below. Do not re-derive them:
+- **"arbitrary is unreachable by policy" is FALSE** — a plane at `blockCoord+0.3` is admitted, binned
+  COINCIDENT by `phaseOf`'s ±0.25 window, and then cut at the cell centre anyway
+  (`SeamClipRenderer.java:354-356`). A live silent mis-cut, reachable via `/portal set_portal_position`
+  or any wand cursor alignment ≠ 2.
+- **"the pop is ONE expression" is HALF WRONG** — `cameraSideWindowPossible` is the whether-to-cut
+  gate; deleting it moves the uncapped hole to the camera-NEAR side. Hence decision C.
+- **the support hazard's reason is INVERTED** — `RIGID` needs the 2px PERIMETER, so it fails at every
+  f<1; and because `canSupportRigidBlock` reads the CACHED `faceSturdy[]`, a position-keyed cut makes
+  rails **FLOAT, not pop**.
+- **`-PdisableSeamPhaseGate` HAS been run green** (2026-07-27, gate matrix row 4); only exact-only
+  had never run — and it has now (below).
+- **is5-shadow is NOT a conflict today**; the risk is a silent one, mitigated by one parameter.
+
+**★ MEASURED 2026-08-02, first ever run of `-PdisableSeamExactOnly`:** 9 policy-declined query-only
+cells → 0, phase/continuation checks 33 → 42, all legs pass. Confirms a decline removes cells from
+the (b)/(c)/(d) surface wholesale. **The predicted red at `CrossingSmoke.java:1094` did NOT fire** —
+portal A is one-way, so green means *the fixture cannot discriminate*, not that offset works.
+
+**★ MEASURED: a partial block supports NOTHING in this build.** A real placed bottom slab gives
+`rail.canSurvive=false torch.canSurvive=false`. So decision B's "rails pop" is the rule every partial
+block already follows. And `Blocks.SOUL_SAND` is the vanilla template for the whole model — partial
+collision, `getBlockSupportShape` overridden back to whole, both predicates forced true.
+
+## Superseded brief: `migration/FRACTIONAL_HANDOFF.md`, starter prompt: `migration/FRACTIONAL_PROMPT.md`
 
 **The user chose fractional after being shown the survey that recommended (c) step 2 instead.**
 That alternative is fully briefed and stays ready at `migration/REDSTONE_C2_HANDOFF.md` /
