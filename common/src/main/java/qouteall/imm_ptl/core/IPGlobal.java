@@ -43,7 +43,11 @@ public class IPGlobal {
     
     public static int indirectLoadingRadiusCap = 8;
     
-    public static boolean lagAttackProof = true;
+    /** DEFAULT FALSE since 2026-08-02 (user decision) — see IPConfig.lagAttackProof for the reasoning
+     *  and for what protection is given up. Kept in step with that field's default deliberately: if
+     *  the two disagree, behaviour differs between the first frames and the moment the config is
+     *  applied, which is the kind of split nobody debugs twice. */
+    public static boolean lagAttackProof = false;
     
     public static RenderMode renderMode = RenderMode.normal;
 
