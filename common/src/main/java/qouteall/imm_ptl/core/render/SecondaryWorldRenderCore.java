@@ -2128,13 +2128,29 @@ public class SecondaryWorldRenderCore {
         if (layer == 0) {
             return; // layer 0 belongs to the IS0 anchor (or, on a cross-view frame, to XWIN above)
         }
-        if (CrossPortalViewRendering.isRenderingCrossPortalView()) {
-            // STAGE 3 SCOPE LIMIT, lifted in its own later stage together with moving the
-            // CROSS_VIEW_REVERSE_WINDOW lever off the head of maybeRunCrossViewPortalPass. Those two
-            // are ONE change: that lever is tested FIRST there, so lifting this exclusion while it
-            // still guards the whole method would make -PdisableCrossViewReverseWindow silently kill
-            // recursion too, entangling two independent A/Bs.
-            return;
+        // IS5-XREC (2026-08-02): the Stage-3 cross-view EXCLUSION IS LIFTED. It used to return here
+        // on isRenderingCrossPortalView(), which is why third person with the camera past a portal
+        // showed the other dimension through the reverse window but every portal INSIDE that window
+        // stayed flat — user-reported: "when the camera is in the opposite dim as the player, the
+        // portals in the player dim dont recurse".
+        //
+        // THE TWO DISPATCHES PARTITION CLEANLY BY LAYER, which is what makes lifting it safe:
+        //   layer 0 on a cross-view frame -> maybeRunCrossViewPortalPass (XWIN) owns the pass; this
+        //       method has already returned at the `layer == 0` check above, so no double dispatch.
+        //   layer >= 1 -> XWIN returns at its own isRendering() floor, so only this method runs.
+        // Mutually exclusive by construction at every layer, on cross-view and normal frames alike.
+        //
+        // THE PLANNED LEVER ENTANGLEMENT DOES NOT APPLY HERE, and the reason is worth recording
+        // because the staging plan asserted it would. That plan assumed the recursion dispatch would
+        // be folded INTO maybeRunCrossViewPortalPass, whose CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER
+        // is tested FIRST — under that shape, -PdisableCrossViewReverseWindow would have silently
+        // killed recursion too. These are SEPARATE methods and this one never reads that lever, so
+        // the two A/Bs stay independent and no lever move is needed. Verified by reading both gates
+        // rather than inherited from the plan.
+        if (IPGlobal.CROSS_VIEW_RECURSION_DISABLED_LEVER
+            && CrossPortalViewRendering.isRenderingCrossPortalView()
+        ) {
+            return; // A/B leg: restores the Stage-3 scope limit on command
         }
         if (layer >= IPGlobal.effectiveIrisMaxPortalLayer()) {
             return; // the shaders-ON depth bound (also collapses to 1 under RenderStates.isLaggy)
