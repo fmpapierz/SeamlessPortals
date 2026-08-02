@@ -362,8 +362,15 @@ public class MyGameRenderer {
 
         //update lightmap (G20: updateLightTexture(0) first-visit prime -> extract+render once via the
         // mod's proven per-dim Lightmap driver; virtual-camera config is S13 driver-core).
-        if (!RenderStates.isDimensionRendered(newDimension)
-            && !qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap // S14.38 lever
+        // IS5-LIGHTMAP: same re-entry guard as the full-pipeline twin. isDimensionRendered is fed by
+        // onEndPortalWorldRendering, which runs AFTER the nested render returns, so a chain that
+        // REVISITS a dimension re-primes the same Lightmap object while its render is still in
+        // flight. Shaders-ON that crashed with "Cannot wait on a fence for the current submit"; this
+        // DECOMPOSED path has the identical shape and recurses just as deep shaders-OFF
+        // (maxPortalLayer is settable to 10+), so it is guarded too rather than waiting for a report.
+        if (!qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap // S14.38 lever
+            && !RenderStates.isDimensionRendered(newDimension)
+            && RenderStates.lightmapPrimedDimensions.add(newDimension)
         ) {
             helper.updateAndRender(newCamera, RenderStates.getPartialTick());
         }
@@ -638,9 +645,20 @@ public class MyGameRenderer {
 
         IrisInterface.invoker.setPipeline(worldRenderer, null);
 
-        // first-visit lightmap prime (pairing: identical).
-        if (!RenderStates.isDimensionRendered(newDimension)
-            && !qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap
+        // first-visit lightmap prime (pairing: identical, PLUS the IS5-LIGHTMAP re-entry guard).
+        //
+        // isDimensionRendered alone is NOT sufficient under recursion: it is fed by
+        // PortalRendering.onEndPortalWorldRendering, which runs AFTER the nested render returns
+        // (PortalRenderer:356 invoke, :370 mark). So a chain that REVISITS a dimension re-enters this
+        // prime while that dimension's render is still in flight, drives the SAME Lightmap object's
+        // ring buffer twice inside one GPU submit, and crashes with
+        // "Cannot wait on a fence for the current submit". Marking at PRIME time is what closes it —
+        // see RenderStates.lightmapPrimedDimensions.
+        // Lever first so it stays byte-inert when set; the set ADD is last because it has a side
+        // effect and must only fire when we are actually about to prime.
+        if (!qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap
+            && !RenderStates.isDimensionRendered(newDimension)
+            && RenderStates.lightmapPrimedDimensions.add(newDimension)
         ) {
             helper.updateAndRender(newCamera, RenderStates.getPartialTick());
         }
