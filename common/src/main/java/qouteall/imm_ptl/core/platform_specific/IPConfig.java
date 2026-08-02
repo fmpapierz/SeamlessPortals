@@ -66,6 +66,31 @@ public class IPConfig implements ConfigData {
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     public boolean irisRecursionLagGuard = false;
+
+    /**
+     * How far from the player a portal will still render its WINDOW, in chunks. {@code 0} = follow
+     * the vanilla render distance, which is the behaviour this mod has always had and what the
+     * per-entry reset button restores.
+     *
+     * <p>Consumed by {@code PortalRenderer.getRenderRange}, whose sole consumer is
+     * {@code shouldSkipRenderingPortal}: a portal further than this from the camera is culled and
+     * its window is not drawn. Raising it means distant portals keep showing their destination;
+     * lowering it culls them sooner and is the cheapest way to claw back frames in a portal-dense
+     * build.
+     *
+     * <p>DISTINCT from {@code portalRenderDistance} in seamlessportals.properties, which controls how
+     * many chunks DEEP the destination is loaded and meshed. This one is how far AWAY you can stand
+     * and still see the window at all. Setting this high while that stays low gives you distant
+     * windows onto a shallow destination.
+     *
+     * <p>Unbounded in the GUI so it is a typed field rather than a slider, but clamped to 0..32 on
+     * apply — 32 is the vanilla render-distance maximum, past which the source chunks the culling is
+     * measured against do not exist anyway. The downstream deep-layer divide and the large-scale
+     * portal multiplier in getRenderRange still apply on top, unchanged.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int portalWindowRenderDistance = 0;
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     public boolean lagAttackProof = true;
@@ -245,6 +270,10 @@ public class IPConfig implements ConfigData {
                 Math.max(1, Math.min(IPGlobal.IRIS_RECURSION_DEPTH_CEILING, irisRecursionDepth));
         }
         IPGlobal.irisRecursionLagGuard = irisRecursionLagGuard;
+        // Clamp on APPLY rather than in the GUI: leaving the field unbounded is what makes Cloth
+        // render a typed box instead of a slider, so the clamp has to live here. 0 = follow the
+        // vanilla render distance (the shipped default, and what the reset button restores).
+        IPGlobal.portalWindowRenderDistance = Math.max(0, Math.min(32, portalWindowRenderDistance));
         IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;
