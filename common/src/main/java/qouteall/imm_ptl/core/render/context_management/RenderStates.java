@@ -76,6 +76,30 @@ public class RenderStates {
     private static float partialTick = 0;
 
     public static Set<ResourceKey<Level>> renderedDimensions = new HashSet<>();
+
+    /**
+     * IS5-LIGHTMAP — dimensions whose lightmap has been primed THIS FRAME, marked at the moment of
+     * priming rather than when the dest render finishes.
+     *
+     * <p>The first-visit lightmap prime in {@code MyGameRenderer.switchAndRenderTheWorldFullPipeline}
+     * used to guard on {@link #isDimensionRendered}, which is fed by
+     * {@code PortalRendering.onEndPortalWorldRendering} — and that runs AFTER the nested render
+     * returns (PortalRenderer:356 invoke, :370 mark). One layer deep that was fine. Under recursion a
+     * chain that REVISITS a dimension (A-&gt;B-&gt;A, or any same-dim chain) re-enters the prime for a
+     * dimension still in flight, drives the SAME {@code Lightmap} object's ring buffer a second time
+     * inside one GPU submit, and crashes:
+     * {@code IllegalStateException: Cannot wait on a fence for the current submit}
+     * (GlFence.awaitCompletion via MappableRingBuffer.currentBuffer). USER-HIT at depth 3+ after ~2
+     * minutes.
+     *
+     * <p>This is the same hazard class the clouds and weather suppression in
+     * {@code SecondaryWorldRenderCore} already cites by name for shared-state passes — the lightmap
+     * has the identical shape and was simply not covered, because nothing could reach it twice per
+     * frame before recursion existed.
+     *
+     * <p>Marked BEFORE the render, so re-entry during the render is what it actually excludes.
+     */
+    public static final Set<ResourceKey<Level>> lightmapPrimedDimensions = new HashSet<>();
     public static List<List<WeakReference<Portal>>> lastPortalRenderInfos = new ArrayList<>();
     public static List<List<WeakReference<Portal>>> portalRenderInfos = new ArrayList<>();
     public static int portalsRenderedThisFrame = 0;// mixins to sodium use that
@@ -149,6 +173,7 @@ public class RenderStates {
         partialTick = newPartialTick;
 
         renderedDimensions.clear();
+        lightmapPrimedDimensions.clear();
         lastPortalRenderInfos = portalRenderInfos;
         portalRenderInfos = new ArrayList<>();
         portalsRenderedThisFrame = 0;
