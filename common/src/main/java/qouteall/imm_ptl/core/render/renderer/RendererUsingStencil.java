@@ -286,6 +286,29 @@ public class RendererUsingStencil extends PortalRenderer {
 
         int outerPortalStencilValue = PortalRendering.getPortalLayer();
 
+        // IS5-TERM (2026-08-02, user-reported): DO NOT DRAW A PORTAL WHOSE CONTENT WILL NOT RENDER.
+        //
+        // The aperture mesh below is drawn with fog colour BLACK (Vec3.ZERO, renderPortalViewAreaToStencil
+        // ~:406) and colour-writes, on the assumption that the dest world is about to be painted over
+        // it. At the recursion bound that assumption fails: renderPortalContent early-returns on
+        // `getPortalLayer() > getMaxPortalLayer()` (PortalRenderer:288-290) AFTER the push, so the
+        // black mesh is all that remains — the terminal portal reads as a solid black box.
+        //
+        // The push makes the layer outerPortalStencilValue + 1, so that early-return fires exactly
+        // when `outer + 1 > max`. Testing it HERE, before the occlusion query and the aperture draw,
+        // means the terminal portal is simply absent — which is what the shaders-ON compat renderer
+        // already does (its doRenderPortal returns at the bound before drawing anything) and what the
+        // user asked for: "with shader off, the last portal that fails the recursion paints as a
+        // solid black box. i do not like this. make it just not show up at all like with shaders on".
+        //
+        // Also strictly cheaper: skips an occlusion query, an aperture rasterization, a stencil INCR
+        // and the matching clamp/restore, per terminal portal per frame.
+        if (!qouteall.imm_ptl.core.IPGlobal.debugDrawTerminalPortalAsBlack
+            && outerPortalStencilValue + 1 > PortalRendering.getMaxPortalLayer()
+        ) {
+            return;
+        }
+
         Profiler.get().push("render_view_area");
 
         qouteall.imm_ptl.core.render.DrawCallTrace.record(
