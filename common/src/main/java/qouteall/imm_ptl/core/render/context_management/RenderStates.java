@@ -189,48 +189,68 @@ public class RenderStates {
                 isLaggy = false;
             }
             else {
-                // KEEP SAYING IT WHILE IT IS TRUE. This is the whole fix: the notice used to be
-                // shown ONCE, on the false->true transition, and vanilla's overlay message expires
-                // after about 3 seconds — while the clamp itself stays on indefinitely. So the
-                // player saw a brief flash and then had portal recursion silently pinned to ONE
-                // layer with nothing on screen to say why. USER-REPORTED after losing time to
-                // exactly that: recursion looked broken, and the cause was this protection firing.
-                showLaggyNotice(false);
+                // Hold the notice for the ~5s window opened by the transition below, then go quiet
+                // for the rest of the clamp. USER-DECIDED: "make it so the lag attack proof only
+                // shows once for 5 seconds" — long enough to read and act on, not a permanent
+                // banner. An earlier revision repeated it for the whole clamp duration and that was
+                // too much.
+                holdLaggyNotice();
             }
         }
         else {
             if (lastPortalRenderInfos.size() > 10) {
                 if (ClientPerformanceMonitor.getAverageFps() < 8 || ClientPerformanceMonitor.getMinimumFps() < 6) {
                     isLaggy = true;
-                    // Animated on the FIRST show only — vanilla's animate flag makes the text pulse,
-                    // which is what catches the eye at the moment the clamp engages. The repeats
-                    // below are steady, because a permanently pulsing message is harder to read than
-                    // a still one and this may now stay up for a long time.
+                    // Opens the ~5s notice window. Animated on this first show only: the pulse is
+                    // what catches the eye at the moment the clamp engages, and the one re-show
+                    // inside the window is steady so it stays readable.
+                    laggyNoticeWindowEndMs = System.currentTimeMillis() + LAGGY_NOTICE_WINDOW_MS;
                     showLaggyNotice(true);
                 }
             }
         }
     }
 
+    /** ~5s: how long the lag-clamp notice stays up, once, per time the clamp engages. */
+    private static final long LAGGY_NOTICE_WINDOW_MS = 5000L;
+
+    /** Wall-clock end of the current notice window; 0 when no notice is being held. */
+    private static long laggyNoticeWindowEndMs = 0L;
+
     private static long lastLaggyNoticeMs = 0L;
 
     /**
-     * Re-issues the "rendering fewer portals" overlay while the lag clamp is engaged.
+     * Holds the notice on screen for {@link #LAGGY_NOTICE_WINDOW_MS} after the clamp engages, then
+     * goes quiet for the remainder of the clamp.
      *
-     * <p>Repeat interval is under vanilla's ~60-tick overlay lifetime so the message never blinks
-     * out mid-clamp; the {@code animate} flag is reserved for the first show. Red + bold because the
-     * default styling reads as an incidental status line, and this one is reporting that a feature
-     * the player configured has been overridden.
+     * <p>The re-show is needed because vanilla's overlay message has a FIXED ~60-tick (~3 s)
+     * lifetime that cannot be extended directly — so a single call cannot span 5 seconds. One
+     * re-issue partway through bridges the gap. That makes the window approximate (~5-5.5 s), which
+     * is the right trade against mixing into {@code Hud}'s timer just to control a notice.
+     *
+     * <p>Shown ONCE PER ENGAGEMENT, not once per session: if the clamp releases and later re-engages
+     * the player is told again, because by then it is news again.
+     */
+    private static void holdLaggyNotice() {
+        long now = System.currentTimeMillis();
+        if (now >= laggyNoticeWindowEndMs) {
+            return; // window closed — stay quiet for the rest of the clamp
+        }
+        if (now - lastLaggyNoticeMs < 2000L) {
+            return; // current message still on screen
+        }
+        showLaggyNotice(false);
+    }
+
+    /**
+     * Red + bold because the default styling reads as an incidental status line, and this one is
+     * reporting that a setting the player configured has been overridden.
      *
      * <p>26.2: {@code Gui.setOverlayMessage} moved to the split-out {@code Hud} (Hud.java:1225),
      * reached via the public field {@code Gui.hud} (Gui.java:72).
      */
     private static void showLaggyNotice(boolean animate) {
-        long now = System.currentTimeMillis();
-        if (!animate && now - lastLaggyNoticeMs < 2000L) {
-            return;
-        }
-        lastLaggyNoticeMs = now;
+        lastLaggyNoticeMs = System.currentTimeMillis();
         try {
             MyRenderHelper.client.gui.hud.setOverlayMessage(
                 Component.translatable("imm_ptl.laggy")
