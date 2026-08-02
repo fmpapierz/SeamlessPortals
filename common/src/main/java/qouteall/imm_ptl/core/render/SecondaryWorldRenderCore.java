@@ -2140,6 +2140,11 @@ public class SecondaryWorldRenderCore {
             return; // the shaders-ON depth bound (also collapses to 1 under RenderStates.isLaggy)
         }
         if (RenderStates.getRenderedPortalNum() >= IPGlobal.irisMaxDestRenders) {
+            // COUNT THE CUT. This return used to be silent, which made budgetCuts= print 0 at the
+            // exact moment the budget was what truncated the chain — a reader would conclude either
+            // "depth N works" or "recursion mysteriously caps", and both readings are wrong. The
+            // in-loop cut in doRenderPortal was counted; this entry-gate one was not.
+            IPGlobal.noteNestedBudgetCut();
             return; // per-frame pack-shaded render budget
         }
         PortalRenderer renderer = IPCGlobal.renderer;
