@@ -59,6 +59,34 @@ public final class SeamRegistry {
      * portal is still indexed, so (b)/(c)/(d) can see that a seam exists and decline gracefully,
      * rather than silently treating the cell as ordinary.
      */
+    /**
+     * ★ THE CUT — where each side's plane actually falls inside its own cell, so the fractional
+     * model can divide a block instead of duplicating it ({@code FRACTIONAL_DESIGN.md} §2a).
+     *
+     * <p>Both offsets are in {@code (0, 1)}, measured from the cell's lower corner along the plane's
+     * axis. They are INDEPENDENT: a .3 source plane pairing with a .21 destination plane is legal
+     * and must work — that is the whole point of user decision A, and it is why this is two numbers
+     * and not one.
+     *
+     * <p>{@code destFacing} is the DESTINATION portal's facing — the side the far world keeps — and
+     * is null when no reverse portal could be resolved (a one-way or unpaired portal). In that case
+     * {@code destPlaneOffset} is {@link Double#NaN} and only the source half of the cut is known;
+     * {@link #hasDestination()} is the guard.
+     *
+     * <p>Derived every bind from live portal geometry, exactly like the rest of the binding — so it
+     * costs no persistence and no packet (both sides run the same bind handler off their own tick
+     * signal, and portal geometry is already synced as entity data).
+     */
+    public record SeamCut(
+        double srcPlaneOffset,
+        @Nullable Direction destFacing,
+        double destPlaneOffset
+    ) {
+        public boolean hasDestination() {
+            return destFacing != null && !Double.isNaN(destPlaneOffset);
+        }
+    }
+
     public record SeamBinding(
         Direction srcFacing,
         @Nullable ResourceKey<Level> destDim,
@@ -66,7 +94,8 @@ public final class SeamRegistry {
         Rotation stateRotation,
         UUID portalUuid,
         SeamMap.SeamPhase phase,
-        boolean seamContinuous
+        boolean seamContinuous,
+        @Nullable SeamCut cut
     ) {
         public boolean isMirrorable() {
             return destDim != null && destPos != null;
@@ -319,9 +348,21 @@ public final class SeamRegistry {
             BlockPos src = SeamMap.seamCell(portal, column);
             BlockPos dst = mirrorable ? resolveDestCell(portal, reverse, column) : null;
 
+            // ★ THE CUT (FRACTIONAL_DESIGN.md §2a). Derived here because this is the one moment BOTH
+            // planes are knowable: `reverse` is already resolved above for resolveDestCell, so the
+            // destination's own plane offset costs nothing extra. Independent per side on purpose —
+            // .3 pairing with .21 is legal and is the case the model exists for.
+            SeamCut cut = new SeamCut(
+                SeamFractional.planeOffsetOf(portal, src),
+                reverse == null ? null
+                    : Direction.getApproximateNearest(
+                        reverse.getNormal().x, reverse.getNormal().y, reverse.getNormal().z),
+                (reverse == null || dst == null) ? Double.NaN
+                    : SeamFractional.planeOffsetOf(reverse, dst));
+
             SeamBinding binding = new SeamBinding(
                 facing, destDim, dst, rotation == null ? Rotation.NONE : rotation, portal.getUUID(),
-                SeamMap.phaseOf(portal, src), continuous);
+                SeamMap.phaseOf(portal, src), continuous, cut);
 
             long key = src.asLong();
             SeamCell existing = holder.seamlessportals$seamCells().get(key);

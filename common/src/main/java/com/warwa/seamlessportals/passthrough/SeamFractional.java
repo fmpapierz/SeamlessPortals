@@ -205,6 +205,31 @@ public final class SeamFractional {
         return out;
     }
 
+    /**
+     * ★ The bridge from a real binding to real fragments — what a block in {@code srcCell} leaves
+     * behind on this side, and where its remainder lands on the far side.
+     *
+     * <p>Returns an empty list when the binding cannot answer: no cut, no destination cell, or no
+     * reverse portal to say where the far plane sits. Callers must treat empty as "this seam cannot
+     * be divided", NOT as "nothing crosses" — the two are different and conflating them is how a
+     * block would silently duplicate instead of dividing.
+     */
+    public static java.util.List<Fragment> destinationFragments(SeamRegistry.SeamBinding binding) {
+        SeamRegistry.SeamCut cut = binding.cut();
+        if (cut == null || !cut.hasDestination() || binding.destPos() == null) {
+            return java.util.List.of();
+        }
+        double cross = crossingThickness(binding.srcFacing(), cut.srcPlaneOffset());
+        return decomposeDestination(
+            binding.destPos(), cut.destFacing(), cut.destPlaneOffset(), cross);
+    }
+
+    /** What THIS side keeps of a block in a seam cell, or NaN when the binding carries no cut. */
+    public static double keptThickness(SeamRegistry.SeamBinding binding) {
+        SeamRegistry.SeamCut cut = binding.cut();
+        return cut == null ? Double.NaN : keptThickness(binding.srcFacing(), cut.srcPlaneOffset());
+    }
+
     /** Total material in a fragment list — the conservation quantity the gate asserts on. */
     public static double totalLength(java.util.List<Fragment> fragments) {
         double sum = 0.0;
