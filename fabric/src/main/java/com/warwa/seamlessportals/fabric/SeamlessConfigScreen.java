@@ -66,6 +66,24 @@ public class SeamlessConfigScreen extends Screen {
             cfg.setSpeculativePrewarm(!cfg.isSpeculativePrewarm());
             b.setMessage(prewarmLabel(cfg));
         }).bounds(x, y, w, 20).build());
+        y += rowH;
+
+        // IS5-REC: recursion depth WITH A SHADERPACK ON. Separate from the slider above because a
+        // shaders-ON layer is a full pack-shaded world render (gbuffer + shadow pass + composite
+        // chain), i.e. a much heavier unit than a shaders-off layer. 1 = the pre-feature behaviour.
+        this.addRenderableWidget(new IntSlider(x, y, w, 20,
+                "Shader portal recursion depth", 1, 5,
+                cfg.getIrisRecursionDepth(), cfg::setIrisRecursionDepth));
+        y += rowH;
+
+        // IS5-REC: the OPT-IN deep-recursion lag guard. Off by default (user-decided). It exists
+        // because the engine's mirror-room protection only checks the frame rate after >10 dest
+        // renders in a frame, and a deep single chain makes about one per layer — so nothing
+        // automatic covers deep recursion without this.
+        this.addRenderableWidget(new Button.Builder(lagGuardLabel(cfg), b -> {
+            cfg.setIrisRecursionLagGuard(!cfg.isIrisRecursionLagGuard());
+            b.setMessage(lagGuardLabel(cfg));
+        }).bounds(x, y, w, 20).build());
         y += rowH + 10;
 
         this.addRenderableWidget(new Button.Builder(Component.literal("Done"), b -> this.onClose())
@@ -78,6 +96,11 @@ public class SeamlessConfigScreen extends Screen {
 
     private static Component prewarmLabel(SeamlessPortalsConfig cfg) {
         return Component.literal("Pre-warm unlit frames: " + (cfg.isSpeculativePrewarm() ? "ON" : "OFF"));
+    }
+
+    private static Component lagGuardLabel(SeamlessPortalsConfig cfg) {
+        return Component.literal(
+            "Reduce shader recursion when laggy: " + (cfg.isIrisRecursionLagGuard() ? "ON" : "OFF"));
     }
 
     @Override

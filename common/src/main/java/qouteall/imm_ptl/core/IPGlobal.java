@@ -376,21 +376,101 @@ public class IPGlobal {
      * taste one. -PirisMaxPortalLayer=N.
      */
     public static int irisMaxPortalLayer =
-        Integer.getInteger("seamlessportals.irisMaxPortalLayer", 2);
+        Integer.getInteger("seamlessportals.irisMaxPortalLayer", 5);
+
+    /** TRUE when {@code -PirisMaxPortalLayer} was passed, i.e. a dev A/B leg is pinning the depth.
+     *  The in-game setting must NOT quietly overwrite that — three legs of this project have already
+     *  been voided by a lever that did not end up governing what it claimed to govern. */
+    public static final boolean IRIS_MAX_LAYER_PINNED_BY_LEVER =
+        System.getProperty("seamlessportals.irisMaxPortalLayer") != null;
 
     /** Belt against a pathological scene (many portals x many layers) turning one frame into an
      *  unbounded pack-shaded render tree. Counted per FRAME across all layers, not per layer.
      *  -PirisMaxDestRenders=N. */
     public static int irisMaxDestRenders =
-        Integer.getInteger("seamlessportals.irisMaxDestRenders", 6);
+        Integer.getInteger("seamlessportals.irisMaxDestRenders", 30);
 
-    /** The bound actually enforced. {@code min} with {@link PortalRendering#getMaxPortalLayer()} so
-     *  the engine bound still dominates AND so {@code RenderStates.isLaggy} — which silently
-     *  collapses that to 1 as mirror-room lag protection — keeps working shaders-ON. */
+    /**
+     * The bound actually enforced this frame.
+     *
+     * <p>Precedence: (1) the {@code -PirisMaxPortalLayer} dev lever if passed — it PINS the value so
+     * an A/B leg measures what it claims to; (2) otherwise the in-game setting
+     * ({@code irisRecursionDepth}, default 5), read live so the config slider applies without a
+     * restart; then (3) the OPT-IN, default-OFF lag guard, and the engine bound.
+     *
+     * <p>The {@code min} with {@link PortalRendering#getMaxPortalLayer()} keeps the engine bound
+     * dominant, which also means {@code RenderStates.isLaggy} still collapses this to 1. But note
+     * that guard CANNOT arm for deep recursion — it requires >10 dest renders in the previous frame
+     * and a deep single chain makes about one per LAYER (measured: {@code isLaggy=false} on all 166
+     * rows of the depth-5 leg, which proves only that the gate could not fire). That gap is exactly
+     * what the opt-in guard below covers.
+     */
     public static int effectiveIrisMaxPortalLayer() {
         int engineBound = qouteall.imm_ptl.core.render.context_management.PortalRendering
             .getMaxPortalLayer();
-        return Math.min(irisMaxPortalLayer, engineBound);
+
+        int configured = irisMaxPortalLayer;
+        if (!IRIS_MAX_LAYER_PINNED_BY_LEVER) {
+            try {
+                configured = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
+                    .getIrisRecursionDepth();
+                // Keep the reflected field in step with the live value, so RunConfigReport's sweep
+                // and the census's effMaxLayer= column report what is ENFORCED rather than the
+                // compile-time default — a self-report that can disagree with reality is worse than
+                // none.
+                irisMaxPortalLayer = configured;
+            }
+            catch (Throwable t) {
+                // config unavailable (early init / server classpath) — keep the field value
+            }
+        }
+
+        if (isIrisRecursionLagGuardOn()) {
+            configured = Math.min(configured, lagGuardedDepth());
+        }
+        return Math.min(configured, engineBound);
+    }
+
+    private static boolean isIrisRecursionLagGuardOn() {
+        try {
+            return com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
+                .isIrisRecursionLagGuard();
+        }
+        catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * The OPT-IN deep-recursion lag guard. Graduated rather than a cliff, so a machine sitting near
+     * a threshold sheds one layer at a time instead of oscillating between 5 and 1 every second.
+     * Reads the same {@code ClientPerformanceMonitor} the engine's guard uses, so the two agree on
+     * what "laggy" means; that monitor's per-second averaging supplies the damping.
+     *
+     * <p>Returns MAX_VALUE (= no throttle) when there is no sample yet, so a cold monitor during
+     * world load cannot clamp the depth on the frames a player is most likely to be looking at a
+     * portal.
+     */
+    private static int lagGuardedDepth() {
+        try {
+            int avg = qouteall.imm_ptl.core.miscellaneous.ClientPerformanceMonitor.getAverageFps();
+            if (avg <= 0) {
+                return Integer.MAX_VALUE;
+            }
+            if (avg < 15) {
+                return 1;
+            }
+            if (avg < 25) {
+                return 2;
+            }
+            if (avg < 40) {
+                return 3;
+            }
+            return Integer.MAX_VALUE;
+        }
+        catch (Throwable t) {
+            return Integer.MAX_VALUE;
+        }
     }
 
     /** MONOTONIC count of nested portal passes dispatched (layer >= 1). DELIBERATELY NOT routed
