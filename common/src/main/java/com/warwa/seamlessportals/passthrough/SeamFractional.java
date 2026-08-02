@@ -39,7 +39,7 @@ public final class SeamFractional {
      * lever, and it is consulted independently below so that flipping this flag immediately makes
      * the master lever meaningful in both directions.
      */
-    private static final boolean CUT_IMPLEMENTED = false;
+    private static final boolean CUT_IMPLEMENTED = true;
 
     /**
      * Whether a mirror-admitted seam cell's block is genuinely divided by the portal plane.
@@ -228,6 +228,100 @@ public final class SeamFractional {
     public static double keptThickness(SeamRegistry.SeamBinding binding) {
         SeamRegistry.SeamCut cut = binding.cut();
         return cut == null ? Double.NaN : keptThickness(binding.srcFacing(), cut.srcPlaneOffset());
+    }
+
+    // =============================================================================================
+    // ★ TIER (i) — THE SHAPE THIS SIDE KEEPS. FRACTIONAL_DESIGN.md §4/§5.
+    // =============================================================================================
+
+    /**
+     * ★ The shape a seam cell actually presents to THIS dimension: {@code original} clipped to the
+     * part on this side of the plane. Returns {@code null} when the cell is not cut, which callers
+     * must pass straight through — a null here means "ordinary block", not "empty".
+     *
+     * <p><b>Why this is the ONLY hook the soul-sand rule needs.</b> User decision (2026-08-02) is
+     * that collision follows the cut while support, redstone conduction and suffocation report
+     * WHOLE. Support and conduction read the per-blockstate {@code Cache}, which is position-blind
+     * by construction ({@code BlockBehaviour.java:901-925}) — so they ALREADY answer "whole" with no
+     * intervention at all. The cache-blindness the blast-radius map called a trap is, under this
+     * rule, exactly the behaviour we want, and tier (ii) needs no interception. Only the
+     * position-aware tier (i) — collision, outline, picking — has to be told about the cut.
+     *
+     * <p>Suffocation is the one deliberate exception and it goes the other way; see
+     * {@link #suppressesSuffocation}.
+     */
+    @org.jetbrains.annotations.Nullable
+    public static net.minecraft.world.phys.shapes.VoxelShape keptShape(
+        BlockGetter level, BlockPos pos, net.minecraft.world.phys.shapes.VoxelShape original
+    ) {
+        if (!collisionActive() || original.isEmpty()) {
+            return null;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        if (binding == null) {
+            return null;
+        }
+        SeamRegistry.SeamCut cut = binding.cut();
+        double off = cut.srcPlaneOffset();
+        Direction facing = binding.srcFacing();
+        double kept = keptThickness(facing, off);
+        // Nothing to do at the degenerate ends: a whole cell stays whole, and an empty one would
+        // make the block vanish rather than be cut, which is a different (and wrong) behaviour.
+        if (kept >= 1.0 - EPS || kept <= EPS) {
+            return null;
+        }
+        boolean positive = facing.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+        double lo = positive ? off : 0.0;
+        double hi = positive ? 1.0 : off;
+
+        net.minecraft.world.phys.shapes.VoxelShape slab = switch (facing.getAxis()) {
+            case X -> net.minecraft.world.phys.shapes.Shapes.box(lo, 0.0, 0.0, hi, 1.0, 1.0);
+            case Y -> net.minecraft.world.phys.shapes.Shapes.box(0.0, lo, 0.0, 1.0, hi, 1.0);
+            case Z -> net.minecraft.world.phys.shapes.Shapes.box(0.0, 0.0, lo, 1.0, 1.0, hi);
+        };
+        // Shapes.join handles arbitrary fractions exactly — Shapes.create falls back to
+        // ArrayVoxelShape with literal coordinate lists when the bounds are not a power-of-two
+        // fraction, so there is no quantization to 1/8ths or 1/16ths here.
+        return net.minecraft.world.phys.shapes.Shapes.join(
+            original, slab, net.minecraft.world.phys.shapes.BooleanOp.AND);
+    }
+
+    /**
+     * Whether a cut seam cell should stop suffocating. User decision 2026-08-02: suffocation follows
+     * THE CUT, not the union — because the removed part is a doorway the player is meant to walk
+     * through, and reporting whole would damage them for using the portal. Deliberately the one
+     * place that diverges from soul sand, whose missing 2/16 is ordinary air in the same world.
+     */
+    public static boolean suppressesSuffocation(BlockGetter level, BlockPos pos) {
+        return collisionActive() && cuttingBinding(level, pos) != null;
+    }
+
+    /**
+     * The binding that actually cuts this cell, or null. Fast path first: the {@code BlockGetter}
+     * is very often not a {@link net.minecraft.world.level.Level} at all (the compile path hands
+     * section copies, and the per-blockstate cache uses {@code EmptyBlockGetter}), and every such
+     * call must cost one instanceof.
+     */
+    @org.jetbrains.annotations.Nullable
+    private static SeamRegistry.SeamBinding cuttingBinding(BlockGetter level, BlockPos pos) {
+        if (!(level instanceof net.minecraft.world.level.Level lvl)) {
+            return null;
+        }
+        SeamRegistry.SeamCell seam = SeamRegistry.lookup(lvl, pos);
+        if (seam == null) {
+            return null;
+        }
+        for (SeamRegistry.SeamBinding b : seam.bindings()) {
+            if (b == null || !b.isMirrorable() || b.cut() == null) {
+                continue;
+            }
+            // A DISJOINT binding does not straddle, so it cuts nothing — and that falls out of the
+            // arithmetic rather than needing a phase branch here (kept == 1 ⇒ keptShape bails).
+            if (b.phase() == SeamMap.SeamPhase.COINCIDENT) {
+                return b;
+            }
+        }
+        return null;
     }
 
     /** Total material in a fragment list — the conservation quantity the gate asserts on. */
