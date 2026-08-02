@@ -410,35 +410,47 @@ public class IPGlobal {
             .getMaxPortalLayer();
 
         int configured = irisMaxPortalLayer;
-        if (!IRIS_MAX_LAYER_PINNED_BY_LEVER) {
-            try {
-                configured = com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
-                    .getIrisRecursionDepth();
-                // Keep the reflected field in step with the live value, so RunConfigReport's sweep
-                // and the census's effMaxLayer= column report what is ENFORCED rather than the
-                // compile-time default — a self-report that can disagree with reality is worse than
-                // none.
-                irisMaxPortalLayer = configured;
-            }
-            catch (Throwable t) {
-                // config unavailable (early init / server classpath) — keep the field value
-            }
-        }
-
-        if (isIrisRecursionLagGuardOn()) {
+        if (irisRecursionLagGuard) {
             configured = Math.min(configured, lagGuardedDepth());
         }
         return Math.min(configured, engineBound);
     }
 
-    private static boolean isIrisRecursionLagGuardOn() {
-        try {
-            return com.warwa.seamlessportals.config.SeamlessPortalsConfig.get()
-                .isIrisRecursionLagGuard();
+    /** Live value, written by {@code IPConfig.onConfigChanged} (the config screen and the json).
+     *  Default OFF — see that field's javadoc for why the engine's own lag guard cannot cover deep
+     *  recursion. */
+    public static boolean irisRecursionLagGuard = false;
+
+    /** Resource ceiling on the shaders-ON depth, not a taste limit: each layer a scene ACTUALLY
+     *  REACHES allocates its own full-screen colour+depth target. 128 layers is ~2.1 GB of VRAM at
+     *  1080p and ~8.5 GB at 4K. */
+    public static final int IRIS_RECURSION_DEPTH_CEILING = 128;
+
+    /** Above this, {@link #warnIfDeepRecursion} logs the VRAM arithmetic once per changed pair. */
+    public static final int DEEP_RECURSION_WARN_AT = 8;
+
+    private static int lastWarnedRecursionDepth = -1;
+
+    /**
+     * One line per changed value — loud enough to explain a VRAM cliff after the fact, quiet enough
+     * not to spam someone who set 40 deliberately. Deliberately does NOT clamp below the ceiling:
+     * the value is the user's decision; this only makes its cost legible.
+     */
+    public static void warnIfDeepRecursion(int vanillaDepth, int shaderDepth) {
+        int deepest = Math.max(vanillaDepth, shaderDepth);
+        if (deepest <= DEEP_RECURSION_WARN_AT || deepest == lastWarnedRecursionDepth) {
+            return;
         }
-        catch (Throwable t) {
-            return false;
-        }
+        lastWarnedRecursionDepth = deepest;
+        Helper.LOGGER.warn(
+            "[IS5-REC] Portal recursion depth set deep (maxPortalLayer={}, irisRecursionDepth={})."
+                + " With a shaderpack ON, each layer a scene ACTUALLY REACHES is a full pack-shaded"
+                + " world render AND allocates its own full-screen colour+depth target (~16.6 MB at"
+                + " 1920x1080, ~66 MB at 3840x2160) — so a scene that truly recurses {} deep would"
+                + " hold ~{} MB of them at 1080p. Allocation is lazy, so this costs nothing until"
+                + " such a scene exists. Note a linked REVERSE PAIR still terminates at 2 regardless"
+                + " (isInvalidRecursionRendering); reaching depth N needs a CHAIN of N portals.",
+            vanillaDepth, shaderDepth, deepest, deepest * 17);
     }
 
     /**
