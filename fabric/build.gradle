@@ -197,6 +197,13 @@ loom {
             // RS-ONLY suite mode (gametest-side skip of the crossing/teleport legs) — also exposed
             // here so a live client run can carry it for symmetry, though only the gametest reads it.
             if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
+            // THE FRACTIONAL SEAM MODEL (migration/FRACTIONAL_DESIGN.md). Fix levers DEFAULT-ON;
+            // seamSupportUnion is an EXPERIMENT lever, default-off, needing the user's word (§5).
+            if (project.findProperty('disableSeamFractional') == 'true') { vmArg('-Dseamlessportals.disableSeamFractional=true') }
+            if (project.findProperty('disableSeamFractionalCollision') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalCollision=true') }
+            if (project.findProperty('disableSeamFractionalSupport') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalSupport=true') }
+            if (project.findProperty('seamSupportUnion') == 'true') { vmArg('-Dseamlessportals.seamSupportUnion=true') }
+            if (project.findProperty('seamFractionalProbe') == 'true') { vmArg('-Dseamlessportals.seamFractionalProbe=true') }
         }
         server {
             server()
@@ -404,6 +411,14 @@ loom {
             // far-dest leg 7, leg 5's world reopen); portal staging, 6a/6b and every RS gate still
             // run. The full suite stays the default and is required before a commit.
             if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
+            // THE FRACTIONAL SEAM MODEL (migration/FRACTIONAL_DESIGN.md). rsSeamCollisionGate reads
+            // these: it is lever-aware from its first run, before any fix exists, and reports which
+            // truth it asserted rather than passing vacuously.
+            if (project.findProperty('disableSeamFractional') == 'true') { vmArg('-Dseamlessportals.disableSeamFractional=true') }
+            if (project.findProperty('disableSeamFractionalCollision') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalCollision=true') }
+            if (project.findProperty('disableSeamFractionalSupport') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalSupport=true') }
+            if (project.findProperty('seamSupportUnion') == 'true') { vmArg('-Dseamlessportals.seamSupportUnion=true') }
+            if (project.findProperty('seamFractionalProbe') == 'true') { vmArg('-Dseamlessportals.seamFractionalProbe=true') }
         }
     }
 }

@@ -3832,6 +3832,12 @@ public class CrossingSmoke implements FabricClientGameTest {
                 // a fixture fault. The bottom row rests on the obsidian sill. (Same reasoning, and
                 // the same hazard, as rsFrameBreakGate's own comment below.)
                 rsPlayerPlaceBracketGate(context, new BlockPos(fx, py + 1, fz));
+                // THE FRACTIONAL SEAM COLLISION GATE — the suite's first collision/support/
+                // conduction assertion at a seam. Built FIRST (user decision C, 2026-08-02) and
+                // asserting today's WHOLE-CUBE truth, so the same leg inverts when the model lands.
+                // Placed after the player-place bracket, which leaves both sides AIR, and before the
+                // frame-break gate, which stages its own state on this same bottom-row cell.
+                rsSeamCollisionGate(context, new BlockPos(fx, py + 1, fz));
                 // BOTTOM OPENING ROW, not the mid-height cell the mirror gate uses. Support is
                 // vanilla (user clarification §0.2): a rail at mid-height sits on another aperture
                 // cell holding the noCollision placeholder, so when teardown wipes those cells with
@@ -4507,6 +4513,306 @@ public class CrossingSmoke implements FabricClientGameTest {
                 ? "player-only DISABLED, so a /setblock mirrored too — the old policy is restored"
                 : "a real BlockItem.place mirrored and a /setblock at the same cell did not",
             detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+    }
+
+    /**
+     * ★ THE FRACTIONAL SEAM COLLISION GATE — the first gate in this suite to assert collision at a
+     * seam at all, and the first thing built for the fractional model (user decision C, 2026-08-02:
+     * GATE → STORAGE → COLLISION → render flip LAST). Spec: {@code migration/FRACTIONAL_DESIGN.md} §7.
+     *
+     * <p><b>It asserts TODAY'S WHOLE-CUBE TRUTH, on purpose.</b> Nothing in the suite has ever
+     * asserted collision, support or conduction at a seam cell, so the fractional model would
+     * otherwise ship with zero coverage on the exact three properties it changes. This leg pins all
+     * three now, so that when the model lands the SAME leg inverts — which is what makes it a proof
+     * rather than a hope.
+     *
+     * <p><b>Lever-aware from its first run, without a hardcoded expectation.</b> The expectation is
+     * read from {@link com.warwa.seamlessportals.passthrough.SeamFractional#active()}, never
+     * hardcoded, and the verdict line REPORTS which branch ran
+     * ({@code SeamFractional.describe()}). Until front 3 flips {@code CUT_IMPLEMENTED} that branch
+     * is always the whole-cube one — said out loud rather than passing vacuously, because a gate
+     * that cannot tell "the fix works" from "the defect never existed here" is not a gate.
+     *
+     * <p>Three arms, because collision at a seam is not one property (§4 of the spec):
+     * <ol>
+     *   <li><b>MOVEMENT</b> — tier (i). Measures the block's collision extent along the seam axis
+     *       THROUGH THE REAL FUNNEL ({@code getBlockCollisions} → {@code BlockCollisions:93} →
+     *       {@code CollisionContext.getCollisionShape}, the one call that HAS the position), not
+     *       through the 2-arg cached accessor. Whole cube ⇒ span 1.0; cut ⇒ span
+     *       {@code keptThickness}.</li>
+     *   <li><b>SUPPORT / RAIL SURVIVAL</b> — tier (ii). A rail on a seam-cell support block. This is
+     *       the (b) use case, and the model's sharpest hazard: {@code BaseRailBlock.canSurvive} is
+     *       {@code canSupportRigidBlock(pos.below())}, which reaches the CACHED {@code faceSturdy[]}.
+     *       Also records the contested {@code getFaceShape(UP)} geometry (see below).</li>
+     *   <li><b>SUFFOCATION / CONDUCTION</b> — tier (ii), the predicate seam. Uses
+     *       {@code Blocks.SOUL_SAND} as well as stone, because soul sand is vanilla's own proof that
+     *       the cached full-block flag and the conduction predicate can DISAGREE: its collision
+     *       shape is 14/16 (so {@code isCollisionShapeFullBlock} is false) while
+     *       {@code isRedstoneConductor} is forced true by an overridden {@code StatePredicate}. A
+     *       side table that intercepts only the cached flag would silently miss it and every one of
+     *       the ~34 vanilla blocks shaped like it. Spec §4a.</li>
+     * </ol>
+     *
+     * <p>⚠ <b>It also settles a question this project deliberately refused to settle by reading.</b>
+     * Two independent traces of {@code VoxelShape.calculateFace} → {@code SliceShape} say
+     * {@code getFaceShape(UP)} of a half-height box is {@code Shapes.empty()} — which would mean a
+     * bottom slab supports nothing, contradicting observed game behaviour. Arm 2 asks the engine
+     * directly and logs the answer. No design decision rests on resolving it by argument.
+     *
+     * <p>Runs on the BOTTOM opening row for the same reason {@link #rsPlayerPlaceBracketGate} and
+     * {@link #rsFrameBreakGate} do: a rail at mid-height sits on another aperture cell holding the
+     * noCollision placeholder, so it would pop for a fixture reason and the gate would blame the
+     * model. Restores both cells to air in its {@code finally} — {@code rsFrameBreakGate} runs next
+     * on this very cell and must not inherit a dirty fixture.
+     */
+    private static void rsSeamCollisionGate(ClientGameTestContext context, BlockPos cell) {
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+            BlockPos above = cell.above();
+            try {
+                // ---- PRECONDITIONS. Assert the FIXTURE, not just the outcome: a leg that runs on a
+                // cell with no mirrorable COINCIDENT binding is measuring ordinary terrain and would
+                // report a confident, meaningless PASS.
+                var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+                if (seam == null) { failure.set("no seam binding at " + cell); return; }
+                var binding = seam.bindings().stream()
+                    .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                    .filter(b -> b.phase()
+                        == com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT)
+                    .findFirst().orElse(null);
+                if (binding == null) {
+                    failure.set("no mirror-admitted COINCIDENT binding at " + cell
+                        + " — the fixture is wrong, not the model. Bindings: " + seam.bindings());
+                    return;
+                }
+                if (!com.warwa.seamlessportals.passthrough.SeamFractional.cuts(ow, cell)) {
+                    failure.set("SeamFractional.cuts() says this cell is not a cut candidate at "
+                        + cell + ", but the binding above is mirror-admitted and COINCIDENT."
+                        + " The predicate and the fixture disagree.");
+                    return;
+                }
+                net.minecraft.core.Direction.Axis axis = binding.srcFacing().getAxis();
+                boolean cutExpected =
+                    com.warwa.seamlessportals.passthrough.SeamFractional.collisionActive();
+                boolean supportCutExpected =
+                    com.warwa.seamlessportals.passthrough.SeamFractional.supportActive();
+
+                // ================= ARM 1 — MOVEMENT (tier i, through the real funnel) =============
+                writeAsPlayer(ow, above, Blocks.AIR.defaultBlockState());
+                writeAsPlayer(ow, cell, Blocks.STONE.defaultBlockState());
+                if (!ow.getBlockState(cell).is(Blocks.STONE)) {
+                    failure.set("the stone staging did not land at " + cell + " (found "
+                        + ow.getBlockState(cell).getBlock() + ") — fixture fault, not a model fault");
+                    return;
+                }
+                // Deflated to this cell alone, so the measured span is THIS block's and not a
+                // neighbour's. getBlockCollisions is the entity-movement funnel: it routes through
+                // BlockCollisions -> CollisionContext.getCollisionShape(state, getter, POS), the
+                // 3-arg form that has no cache branch. Deliberately NOT the 2-arg accessor.
+                net.minecraft.world.phys.AABB probe =
+                    new net.minecraft.world.phys.AABB(cell).deflate(1.0E-3);
+                double lo = Double.POSITIVE_INFINITY;
+                double hi = Double.NEGATIVE_INFINITY;
+                int shapesSeen = 0;
+                for (net.minecraft.world.phys.shapes.VoxelShape s
+                        : ow.getBlockCollisions(null, probe)) {
+                    if (s.isEmpty()) continue;
+                    shapesSeen++;
+                    net.minecraft.world.phys.AABB b = s.bounds();
+                    lo = Math.min(lo, axis.choose(b.minX, b.minY, b.minZ));
+                    hi = Math.max(hi, axis.choose(b.maxX, b.maxY, b.maxZ));
+                }
+                // COVERAGE, not just result: zero shapes means the funnel never saw our block and
+                // every assertion below would be vacuous.
+                if (shapesSeen == 0) {
+                    failure.set("ARM 1 VACUOUS — the collision funnel returned no shape for a stone"
+                        + " block at " + cell + ". The gate measured nothing.");
+                    return;
+                }
+                double span = hi - lo;
+                double expectedSpan = cutExpected
+                    ? com.warwa.seamlessportals.passthrough.SeamFractional.keptThickness(
+                        binding.srcFacing(),
+                        com.warwa.seamlessportals.passthrough.SeamFractional.planeOffset(binding, cell))
+                    : 1.0;
+                if (Math.abs(span - expectedSpan) > 1.0E-4) {
+                    failure.set("ARM 1 (MOVEMENT) — collision span along " + axis + " at " + cell
+                        + " is " + span + ", expected " + expectedSpan + " ("
+                        + (cutExpected ? "the cut half" : "a whole cube")
+                        + "). shapes=" + shapesSeen + " lo=" + lo + " hi=" + hi);
+                    return;
+                }
+
+                // ================= ARM 2 — SUPPORT / RAIL SURVIVAL (tier ii) ======================
+                // The direct predicate first, then the gameplay outcome it decides. Asserting only
+                // the rail would not distinguish "support reports whole" from "the rail never got
+                // placed"; asserting only the predicate stops one step short of what the user sees.
+                var stone = ow.getBlockState(cell);
+                boolean rigid = stone.isFaceSturdy(ow, cell, net.minecraft.core.Direction.UP,
+                    net.minecraft.world.level.block.SupportType.RIGID);
+                if (rigid == supportCutExpected) {
+                    failure.set("ARM 2 (SUPPORT) — SupportType.RIGID on the UP face of the seam cell "
+                        + cell + " reported " + rigid + "; expected " + (!supportCutExpected)
+                        + ". RIGID requires the 2px PERIMETER frame, so a cut at any fraction < 1"
+                        + " must fail it and a whole cube must pass it.");
+                    return;
+                }
+                // ⚠ THE PREDICATE IS THE LOAD-BEARING ASSERTION, and a raw write is NOT.
+                // Blocks.RAIL is the curvable rail, so BaseRailBlock.isStraight is FALSE — which
+                // means onPlace -> updateState does NOT call neighborChanged (BaseRailBlock:70-76),
+                // and nothing consults canSurvive at write time. A setBlock'd rail therefore sits
+                // there until some LATER neighbour update pops it. Reading "is a rail still at this
+                // position" immediately after the write would pass in BOTH lever directions once
+                // the model lands — the vacuous-pass family this project has been bitten by five
+                // times. So: assert canSurvive directly (deterministic, position-live, and exactly
+                // what shouldBeRemoved consults), THEN drive a real neighbour update and assert the
+                // visible outcome as well.
+                boolean railCanSurvive = Blocks.RAIL.defaultBlockState().canSurvive(ow, above);
+                if (railCanSurvive == supportCutExpected) {
+                    failure.set("ARM 2 (RAIL canSurvive) — Blocks.RAIL.canSurvive at " + above
+                        + " reported " + railCanSurvive + ", expected " + (!supportCutExpected)
+                        + ". BaseRailBlock.canSurvive is canSupportRigidBlock(pos.below()), so it"
+                        + " must track the RIGID verdict on " + cell + " (which was " + rigid + ").");
+                    return;
+                }
+                writeAsPlayer(ow, above, Blocks.RAIL.defaultBlockState());
+                // The update the raw write does not perform. Without this the read below is timing-
+                // dependent rather than a verdict.
+                ow.updateNeighborsAt(cell, ow.getBlockState(cell).getBlock(), null);
+                boolean railSurvived = ow.getBlockState(above).is(Blocks.RAIL);
+                if (railSurvived == supportCutExpected) {
+                    failure.set("ARM 2 (RAIL SURVIVAL) — rail at " + above + " on a seam-cell support"
+                        + " block: survived=" + railSurvived + " after a real neighbour update,"
+                        + " expected " + (!supportCutExpected) + " to match canSurvive="
+                        + railCanSurvive + ". Found " + ow.getBlockState(above).getBlock());
+                    return;
+                }
+
+                // ⚠ REPORT-ONLY, and the reason it is here: two independent source traces of
+                // VoxelShape.calculateFace -> SliceShape say getFaceShape(UP) of a half-height box
+                // is Shapes.empty(), which would mean a bottom slab supports nothing — contradicting
+                // observed game behaviour. Ask the engine instead of arguing about it.
+                // ⚠ AND IT IS MEASURED AT THE OUTCOME LEVEL, NOT THE PREDICATE LEVEL. The first
+                // build of this probe read isFaceSturdy only and got CENTER=false for a bottom slab
+                // — which would mean a torch cannot be placed on a slab, contradicting observable
+                // game behaviour. A predicate reading that fails a sanity check is the probe
+                // confessing, not the engine: "assert the outcome the user can see, not the request
+                // your code issued". So place a REAL slab and put real blocks on it.
+                var slab = Blocks.SMOOTH_STONE_SLAB.defaultBlockState();
+                boolean slabRigid = slab.isFaceSturdy(ow, cell, net.minecraft.core.Direction.UP,
+                    net.minecraft.world.level.block.SupportType.RIGID);
+                boolean slabCenter = slab.isFaceSturdy(ow, cell, net.minecraft.core.Direction.UP,
+                    net.minecraft.world.level.block.SupportType.CENTER);
+                // ⚠ SCRATCH COLUMN — LATERALLY clear of the aperture, never BELOW it. The first
+                // build used cell.offset(0,-6,0), which for this fixture is y=-65: one block under
+                // the overworld floor, so setBlock silently did nothing and the "outcome" was read
+                // against empty space. It still PASSED, because the coverage was logged and not
+                // asserted. Hence both changes here: a position inside the build range, and a hard
+                // assertion that the slab actually landed.
+                BlockPos slabAt = cell.offset(6, 2, 6);
+                BlockPos onSlab = slabAt.above();
+                var priorSlabAt = ow.getBlockState(slabAt);
+                var priorOnSlab = ow.getBlockState(onSlab);
+                boolean slabRailSurvives;
+                boolean slabTorchSurvives;
+                boolean slabPlaced;
+                try {
+                    writeAsPlayer(ow, onSlab, Blocks.AIR.defaultBlockState());
+                    writeAsPlayer(ow, slabAt, slab);
+                    slabPlaced = ow.getBlockState(slabAt).is(Blocks.SMOOTH_STONE_SLAB);
+                    slabRailSurvives = Blocks.RAIL.defaultBlockState().canSurvive(ow, onSlab);
+                    slabTorchSurvives = Blocks.TORCH.defaultBlockState().canSurvive(ow, onSlab);
+                } finally {
+                    // Restore what was there, not blanket AIR — this column is outside the fixture
+                    // and punching a hole in it would perturb a later leg for no reason.
+                    writeAsPlayer(ow, onSlab, priorOnSlab);
+                    writeAsPlayer(ow, slabAt, priorSlabAt);
+                }
+                if (!slabPlaced) {
+                    failure.set("THE SLAB PROBE MEASURED NOTHING — no slab landed at " + slabAt
+                        + " (found " + ow.getBlockState(slabAt).getBlock() + ", world floor is "
+                        + ow.getMinY() + "). The §1.3 outcome reading would be vacuous, and a"
+                        + " vacuous reading of a contested question is worse than no reading.");
+                    return;
+                }
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "[SEAM FRAC] CONTESTED GEOMETRY (FRACTIONAL_DESIGN.md §1.3) — bottom slab"
+                        + " at {}: predicate isFaceSturdy RIGID={} CENTER={}; OUTCOME on a real"
+                        + " placed slab (placed={}) rail.canSurvive={} torch.canSurvive={}."
+                        + " If the OUTCOMES are true while the predicates are false, the predicate"
+                        + " reading is the wrong instrument and the half-height-box trace does NOT"
+                        + " describe what the game does.",
+                    slabAt, slabRigid, slabCenter, slabPlaced, slabRailSurvives, slabTorchSurvives);
+
+                // ============ ARM 3 — SUFFOCATION / CONDUCTION (tier ii, predicate seam) =========
+                writeAsPlayer(ow, above, Blocks.AIR.defaultBlockState());
+                boolean stoneSuffocates = stone.isSuffocating(ow, cell);
+                boolean stoneConducts = stone.isRedstoneConductor(ow, cell);
+                if (stoneSuffocates == supportCutExpected || stoneConducts == supportCutExpected) {
+                    failure.set("ARM 3 (STONE) — at seam cell " + cell + " isSuffocating="
+                        + stoneSuffocates + " isRedstoneConductor=" + stoneConducts + "; both"
+                        + " expected " + (!supportCutExpected) + ". Default derivation is"
+                        + " isCollisionShapeFullBlock, read from the per-blockstate cache.");
+                    return;
+                }
+                // THE PREDICATE-SEAM WITNESS. This is a VANILLA invariant, so it is a precondition:
+                // if soul sand ever stops disagreeing with its own cached full-block flag, this arm
+                // has stopped covering the ~34 blocks that override the predicate and must say so.
+                writeAsPlayer(ow, cell, Blocks.SOUL_SAND.defaultBlockState());
+                var soul = ow.getBlockState(cell);
+                if (!soul.is(Blocks.SOUL_SAND)) {
+                    failure.set("the soul sand staging did not land at " + cell + " (found "
+                        + soul.getBlock() + ") — fixture fault");
+                    return;
+                }
+                boolean soulFullBlock = soul.isCollisionShapeFullBlock(ow, cell);
+                boolean soulConducts = soul.isRedstoneConductor(ow, cell);
+                if (soulFullBlock) {
+                    failure.set("ARM 3 COVERAGE LOST — soul sand reported isCollisionShapeFullBlock="
+                        + "true. Its collision shape is column(16,0,14), so this arm no longer covers"
+                        + " the case where the cached flag and the conduction predicate disagree.");
+                    return;
+                }
+                if (soulConducts == supportCutExpected) {
+                    failure.set("ARM 3 (PREDICATE SEAM) — soul sand at " + cell
+                        + " isRedstoneConductor=" + soulConducts + ", expected "
+                        + (!supportCutExpected) + ". Soul sand overrides the predicate to always;"
+                        + " a side table that intercepts only isCollisionShapeFullBlock would miss"
+                        + " this and every one of the ~34 vanilla blocks shaped like it.");
+                    return;
+                }
+
+                detail.set("cell=" + cell + " axis=" + axis + " facing=" + binding.srcFacing()
+                    + " span=" + span + "/" + expectedSpan + " shapes=" + shapesSeen
+                    + " rigid=" + rigid + " railCanSurvive=" + railCanSurvive
+                    + " railSurvived=" + railSurvived
+                    + " stone[suffocate=" + stoneSuffocates + " conduct=" + stoneConducts + "]"
+                    + " soulSand[fullBlock=" + soulFullBlock + " conduct=" + soulConducts + "]"
+                    + " slab[RIGID=" + slabRigid + " CENTER=" + slabCenter + "]");
+            } finally {
+                // MANDATORY — rsFrameBreakGate runs next on this very cell and stages its own state.
+                try {
+                    writeAsPlayer(ow, cell.above(), Blocks.AIR.defaultBlockState());
+                    writeAsPlayer(ow, cell, Blocks.AIR.defaultBlockState());
+                } catch (Throwable t) {
+                    SeamlessPortalsConstants.LOGGER.warn(
+                        LOG + "[SEAM FRAC] CLEANUP FAILED — the frame-break gate may see a dirty"
+                            + " fixture at " + cell, t);
+                }
+            }
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS SEAM COLLISION GATE FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS SEAM COLLISION GATE PASS — model is {}. {}",
+            com.warwa.seamlessportals.passthrough.SeamFractional.describe(), detail.get());
     }
 
     /**
