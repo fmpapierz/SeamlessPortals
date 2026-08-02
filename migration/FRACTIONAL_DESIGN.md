@@ -397,12 +397,43 @@ not merely asserted about.
 
 ---
 
-## §5 THE SUPPORT RULE
+## §5 THE SUPPORT RULE — ★ SUPERSEDED BY USER DECISION 2026-08-02 (second round)
 
-**Decision B says a partial block reports partial. Rails pop.** That is the shipped default.
+> **★★ USER DECISION, after the live round: THE SOUL SAND BEHAVIOUR, AT ALL OFFSETS.**
+> *"i need the soul sand to work at all points"* — arbitrary, INDEPENDENT per-side offsets
+> (.3, .21, .07, …), not just complementary pairs. This **replaces** the earlier decision B reading
+> ("a partial block reports partial, rails pop"), which was taken before `SOUL_SAND` (§4a) and the
+> measured slab result (§1.3a) were on the table.
 
-⚠ **§4a materially strengthens the alternative below** — the "union" reading is not a novel invention,
-it is `SOUL_SAND`'s shipped behaviour. Worth re-reading before the live round.
+**The rule, stated once:**
+
+| property | follows | why |
+|---|---|---|
+| collision (walking, raytrace, picking) | **THE CUT**, at the local plane | the doorway must be walk-through-able |
+| support (rails, torches, everything placed on it) | **WHOLE** — `getBlockSupportShape` → `Shapes.block()` | there is a full block of material; half is simply on the far side |
+| redstone conduction | **WHOLE** | same |
+| suffocation | **WHOLE** (soul sand's own choice) — see the open note below | |
+
+### ★ IT IS FRACTION-AGNOSTIC *AND* COMPLEMENTARITY-AGNOSTIC — and an earlier claim here was wrong
+
+An earlier draft of this section argued that the union of the two halves is exactly one cube, that
+EXACT alignment guarantees it, and therefore that "Option B's precondition is already enforced by the
+existing policy". **That was wrong twice, and the user corrected both:**
+
+1. **Option B needs no such precondition.** The implementation is `getBlockSupportShape` returning
+   `Shapes.block()` — a CONSTANT. It never reads the fraction and never reads the other side. It is
+   correct at .3, at .21, at .07, and it does not care whether the two halves sum to a whole block.
+   The union argument was a *justification* dressed up as a *requirement*.
+2. **"Enforced by the policy" was the wrong word regardless.** The policy does not make
+   non-complementary pairs work — it **refuses** them (`latticeAligned` false ⇒ `OFFSET` ⇒ declined).
+   Refusing the case the user needs is not handling it.
+
+⚠ **OPEN, ONE SUB-QUESTION:** suffocation. `SOUL_SAND` puts it on the whole side, and the decision
+above says "soul sand behaviour", so WHOLE is the default. But soul sand's missing 2/16 is empty air
+in the *same* world, whereas a seam cell's missing part is solid in the *far* world — so a player
+whose head is in the removed part is in space that is empty in their own dimension. If that reads
+wrong live, `-PdisableSeamSuffocationUnion` flips suffocation to follow the cut. Flagged, not decided
+by me.
 
 ⚠ **OPEN — NEEDS THE USER'S WORD BEFORE IT COULD EVER BECOME DEFAULT.** There is a second defensible
 reading of "partial" *at a seam specifically*: a COINCIDENT/FRACTIONAL cell is, in `SeamMap`'s own
@@ -482,6 +513,35 @@ run certifies one of two shipping configurations. Recorded, not solved, in v1.
   (IP already has `MixinClipContext`) if the panel later wants them cut.
 - **`destinationIsFree` does a SYNCHRONOUS chunk load on the placement path**
   (`SeamMirror.java:166-167`) — widening what `mayPlace` inspects widens that exposure.
+
+---
+
+## §8a ★ THE OFFSET JOB IS IN SCOPE — pulled in by the 2026-08-02 "at all points" decision
+
+§5's decision requires **arbitrary INDEPENDENT per-side offsets** — .3 on one side, .21 on the other.
+Those are not complementary, so `latticeAligned` (`SeamMap.java:285-288`) returns false, the pair
+classifies `SeamAlignment.OFFSET`, and `SeamMirrorPolicy.mirrors(SeamAlignment)`
+(`SeamMirrorPolicy.java:61-70`) **declines it**.
+
+**A decline is not "query-only".** It sets `mirrorable = false` at `SeamRegistry.bind`, which nulls
+`destDim`/`destPos` **and clears `seamContinuous`** — and every (b) rail, (c) signal and (d) cart path
+gates on `isMirrorable() && seamContinuous()`. So a .3/.21 pair is currently **dead** for rails,
+redstone, minecarts, frame links and the clip renderer.
+
+⇒ **§11's offset work can no longer be deferred.** It was listed as "sizing", it is now a dependency.
+What §11's measurement already established: flipping `-PdisableSeamExactOnly` takes 9 declined cells
+to 0 and switches 9 more phase/continuation checks on, with the suite green — but the existing fixture
+**cannot discriminate the destination arithmetic** (portal A is one-way, so `resolveDestCell` returns
+`SeamMap.mirrorCell` verbatim). The first real task is therefore the discriminating fixture: a
+REVERSE portal at an offset destination.
+
+⚠ And the four hazards a widened predicate hits, from `REDSTONE_C2_HANDOFF.md` §1 — none of them
+touched by the soul-sand rule, all of them still live: the second independent gate
+(`SeamMirror.isPhaseGated`, which classifies the canonical offset pair COINCIDENT on one side and
+DISJOINT on the other, making mirroring one-directional); column pairing going 3-against-2 under
+lateral offset (`SeamMap.enumerateColumns`, `MIN_OVERLAP 0.5`); `resolveDestCell` diverging between
+client and server when the far ClientLevel is cold; and five never-exercised subsystems switching on
+at once.
 
 ---
 
