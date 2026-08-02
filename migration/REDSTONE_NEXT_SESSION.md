@@ -35,11 +35,30 @@ generalise "to everything else easily, including offset mirroring" — that is w
 - **Same-frame mirroring**, place AND break — the mirrored half now appears in the same frame as the
   player's own block, like vanilla. Lever `-PdisableSeamPrediction`. User-confirmed both directions.
 
-## ★★ NEXT ENGAGEMENT IS (c) STEP 2 — WIRE/DUST. Brief: `migration/REDSTONE_C2_HANDOFF.md`,
-## starter prompt: `migration/REDSTONE_C2_PROMPT.md`
+## ★★ NEXT ENGAGEMENT IS THE FRACTIONAL SEAM MODEL — **USER DECISION 2026-08-01**
+## Brief: `migration/FRACTIONAL_HANDOFF.md`, starter prompt: `migration/FRACTIONAL_PROMPT.md`
 
-**Chosen 2026-08-01 over the fractional model, against the (e) session's own initial
-recommendation.** A four-reader survey refuted all three arguments for fractional-first: the
+**The user chose fractional after being shown the survey that recommended (c) step 2 instead.**
+That alternative is fully briefed and stays ready at `migration/REDSTONE_C2_HANDOFF.md` /
+`REDSTONE_C2_PROMPT.md`, and queues behind this — note its connection-shape surface must be
+re-derived once a seam cell is partial.
+
+⚠ **FRACTIONAL IS A DESIGN PANEL BEFORE IT IS AN IMPLEMENTATION.** There is no spec anywhere:
+recon §0.9 is six lines under "do not build now", `SEAM_CLIP_DESIGN.md` is the RENDERER only.
+**Two decisions gate everything and both need the user's word:** (A) the FRACTION — arbitrary or
+exactly ½? The code today is BINARY (`SeamMap.phaseOf`) and the clip's `PlaneKey` stores halves
+only, so "arbitrary fraction" is unreachable by current policy. (B) the STORAGE — BlockStates /
+position-keyed side table / BlockEntity, each with a named disqualifier.
+
+⚠ **THE SHARPEST HAZARD: a vertically half-cut cube fails `SupportType.RIGID`**, so
+`BaseRailBlock.canSurvive` **pops a rail off a partial support block** — the exact (b) use case.
+Fractional BREAKS it unless the panel decides how a partial block reports support. And **there is
+no collision gate anywhere in the suite** — build it first, asserting today's whole-cube truth so
+it inverts when fractional lands.
+
+### The survey's case for (c) step 2 first — recorded because it is real, not to relitigate
+
+A four-reader survey refuted all three arguments for fractional-first: the
 offset decline only bites WAND-BUILT pairs (obsidian pairs are COINCIDENT+EXACT by construction and
 already carry everything); (e)'s fresh render context sits where fractional is CHEAP, while its
 expensive fronts (collision, state storage) are server-side greenfield; and fractional's renderer
