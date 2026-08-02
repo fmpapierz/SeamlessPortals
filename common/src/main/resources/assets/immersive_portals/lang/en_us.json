@@ -16,7 +16,7 @@
   "imm_ptl.command.make_portal.success": "Created %sx%s portal %s%s -> %s%s",
   "imm_ptl.command.tpme.success": "Teleported self to %s",
   "imm_ptl.command.tp.success": "Teleported %d entities to %s",
-  "imm_ptl.laggy": "Rendering Fewer Portals Because Laggy. (Lag Attack Proof can be Disabled in Config)",
+  "imm_ptl.laggy": "⚠ Portal recursion limited to 1 layer — low FPS. Turn off \"Lag Attack Proof\" in the config to keep full depth.",
   "imm_ptl.pure_mirror": "Pure Mirror",
   "imm_ptl.portal_gen": "Custom Portal Generation",
   "imm_ptl.not_pointing_portal": "You are not pointing to any portal",

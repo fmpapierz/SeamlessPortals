@@ -459,6 +459,21 @@ public class IPGlobal {
      *  1080p and ~8.5 GB at 4K. */
     public static final int IRIS_RECURSION_DEPTH_CEILING = 128;
 
+    /**
+     * IS5-RLOAD — total number of portal-destination chunk loaders one player may generate per tick
+     * while walking the portal chain ({@code ChunkVisibility.loadPortalChainRecursively}).
+     *
+     * <p>DEPTH ALONE DOES NOT BOUND THIS. Portals fan out: a room with 5 portals each seeing 5 more
+     * is 25 regions at depth 3 and 125 at depth 4. This is the bound that stops a dense build from
+     * pinning thousands of chunk regions loaded on the server. 64 is generous for any hand-built
+     * chain (a 10-deep single chain needs 10) while still capping the pathological case.
+     *
+     * <p>When it bites, the chain simply stops loading further out — the same visual result as
+     * before this fix existed, and strictly better than a stalled server tick.
+     */
+    public static int portalChainLoaderBudget =
+        Integer.getInteger("seamlessportals.portalChainLoaderBudget", 64);
+
     /** Above this, {@link #warnIfDeepRecursion} logs the VRAM arithmetic once per changed pair. */
     public static final int DEEP_RECURSION_WARN_AT = 8;
 
