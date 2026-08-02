@@ -138,10 +138,49 @@ something (most plausibly iris) sets it back before our draws. Bytecode is not g
 ## §7 THE QUEUE AFTER THIS (user-set 2026-08-01)
 
 1. **THIS** — recursive portal visibility, shaders ON.
-2. **The C2 JIT defect** — memory `temurin-c2-jit-crash`. Six victims, five in the portal
-   occlusion-query / `doRenderPortal` region, crashes on BOTH Temurin 25.0.2 and Zulu 25.0.4, so it
-   is a code-shape problem and not a vendor problem. Six `CompileCommand=exclude` rows are the
-   current mitigation and are load-bearing. **A seventh exclude is not the answer** — the question is
-   what about that region C2 cannot compile. NOTE the overlap: recursion work will touch
-   `doRenderPortal`, which is victim #6, so this arc may perturb it either way.
+2. **The C2 JIT defect** — memory `temurin-c2-jit-crash`, report draft
+   `migration/C2_JIT_BUG_REPORT.md`. Six victims, five in the portal occlusion-query /
+   `doRenderPortal` region, crashes on BOTH Temurin 25.0.2 and Zulu 25.0.4, so it is a code-shape
+   problem and not a vendor problem. The diagnosis: the chain compiles into ONE unit of 300-600
+   inlined methods (counted from the replay files), and C2 dies at a fixed point in it — every crash
+   faults reading `0x2c` with `RAX=0`. Six `CompileCommand=exclude` rows are the current mitigation
+   and are load-bearing. **A seventh exclude is not the answer.**
+
+   > ### ★ USER DECISION 2026-08-01 — THE `dontinline` EXPERIMENT IS DEFERRED UNTIL AFTER THIS ARC
+   > The prepared fix is ONE flag replacing the six exclusions:
+   > ```
+   > -XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea
+   > ```
+   > (chosen because it sits BELOW every observed crash root, so unlike `exclude` it cannot let C2
+   > re-root on a sibling; it keeps everything JIT-compiled; and it also covers the shaders-OFF
+   > stencil renderer, which shares the identical call shape and is unprotected today).
+   >
+   > **DO NOT run it before the recursion work.** The user's reasoning, and it is right: this arc
+   > will restructure `doRenderPortal` — crash victim #6 — so the inlining tree is about to change.
+   > Testing the flag against a tree that is about to be rewritten would measure the wrong thing, and
+   > a clean result would have to be re-earned afterwards anyway.
+   >
+   > **KEEP THE SIX EXCLUDES IN PLACE MEANWHILE.** They are the working mitigation. Do not "tidy"
+   > them during the recursion work — that mistake has already been made once this session
+   > (`8b96a3e`, reverted by `c258873`).
+   >
+   > **The recursion arc is itself an unplanned experiment on the tree — watch it.** If crash
+   > frequency, or the victim named in `Current CompileTask`, changes while recursion work is in
+   > flight, that is free evidence about the mechanism. Record any new `hs_err_pid*.log` rather than
+   > dismissing it as "the known crash".
+   >
+   > **When the time comes, two traps:**
+   > (a) **Do NOT accelerate with `-Xcomp` or `CompileThreshold=1`** — they destroy the receiver-type
+   > profile on `renderingFunc.run()`, and that profile is what drives the inline welding the tree
+   > together, so they would produce a FALSE NEGATIVE.
+   > (b) **A clean run is weak evidence** (historical MTTF 182-999 s). Gate on the MECHANISM, not on
+   > silence: with `-XX:CompileCommand=PrintInlining,...doRenderPortal`, require the literal
+   > `renderPortalArea … failed to inline: disallowed by CompileCommand` line AND that the printed
+   > tree shrank from ~459 nodes to ~100. If you cannot show the tree shrank, "no crash" means
+   > nothing.
+   >
+   > **There may also be an offline reproducer already sitting on disk:** four HotSpot replay files
+   > (`fabric/runs/client-sodium/replay_pid*.log`, one `compile` record each) may re-run the exact
+   > failing compilation via `-XX:+ReplayCompiles` in seconds, with no game. Untested. If it works it
+   > makes every A/B instant and the upstream report far more actionable.
 3. **The MB bloom-ring commission** — `MB_SMEAR_HANDOFF` §1c, one look with Motion Blur explicitly ON.
