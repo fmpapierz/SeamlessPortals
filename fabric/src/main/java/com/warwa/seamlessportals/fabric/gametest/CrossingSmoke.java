@@ -4697,6 +4697,31 @@ public class CrossingSmoke implements FabricClientGameTest {
     }
 
     /**
+     * The collision extent of one cell along one axis, measured THROUGH THE REAL FUNNEL
+     * ({@code getBlockCollisions} → {@code BlockCollisions:93} → the 3-arg
+     * {@code CollisionContext.getCollisionShape}). Deliberately not the 2-arg cached accessor, which
+     * reads the position-blind per-blockstate cache and would report a whole cube no matter what.
+     * Returns 0 when the funnel yields nothing.
+     */
+    private static double seamAxisSpan(
+        ServerLevel level, BlockPos cell, net.minecraft.core.Direction.Axis axis
+    ) {
+        net.minecraft.world.phys.AABB probe =
+            new net.minecraft.world.phys.AABB(cell).deflate(1.0E-3);
+        double lo = Double.POSITIVE_INFINITY;
+        double hi = Double.NEGATIVE_INFINITY;
+        for (net.minecraft.world.phys.shapes.VoxelShape s : level.getBlockCollisions(null, probe)) {
+            if (s.isEmpty()) {
+                continue;
+            }
+            net.minecraft.world.phys.AABB b = s.bounds();
+            lo = Math.min(lo, axis.choose(b.minX, b.minY, b.minZ));
+            hi = Math.max(hi, axis.choose(b.maxX, b.maxY, b.maxZ));
+        }
+        return hi < lo ? 0.0 : hi - lo;
+    }
+
+    /**
      * ★ THE FRAGMENT BINDING GATE — connects the pure arithmetic to REAL portal geometry.
      *
      * <p>{@link #rsFragmentArithmeticGate} proves the decomposition is self-consistent on synthetic
@@ -4987,6 +5012,14 @@ public class CrossingSmoke implements FabricClientGameTest {
                         + ow.getBlockState(cell).getBlock() + ") — fixture fault, not a model fault");
                     return;
                 }
+                // ★ ESTABLISH THE STARTING STATE ONCE, HERE. rsPlayerPlaceBracketGate drives a REAL
+                // BlockItem.place on this same cell immediately before this leg, so an owner half is
+                // already recorded — twice now this gate has gone red measuring that leftover
+                // instead of its own fixture. This leg stages its block with a raw setBlock, which
+                // records no placement, so "no owner" IS the correct state for it; make that true
+                // rather than assume it. (Both reds were the same shape: assuming a precondition
+                // instead of creating it.)
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cell);
                 // Deflated to this cell alone, so the measured span is THIS block's and not a
                 // neighbour's. getBlockCollisions is the entity-movement funnel: it routes through
                 // BlockCollisions -> CollisionContext.getCollisionShape(state, getter, POS), the
@@ -5012,14 +5045,71 @@ public class CrossingSmoke implements FabricClientGameTest {
                     return;
                 }
                 double span = hi - lo;
-                // ★ The expectation comes from the binding's OWN cut, not from a hardcoded half.
-                // An earlier build read the SeamFractional.planeOffset stub (which returns 0.5
-                // unconditionally), so it would have passed a portal whose real plane sat anywhere
-                // in the COINCIDENT window — the exact silent mis-cut this model exists to close.
-                double expectedSpan = cutExpected && binding.cut() != null
-                    ? com.warwa.seamlessportals.passthrough.SeamFractional.keptThickness(
-                        binding.srcFacing(), binding.cut().srcPlaneOffset())
-                    : 1.0;
+
+                // ★ ARM 1b — THE OWNER HALF (FRACTIONAL_DESIGN.md §2a.0). The live round proved the
+                // cut cannot be derived from the binding: an obsidian portal is bi-faced, so the
+                // cell has two bindings with opposite facings and picking one gave the WRONG half.
+                // The half is recorded at placement from the crosshair hit point. This arm drives
+                // that store directly through its three states, which is the only way to falsify
+                // the rule without a real click.
+                if (cutExpected && binding.cut() != null) {
+                    double off2 = binding.cut().srcPlaneOffset();
+                    // ★ ESTABLISH THE PRECONDITION, DO NOT ASSUME IT. rsPlayerPlaceBracketGate runs
+                    // a REAL BlockItem.place on this very cell immediately before this leg, so an
+                    // owner half is already recorded here — the first build of this arm read the
+                    // span from arm 1 and asserted "no owner", then went red at 0.5 because there
+                    // WAS one. (That red is also the proof the placement capture works.) Clear the
+                    // store and re-measure so each state below is the one being tested.
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cell);
+                    double unowned = seamAxisSpan(ow, cell, axis);
+                    // (i) NO OWNER — a pre-existing block must stay WHOLE. Guessing a half here is
+                    // exactly what the live defect looked like.
+                    if (Math.abs(unowned - 1.0) > 1.0e-4) {
+                        failure.set("ARM 1b — with NO owner half recorded, the cell must stay WHOLE"
+                            + " (span 1.0), but measured " + unowned + ". A block with no recorded"
+                            + " placement side must not be cut on a guess.");
+                        return;
+                    }
+                    // (ii) ONE HALF owned — cut to exactly that half, and to the OTHER one when the
+                    // other bit is set. Asserting both directions is what catches an inverted
+                    // convention, which is the defect that shipped.
+                    for (byte owned : new byte[]{
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE,
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE}) {
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cell);
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cell, owned);
+                        boolean pos2 = owned
+                            == com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE;
+                        double want = pos2 ? 1.0 - off2 : off2;
+                        double got = seamAxisSpan(ow, cell, axis);
+                        if (Math.abs(got - want) > 1.0e-4) {
+                            failure.set("ARM 1b — owning the "
+                                + (pos2 ? "POSITIVE" : "NEGATIVE") + " " + axis + " half must keep "
+                                + want + " (planeOffset=" + off2 + "), but the collision funnel"
+                                + " measured " + got + ". The owner-half convention is inverted or"
+                                + " ignored — this is the live 2026-08-02 defect.");
+                            return;
+                        }
+                    }
+                    // (iii) BOTH halves owned — two objects meeting at the plane, materially whole.
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cell,
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.BOTH);
+                    double bothSpan = seamAxisSpan(ow, cell, axis);
+                    if (Math.abs(bothSpan - 1.0) > 1.0e-4) {
+                        failure.set("ARM 1b — with BOTH halves owned the cell is materially whole"
+                            + " again (two objects meeting at the plane), so the span must be 1.0;"
+                            + " measured " + bothSpan);
+                        return;
+                    }
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cell);
+                }
+                // ★ A block staged with a raw setBlock has NO recorded owner half, and the model's
+                // safe answer for that is WHOLE — so the baseline expectation is 1.0 in every lever
+                // position. Arm 1b below drives the occupancy store through its three states to
+                // assert the cut itself. (An earlier build expected keptThickness here and derived
+                // it from the BINDING, which is precisely the bug the live round found: a bi-faced
+                // portal's binding cannot say which half is ours.)
+                double expectedSpan = 1.0;
                 if (Math.abs(span - expectedSpan) > 1.0E-4) {
                     failure.set("ARM 1 (MOVEMENT) — collision span along " + axis + " at " + cell
                         + " is " + span + ", expected " + expectedSpan + " ("
