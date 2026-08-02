@@ -59,6 +59,22 @@ public abstract class MixinBlockItemPlaceSource {
         // this feature exists for.
         seamlessportals$saved = SeamWriteContext.push(
             SeamWriteSource.PLAYER_PLACE, context.getClickedPos());
+
+        // ★ OWNER-HALF CAPTURE MUST HAPPEN AT *HEAD*, NOT RETURN — an ordering bug found live.
+        //
+        // The mirror runs from LevelChunkSetBlockStateMixin at LevelChunk.setBlockState RETURN,
+        // which is INSIDE this place() call. Claiming the half at place() RETURN therefore recorded
+        // it AFTER the mirror had already run, so SeamMirror.claimCrossingHalf saw an unowned source
+        // cell, returned early, and the destination half was never claimed at all — measured live as
+        // zero CROSS lines while CLAIM fired correctly. Same family as the delivery probe that
+        // bracketed a call doing its interesting work internally.
+        //
+        // The reason RETURN was chosen — only claim for a placement that SUCCEEDS — is preserved by
+        // releasing the claim on the way out if the placement did not consume (below).
+        seamlessportals$claimedHalf = com.warwa.seamlessportals.passthrough.SeamFractional
+            .recordPlacement(context.getLevel(), context.getClickedPos(),
+                context.getClickLocation());
+        seamlessportals$claimedCell = context.getClickedPos();
     }
 
     @Inject(method = "place(Lnet/minecraft/world/item/context/BlockPlaceContext;)Lnet/minecraft/world/InteractionResult;",
@@ -70,19 +86,25 @@ public abstract class MixinBlockItemPlaceSource {
             SeamWriteContext.pop(seamlessportals$saved);
             seamlessportals$saved = null;
         }
-        // ★ OWNER-HALF CAPTURE (FRACTIONAL_DESIGN.md §2a.0). Recorded at RETURN, not HEAD, so it
-        // only fires for a placement that actually SUCCEEDED — claiming a half for a refused
-        // placement would leave a phantom owner and cut a block that is not there.
-        //
-        // The hit POINT is the authority, per the user's decision: the clicked block cannot answer
-        // (the floor under an aperture and the frame both straddle the plane) and the player's eyes
-        // cannot either (leaning through the portal would flip the side).
-        if (cir.getReturnValue() != null && cir.getReturnValue().consumesAction()
-            && context.getPlayer() != null && SeamlessPortalsConfig.isEntityPortals()) {
-            com.warwa.seamlessportals.passthrough.SeamFractional.recordPlacement(
-                context.getLevel(), context.getClickedPos(), context.getClickLocation());
+        // ★ UNDO THE HEAD CLAIM IF THE PLACEMENT DID NOT HAPPEN. The claim has to be made at HEAD so
+        // the mirror (which runs inside this call) can see it — but a refused placement must not
+        // leave a phantom owner behind cutting a block that is not there.
+        if (seamlessportals$claimedHalf != 0 && seamlessportals$claimedCell != null) {
+            boolean placed = cir.getReturnValue() != null && cir.getReturnValue().consumesAction();
+            if (!placed) {
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.release(
+                    context.getLevel(), seamlessportals$claimedCell, seamlessportals$claimedHalf);
+            }
+            seamlessportals$claimedHalf = 0;
+            seamlessportals$claimedCell = null;
         }
     }
+
+    @org.spongepowered.asm.mixin.Unique
+    private byte seamlessportals$claimedHalf;
+
+    @org.spongepowered.asm.mixin.Unique
+    private net.minecraft.core.BlockPos seamlessportals$claimedCell;
 
     /**
      * Saved outer state, restored on the way out. A per-instance field is safe here only because

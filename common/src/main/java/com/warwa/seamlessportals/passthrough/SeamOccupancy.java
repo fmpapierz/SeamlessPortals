@@ -98,6 +98,18 @@ public final class SeamOccupancy {
         map(level).remove(cell.asLong());
     }
 
+    /**
+     * REPLACE a cell's mask outright. For the client applying an authoritative server value: the
+     * server owns how many halves exist, and merging would make a release impossible to express.
+     */
+    public static void set(Level level, BlockPos cell, byte mask) {
+        if (mask == 0) {
+            clear(level, cell);
+        } else {
+            map(level).put(cell.asLong(), mask);
+        }
+    }
+
     /** The occupancy mask for a cell: 0 when nothing here, else some combination of the two halves. */
     public static byte occupancyOf(Level level, BlockPos cell) {
         return map(level).get(cell.asLong());
@@ -110,6 +122,41 @@ public final class SeamOccupancy {
     public static byte halfOf(Direction facing) {
         return facing.getAxisDirection() == Direction.AxisDirection.POSITIVE
             ? HALF_POSITIVE : HALF_NEGATIVE;
+    }
+
+    /**
+     * ★ PUSH a cell's occupancy to every online player.
+     *
+     * <p>Required because occupancy is the one piece of seam state that is NOT derivable from portal
+     * geometry — it records where a placement's crosshair ray hit, and both fractions of a split
+     * block are the same block, so nothing in the world can be inspected to recover it. A player's
+     * own placement reaches both sides for free ({@code BlockItem.place} runs client and server), but
+     * the CROSSING half is written by {@code SeamMirror}, which is server-only. Without this push the
+     * client draws the destination cell whole — measured live 2026-08-02.
+     *
+     * <p>Broadcast to all players rather than to a tracking set: a seam cell is visible through a
+     * portal from arbitrary distance in another dimension, so "who can see this" is not answerable
+     * from the cell's own position. The volume is bounded by placements at seams, which is a human
+     * action, not a per-tick one.
+     */
+    public static void broadcast(Level level, BlockPos cell) {
+        if (!(level instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
+            return;
+        }
+        net.minecraft.server.MinecraftServer server = serverLevel.getServer();
+        if (server == null) {
+            return;
+        }
+        var payload = new com.warwa.seamlessportals.network.ModPayloads.SeamOccupancyPayload(
+            level.dimension().identifier().toString(), cell.asLong(), occupancyOf(level, cell));
+        for (net.minecraft.server.level.ServerPlayer player : server.getPlayerList().getPlayers()) {
+            try {
+                com.warwa.seamlessportals.network.PlatformHelper.getInstance()
+                    .sendToClient(player, payload);
+            } catch (Throwable t) {
+                // Never let a display concern break a write that already succeeded.
+            }
+        }
     }
 
     /** Duck interface on {@code Level}, alongside the other per-level seam indices. */

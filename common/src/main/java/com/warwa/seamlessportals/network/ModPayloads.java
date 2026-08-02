@@ -522,6 +522,47 @@ public class ModPayloads {
      *   </li>
      * </ul>
      */
+    /**
+     * ★ THE OWNER-HALF OCCUPANCY OF ONE SEAM CELL — {@code FRACTIONAL_DESIGN.md} §2a.0/§3.
+     *
+     * <p><b>Why this cannot be derived and therefore needs a packet.</b> Every other piece of seam
+     * state is a pure function of portal geometry, which both sides already have as synced entity
+     * data, so each recomputes it independently from its own tick signal and no packet is needed.
+     * Occupancy is different: it comes from a PLACEMENT. Which half of a seam cell an object owns is
+     * decided by where the player's crosshair ray hit, and nothing in the world can be inspected to
+     * recover it — both fractions of a split block are the same block.
+     *
+     * <p>A player's own placement happens to reach both sides for free, because
+     * {@code BlockItem.place} runs on the client for prediction as well as on the server. The
+     * CROSSING half does not: {@code SeamMirror} is server-only, so without this payload the client
+     * never learns which half of the DESTINATION cell the material occupies, and the shape hook —
+     * correctly refusing to guess — draws that cell whole. Measured live 2026-08-02: one
+     * {@code CROSS} line on the server thread, none on the client, and a full block visible on both
+     * destination sides.
+     *
+     * <p>{@code mask} is the two-bit occupancy: bit 0 = the axis-NEGATIVE half, bit 1 = the
+     * axis-POSITIVE half, 0 = no owner (draw whole).
+     */
+    public record SeamOccupancyPayload(
+        String dimensionId,
+        long packedPos,
+        int mask
+    ) implements CustomPacketPayload {
+        public static final Type<SeamOccupancyPayload> TYPE = new Type<>(
+            Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "seam_occupancy")
+        );
+
+        public static final StreamCodec<FriendlyByteBuf, SeamOccupancyPayload> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, SeamOccupancyPayload::dimensionId,
+            ByteBufCodecs.VAR_LONG, SeamOccupancyPayload::packedPos,
+            ByteBufCodecs.VAR_INT, SeamOccupancyPayload::mask,
+            SeamOccupancyPayload::new
+        );
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     public record RemoteBlockUpdatePayload(
         String dimensionId,
         long packedPos,
