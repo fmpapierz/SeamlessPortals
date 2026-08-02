@@ -5,6 +5,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -47,10 +48,12 @@ public class SeamlessConfigScreen extends Screen {
                 cfg.getPortalRenderDistance(), cfg::setPortalRenderDistance));
         y += rowH;
 
-        // Recursive portal-through-portal render depth.
-        this.addRenderableWidget(new IntSlider(x, y, w, 20,
-                "Max recursive portal depth", 0, 3,
-                cfg.getMaxPortalRenderDepth(), cfg::setMaxPortalRenderDepth));
+        // Recursive portal-through-portal depth, NO shaderpack. This replaces the former
+        // "Max recursive portal depth" slider, which was capped at 3 and — more to the point — had
+        // NO consumer anywhere: nothing outside its own getter/setter ever read the value, so moving
+        // it did nothing at all. This one writes IPGlobal.maxPortalLayer, which the engine reads.
+        addDepthRow(x, y, w, "Portal recursion depth", cfg.getVanillaRecursionDepth(),
+                cfg::setVanillaRecursionDepth);
         y += rowH;
 
         // Master "render through portals" toggle.
@@ -68,12 +71,11 @@ public class SeamlessConfigScreen extends Screen {
         }).bounds(x, y, w, 20).build());
         y += rowH;
 
-        // IS5-REC: recursion depth WITH A SHADERPACK ON. Separate from the slider above because a
+        // IS5-REC: recursion depth WITH A SHADERPACK ON. Separate from the row above because a
         // shaders-ON layer is a full pack-shaded world render (gbuffer + shadow pass + composite
         // chain), i.e. a much heavier unit than a shaders-off layer. 1 = the pre-feature behaviour.
-        this.addRenderableWidget(new IntSlider(x, y, w, 20,
-                "Shader portal recursion depth", 1, 5,
-                cfg.getIrisRecursionDepth(), cfg::setIrisRecursionDepth));
+        addDepthRow(x, y, w, "Shader portal recursion depth", cfg.getIrisRecursionDepth(),
+                cfg::setIrisRecursionDepth);
         y += rowH;
 
         // IS5-REC: the OPT-IN deep-recursion lag guard. Off by default (user-decided). It exists
@@ -88,6 +90,67 @@ public class SeamlessConfigScreen extends Screen {
 
         this.addRenderableWidget(new Button.Builder(Component.literal("Done"), b -> this.onClose())
                 .bounds(cx - 100, y, 200, 20).build());
+    }
+
+    /**
+     * A depth row: a SLIDER for the common range plus a TYPED BOX that can exceed it.
+     *
+     * <p>The slider alone cannot express the values this setting now supports — a slider capped at
+     * the useful range is exactly what blocked entering 20 or 100 — and a text box alone loses the
+     * one-drag adjustment that covers almost every real use. So both, kept in sync: dragging the
+     * slider rewrites the box, and typing a valid number moves the slider (clamping its POSITION to
+     * its own range while the real value goes through unclamped).
+     *
+     * <p>Typing is validated on every keystroke and simply ignored while the field is empty or
+     * mid-word ("2" on the way to "20" is a legal value, so it applies — the config is re-read on
+     * screen close anyway, and nothing here is destructive).
+     */
+    private void addDepthRow(int x, int y, int w, String label, int current, IntConsumer apply) {
+        final int boxW = 46;
+        final int gap = 4;
+        final int sliderW = w - boxW - gap;
+
+        EditBox box = new EditBox(this.font, x + sliderW + gap, y, boxW, 20,
+                Component.literal(label + " (exact)"));
+        box.setMaxLength(3); // 999 max typeable; the config setter clamps to MAX_RECURSION_DEPTH
+        box.setValue(Integer.toString(current));
+
+        IntSlider slider = new IntSlider(x, y, sliderW, 20, label,
+                SLIDER_MIN, SLIDER_MAX, clampToSlider(current), v -> {
+            apply.accept(v);
+            // Keep the box showing the live value, but never fight the user mid-type: only rewrite
+            // it when the slider is what changed the value.
+            box.setValue(Integer.toString(v));
+        });
+
+        box.setResponder(text -> {
+            String t = text.trim();
+            if (t.isEmpty()) {
+                return; // mid-edit, not a value yet
+            }
+            try {
+                int typed = Integer.parseInt(t);
+                if (typed < 0) {
+                    return;
+                }
+                apply.accept(typed);
+                slider.setFromValue(clampToSlider(typed));
+            }
+            catch (NumberFormatException ignored) {
+                // not a number yet — leave the last good value in place
+            }
+        });
+
+        this.addRenderableWidget(slider);
+        this.addRenderableWidget(box);
+    }
+
+    /** The slider's own range. The TYPED box is what reaches past it. */
+    private static final int SLIDER_MIN = 0;
+    private static final int SLIDER_MAX = 10;
+
+    private static int clampToSlider(int v) {
+        return Math.max(SLIDER_MIN, Math.min(SLIDER_MAX, v));
     }
 
     private static Component renderingLabel(SeamlessPortalsConfig cfg) {
@@ -137,6 +200,16 @@ public class SeamlessConfigScreen extends Screen {
 
         private int currentValue() {
             return this.min + (int) Math.round(this.value * (this.max - this.min));
+        }
+
+        /**
+         * Move the knob to represent {@code v} WITHOUT re-applying it. Used when the typed box is
+         * the source of the change: re-applying here would bounce the value back through the
+         * consumer and overwrite what was just typed with the slider's clamped version.
+         */
+        void setFromValue(int v) {
+            this.value = (double) (v - this.min) / (double) (this.max - this.min);
+            this.updateMessage();
         }
 
         @Override
