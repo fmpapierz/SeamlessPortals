@@ -478,6 +478,18 @@ public class IPGlobal {
     public static int portalChainLoaderBudget =
         Integer.getInteger("seamlessportals.portalChainLoaderBudget", 64);
 
+    /**
+     * IS5-REACH — nested portal levels load with the same distance graduation as the FIRST level
+     * (full view distance within 5 blocks of that portal, 2/3 within 15, 1/3 beyond) instead of a
+     * flat quarter of the view distance. Live value, written by {@code IPConfig.onConfigChanged}.
+     *
+     * <p>OFF restores the original flat {@code loadDistance / 4} — which also makes
+     * {@link #indirectLoadingRadiusCap} INERT for deep levels, since that cap can only bind when the
+     * target exceeds it and a fixed quarter never does. That is why maxing the cap appeared to do
+     * nothing before this existed.
+     */
+    public static boolean deepPortalLoadingReach = true;
+
     /** Above this, {@link #warnIfDeepRecursion} logs the VRAM arithmetic once per changed pair. */
     public static final int DEEP_RECURSION_WARN_AT = 8;
 

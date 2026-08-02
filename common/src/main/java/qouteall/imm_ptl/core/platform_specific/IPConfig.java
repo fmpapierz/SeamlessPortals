@@ -99,6 +99,22 @@ public class IPConfig implements ConfigData {
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     public int portalWindowRenderDistance = 0;
+
+    /**
+     * IS5-REACH — load nested portal levels as deeply as the first one.
+     *
+     * <p>ON (default): every level uses the same distance graduation as layer 1 — full view distance
+     * within 5 blocks of that portal, 2/3 within 15, 1/3 beyond. OFF: the original flat
+     * {@code viewDistance / 4} for every level below the first, which at view distance 32 is 8
+     * chunks against layer 1's 32.
+     *
+     * <p>Note this is what makes {@link #indirectLoadingRadiusCap} MEAN anything for deep levels: the
+     * radius is {@code min(target, cap)}, and with the target pinned at a quarter the cap could never
+     * bind, so raising it had no effect below layer 1.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public boolean deepPortalLoadingReach = true;
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     // DEFAULT FLIPPED TO FALSE (2026-08-02, user decision). When this engages it clamps portal
@@ -302,6 +318,7 @@ public class IPConfig implements ConfigData {
         // state that disagrees with itself and no line anywhere to reconcile it.
         portalWindowRenderDistance = Mth.clamp(portalWindowRenderDistance, 0, 32);
         IPGlobal.portalWindowRenderDistance = portalWindowRenderDistance;
+        IPGlobal.deepPortalLoadingReach = deepPortalLoadingReach;
         IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;
