@@ -96,17 +96,125 @@ public final class SeamFractional {
     }
 
     /**
-     * The thickness of the half THIS dimension owns, for a cell cut at {@code planeOffset}.
+     * ★ THE REAL PLANE OFFSET, computed from the portal instead of assumed.
      *
-     * <p>The kept half lies on the {@code srcFacing} side — the side the portal's viewers and its
-     * aperture cell are on. So a POSITIVE-facing binding keeps the upper part of the axis span and
-     * a NEGATIVE-facing one keeps the lower part.
+     * <p><b>Derivation.</b> {@code Portal.getDistanceToPlane} returns the signed distance
+     * {@code d = (p − planePoint)·n}, so the projection of {@code p} onto the plane is
+     * {@code p − d·n}. Take {@code p} = the cell centre and read the component along the plane's own
+     * axis; because the normal is a signed unit axis, {@code nA = ±1}:
+     * <pre>{@code planeCoord = (cell + 0.5) − d·nA   ⇒   offset = 0.5 − d·nA}</pre>
+     * Worked both ways: a plane at {@code cell+0.3} with {@code n = +A} gives {@code d = +0.2} and
+     * {@code offset = 0.5 − 0.2 = 0.3}; with {@code n = −A} it gives {@code d = −0.2} and
+     * {@code offset = 0.5 − (−0.2)(−1) = 0.3}. Same answer either orientation, which is the point.
+     */
+    public static double planeOffsetOf(qouteall.imm_ptl.core.portal.Portal portal, BlockPos cell) {
+        Direction.Axis axis = axisOf(portal);
+        net.minecraft.world.phys.Vec3 n = portal.getNormal();
+        double nA = axis.choose(n.x, n.y, n.z);
+        double d = portal.getDistanceToPlane(net.minecraft.world.phys.Vec3.atCenterOf(cell));
+        return 0.5 - d * nA;
+    }
+
+    /** The portal's plane axis — the axis its (signed-unit) normal lies along. */
+    public static Direction.Axis axisOf(qouteall.imm_ptl.core.portal.Portal portal) {
+        net.minecraft.world.phys.Vec3 n = portal.getNormal();
+        return Direction.getApproximateNearest(n.x, n.y, n.z).getAxis();
+    }
+
+    /**
+     * The thickness of the part THIS dimension owns, for a cell cut at {@code planeOffset}.
+     *
+     * <p>The kept part lies on the {@code facing} side — the side the portal's viewers and its
+     * aperture cell are on. So a POSITIVE-facing binding keeps the upper part of the axis span
+     * ({@code [offset, 1]}) and a NEGATIVE-facing one keeps the lower part ({@code [0, offset]}).
      */
     public static double keptThickness(Direction srcFacing, double planeOffset) {
         return srcFacing.getAxisDirection() == Direction.AxisDirection.POSITIVE
             ? 1.0 - planeOffset
             : planeOffset;
     }
+
+    /** What crosses into the far dimension: the complement of what this side keeps. */
+    public static double crossingThickness(Direction srcFacing, double planeOffset) {
+        return 1.0 - keptThickness(srcFacing, planeOffset);
+    }
+
+    // =============================================================================================
+    // ★ THE FRAGMENT DECOMPOSITION — FRACTIONAL_DESIGN.md §2a
+    // =============================================================================================
+
+    /**
+     * One piece of a divided block: the occupied interval {@code [lo, hi]} within {@code cell},
+     * measured along the seam axis from the cell's lower corner. Both bounds lie in {@code [0, 1]}.
+     */
+    public record Fragment(BlockPos cell, double lo, double hi) {
+        public double length() {
+            return hi - lo;
+        }
+    }
+
+    /**
+     * ★ Lay {@code crossThickness} of material into the destination, starting AT the destination
+     * plane and running away from the destination's own kept side.
+     *
+     * <p><b>The user's worked example</b> ({@code FRACTIONAL_DESIGN.md} §2a), which
+     * {@code rsFragmentArithmeticGate} pins exactly: a source plane at 0.3 keeping {@code [0, 0.3]}
+     * sends 0.7 across; the destination plane sits at 0.79 in D0 keeping {@code [0, 0.79]}, so the
+     * material runs POSITIVE and occupies {@code D0[0.79, 1.0]} (0.21) then {@code D1[0.0, 0.49]}
+     * (0.49). Total 0.7 — conserved.
+     *
+     * <p><b>★ AT MOST TWO FRAGMENTS, and it is a proof rather than an observation.</b> The remainder
+     * in the first cell is {@code r ∈ (0, 1)} and the crossing thickness is {@code t < 1}, so the
+     * overflow {@code t − r} is strictly less than 1 and cannot reach a third cell. The model is
+     * 1-to-≤2, not 1-to-N — which is why this returns a two-element list and not a stream.
+     *
+     * @param destFacing the DESTINATION portal's facing — the side the far world keeps
+     * @param destPlaneOffset the destination plane's offset inside {@code destCell}, in {@code (0,1)}
+     */
+    public static java.util.List<Fragment> decomposeDestination(
+        BlockPos destCell, Direction destFacing, double destPlaneOffset, double crossThickness
+    ) {
+        if (crossThickness <= EPS) {
+            return java.util.List.of();
+        }
+        Direction.Axis axis = destFacing.getAxis();
+        boolean positiveFacing = destFacing.getAxisDirection() == Direction.AxisDirection.POSITIVE;
+
+        // The far world keeps the side its facing points to, so the material fills the complement:
+        // a POSITIVE-facing destination keeps [p, 1] and the material runs DOWN from p; a
+        // NEGATIVE-facing one keeps [0, p] and it runs UP from p.
+        double remainder = positiveFacing ? destPlaneOffset : 1.0 - destPlaneOffset;
+        double first = Math.min(crossThickness, remainder);
+        double overflow = crossThickness - first;
+
+        java.util.List<Fragment> out = new java.util.ArrayList<>(2);
+        if (first > EPS) {
+            out.add(positiveFacing
+                ? new Fragment(destCell, destPlaneOffset - first, destPlaneOffset)
+                : new Fragment(destCell, destPlaneOffset, destPlaneOffset + first));
+        }
+        if (overflow > EPS) {
+            // One cell further along the direction the material is running.
+            BlockPos next = destCell.relative(Direction.get(
+                positiveFacing ? Direction.AxisDirection.NEGATIVE : Direction.AxisDirection.POSITIVE,
+                axis));
+            out.add(positiveFacing
+                ? new Fragment(next, 1.0 - overflow, 1.0)
+                : new Fragment(next, 0.0, overflow));
+        }
+        return out;
+    }
+
+    /** Total material in a fragment list — the conservation quantity the gate asserts on. */
+    public static double totalLength(java.util.List<Fragment> fragments) {
+        double sum = 0.0;
+        for (Fragment f : fragments) {
+            sum += f.length();
+        }
+        return sum;
+    }
+
+    private static final double EPS = 1.0e-9;
 
     /**
      * Whether this cell is one the model would cut: it carries a mirror-admitted binding whose

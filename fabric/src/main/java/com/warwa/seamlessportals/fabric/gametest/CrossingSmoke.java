@@ -520,6 +520,15 @@ public class CrossingSmoke implements FabricClientGameTest {
             // reported PASS. The gate now also FAILS when its coverage is zero.
             rsSeamMapGate(context);
 
+            // ★ FRACTIONAL FRONT 1 — the fragment decomposition, gated as PURE ARITHMETIC. Runs
+            // UNCONDITIONALLY (no portal, no world, no lever): the live discriminating fixture is
+            // blocked four independent ways by the exact-only policy the model must delete, so the
+            // geometry would otherwise stay unfalsifiable until that whole front lands. Pins the
+            // user's worked example exactly and sweeps ~78k offset pairs for conservation, the
+            // <=2 proof, orientation symmetry and contiguity. Cheap; asserts nothing about
+            // mirroring, placement or rendering — those are separate fronts with separate falsifiers.
+            rsFragmentArithmeticGate(context);
+
             // RS (b) RAIL LEGS — rails CONNECTING across the seam (REDSTONE_B_SPEC.md §9, adapted).
             // After the seam-map gate on purpose: these consume the primitive it just proved, so a
             // failure here is a consumer bug, not seam arithmetic. Both are lever-aware: with (b) on
@@ -4513,6 +4522,173 @@ public class CrossingSmoke implements FabricClientGameTest {
                 ? "player-only DISABLED, so a /setblock mirrored too — the old policy is restored"
                 : "a real BlockItem.place mirrored and a /setblock at the same cell did not",
             detail.get(), com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+    }
+
+    /**
+     * ★ THE FRAGMENT ARITHMETIC GATE — the fractional model's foundation, gated as PURE ARITHMETIC.
+     *
+     * <p><b>Why this leg exists, and why it needs no portal.</b> The 8-area blast-radius map
+     * (2026-08-02) found the live discriminating fixture blocked FOUR independent ways: an
+     * independent-offset pair (.3/.21) is not lattice-aligned, so it classifies OFFSET and
+     * {@code SeamMirrorPolicy} declines it; the decline nulls {@code destPos} and clears
+     * {@code seamContinuous}, so every assertion about it would have no subject;
+     * {@code -PdisableSeamExactOnly} re-admits it only through the greatest-overlap ROUNDING the new
+     * model exists to replace; and {@code SeamMirror.isPhaseGated} classifies the .3 side COINCIDENT
+     * while the .21 side is DISJOINT, so mirroring is one-directional before any fragment arithmetic
+     * runs. Waiting for that fixture would leave the model's core unfalsifiable indefinitely.
+     *
+     * <p><b>The decomposition is pure geometry</b> — no world, no portal, no side effects — so it can
+     * be pinned exactly, today, and it is the thing every other front consumes. This leg is the
+     * falsifier for the arithmetic; the live fixture, when it exists, is the falsifier for the
+     * plumbing. They are different questions and this one is answerable now.
+     *
+     * <p>Asserts, on {@code FRACTIONAL_DESIGN.md} §2a:
+     * <ol>
+     *   <li><b>The user's worked example, exactly.</b> Source plane 0.3 keeping {@code [0, 0.3]}
+     *       sends 0.7; destination plane 0.79 keeping {@code [0, 0.79]} yields
+     *       {@code D0[0.79, 1.0]} = 0.21 and {@code D1[0.0, 0.49]} = 0.49.</li>
+     *   <li><b>Conservation</b> — kept + crossed = 1.0 exactly, and the fragments sum to the
+     *       crossing thickness, swept across many offset pairs.</li>
+     *   <li><b>The ≤2 proof</b> — no offset pair may ever produce a third fragment. This is the
+     *       claim the whole model's cost estimate rests on, so it is swept, not spot-checked.</li>
+     *   <li><b>Orientation symmetry</b> — POSITIVE and NEGATIVE facings must be mirror images. A
+     *       sign error here would be invisible on obsidian pairs (which are symmetric) and wrong on
+     *       every wand pair.</li>
+     *   <li><b>Fragments stay inside their cell</b> — every interval within {@code [0, 1]}, and
+     *       contiguous across the cell boundary when there are two.</li>
+     * </ol>
+     *
+     * <p>⚠ It asserts NOTHING about mirroring, placement or rendering. Those are separate fronts with
+     * separate falsifiers; a green run here means the geometry is right, not that the feature works.
+     */
+    private static void rsFragmentArithmeticGate(ClientGameTestContext context) {
+        final double eps = 1.0e-9;
+        BlockPos d0 = new BlockPos(10, 70, 10);
+
+        // ---- (1) THE USER'S WORKED EXAMPLE, PINNED EXACTLY ----
+        // Source keeps [0, 0.3] => NEGATIVE facing, offset 0.3. Destination keeps [0, 0.79] =>
+        // NEGATIVE facing, offset 0.79, so the material runs POSITIVE from 0.79.
+        double kept = com.warwa.seamlessportals.passthrough.SeamFractional
+            .keptThickness(net.minecraft.core.Direction.NORTH, 0.3);
+        double cross = com.warwa.seamlessportals.passthrough.SeamFractional
+            .crossingThickness(net.minecraft.core.Direction.NORTH, 0.3);
+        if (Math.abs(kept - 0.3) > eps || Math.abs(cross - 0.7) > eps) {
+            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED: a NEGATIVE-facing"
+                + " plane at 0.3 must keep 0.3 and cross 0.7; got kept=" + kept + " cross=" + cross);
+        }
+        var frags = com.warwa.seamlessportals.passthrough.SeamFractional
+            .decomposeDestination(d0, net.minecraft.core.Direction.NORTH, 0.79, cross);
+        if (frags.size() != 2) {
+            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED: the worked example"
+                + " must produce exactly TWO destination fragments, got " + frags.size()
+                + " => " + frags);
+        }
+        var f0 = frags.get(0);
+        var f1 = frags.get(1);
+        if (!f0.cell().equals(d0)
+            || Math.abs(f0.lo() - 0.79) > 1.0e-6 || Math.abs(f0.hi() - 1.0) > 1.0e-6
+            || Math.abs(f0.length() - 0.21) > 1.0e-6) {
+            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED: first fragment must"
+                + " be D0[0.79, 1.0] (length 0.21); got " + f0);
+        }
+        BlockPos d1 = d0.relative(net.minecraft.core.Direction.SOUTH);
+        if (!f1.cell().equals(d1)
+            || Math.abs(f1.lo() - 0.0) > 1.0e-6 || Math.abs(f1.hi() - 0.49) > 1.0e-6) {
+            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED: second fragment must"
+                + " be D1[0.0, 0.49] in the NEXT cell along the run; got " + f1
+                + " (expected cell " + d1 + ")");
+        }
+
+        // ---- (2)(3)(4)(5) SWEEP — every offset pair on a fine grid, both orientations ----
+        int checked = 0;
+        int twoFragmentCases = 0;
+        for (net.minecraft.core.Direction srcF : new net.minecraft.core.Direction[]{
+            net.minecraft.core.Direction.NORTH, net.minecraft.core.Direction.SOUTH,
+            net.minecraft.core.Direction.EAST, net.minecraft.core.Direction.WEST}) {
+            for (int si = 1; si < 100; si++) {
+                double sOff = si / 100.0;
+                double k = com.warwa.seamlessportals.passthrough.SeamFractional
+                    .keptThickness(srcF, sOff);
+                double c = com.warwa.seamlessportals.passthrough.SeamFractional
+                    .crossingThickness(srcF, sOff);
+                // (2) CONSERVATION at the source cut.
+                if (Math.abs((k + c) - 1.0) > eps) {
+                    throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED:"
+                        + " kept+crossed must be exactly 1.0; facing=" + srcF + " offset=" + sOff
+                        + " kept=" + k + " crossed=" + c);
+                }
+                // (4) ORIENTATION SYMMETRY — the opposite facing at the mirrored offset must keep
+                // the same thickness. A sign error is invisible on symmetric obsidian pairs.
+                double mirrored = com.warwa.seamlessportals.passthrough.SeamFractional
+                    .keptThickness(srcF.getOpposite(), 1.0 - sOff);
+                if (Math.abs(mirrored - k) > eps) {
+                    throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED: orientation"
+                        + " asymmetry — facing=" + srcF + " offset=" + sOff + " keeps " + k
+                        + " but " + srcF.getOpposite() + " at " + (1.0 - sOff) + " keeps " + mirrored);
+                }
+                for (net.minecraft.core.Direction dstF : new net.minecraft.core.Direction[]{
+                    net.minecraft.core.Direction.NORTH, net.minecraft.core.Direction.SOUTH}) {
+                    for (int di = 1; di < 100; di++) {
+                        double dOff = di / 100.0;
+                        var fs = com.warwa.seamlessportals.passthrough.SeamFractional
+                            .decomposeDestination(d0, dstF, dOff, c);
+                        checked++;
+                        // (3) THE <=2 PROOF — the model's whole cost estimate rests on this.
+                        if (fs.size() > 2) {
+                            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED: the"
+                                + " decomposition produced " + fs.size() + " fragments (>2) at"
+                                + " srcFacing=" + srcF + " srcOffset=" + sOff + " dstFacing=" + dstF
+                                + " dstOffset=" + dOff + " => " + fs);
+                        }
+                        if (fs.size() == 2) {
+                            twoFragmentCases++;
+                        }
+                        // (2) CONSERVATION across the boundary.
+                        double total = com.warwa.seamlessportals.passthrough.SeamFractional
+                            .totalLength(fs);
+                        if (Math.abs(total - c) > 1.0e-9) {
+                            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED:"
+                                + " material not conserved — crossed " + c + " but fragments hold "
+                                + total + " at srcFacing=" + srcF + " srcOffset=" + sOff
+                                + " dstFacing=" + dstF + " dstOffset=" + dOff + " => " + fs);
+                        }
+                        // (5) EVERY INTERVAL INSIDE ITS CELL.
+                        for (var fr : fs) {
+                            if (fr.lo() < -1.0e-9 || fr.hi() > 1.0 + 1.0e-9 || fr.length() < -1.0e-9) {
+                                throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED:"
+                                    + " fragment escapes its cell — " + fr + " at srcOffset=" + sOff
+                                    + " dstFacing=" + dstF + " dstOffset=" + dOff);
+                            }
+                        }
+                        // (5) CONTIGUITY — two fragments must meet exactly at the shared boundary,
+                        // or the run has a gap the player would see and walk through.
+                        if (fs.size() == 2) {
+                            var a = fs.get(0);
+                            var b = fs.get(1);
+                            boolean meet = (Math.abs(a.hi() - 1.0) < 1.0e-9 && Math.abs(b.lo()) < 1.0e-9)
+                                || (Math.abs(a.lo()) < 1.0e-9 && Math.abs(b.hi() - 1.0) < 1.0e-9);
+                            if (!meet) {
+                                throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE FAILED:"
+                                    + " the two fragments do not meet at the cell boundary — " + a
+                                    + " then " + b + " at srcOffset=" + sOff + " dstOffset=" + dOff);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // COVERAGE — a sweep that never produced a two-fragment case would have proved nothing about
+        // the split, which is the entire point of the model.
+        if (twoFragmentCases == 0) {
+            throw new AssertionError(LOG + "RS FRAGMENT ARITHMETIC GATE VACUOUS: " + checked
+                + " decompositions and not one of them split across a cell boundary. The sweep is"
+                + " not exercising the case the model exists for.");
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS FRAGMENT ARITHMETIC GATE PASS — worked example exact (D0[0.79,1.0]=0.21 +"
+                + " D1[0.0,0.49]=0.49); {} decompositions swept, {} of them two-fragment; material"
+                + " conserved, <=2 proven, orientations symmetric, all intervals in-cell and"
+                + " contiguous.", checked, twoFragmentCases);
     }
 
     /**
