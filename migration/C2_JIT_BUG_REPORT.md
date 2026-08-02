@@ -51,15 +51,31 @@ same call chain have crashed so far.
 
 ### Failure signature — identical across all four crashes
 ```
-EXCEPTION_ACCESS_VIOLATION (0xc0000005)
+EXCEPTION_ACCESS_VIOLATION (0xc0000005) reading address 0x000000000000002c   <- ALL FOUR, RAX=0x0
 Current thread: JavaThread "C2 CompilerThread0" daemon [_thread_in_native]
 Problematic frame: V  [jvm.dll+0x73238f]     (Temurin 25.0.2 — all three crashes on that build)
 Problematic frame: V  [jvm.dll+0x741a7f]     (Zulu 25.0.4 — different build, so a different offset)
 Native frames: ALL jvm.dll — no application, JNI, or driver frames
 Java frames: (none)
 ```
-The frame offset is **byte-identical across three separate crashes on the same build**, which
-suggests a single deterministic fault site rather than memory corruption.
+Two details that argue for a single deterministic fault rather than memory corruption:
+- the frame offset is **byte-identical across three separate crashes on the same build**;
+- **every crash faults reading `0x2c` with `RAX = 0`** — i.e. a field load at a fixed offset from a
+  null base, the same offset every time, on both vendors' builds.
+
+### ★ REPLAY FILES ARE AVAILABLE (please ask for these)
+The VM emitted a compiler replay file alongside each crash. Each contains exactly **one** `compile`
+record plus the full `ciMethod` profile set, so the failing compilation should be reproducible
+offline with `-XX:+ReplayCompiles -XX:ReplayDataFile=...`, with no game, GPU or timing involved:
+
+| file | size | inlined-method records |
+|---|---|---|
+| `replay_pid962536.log` | 6.7 MB | 380 |
+| `replay_pid87244.log`  | 6.6 MB | 312 |
+| `replay_pid91576.log`  | 6.4 MB | 354 |
+| `replay_pid96624.log`  | 6.7 MB | 597 (Zulu 25.0.4) |
+
+Note the inline counts: the failing compilation pulls in **300–600 methods** into one unit.
 
 ### The four captured crashes and their compile tasks
 | elapsed | JDK | Current CompileTask |
@@ -91,12 +107,24 @@ Notable shape: a **capturing lambda passed down three call levels before being i
 into a large leaf, with exception edges present (`org.apache.commons.lang3.Validate.isTrue` in
 `performQuery`, and a `try/finally` in `doRenderPortal`).
 
-**Evidence that it is the tree and not the individual method:** adding
-`-XX:CompileCommand=exclude` for the crashing method does not stop the crash — it reappears on
-another member of the same chain. This has now happened five times in sequence. In one instance the
-exclusion was applied to a lambda's proxy bridge (`$$Lambda…::run`) and C2 then crashed on the
-lambda's synthetic body (`lambda$testShouldRenderPortal$0`) instead — i.e. the *other* half of the
-same lambda.
+**Evidence that it is the tree and not the individual method.** Adding
+`-XX:CompileCommand=exclude` for a crashing method does not stop the crash — it reappears on another
+member of the same chain. Stated precisely, with the number of exclusions actually live in each run
+(read from each crash file's own command line, not assumed):
+
+| crash | exclusions active | new victim |
+|---|---|---|
+| 962536 | 2 | `GlQueryObject::performQuery` |
+| 87244 | 3 | `…$$Lambda/0x…::run` |
+| 91576 | 4 | `…::lambda$testShouldRenderPortal$0` |
+| 96624 | **0** | `…::doRenderPortal` |
+
+So the "moves to a sibling" behaviour is evidenced by **three** crashes, not four — the Zulu run had
+no exclusions active at all and is simply the unmitigated defect on a second vendor's build.
+
+The sharpest single instance is crash 91576: the exclusion in force covered the lambda's **proxy
+bridge** (`$$Lambda…::run`), and C2 then crashed compiling the lambda's **synthetic body**
+(`lambda$testShouldRenderPortal$0`) — the other half of the same lambda.
 
 ### Reproducibility
 Not reproducible on demand, but recurs reliably within roughly 3–17 minutes of gameplay whenever the
