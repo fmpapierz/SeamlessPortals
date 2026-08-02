@@ -2140,13 +2140,29 @@ public class SecondaryWorldRenderCore {
         //   layer >= 1 -> XWIN returns at its own isRendering() floor, so only this method runs.
         // Mutually exclusive by construction at every layer, on cross-view and normal frames alike.
         //
-        // THE PLANNED LEVER ENTANGLEMENT DOES NOT APPLY HERE, and the reason is worth recording
-        // because the staging plan asserted it would. That plan assumed the recursion dispatch would
-        // be folded INTO maybeRunCrossViewPortalPass, whose CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER
-        // is tested FIRST — under that shape, -PdisableCrossViewReverseWindow would have silently
-        // killed recursion too. These are SEPARATE methods and this one never reads that lever, so
-        // the two A/Bs stay independent and no lever move is needed. Verified by reading both gates
-        // rather than inherited from the plan.
+        // ★ LEVER DEPENDENCY ON A CROSS-VIEW FRAME — ONE-WAY, INHERENT, AND I FIRST GOT IT WRONG.
+        //
+        // On a cross-view frame this dispatch is DOWNSTREAM of two other levers, and both of them
+        // silently disable cross-view recursion as a side effect:
+        //   * -PdisableCrossViewReverseWindow makes maybeRunCrossViewPortalPass return at its head,
+        //     so the LAYER-0 portal pass never runs, so nothing ever pushes a portal layer, so this
+        //     method is never reached above layer 0.
+        //   * -PdisableCrossViewFullPipeline routes invokeWorldRendering to the decomposed fallback
+        //     (IrisCompatOn262Renderer:771), which never enters renderDestWorldFullPipeline at all,
+        //     so this dispatch site does not exist on that frame.
+        // The dependency is INHERENT, not a defect: you cannot recurse inside a window that was
+        // never drawn. It is one-way — -PdisableCrossViewRecursion does NOT affect the window.
+        //
+        // The staging plan predicted an entanglement here and prescribed moving the reverse-window
+        // lever to fix it. I checked its stated MECHANISM (that lever being tested first inside a
+        // SHARED method), found it inapplicable because these are separate methods, and wrongly
+        // concluded the entanglement itself was absent — refuting a mechanism is not refuting the
+        // claim. The plan's conclusion was right for a reason it did not name. Moving the lever
+        // would NOT have fixed it either, since the dependency is structural rather than ordering.
+        //
+        // CONSEQUENCE FOR ANYONE RUNNING AN A/B: to attribute cross-view recursion, vary ONLY
+        // -PdisableCrossViewRecursion. A leg that also carries -PdisableCrossViewReverseWindow or
+        // -PdisableCrossViewFullPipeline has two variables and cannot attribute either.
         if (IPGlobal.CROSS_VIEW_RECURSION_DISABLED_LEVER
             && CrossPortalViewRendering.isRenderingCrossPortalView()
         ) {
