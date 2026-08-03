@@ -5,6 +5,7 @@
   "compatibilityLevel": "JAVA_25",
   "minVersion": "0.8",
   "client": [
+    "passthrough.MultiPlayerGameModeSecondaryBreakMixin",
     "client.GameRendererMixin",
     "client.MinecraftAccessorMixin",
     "client.ClientLevelChunkSourceAccessor",
