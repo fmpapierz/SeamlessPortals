@@ -406,6 +406,14 @@ public final class SeamFractional {
             || !(level instanceof net.minecraft.world.level.Level lvl)) {
             return null;
         }
+        // ★ OUTLINE DRAW ≠ TARGETING (user live round: "extra line in the outline at the seam").
+        // While extractBlockOutline is capturing the DRAW shape, a seam cell reports FULL — the
+        // near pass and the window pass then outline coincident whole cubes that merge into one
+        // normal block box, with no cut-face rectangle at the plane. Rays never run inside the
+        // extract, so the viewer-half targeting rule below is untouched.
+        if (com.warwa.seamlessportals.render.SeamCounterpartOutline.extractingOutline) {
+            return null;
+        }
         byte owned = SeamOccupancy.occupancyOf(lvl, pos);
         SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(lvl, pos);
         if ((owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE)

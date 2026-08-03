@@ -684,6 +684,10 @@ public class CrossingSmoke implements FabricClientGameTest {
             SeamlessPortalsConstants.LOGGER.info(
                 LOG + "leg 5 PASS — datapack custom generation decoded at world open + manager built");
 
+            // RELOG PERSISTENCE — the fractional model's SavedData + rebind + behaviour, asserted
+            // against the fixture rsRelogStage left in this very save before the close.
+            rsRelogAssert(context);
+
             SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
         }
     }
@@ -3862,6 +3866,12 @@ public class CrossingSmoke implements FabricClientGameTest {
                 // pair built with the user's exact commands (make_portal +
                 // complete_bi_way_bi_faced_portal), differing only in dimension topology.
                 rsObjectBreakBothSameDimGate(context);
+                // RELOG PERSISTENCE — stage a two-object cell that SURVIVES the world close, on
+                // its own bi-way pair with a PERSISTENT forceload; the assert runs after leg 5's
+                // worldSave.open(). Full-suite only: RS-only runs never reopen the save.
+                if (!AperturePassthroughLever.RS_ONLY) {
+                    rsRelogStage(context);
+                }
                 // BOTTOM OPENING ROW, not the mid-height cell the mirror gate uses. Support is
                 // vanilla (user clarification §0.2): a rail at mid-height sits on another aperture
                 // cell holding the noCollision placeholder, so when teardown wipes those cells with
@@ -5579,6 +5589,232 @@ public class CrossingSmoke implements FabricClientGameTest {
         SeamlessPortalsConstants.LOGGER.info(
             LOG + "RS OBJECT BREAK-BOTH GATE [" + tag + "] PASS — breaking the crossing half"
                 + " cleared the origin and both sides promoted their secondaries. {}", detail.get());
+    }
+
+    /** Relog fixture coordinates, set by {@link #rsRelogStage}, read after the world reopen. */
+    private static BlockPos relogCell = null;
+    private static BlockPos relogDest = null;
+
+    /**
+     * ★ RELOG STAGE — builds a persisted two-object cell the world close cannot erase: a bi-way
+     * same-dim pair (the user's construction), object 1 placed+mirrored+claimed, object 2 as a
+     * different-type secondary on both sides, forceload left ON (forceloads persist in the save).
+     * The teardown fixture cannot host this — its cleanup deletes the frames before the close.
+     */
+    private static void rsRelogStage(ClientGameTestContext context) {
+        if (!com.warwa.seamlessportals.passthrough.SeamFractional.active()
+            || AperturePassthroughLever.DISABLED
+            || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
+            return;
+        }
+        final int cx = 9200, cy = 100, cz = 9200;
+        final Vec3 destCenter = new Vec3(cx + 0.5, cy + 1.0 - 50, cz + 60 + 0.5);
+        AtomicReference<Vec3> playerBefore = new AtomicReference<>(null);
+        runOnServer(context, server -> {
+            var players = server.getPlayerList().getPlayers();
+            if (!players.isEmpty()) {
+                playerBefore.set(players.get(0).position());
+            }
+        });
+        runCommands(context, List.of(
+            "forceload add " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 76),
+            "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+            "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz + 2) + " "
+                + (cx + 6) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
+            "setblock " + cx + " " + (cy - 1) + " " + cz + " minecraft:stone",
+            "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                + (cx + 6) + " " + (cy - 51) + " " + (cz + 64) + " minecraft:stone",
+            "fill " + (cx - 6) + " " + (cy - 50) + " " + (cz + 54) + " "
+                + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
+            "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 27"
+        ));
+        context.waitTicks(10);
+        runCommands(context, List.of(
+            "execute as @p at @p run portal make_portal 1 2 minecraft:overworld "
+                + destCenter.x + " " + destCenter.y + " " + destCenter.z));
+        context.waitTicks(10);
+        runCommands(context, List.of(
+            "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 5",
+            "execute as @p at @p run portal complete_bi_way_bi_faced_portal"));
+        context.waitTicks(20);
+
+        final BlockPos cellS = new BlockPos(cx, cy, cz);
+        AtomicReference<BlockPos> destRef = new AtomicReference<>(null);
+        for (int attempt = 0; attempt < 30 && destRef.get() == null; attempt++) {
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                if (cell != null) {
+                    cell.bindings().stream()
+                        .filter(b -> b.isMirrorable() && b.cut() != null && b.destPos() != null)
+                        .findFirst().ifPresent(b -> destRef.set(b.destPos()));
+                }
+            });
+            if (destRef.get() == null) {
+                context.waitTicks(10);
+            }
+        }
+        if (destRef.get() == null) {
+            throw new AssertionError(LOG + "RS RELOG STAGE FAILED — the persistence pair never"
+                + " bound at " + cellS);
+        }
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            BlockPos destPos = destRef.get();
+            // Object 1: HEAD-claim then bracketed write, exactly as placement builds it.
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cellS,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+            writeAsPlayer(ow, cellS, Blocks.STONE.defaultBlockState());
+            byte destOwned = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                .occupancyOf(ow, destPos);
+            if (!ow.getBlockState(destPos).is(Blocks.STONE)
+                || com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(destOwned) == 0) {
+                failure.set("staging precondition — object 1 did not mirror+claim (destState="
+                    + ow.getBlockState(destPos).getBlock() + " destOwned=" + destOwned + ")");
+                return;
+            }
+            // Object 2: different-type secondaries, complements on both sides.
+            var gold = Blocks.GOLD_BLOCK.defaultBlockState();
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellS,
+                new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold,
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE));
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, destPos,
+                new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold,
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(destOwned)));
+            // PRECONDITION — the store must actually be dirty-persisted, or the reopen assert
+            // would measure hydration of nothing and blame the wrong subsystem.
+            var store = com.warwa.seamlessportals.passthrough.SeamOccupancySavedData.get(ow);
+            if (store == null) {
+                failure.set("staging precondition — no SavedData store on the overworld");
+            }
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(LOG + "RS RELOG STAGE FAILED: " + failure.get());
+        }
+        relogCell = cellS;
+        relogDest = destRef.get();
+        Vec3 back = playerBefore.get();
+        if (back != null) {
+            runCommands(context, List.of("tp @p " + back.x + " " + back.y + " " + back.z));
+        }
+        SeamlessPortalsConstants.LOGGER.info(LOG + "RS RELOG STAGE — two-object cell persisted at"
+            + " {} / {} (forceload left ON deliberately; the reopen assert consumes it)",
+            relogCell, relogDest);
+    }
+
+    /**
+     * ★ RELOG ASSERT — runs AFTER {@code worldSave.open()}: the SavedData hydrated, the pair
+     * rebound, and the object model must behave IDENTICALLY to before the close. Reproduces the
+     * user's live relog round headlessly: "cant break seam block unless both sides are broken,
+     * seam block gets replaced by the other side, replace goes to both sides" — all three are
+     * post-reload state corruption, and this leg measures state AND behaviour.
+     */
+    private static void rsRelogAssert(ClientGameTestContext context) {
+        if (relogCell == null || relogDest == null) {
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS RELOG ASSERT SKIPPED — nothing staged"
+                + " (fractional off or staging failed earlier, which already threw).");
+            return;
+        }
+        final BlockPos cellS = relogCell;
+        final BlockPos destPos = relogDest;
+        // Wait for the reopened world to rebind the pair and hydrate the store.
+        AtomicReference<Boolean> ready = new AtomicReference<>(false);
+        for (int attempt = 0; attempt < 90 && !ready.get(); attempt++) {
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow == null) {
+                    return;
+                }
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                boolean bound = cell != null && cell.bindings().stream()
+                    .anyMatch(b -> b.isMirrorable() && b.cut() != null);
+                boolean hydrated = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, cellS) != 0;
+                ready.set(bound && hydrated);
+            });
+            if (!ready.get()) {
+                context.waitTicks(10);
+            }
+        }
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            try {
+                byte srcOwned = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, cellS);
+                var srcSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(ow, cellS);
+                byte destOwned = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, destPos);
+                var destSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(ow, destPos);
+                detail.set("srcOwned=" + srcOwned + " srcSec="
+                    + (srcSec == null ? "null" : srcSec.state().getBlock() + "@" + srcSec.half())
+                    + " destOwned=" + destOwned + " destSec="
+                    + (destSec == null ? "null" : destSec.state().getBlock() + "@" + destSec.half())
+                    + " srcState=" + ow.getBlockState(cellS).getBlock()
+                    + " destState=" + ow.getBlockState(destPos).getBlock());
+                // ---- STATE SURVIVED THE RELOAD ----
+                if (srcOwned != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE) {
+                    failure.set("RELOAD LOST THE OWNER HALF — source mask is " + srcOwned
+                        + ", staged POSITIVE. Hydration or the write-through dropped it.");
+                    return;
+                }
+                if (srcSec == null || !srcSec.state().is(Blocks.GOLD_BLOCK)
+                    || srcSec.half() != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE) {
+                    failure.set("RELOAD LOST THE SECOND OBJECT (source side) — " + detail.get());
+                    return;
+                }
+                if (com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(destOwned) == 0
+                    || destSec == null || !destSec.state().is(Blocks.GOLD_BLOCK)
+                    || destSec.half() != com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .otherHalf(destOwned)) {
+                    failure.set("RELOAD LOST THE DEST RECORDS — " + detail.get());
+                    return;
+                }
+                // ---- BEHAVIOUR SURVIVED THE RELOAD: the break-both + promote cycle, the exact
+                // operations the user reported broken after their live relog. ----
+                writeAsPlayer(ow, destPos, Blocks.AIR.defaultBlockState());
+                if (ow.getBlockState(cellS).is(Blocks.STONE)) {
+                    failure.set("POST-RELOAD BREAK-BOTH BROKEN — breaking the crossing half left the"
+                        + " origin standing (the user's 'cant break unless both sides are broken').");
+                    return;
+                }
+                if (!ow.getBlockState(cellS).is(Blocks.GOLD_BLOCK)
+                    || !ow.getBlockState(destPos).is(Blocks.GOLD_BLOCK)) {
+                    failure.set("POST-RELOAD PROMOTE BROKEN — expected both sides to promote the"
+                        + " surviving gold; src=" + ow.getBlockState(cellS).getBlock()
+                        + " dest=" + ow.getBlockState(destPos).getBlock());
+                    return;
+                }
+            } finally {
+                // Full teardown — this fixture must not leak into anything after leg 5.
+                writeAsPlayer(ow, cellS, Blocks.AIR.defaultBlockState());
+                writeAsPlayer(ow, destPos, Blocks.AIR.defaultBlockState());
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cellS);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellS, null);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, destPos);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, destPos, null);
+                for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(9200 - 6, 100 - 56, 9200 - 6,
+                        9200 + 6, 100 + 6, 9200 + 66), x -> true)) {
+                    portal.discard();
+                }
+            }
+        });
+        runCommands(context, List.of(
+            "forceload remove " + (9200 - 16) + " " + (9200 - 16) + " "
+                + (9200 + 16) + " " + (9200 + 76)));
+        if (failure.get() != null) {
+            throw new AssertionError(LOG + "RS RELOG PERSISTENCE GATE FAILED: "
+                + (ready.get() ? "" : "(fixture never became ready after reopen — binding or"
+                    + " hydration absent) ") + failure.get() + " | " + detail.get());
+        }
+        SeamlessPortalsConstants.LOGGER.info(LOG + "RS RELOG PERSISTENCE GATE PASS — two-object"
+            + " state and break-both behaviour survived the world reopen. {}", detail.get());
     }
 
     /**

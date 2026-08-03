@@ -46,6 +46,18 @@ public final class SeamCounterpartOutline {
     /** The near half of a through-window-targeted object; null = none this frame. */
     public static BlockHitResult nearHit = null;
 
+    /**
+     * ★ TRUE while vanilla's {@code extractBlockOutline} is capturing the outline shape (user live
+     * round: "extra line in the outline at the seam"). The line is the cut-face rectangle — a
+     * half-box outline necessarily draws four edges ON the plane, and a VoxelShape cannot omit
+     * edges. During the outline EXTRACT (and only then), seam cells report their FULL shape, so the
+     * near pass and the window pass outline coincident full cubes that merge into one normal block
+     * box with no internal line. Targeting rays never run inside the extract, so the
+     * viewer-half rule — and the far-side break protection built on it — is untouched.
+     * Render-thread confined, like the rest of this class.
+     */
+    public static boolean extractingOutline = false;
+
     /** Recompute both directions from the frame's final targeting. Called from the pick tail. */
     public static void update(Minecraft client) {
         farDim = null;

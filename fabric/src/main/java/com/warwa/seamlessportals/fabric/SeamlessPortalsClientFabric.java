@@ -75,6 +75,11 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
                 com.warwa.seamlessportals.passthrough.SeamOccupancyClient.apply(
                     payload.dimensionId(), payload.packedPos(), (byte) payload.mask(),
                     payload.secondaryStateId(), (byte) payload.secondaryHalf())));
+        // ★ PENDING flush driver (the live-relog fix): the JOIN burst lands before the joining
+        // client's level exists and parks in the PENDING stash — which previously only drained on
+        // the NEXT packet, i.e. never after a quiet relog. One branch per tick when empty.
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(
+            mc -> com.warwa.seamlessportals.passthrough.SeamOccupancyClient.flushPendingTick());
 
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) client init — S13 step 4 =====================

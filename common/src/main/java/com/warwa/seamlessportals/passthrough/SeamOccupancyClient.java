@@ -122,12 +122,29 @@ public final class SeamOccupancyClient {
         return pending != null && pending.containsKey(packedPos);
     }
 
+    /**
+     * ★ TICK-DRIVEN FLUSH (the user's live relog round, root-caused via the green server-side
+     * relog gate): the JOIN burst arrives BEFORE the joining client's ClientLevel exists, so every
+     * entry parks in {@link #PENDING} — and flushing only ran on the NEXT apply(), which after a
+     * relog with no further placements never comes. The client then renders every seam cell as its
+     * whole blockstate: "side b and dest side a replaced by source side a", and every downstream
+     * symptom follows. Registered on END_CLIENT_TICK; the empty-map early-out makes the quiet case
+     * one branch.
+     */
+    public static void flushPendingTick() {
+        flushPending();
+    }
+
     private static void flushPending() {
         if (PENDING.isEmpty()) {
             return;
         }
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         for (var e : PENDING.entrySet()) {
             ClientLevel lvl = qouteall.imm_ptl.core.ClientWorldLoader.getOptionalWorld(e.getKey());
+            if (lvl == null && mc.level != null && mc.level.dimension().equals(e.getKey())) {
+                lvl = mc.level;   // early-join window: mc.level exists before the loader registers it
+            }
             if (lvl == null) {
                 continue;
             }
