@@ -423,7 +423,17 @@ public final class SeamFractional {
             // No viewer: fall back to the viewer-independent collision union.
             return keptShape(level, pos, original);
         }
-        byte viewerHalf = SeamOccupancy.halfOfEye(ec.getEntity(), pos, axis, off);
+        // ★ ONE RULE, LOCAL AND THROUGH-WINDOW — a local viewer targets their own side; a
+        // through-window viewer targets only the half BEYOND the far plane (what the window
+        // legitimately shows). A raw halfOfEye here with a foreign viewer's coordinates was live
+        // round 11's bug: the far-side-only object was breakable from the empty side through the
+        // window, because a viewer millions of blocks away in another dimension computed a garbage
+        // half that coincided with the material.
+        byte viewerHalf = viewerTargetableHalf(lvl, pos, binding, ec.getEntity());
+        if (viewerHalf == 0) {
+            // No legitimate line to this cell: nothing to see, nothing to hit.
+            return net.minecraft.world.phys.shapes.Shapes.empty();
+        }
         if (owned == viewerHalf) {
             return net.minecraft.world.phys.shapes.Shapes.join(
                 original, halfBox(axis, viewerHalf, off),
@@ -649,6 +659,68 @@ public final class SeamFractional {
                     + axis + " half (level=" + (level.isClientSide() ? "CLIENT" : "SERVER") + ")");
         }
         return net.minecraft.world.InteractionResult.SUCCESS;
+    }
+
+    /**
+     * ★ THE VIEWER'S TARGETABLE HALF — one rule for outline, breaking and picking, LOCAL and
+     * THROUGH-WINDOW (live round 11's bug, and features 2/3's foundation, in one).
+     *
+     * <p>A LOCAL viewer (same level as the cell) targets the half on THEIR side of the plane — they
+     * are looking at the near face. A THROUGH-WINDOW viewer (foreign level, reaching this cell via
+     * the portal) targets only the half BEYOND the far plane — exactly the region the window
+     * legitimately shows, the same rule the renderer's inner clip enforces on pixels.
+     *
+     * <p><b>The bug this fixes:</b> {@code halfOfEye} with a foreign viewer's RAW coordinates —
+     * another dimension, possibly millions of blocks away — computes garbage that can coincide with
+     * the material half. Measured live: from the EMPTY side, through the window, the far-side-only
+     * object was outlined and breakable, though the renderer (correctly) showed nothing there. The
+     * transformed viewpoint sits BEFORE the far plane, in the region the inner clip hides; a
+     * forward ray may only touch what lies BEYOND it.
+     *
+     * <p>The beyond-half is computed without any transform arithmetic: take the viewer's half at
+     * their OWN counterpart cell (their dimension, their coordinates — meaningful), carry that
+     * direction through the back-binding's rotation into this cell's frame, and take the OPPOSITE —
+     * beyond the plane. Verified against the user-confirmed geometry: material-side viewer through
+     * the window targets the object's far half (cross-dim selection working); empty-side viewer
+     * targets the far EMPTY half (nothing to hit — the bug closed).
+     *
+     * @return the targetable half, or 0 when the viewer has no legitimate line to this cell (a
+     *         foreign viewer from an unrelated dimension) — callers treat 0 as "nothing targetable".
+     */
+    public static byte viewerTargetableHalf(
+        net.minecraft.world.level.Level level, BlockPos cell,
+        SeamRegistry.SeamBinding binding, net.minecraft.world.entity.Entity viewer
+    ) {
+        if (binding.cut() == null) {
+            return 0;
+        }
+        if (viewer.level() == level) {
+            return SeamOccupancy.halfOfEye(viewer, cell,
+                binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+        }
+        if (binding.destPos() == null || binding.destDim() == null
+            || !viewer.level().dimension().equals(binding.destDim())) {
+            return 0;
+        }
+        SeamRegistry.SeamCell backCell = SeamRegistry.lookup(viewer.level(), binding.destPos());
+        if (backCell == null) {
+            return 0;
+        }
+        for (SeamRegistry.SeamBinding back : backCell.bindings()) {
+            if (back == null || !back.isMirrorable() || back.cut() == null
+                || !cell.equals(back.destPos())) {
+                continue;
+            }
+            byte atCounterpart = SeamOccupancy.halfOfEye(viewer, binding.destPos(),
+                back.srcFacing().getAxis(), back.cut().srcPlaneOffset());
+            Direction dirThere = Direction.get(
+                atCounterpart == SeamOccupancy.HALF_POSITIVE
+                    ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                back.srcFacing().getAxis());
+            Direction dirHere = SeamRegistry.mapDir(back, dirThere);
+            return SeamOccupancy.otherHalf(SeamOccupancy.halfOf(dirHere));
+        }
+        return 0;
     }
 
     /**
