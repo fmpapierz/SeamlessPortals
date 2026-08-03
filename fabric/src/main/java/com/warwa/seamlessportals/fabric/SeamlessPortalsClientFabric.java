@@ -73,7 +73,8 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             com.warwa.seamlessportals.network.ModPayloads.SeamOccupancyPayload.TYPE,
             (payload, context) -> context.client().execute(() ->
                 com.warwa.seamlessportals.passthrough.SeamOccupancyClient.apply(
-                    payload.dimensionId(), payload.packedPos(), (byte) payload.mask())));
+                    payload.dimensionId(), payload.packedPos(), (byte) payload.mask(),
+                    payload.secondaryStateId(), (byte) payload.secondaryHalf())));
 
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) client init — S13 step 4 =====================

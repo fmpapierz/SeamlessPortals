@@ -340,19 +340,102 @@ public final class SeamFractional {
                         ? (lv2.isClientSide() ? "CLIENT" : "SERVER") : "?") + ")");
             SeamFractionalProbe.onCut();
         }
+        net.minecraft.world.phys.shapes.VoxelShape cutShape =
+            net.minecraft.world.phys.shapes.Shapes.join(
+                original, halfBox(axis, owned, off), net.minecraft.world.phys.shapes.BooleanOp.AND);
+        // ★ THE SECONDARY OCCUPANT'S COLLISION, unioned in. Its base shape comes from the 2-ARG
+        // getCollisionShape — the cached, position-blind accessor — DELIBERATELY: the 3-arg form is
+        // the one this very hook intercepts, and calling it here would recurse. The cached whole
+        // shape is exactly the right input anyway; the clip to its half happens here.
+        if (level instanceof net.minecraft.world.level.Level lvl2) {
+            SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(lvl2, pos);
+            if (sec != null) {
+                net.minecraft.world.phys.shapes.VoxelShape secShape =
+                    net.minecraft.world.phys.shapes.Shapes.join(
+                        sec.state().getCollisionShape(level, pos),
+                        halfBox(axis, sec.half(), off),
+                        net.minecraft.world.phys.shapes.BooleanOp.AND);
+                cutShape = net.minecraft.world.phys.shapes.Shapes.or(cutShape, secShape);
+            }
+        }
+        // Shapes.join handles arbitrary fractions exactly — Shapes.create falls back to
+        // ArrayVoxelShape with literal coordinate lists when the bounds are not a power-of-two
+        // fraction, so there is no quantization to 1/8ths or 1/16ths here.
+        return cutShape;
+    }
+
+    /** The unit-cell box of one half, split at {@code off} along {@code axis}. */
+    private static net.minecraft.world.phys.shapes.VoxelShape halfBox(
+        Direction.Axis axis, byte half, double off
+    ) {
+        boolean positive = half == SeamOccupancy.HALF_POSITIVE;
         double lo = positive ? off : 0.0;
         double hi = positive ? 1.0 : off;
-
-        net.minecraft.world.phys.shapes.VoxelShape slab = switch (facing.getAxis()) {
+        return switch (axis) {
             case X -> net.minecraft.world.phys.shapes.Shapes.box(lo, 0.0, 0.0, hi, 1.0, 1.0);
             case Y -> net.minecraft.world.phys.shapes.Shapes.box(0.0, lo, 0.0, 1.0, hi, 1.0);
             case Z -> net.minecraft.world.phys.shapes.Shapes.box(0.0, 0.0, lo, 1.0, 1.0, hi);
         };
-        // Shapes.join handles arbitrary fractions exactly — Shapes.create falls back to
-        // ArrayVoxelShape with literal coordinate lists when the bounds are not a power-of-two
-        // fraction, so there is no quantization to 1/8ths or 1/16ths here.
-        return net.minecraft.world.phys.shapes.Shapes.join(
-            original, slab, net.minecraft.world.phys.shapes.BooleanOp.AND);
+    }
+
+    /**
+     * ★ THE TARGETING RULE — an entity's OUTLINE shape for a seam cell includes ONLY the half on
+     * ITS side of the plane. User non-negotiables, live round 8: no floating cut face from the
+     * empty side ("there should be nothing"), and punching from the empty side must never touch the
+     * original ("completely separate"). The half beyond the plane is the other dimension's
+     * business, reachable only through the window.
+     *
+     * <p>This is viewer-dependent, and it CAN be: {@code ClipContext.Block.OUTLINE} routes through
+     * the 3-arg {@code getShape} whose {@code CollisionContext} carries the picking entity
+     * ({@code EntityCollisionContext.getEntity}, bytecode-verified). Vanilla built the plumbing;
+     * this is the first rule in the mod to use it.
+     *
+     * <p>Consequences, all deliberate: from the empty side the ray passes straight through the cell
+     * (no outline, no punch target — it lands on the window or terrain instead); from your own side
+     * you target exactly your occupant, whichever of the two objects that is; a non-entity query
+     * falls back to the collision union, which is viewer-independent physics.
+     *
+     * @return null = leave vanilla's shape untouched.
+     */
+    @org.jetbrains.annotations.Nullable
+    public static net.minecraft.world.phys.shapes.VoxelShape outlineShape(
+        BlockGetter level, BlockPos pos, net.minecraft.world.phys.shapes.VoxelShape original,
+        net.minecraft.world.phys.shapes.CollisionContext ctx
+    ) {
+        if (!collisionActive() || original.isEmpty()
+            || !(level instanceof net.minecraft.world.level.Level lvl)) {
+            return null;
+        }
+        byte owned = SeamOccupancy.occupancyOf(lvl, pos);
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(lvl, pos);
+        if ((owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE)
+            && sec == null) {
+            return null;    // no owner recorded: vanilla cell, vanilla outline
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        if (binding == null || binding.cut() == null) {
+            return null;
+        }
+        double off = binding.cut().srcPlaneOffset();
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        if (!(ctx instanceof net.minecraft.world.phys.shapes.EntityCollisionContext ec)
+            || ec.getEntity() == null) {
+            // No viewer: fall back to the viewer-independent collision union.
+            return keptShape(level, pos, original);
+        }
+        byte viewerHalf = SeamOccupancy.halfOfEye(ec.getEntity(), pos, axis, off);
+        if (owned == viewerHalf) {
+            return net.minecraft.world.phys.shapes.Shapes.join(
+                original, halfBox(axis, viewerHalf, off),
+                net.minecraft.world.phys.shapes.BooleanOp.AND);
+        }
+        if (sec != null && sec.half() == viewerHalf) {
+            return net.minecraft.world.phys.shapes.Shapes.join(
+                sec.state().getShape(level, pos), halfBox(axis, viewerHalf, off),
+                net.minecraft.world.phys.shapes.BooleanOp.AND);
+        }
+        // The viewer's half is EMPTY: nothing to see, nothing to hit. The ray passes.
+        return net.minecraft.world.phys.shapes.Shapes.empty();
     }
 
     /**
@@ -493,47 +576,66 @@ public final class SeamFractional {
             return null;
         }
         net.minecraft.world.level.Level level = ctx.getLevel();
-        Direction face = ctx.getClickedFace();
-        // The ORIGINAL clicked block. The seam cell is not replaceable, so getClickedPos() is
-        // already offset one step along the face; step back to recover what was actually clicked.
-        BlockPos orig = ctx.getClickedPos().relative(face.getOpposite());
-        byte owned = SeamOccupancy.occupancyOf(level, orig);
+        // The cell the placement RESOLVES INTO — the seam cell is occupied and not replaceable, so
+        // clicking any adjacent face (the sill below the opening, a side block, the frame) offsets
+        // here. This is the natural vanilla gesture for "put a block in that spot", and it is the
+        // one the user actually performs; the old build required clicking the cut face, which the
+        // targeting rule (outlineShape) now correctly makes unhittable from the empty side.
+        BlockPos target = ctx.getClickedPos();
+        byte owned = SeamOccupancy.occupancyOf(level, target);
         if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
             return null;
         }
-        SeamRegistry.SeamBinding binding = cuttingBinding(level, orig);
-        if (binding == null || binding.destPos() == null) {
+        if (SeamOccupancy.secondaryOf(level, target) != null) {
+            return null;    // both halves already occupied
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, target);
+        if (binding == null || binding.destPos() == null || binding.cut() == null) {
             return null;
         }
         Direction.Axis axis = binding.srcFacing().getAxis();
-        byte emptyHalf = (byte) (SeamOccupancy.BOTH & ~owned);
-        Direction emptyDir = Direction.get(
-            emptyHalf == SeamOccupancy.HALF_POSITIVE
-                ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
-            axis);
-        // The gesture is specifically a click on the CUT face — the one whose normal points into
-        // the empty half. Any other face is ordinary vanilla placement against this block.
-        if (face != emptyDir) {
+        double off = binding.cut().srcPlaneOffset();
+        byte emptyHalf = SeamOccupancy.otherHalf(owned);
+        // The HIT POINT decides which half the player is building into — the same rule as first
+        // placement. A click resolving into this cell but aimed at the occupied side is a mistake,
+        // not a second object; decline and let vanilla refuse it.
+        byte hitHalf = SeamOccupancy.halfFromHit(ctx.getClickLocation(), target, axis, off);
+        if (hitHalf != emptyHalf) {
             return null;
         }
         net.minecraft.world.item.ItemStack stack = ctx.getItemInHand();
-        if (!(stack.getItem() instanceof net.minecraft.world.item.BlockItem blockItem)
-            || level.getBlockState(orig).getBlock() != blockItem.getBlock()) {
+        if (!(stack.getItem() instanceof net.minecraft.world.item.BlockItem blockItem)) {
+            return null;
+        }
+        // ★ ANY BLOCK TYPE — the user's non-negotiable. The second object's state lives in the side
+        // table, not the chunk, so it does not need to match the vanilla occupant. Two refusals
+        // remain, both storage facts rather than policy: block entities (the side table cannot host
+        // inventory/NBT) and a null placement state (vanilla itself cannot place it here).
+        net.minecraft.world.level.block.state.BlockState state =
+            blockItem.getBlock().getStateForPlacement(ctx);
+        if (state == null || state.hasBlockEntity()) {
             return null;
         }
 
-        SeamOccupancy.claim(level, orig, emptyHalf);
+        SeamOccupancy.setSecondary(level, target, new SeamOccupancy.Secondary(state, emptyHalf));
         if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
-            SeamOccupancy.broadcast(level, orig);
+            SeamOccupancy.broadcast(level, target);
             net.minecraft.server.level.ServerLevel dest =
                 serverLevel.getServer().getLevel(binding.destDim());
             if (dest != null) {
-                // The new object's crossing: its owned direction, reflected through the plane and
+                // The new object's crossing: its owned direction reflected through the plane and
                 // carried through the portal rotation — the identical computation that placed the
-                // first object's crossing half, so the two are complements by construction.
+                // first object's crossing half, so the two are complements by construction. The
+                // crossing state is rotated exactly as the mirror rotates a primary write.
+                Direction emptyDir = Direction.get(
+                    emptyHalf == SeamOccupancy.HALF_POSITIVE
+                        ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                    axis);
                 byte destHalf = SeamOccupancy.halfOf(
                     SeamRegistry.mapDir(binding, emptyDir.getOpposite()));
-                SeamOccupancy.claim(dest, binding.destPos(), destHalf);
+                SeamOccupancy.setSecondary(dest, binding.destPos(),
+                    new SeamOccupancy.Secondary(
+                        state.rotate(binding.stateRotation()), destHalf));
                 SeamOccupancy.broadcast(dest, binding.destPos());
             }
         }
@@ -541,13 +643,80 @@ public final class SeamFractional {
             stack.shrink(1);
         }
         if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
-            SeamFractionalProbe.onSeamCell(orig, "COMPLETE",
-                "two-object placement filled the " + (emptyHalf == SeamOccupancy.HALF_POSITIVE
-                    ? "POSITIVE" : "NEGATIVE") + " " + axis + " half (now="
-                    + SeamOccupancy.occupancyOf(level, orig) + ", level="
-                    + (level.isClientSide() ? "CLIENT" : "SERVER") + ")");
+            SeamFractionalProbe.onSeamCell(target, "SECONDARY",
+                "second object " + state.getBlock() + " placed into the "
+                    + (emptyHalf == SeamOccupancy.HALF_POSITIVE ? "POSITIVE" : "NEGATIVE") + " "
+                    + axis + " half (level=" + (level.isClientSide() ? "CLIENT" : "SERVER") + ")");
         }
         return net.minecraft.world.InteractionResult.SUCCESS;
+    }
+
+    /**
+     * ★ BREAK ROUTING for the second object — the user's "completely separate" rule. Called from
+     * the {@code ServerPlayerGameMode.destroyBlock} HEAD hook when the breaking player's eye-side
+     * half is the SECONDARY's half: the whole second object goes (both dimensions), one item drops
+     * on the breaker's side, and the vanilla destroy — which would have removed the PRIMARY's
+     * blockstate — never runs.
+     */
+    public static boolean breakSecondary(
+        net.minecraft.server.level.ServerLevel level, BlockPos pos,
+        net.minecraft.server.level.ServerPlayer player
+    ) {
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(level, pos);
+        if (sec == null) {
+            return false;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        SeamOccupancy.setSecondary(level, pos, null);
+        SeamOccupancy.broadcast(level, pos);
+        if (binding != null && binding.destPos() != null) {
+            net.minecraft.server.level.ServerLevel dest =
+                level.getServer().getLevel(binding.destDim());
+            if (dest != null) {
+                SeamOccupancy.setSecondary(dest, binding.destPos(), null);
+                SeamOccupancy.broadcast(dest, binding.destPos());
+            }
+        }
+        if (!player.getAbilities().instabuild) {
+            net.minecraft.world.level.block.Block.popResource(level, pos,
+                new net.minecraft.world.item.ItemStack(sec.state().getBlock()));
+        }
+        if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+            SeamFractionalProbe.onSeamCell(pos, "BREAK-SECONDARY",
+                "second object " + sec.state().getBlock() + " removed (both dimensions), primary"
+                    + " untouched");
+        }
+        return true;
+    }
+
+    /**
+     * ★ PROMOTE ON BREAK — when the PRIMARY object's blockstate is removed (vanilla destroy, or the
+     * mirror's break-either-breaks-both clearing the counterpart), a surviving second object
+     * becomes the cell's vanilla occupant: its state moves from the side table into the chunk and
+     * its half becomes the recorded owner. Called from the seam driver's air branch on BOTH sides —
+     * the counterpart promotes itself when the break path airs it.
+     *
+     * @return true when a promote happened (the caller must then NOT clear occupancy — it was
+     *         rewritten, not emptied).
+     */
+    public static boolean promoteSecondaryOnAir(
+        net.minecraft.world.level.Level level, BlockPos pos
+    ) {
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(level, pos);
+        if (sec == null) {
+            return false;
+        }
+        SeamOccupancy.setSecondary(level, pos, null);
+        SeamOccupancy.set(level, pos, sec.half());
+        SeamMirror.writeAsSeamInternal(level, pos, sec.state());
+        SeamOccupancy.broadcast(level, pos);
+        if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+            SeamFractionalProbe.onSeamCell(pos, "PROMOTE",
+                "primary broken; surviving second object " + sec.state().getBlock()
+                    + " promoted to the cell's blockstate (half="
+                    + (sec.half() == SeamOccupancy.HALF_POSITIVE ? "POSITIVE" : "NEGATIVE") + ")");
+        }
+        return true;
     }
 
     /** Forget a cell's owner halves — the object was broken or the cell replaced wholesale. */

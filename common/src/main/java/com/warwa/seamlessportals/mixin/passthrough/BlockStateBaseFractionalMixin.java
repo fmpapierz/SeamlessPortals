@@ -91,7 +91,12 @@ public abstract class BlockStateBaseFractionalMixin {
         if (original == null) {
             return;
         }
-        VoxelShape cut = SeamFractional.keptShape(level, pos, original);
+        // ★ VIEWER-DEPENDENT, deliberately — the targeting rule (user live round 8): an entity's
+        // outline for a seam cell includes ONLY the half on ITS side of the plane. From the empty
+        // side there is nothing to see or hit and the ray passes; from your side you target exactly
+        // your occupant. The picking entity rides in the CollisionContext, which vanilla plumbs
+        // through ClipContext.Block.OUTLINE.
+        VoxelShape cut = SeamFractional.outlineShape(level, pos, original, context);
         if (cut != null) {
             cir.setReturnValue(cut);
         }
