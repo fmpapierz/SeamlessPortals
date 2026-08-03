@@ -534,6 +534,20 @@ public final class SeamMirror {
                 forceClientSync(sourceLevel, dest, destPos);
                 clearedMirrors++;
                 probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
+                // ★ THE COUNTERPART'S OCCUPANCY BOOKKEEPING MUST HAPPEN HERE — its own driver never
+                // runs it. This whole block executes under `applying = true`, and the counterpart's
+                // onSeamCellChanged returns at that guard before reaching the air branch. So without
+                // this, the counterpart cell goes to air with a STALE owner mask and an UNPROMOTED
+                // secondary — object records diverge, and the next placement is adjudicated against
+                // ghosts (live round 10's cascade). Promote-or-clear, exactly as the driver's own
+                // air branch would have.
+                if (!com.warwa.seamlessportals.passthrough.SeamFractional
+                        .promoteSecondaryOnAir(dest, destPos)) {
+                    if (SeamOccupancy.occupancyOf(dest, destPos) != 0) {
+                        SeamOccupancy.clear(dest, destPos);
+                        SeamOccupancy.broadcast(dest, destPos);
+                    }
+                }
             }
             holder.seamlessportals$mirrorCreatedCells().remove(destKey);
             return;
