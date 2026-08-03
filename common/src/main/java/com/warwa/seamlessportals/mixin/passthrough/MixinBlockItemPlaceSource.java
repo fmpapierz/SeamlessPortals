@@ -46,11 +46,23 @@ import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 public abstract class MixinBlockItemPlaceSource {
 
     @Inject(method = "place(Lnet/minecraft/world/item/context/BlockPlaceContext;)Lnet/minecraft/world/InteractionResult;",
-        at = @At("HEAD"))
+        at = @At("HEAD"), cancellable = true)
     private void seamlessportals$armPlayerPlace(
         BlockPlaceContext context, CallbackInfoReturnable<InteractionResult> cir
     ) {
         if (!SeamlessPortalsConfig.isEntityPortals() || context.getPlayer() == null) {
+            return;
+        }
+        // ★ THE TWO-OBJECT GESTURE, checked BEFORE vanilla runs at all: clicking the cut face of a
+        // half-owned seam cell completes that cell. Vanilla cannot express this placement (the cell
+        // is occupied and not replaceable, so it offsets to the neighbour; and a same-state setBlock
+        // is a no-op that would fail place()), so on a match the whole call is replaced by the
+        // occupancy bookkeeping in SeamFractional. Cancelling here means the arm/claim below and
+        // the RETURN handler never run for this gesture — correct, since no world write happens.
+        InteractionResult twoObject =
+            com.warwa.seamlessportals.passthrough.SeamFractional.tryTwoObjectPlacement(context);
+        if (twoObject != null) {
+            cir.setReturnValue(twoObject);
             return;
         }
         // getClickedPos() is the cell the block actually lands in — already offset off the clicked
