@@ -344,6 +344,77 @@ and leg 3 (bloom ON) were **not comparable**, and the "sliver" judged in each ma
 right and my merge of them was not. **Pack options are user-side state the harness does not control:
 read `shaderpacks/<pack>.txt` at the START of every leg and record it beside the lever block.**
 
+### §7h THE FIX — IS5-BLOOMMB, the gatherer retarget (BUILT; live A/B pending)
+
+**The rule**, in `buildPlan` right after the legacy `maskIndex = lastC0Writer + 1`:
+
+```java
+if (!IPGlobal.BLOOM_MASK_GATHERER_RETARGET_DISABLED_LEVER
+    && lastDb.length > 1
+    && passMipGathersC0(passes.get(lastC0Writer))) {
+    maskIndex = lastC0Writer;
+}
+```
+
+**The signal is the MIP DECLARATION, not the draw buffers.** A pass that samples colortex0's mip
+pyramid is non-local *by definition*, and no pack can do it without declaring
+`const bool colortex0MipmapEnabled = true;`, which iris parses into `CompositeRenderer$Pass
+.mipmappedBuffers` — **javap-confirmed on the pinned jar** (`iris-1.11.2+26.2-fabric`) as
+`ImmutableSet<Integer> mipmappedBuffers;`, package-private, non-final, declared beside the already-
+reflected `stageReadsFromAlt`. In `composite4.glsl` that declaration is at `:18`, inside
+`#ifdef FRAGMENT_SHADER` and under **no other conditional** — so unlike the draw buffers it is
+**Motion-Blur-invariant**, which is exactly the property a selector needs here.
+
+**Why `lastDb.length > 1` is in the condition — it is NOT a gatherer test.** It is a blast-radius
+short-circuit that makes the shipped, user-confirmed MB-OFF path **structurally unreachable** by this
+change rather than merely unaffected in practice: `composite3.glsl:160` is `/* DRAWBUFFERS:0 */`,
+length 1, so with Motion Blur off the `&&` short-circuits before `passMipGathersC0` is ever called.
+That is a proof, not a promise.
+
+**`maskIndex` semantics, and why the retarget is exactly right.** The mixin fires at
+`Program.unbind()` *before* pass `i`'s own mip regen and draw, so `maskIndex = N` means "mask
+immediately before pass N executes". The MB-OFF plan that the user confirmed working is `idx=3` =
+composite4. The retarget makes the MB-ON plan produce **the same index**, i.e. it reproduces a
+configuration already proven correct by observation rather than inventing a new one.
+
+**Deliberately rejected, each killed by a measurement:**
+- `drawBuffers.length == 1` as the *gatherer* test — `composite1.glsl:337` is `/* DRAWBUFFERS:05 */`,
+  a default-reachable multi-buffer c0 write; on a pack where every c0 write is multi-buffer the rule
+  yields `lastC0Writer = -1` and hard-disarms a working feature.
+- retargeting onto **every** mip-gathering pass — `composite3.glsl:19` declares the same constant
+  under `#if WORLD_BLUR > 0`, and its DOF branch **replaces** the frame from 18 c0 mip taps. Masking
+  there would push a second non-local reader's dark fringe into the visible image. (`WORLD_BLUR`
+  defaults to `0` — `lib/common.glsl:162` — and is absent from the live sidecar, so it is off here;
+  the narrow rule never selects composite3 regardless.)
+- reflectively emptying `Pass.mipmappedBuffers` — the same `Pass` objects serve the main-world frame,
+  and skipping `RenderTarget.turnOnMips` would degrade the gather to level-0 sampling: catastrophically
+  wrong bloom rather than absent bloom.
+
+**The optional reflection is bound in its OWN try.** Inside the shared one, an iris rename of
+`mipmappedBuffers` would fall through to the catch, leave `reflectReady` false, and route every plan
+to `noopPlan("reflection failed")` — **killing the MB-OFF masking that is already shipped and
+user-confirmed.** Nested, the same rename degrades to "no retarget ⇒ the ring returns under MB ON",
+i.e. exactly today's behaviour and nothing worse.
+
+**New instrument: `[C3-BLOOM] PLAN:`** — a content-keyed whole-chain census printing `idx name db=
+mip=` for every pass plus `sel=gatherer|legacy`. The `mip=` column is the specific thing whose absence
+cost this arc a wrong verdict (§7f-bis). The `LIVE:` line now also carries `sel=`.
+
+**★ THE DEFAULT IS PROVISIONAL, AND THE GATE THAT WOULD LIE.** Masking before composite4 also blackens
+the source of its motion blur, which samples colortex0 at **LOD 0**, 9 taps, clamped to the **screen**
+not the aperture (`composite4.glsl:141`), with reach linear in `MOTION_BLURRING_STRENGTH` — the user
+runs **2.00, the slider maximum**. So the trade is a bright bloom ring for a possible **dark MB fringe
+inside the window**. Critically: at `velocity == 0` all nine taps collapse onto the fragment's own
+texel, so **the fringe is arithmetically ZERO AT REST and a stationary A/B will pass even if the fringe
+is severe.** It must be judged under sustained fast yaw with `-PdebugTintBloomMask=true`, where the
+fringe reads as a magenta→black ramp that can be measured in pixels against the lever-off control. If
+that ramp is unacceptable, the default flips and the level-0 restore stage gets built (design:
+restore c0 level 0 from the scratch copy at a `Pass.setupState()` `Shift.AFTER` seam, after the mip
+regen has already consumed the masked level 0).
+
+**Also never the gate: `masks=` / `misses=`.** MEASURED — this session logged `masks=10148 misses=0`
+while the ring was plainly visible. The counter records draws issued, never outcome achieved.
+
 ### §7g THE REMAINING OPEN ITEMS (do not lose these — the bloom ring is only one of them)
 
 1. **The MB-OFF residual sliver.** With Bloom OFF *and* MB OFF the user still reported "an even smaller

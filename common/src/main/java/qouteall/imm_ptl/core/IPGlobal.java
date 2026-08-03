@@ -1160,6 +1160,18 @@ public class IPGlobal {
         return irisBloomApertureMask && !IRIS_BLOOM_MASK_DISABLED_LEVER;
     }
 
+    // IS5-BLOOMMB — the gatherer retarget. `maskIndex = lastC0Writer + 1` assumes the last colortex0
+    // WRITER precedes the bloom GATHERER. With the pack's Motion Blur on, Complementary's composite4
+    // (which IS the gatherer) starts writing colortex0 too, becomes the last writer, and shoves the
+    // mask one pass PAST the gather — where it runs successfully every frame and does nothing.
+    // The retarget detects that shape via Pass.mipmappedBuffers and masks the gatherer instead.
+    // DEFAULT TRUE, but PROVISIONALLY so: it also blackens composite4's motion-blur source, a trade
+    // that is arithmetically zero at rest and must be judged under sustained fast yaw before the
+    // default is considered settled. A/B OFF via -Dseamlessportals.disableBloomMaskGathererRetarget.
+    // Full record: migration/MB_BLOOM_SEAM_HANDOFF.md §7f.
+    public static final boolean BLOOM_MASK_GATHERER_RETARGET_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableBloomMaskGathererRetarget");
+
     /** Confirm-counter: incremented once per successful mask (per portal per frame). Render-thread int. */
     public static int irisBloomMaskCount = 0;
     /** Miss-counter: armed-but-never-consumed portal windows (dormant mixin / ineligible pack / disarm). */
