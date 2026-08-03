@@ -41,6 +41,20 @@ public abstract class SeamIndexHolderMixin
         return seamlessportals$seamOccupancy;
     }
 
+    /**
+     * ★ SECONDARY OCCUPANTS — the second object in a shared seam cell (state + half), which vanilla's
+     * one-blockstate-per-cell storage cannot hold. Same lifecycle as the rest: dies with the Level.
+     */
+    @Unique
+    private final java.util.Map<Long, com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary>
+        seamlessportals$seamSecondary = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Override
+    public java.util.Map<Long, com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary>
+        seamlessportals$seamSecondary() {
+        return seamlessportals$seamSecondary;
+    }
+
     @Unique
     private final Long2ObjectOpenHashMap<SeamRegistry.SeamCell> seamlessportals$seamCells =
         new Long2ObjectOpenHashMap<>();

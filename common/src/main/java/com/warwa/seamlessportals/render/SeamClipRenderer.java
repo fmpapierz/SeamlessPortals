@@ -342,19 +342,38 @@ public final class SeamClipRenderer {
             // view-INDEPENDENT by construction. A cell with no recorded owner keeps today's
             // behaviour (drawn whole) rather than guessing a side, matching keptShape exactly.
             byte owned = SeamOccupancy.occupancyOf(level, pos);
-            Direction keptDir;
-            if (owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE) {
-                keptDir = Direction.get(
+            // ★ TWO OCCUPANTS PER CELL (user live round 8). A cell may hold the vanilla blockstate
+            // (the PRIMARY, clipped to its owned half) AND a side-table SECONDARY of any type,
+            // clipped to the other half. Each occupant is its own draw with its own plane; the
+            // secondary's state never touches the chunk, so this dynamic path is the ONLY thing
+            // that renders it — which works because seam cells are mesh-excluded and drawn here
+            // every frame from live state.
+            SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(level, pos);
+            boolean single =
+                owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE;
+            net.minecraft.world.level.block.state.BlockState[] oStates;
+            Direction[] oDirs;    // null dir = drawn whole (no owner recorded / legacy BOTH)
+            if (single) {
+                Direction primaryDir = Direction.get(
                     owned == SeamOccupancy.HALF_POSITIVE
                         ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
                     f.getAxis());
+                if (sec != null && stateQualifies(sec.state())) {
+                    Direction secDir = Direction.get(
+                        sec.half() == SeamOccupancy.HALF_POSITIVE
+                            ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                        f.getAxis());
+                    oStates = new net.minecraft.world.level.block.state.BlockState[]{
+                        state, sec.state()};
+                    oDirs = new Direction[]{primaryDir, secDir};
+                } else {
+                    oStates = new net.minecraft.world.level.block.state.BlockState[]{state};
+                    oDirs = new Direction[]{primaryDir};
+                }
             } else {
-                // No owner, or BOTH halves owned (two objects meeting at the plane ⇒ materially a
-                // whole cube). Either way there is nothing to cut here.
-                keptDir = f;
+                oStates = new net.minecraft.world.level.block.state.BlockState[]{state};
+                oDirs = new Direction[]{null};
             }
-            boolean cutThisCell =
-                owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE;
             // ★ BOTH CAMERA-DERIVED GUARDS ARE GONE — user live round 6, and FRACTIONAL_DESIGN.md
             // §1.2 predicted exactly this once the cut stopped being camera-derived:
             //
@@ -368,19 +387,24 @@ public final class SeamClipRenderer {
             //   half is GENUINELY ABSENT — there is nothing to supply — so the cut is correct from
             //   every viewpoint, windows or none, and the whole-block fallback was one more way to
             //   flash the empty half.
-            boolean clipThis = cutThisCell;
-            if (activePlane != null && !onPlane(center, f, activePlane)) {
-                // Unrelated cell inside a dest pass. Wholly on the ambient CLIPPED (camera) side:
-                // every fragment would be discarded — skip the tessellation outright. Straddling:
-                // draw ambient (never abandon the inner clip — panel finding 5). Wholly on the
-                // kept side: own-plane bracket is safe.
-                if (whollyOnClippedSide(pos, activePlane)) {
-                    continue;
-                }
-                if (!whollyOnKeptSide(pos, activePlane)) {
+            if (activePlane != null && !onPlane(center, f, activePlane)
+                && whollyOnClippedSide(pos, activePlane)) {
+                // Unrelated cell in a dest pass, wholly on the CLIPPED (camera) side: every
+                // fragment of every occupant would be discarded — skip the whole cell.
+                continue;
+            }
+            boolean offPlaneStraddling = activePlane != null && !onPlane(center, f, activePlane)
+                && !whollyOnKeptSide(pos, activePlane);
+
+            for (int oi = 0; oi < oStates.length; oi++) {
+                net.minecraft.world.level.block.state.BlockState oState = oStates[oi];
+                Direction keptDir = oDirs[oi] == null ? f : oDirs[oi];
+                boolean clipThis = oDirs[oi] != null;
+                if (offPlaneStraddling) {
+                    // Straddling: draw ambient (never abandon the inner clip — panel finding 5).
                     clipThis = false;
                 }
-            } else if (activePlane != null) {
+                if (activePlane != null && onPlane(center, f, activePlane)) {
                 // ★ ON-PLANE CELL IN A DEST PASS — THE WINDOW VIEW, and the phantom-half fix
                 // (user live round 5, 2026-08-02). The old rule drew the cell's WHOLE cube under the
                 // ambient inner clip: "show the beyond-plane half through the window". Correct under
@@ -397,41 +421,41 @@ public final class SeamClipRenderer {
                 // clipped side (there is nothing beyond the plane to show — draw NOTHING). One
                 // plane evaluation at the owned half's centre decides; kept side is positive, per
                 // whollyOnKeptSide/cornersExtreme.
-                byte ownedOnPlane = SeamOccupancy.occupancyOf(level, pos);
-                if (ownedOnPlane == SeamOccupancy.HALF_POSITIVE
-                    || ownedOnPlane == SeamOccupancy.HALF_NEGATIVE) {
-                    Direction ownedDir = Direction.get(
-                        ownedOnPlane == SeamOccupancy.HALF_POSITIVE
-                            ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
-                        f.getAxis());
-                    Vec3 halfCenter = center.add(
-                        ownedDir.getStepX() * 0.25, ownedDir.getStepY() * 0.25,
-                        ownedDir.getStepZ() * 0.25);
-                    Vec3 n = activePlane.normal();
-                    Vec3 pp = activePlane.pos();
-                    double ownedSide = n.x * (halfCenter.x - pp.x)
-                        + n.y * (halfCenter.y - pp.y) + n.z * (halfCenter.z - pp.z);
-                    if (ownedSide < 0) {
-                        continue;   // material is entirely on the camera side — nothing to show
+                    if (oDirs[oi] != null) {
+                        // Per-OCCUPANT window test: this occupant draws through the window only if
+                        // ITS half lies beyond the plane. With two occupants exactly one qualifies
+                        // (their halves are complements), so each side of the window shows the
+                        // object whose material genuinely is there.
+                        Vec3 halfCenter = center.add(
+                            keptDir.getStepX() * 0.25, keptDir.getStepY() * 0.25,
+                            keptDir.getStepZ() * 0.25);
+                        Vec3 n = activePlane.normal();
+                        Vec3 pp = activePlane.pos();
+                        double ownedSide = n.x * (halfCenter.x - pp.x)
+                            + n.y * (halfCenter.y - pp.y) + n.z * (halfCenter.z - pp.z);
+                        if (ownedSide < 0) {
+                            continue;   // this occupant is entirely on the camera side
+                        }
                     }
+                    clipThis = false;   // the active link's own cells: ambient inner clip cuts
                 }
-                clipThis = false;       // the active link's own cells: ambient inner clip cuts
-            }
-            CellDraw draw = new CellDraw(pos, state);
-            if (clipThis) {
-                // planeCoordHalf: the plane passes through the cell centre; its coordinate along
-                // the axis is (blockCoord + 0.5), stored ×2 to stay integral.
-                int coordHalf = 2 * componentAlong(pos, keptDir.getAxis()) + 1;
-                if (bracketed == null) {
-                    bracketed = new LinkedHashMap<>();
+                CellDraw draw = new CellDraw(pos, oState);
+                if (clipThis) {
+                    // planeCoordHalf: the plane passes through the cell centre; its coordinate
+                    // along the axis is (blockCoord + 0.5), stored ×2 to stay integral.
+                    int coordHalf = 2 * componentAlong(pos, keptDir.getAxis()) + 1;
+                    if (bracketed == null) {
+                        bracketed = new LinkedHashMap<>();
+                    }
+                    bracketed.computeIfAbsent(new PlaneKey(keptDir, coordHalf),
+                            k -> new ArrayList<>())
+                        .add(draw);
+                } else {
+                    if (ambient == null) {
+                        ambient = new ArrayList<>();
+                    }
+                    ambient.add(draw);
                 }
-                bracketed.computeIfAbsent(new PlaneKey(keptDir, coordHalf), k -> new ArrayList<>())
-                    .add(draw);
-            } else {
-                if (ambient == null) {
-                    ambient = new ArrayList<>();
-                }
-                ambient.add(draw);
             }
         }
         if (ambient == null && bracketed == null) {

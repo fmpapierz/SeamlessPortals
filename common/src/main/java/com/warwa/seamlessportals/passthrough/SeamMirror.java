@@ -251,9 +251,17 @@ public final class SeamMirror {
         // every client's copy clears too; v1 clears the WHOLE cell (per-half breaking of a
         // two-object cell is front-4 work — vanilla removes the entire blockstate on break).
         if (newState.isAir() && level instanceof net.minecraft.server.level.ServerLevel) {
-            if (SeamOccupancy.occupancyOf(level, pos) != 0) {
-                SeamOccupancy.clear(level, pos);
-                SeamOccupancy.broadcast(level, pos);
+            // ★ PROMOTE FIRST. If a second object survives in this cell, the break removed only the
+            // PRIMARY: the survivor's state moves from the side table into the chunk and its half
+            // becomes the owner. Deliberately FALLS THROUGH afterwards (no return): the flow below
+            // still owes the broken primary its break-either-breaks-both counterpart clear, and the
+            // counterpart's own air event runs its own promote symmetrically. The promote's setBlock
+            // re-enters this driver under the applying guard, which swallows it.
+            if (!SeamFractional.promoteSecondaryOnAir(level, pos)) {
+                if (SeamOccupancy.occupancyOf(level, pos) != 0) {
+                    SeamOccupancy.clear(level, pos);
+                    SeamOccupancy.broadcast(level, pos);
+                }
             }
         }
         // ★ WHO WROTE THIS? (user decision 2026-07-26 — players only.)
@@ -363,6 +371,26 @@ public final class SeamMirror {
         Level sourceLevel, BlockPos sourcePos
     ) {
         applyToDestination(dest, binding, newState, sourceLevel, sourcePos, false);
+    }
+
+    /**
+     * ★ A seam-internal write: setBlock under the {@code applying} guard, so the driver observes it
+     * and swallows it — no mirror fires, no break-release fires, no policy consulted. Used by the
+     * promote path, whose write is bookkeeping (moving a surviving second object's state from the
+     * side table into the chunk), not a player action.
+     */
+    public static void writeAsSeamInternal(
+        Level level, BlockPos pos, BlockState state
+    ) {
+        boolean prev = applying;
+        applying = true;
+        try {
+            level.setBlock(pos, state,
+                net.minecraft.world.level.block.Block.UPDATE_ALL
+                    | net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE);
+        } finally {
+            applying = prev;
+        }
     }
 
     /**

@@ -147,8 +147,11 @@ public final class SeamOccupancy {
         if (server == null) {
             return;
         }
+        Secondary sec = secondaryOf(level, cell);
         var payload = new com.warwa.seamlessportals.network.ModPayloads.SeamOccupancyPayload(
-            level.dimension().identifier().toString(), cell.asLong(), occupancyOf(level, cell));
+            level.dimension().identifier().toString(), cell.asLong(), occupancyOf(level, cell),
+            sec == null ? -1 : net.minecraft.world.level.block.Block.getId(sec.state()),
+            sec == null ? 0 : sec.half());
         for (net.minecraft.server.level.ServerPlayer player : server.getPlayerList().getPlayers()) {
             try {
                 com.warwa.seamlessportals.network.PlatformHelper.getInstance()
@@ -159,8 +162,64 @@ public final class SeamOccupancy {
         }
     }
 
+    // =============================================================================================
+    // ★ THE SECONDARY OCCUPANT — user non-negotiables, live round 8 (2026-08-02):
+    //   "i must be able to place ANY block i want in the empty half"
+    //   "when i break/punch it should not replace the original block EVER, completely separate"
+    //
+    // Vanilla stores exactly ONE BlockState per cell, so a second, possibly different-type object
+    // sharing a seam cell cannot live in the chunk. It lives HERE: state + half, with its own
+    // placement, rendering, collision, targeting and breaking. The same-type completion gesture
+    // routes through this too — a second object always has its own identity, which is precisely
+    // what makes its breaking independent of the original's.
+    // =============================================================================================
+
+    /** The second object in a cell: its state and the single half it occupies. */
+    public record Secondary(net.minecraft.world.level.block.state.BlockState state, byte half) {}
+
+    private static java.util.Map<Long, Secondary> secondaryMap(Level level) {
+        return ((SeamOccupancyHolder) level).seamlessportals$seamSecondary();
+    }
+
+    @org.jetbrains.annotations.Nullable
+    public static Secondary secondaryOf(Level level, BlockPos cell) {
+        return secondaryMap(level).get(cell.asLong());
+    }
+
+    public static void setSecondary(Level level, BlockPos cell,
+        @org.jetbrains.annotations.Nullable Secondary secondary) {
+        if (secondary == null) {
+            secondaryMap(level).remove(cell.asLong());
+        } else {
+            secondaryMap(level).put(cell.asLong(), secondary);
+        }
+    }
+
+    /**
+     * The half an entity's EYES are on — the targeting rule's discriminator. An entity only sees,
+     * outlines and punches the half of a seam cell on ITS side of the plane; the other half is the
+     * other dimension's business, reachable only through the window.
+     */
+    public static byte halfOfEye(net.minecraft.world.entity.Entity entity, BlockPos cell,
+        Direction.Axis axis, double planeOffset) {
+        double eye = switch (axis) {
+            case X -> entity.getX() - cell.getX();
+            case Y -> entity.getEyeY() - cell.getY();
+            case Z -> entity.getZ() - cell.getZ();
+        };
+        return eye >= planeOffset ? HALF_POSITIVE : HALF_NEGATIVE;
+    }
+
+    /** The complement of a single half; 0 for anything else. */
+    public static byte otherHalf(byte half) {
+        return half == HALF_POSITIVE ? HALF_NEGATIVE
+            : half == HALF_NEGATIVE ? HALF_POSITIVE : 0;
+    }
+
     /** Duck interface on {@code Level}, alongside the other per-level seam indices. */
     public interface SeamOccupancyHolder {
         Long2ByteOpenHashMap seamlessportals$seamOccupancy();
+
+        java.util.Map<Long, Secondary> seamlessportals$seamSecondary();
     }
 }

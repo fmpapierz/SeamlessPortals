@@ -48,15 +48,23 @@ public final class SeamOccupancyClient {
      * and the next placement self-heals it. Static, so it survives level swaps; bounded by the
      * number of seam cells a server can have live, which is human-placement-bounded.
      */
-    private static final java.util.Map<ResourceKey<Level>, it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap>
+    private static final java.util.Map<ResourceKey<Level>, java.util.concurrent.ConcurrentHashMap<Long, Pending>>
         PENDING = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static void apply(String dimensionId, long packedPos, byte mask) {
+        apply(dimensionId, packedPos, mask, -1, (byte) 0);
+    }
+
+    public static void apply(String dimensionId, long packedPos, byte mask,
+        int secondaryStateId, byte secondaryHalf) {
         ResourceKey<Level> dim = parseDimensionKey(dimensionId);
         if (dim == null) {
             return;
         }
         BlockPos pos = BlockPos.of(packedPos);
+        SeamOccupancy.Secondary secondary = secondaryStateId < 0 ? null
+            : new SeamOccupancy.Secondary(
+                net.minecraft.world.level.block.Block.stateById(secondaryStateId), secondaryHalf);
         // Older stashes first, so a fresher mask for the same cell wins below.
         flushPending();
 
@@ -70,22 +78,22 @@ public final class SeamOccupancyClient {
         boolean applied = false;
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         if (mc.level != null && mc.level.dimension().equals(dim)) {
-            put(mc.level, pos, mask);
+            put(mc.level, pos, mask, secondary);
             applied = true;
         }
         ClientLevel ipWorld = qouteall.imm_ptl.core.ClientWorldLoader.getOptionalWorld(dim);
         if (ipWorld != null && ipWorld != mc.level) {
-            put(ipWorld, pos, mask);
+            put(ipWorld, pos, mask, secondary);
             applied = true;
         }
         ClientLevel cached = PortalWorldManager.getLevel(dim);
         if (cached != null && cached != mc.level && cached != ipWorld) {
-            put(cached, pos, mask);
+            put(cached, pos, mask, secondary);
             applied = true;
         }
         if (!applied) {
-            PENDING.computeIfAbsent(dim, k -> new it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap())
-                .put(packedPos, mask);
+            PENDING.computeIfAbsent(dim, k -> new java.util.concurrent.ConcurrentHashMap<>())
+                .put(packedPos, new Pending(mask, secondary));
         }
         if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
             SeamlessPortalsConstants.LOGGER.info(
@@ -123,20 +131,27 @@ public final class SeamOccupancyClient {
             if (lvl == null) {
                 continue;
             }
-            for (var cell : e.getValue().long2ByteEntrySet()) {
-                put(lvl, BlockPos.of(cell.getLongKey()), cell.getByteValue());
+            for (var cell : e.getValue().entrySet()) {
+                put(lvl, BlockPos.of(cell.getKey()), cell.getValue().mask(),
+                    cell.getValue().secondary());
             }
             PENDING.remove(e.getKey());
         }
     }
 
-    private static void put(Level level, BlockPos pos, byte mask) {
+    private static void put(Level level, BlockPos pos, byte mask,
+        @org.jetbrains.annotations.Nullable SeamOccupancy.Secondary secondary) {
         if (mask == 0) {
             SeamOccupancy.clear(level, pos);
         } else {
             SeamOccupancy.set(level, pos, mask);
         }
+        SeamOccupancy.setSecondary(level, pos, secondary);
     }
+
+    /** A stashed packet for a dimension whose ClientLevel does not exist yet. */
+    private record Pending(byte mask, @org.jetbrains.annotations.Nullable
+        SeamOccupancy.Secondary secondary) {}
 
     private static ResourceKey<Level> parseDimensionKey(String dimensionId) {
         try {

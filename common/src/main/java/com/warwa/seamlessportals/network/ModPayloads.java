@@ -546,7 +546,9 @@ public class ModPayloads {
     public record SeamOccupancyPayload(
         String dimensionId,
         long packedPos,
-        int mask
+        int mask,
+        int secondaryStateId,   // Block.getId of the secondary occupant's state; -1 = none
+        int secondaryHalf       // the half the secondary occupies; meaningless when stateId == -1
     ) implements CustomPacketPayload {
         public static final Type<SeamOccupancyPayload> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(SeamlessPortalsConstants.MOD_ID, "seam_occupancy")
@@ -556,6 +558,8 @@ public class ModPayloads {
             ByteBufCodecs.STRING_UTF8, SeamOccupancyPayload::dimensionId,
             ByteBufCodecs.VAR_LONG, SeamOccupancyPayload::packedPos,
             ByteBufCodecs.VAR_INT, SeamOccupancyPayload::mask,
+            ByteBufCodecs.VAR_INT, SeamOccupancyPayload::secondaryStateId,
+            ByteBufCodecs.VAR_INT, SeamOccupancyPayload::secondaryHalf,
             SeamOccupancyPayload::new
         );
 
