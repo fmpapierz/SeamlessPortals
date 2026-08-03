@@ -68,6 +68,13 @@ public abstract class ServerPlayerGameModeSecondaryBreakMixin {
             if (playerHalf == 0) {
                 // No legitimate line to this cell from where the breaker is: refuse the break
                 // outright rather than letting vanilla destroy whatever the cell holds.
+                if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                        .SEAM_FRACTIONAL_PROBE) {
+                    com.warwa.seamlessportals.passthrough.SeamFractionalProbe.onSeamCell(pos,
+                        "REFUSE", "break refused — no legitimate line (viewer at "
+                            + this.player.blockPosition() + " in "
+                            + this.player.level().dimension().identifier() + ")");
+                }
                 cir.setReturnValue(false);
                 return;
             }
@@ -82,6 +89,13 @@ public abstract class ServerPlayerGameModeSecondaryBreakMixin {
                 // The breaker's targetable half is EMPTY (single-object cell, material on the other
                 // side): there is nothing of theirs to break. Without this, vanilla destroy would
                 // remove the primary a viewer on that side cannot even see.
+                if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                        .SEAM_FRACTIONAL_PROBE) {
+                    com.warwa.seamlessportals.passthrough.SeamFractionalProbe.onSeamCell(pos,
+                        "REFUSE", "break refused — targetable half "
+                            + (playerHalf == SeamOccupancy.HALF_POSITIVE ? "POSITIVE" : "NEGATIVE")
+                            + " is empty (material on the other side)");
+                }
                 cir.setReturnValue(false);
                 return;
             }

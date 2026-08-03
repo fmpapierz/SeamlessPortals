@@ -687,6 +687,13 @@ public final class SeamFractional {
      * @return the targetable half, or 0 when the viewer has no legitimate line to this cell (a
      *         foreign viewer from an unrelated dimension) — callers treat 0 as "nothing targetable".
      */
+    /**
+     * Interaction locality radius, squared. A genuine LOCAL interaction happens within reach
+     * (~5 blocks) of the cell; a through-window interaction happens within reach of the cell's
+     * COUNTERPART. 12 blocks of slack covers reach plus the aperture's extent.
+     */
+    private static final double NEAR_SQ = 12.0 * 12.0;
+
     public static byte viewerTargetableHalf(
         net.minecraft.world.level.Level level, BlockPos cell,
         SeamRegistry.SeamBinding binding, net.minecraft.world.entity.Entity viewer
@@ -694,12 +701,20 @@ public final class SeamFractional {
         if (binding.cut() == null) {
             return 0;
         }
-        if (viewer.level() == level) {
+        // ★ LOCALITY IS DISTANCE, NOT DIMENSION — live round 12's one-way break. For a SAME-DIM
+        // portal pair, a through-window viewer satisfies viewer.level() == level while standing
+        // millions of blocks away at the other portal; the "local" eye-side computation across
+        // that distance is garbage that matches whichever material half faces their portal —
+        // allowed one way, refused the other, exactly the reported asymmetry. Local means NEAR
+        // THIS CELL; through-window means near its COUNTERPART; near neither means no line.
+        if (viewer.level() == level
+            && viewer.blockPosition().distSqr(cell) <= NEAR_SQ) {
             return SeamOccupancy.halfOfEye(viewer, cell,
                 binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
         }
         if (binding.destPos() == null || binding.destDim() == null
-            || !viewer.level().dimension().equals(binding.destDim())) {
+            || !viewer.level().dimension().equals(binding.destDim())
+            || viewer.blockPosition().distSqr(binding.destPos()) > NEAR_SQ) {
             return 0;
         }
         SeamRegistry.SeamCell backCell = SeamRegistry.lookup(viewer.level(), binding.destPos());
