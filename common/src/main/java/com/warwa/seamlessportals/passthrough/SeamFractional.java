@@ -461,6 +461,95 @@ public final class SeamFractional {
         }
     }
 
+    /**
+     * ★ THE TWO-OBJECT PLACEMENT — clicking the CUT FACE of a half-owned seam cell completes the
+     * cell ({@code FRACTIONAL_DESIGN.md} §2a.0: "two independent objects share the cell").
+     *
+     * <p><b>Why vanilla cannot do this at all</b> (user live round 7: "i cannot place another block
+     * in that spot that is empty"): the seam cell holds a real blockstate — merely shape-cut — so it
+     * is not replaceable, and {@code BlockPlaceContext} offsets placement to the NEIGHBOUR cell
+     * toward the player. There is no vanilla concept of "place into the empty half of an occupied
+     * cell". And even with the target redirected, vanilla {@code place()} would fail: the cell
+     * already holds the identical blockstate, and a same-state {@code setBlock} is a no-op.
+     *
+     * <p><b>What a second object actually is, in blockstate terms: nothing.</b> The cell's
+     * blockstate already exists; the second object is pure bookkeeping — claim the empty half here,
+     * claim the complementary half in the destination (its material crosses the other way), consume
+     * one item. Complementarity is guaranteed, not hoped: the destination half comes from the same
+     * {@code mapDir} rotation that placed the first object's crossing half (user-verified live),
+     * and a rotation maps opposite directions to opposite directions.
+     *
+     * <p>SAME BLOCK TYPE ONLY — vanilla stores one blockstate per cell, so a different-type click
+     * declines and falls through to vanilla's ordinary neighbour placement.
+     *
+     * @return SUCCESS when the gesture completed the cell; null when this is not that gesture and
+     *         vanilla should proceed.
+     */
+    @org.jetbrains.annotations.Nullable
+    public static net.minecraft.world.InteractionResult tryTwoObjectPlacement(
+        net.minecraft.world.item.context.BlockPlaceContext ctx
+    ) {
+        if (!active() || ctx.getPlayer() == null) {
+            return null;
+        }
+        net.minecraft.world.level.Level level = ctx.getLevel();
+        Direction face = ctx.getClickedFace();
+        // The ORIGINAL clicked block. The seam cell is not replaceable, so getClickedPos() is
+        // already offset one step along the face; step back to recover what was actually clicked.
+        BlockPos orig = ctx.getClickedPos().relative(face.getOpposite());
+        byte owned = SeamOccupancy.occupancyOf(level, orig);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return null;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, orig);
+        if (binding == null || binding.destPos() == null) {
+            return null;
+        }
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        byte emptyHalf = (byte) (SeamOccupancy.BOTH & ~owned);
+        Direction emptyDir = Direction.get(
+            emptyHalf == SeamOccupancy.HALF_POSITIVE
+                ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+            axis);
+        // The gesture is specifically a click on the CUT face — the one whose normal points into
+        // the empty half. Any other face is ordinary vanilla placement against this block.
+        if (face != emptyDir) {
+            return null;
+        }
+        net.minecraft.world.item.ItemStack stack = ctx.getItemInHand();
+        if (!(stack.getItem() instanceof net.minecraft.world.item.BlockItem blockItem)
+            || level.getBlockState(orig).getBlock() != blockItem.getBlock()) {
+            return null;
+        }
+
+        SeamOccupancy.claim(level, orig, emptyHalf);
+        if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            SeamOccupancy.broadcast(level, orig);
+            net.minecraft.server.level.ServerLevel dest =
+                serverLevel.getServer().getLevel(binding.destDim());
+            if (dest != null) {
+                // The new object's crossing: its owned direction, reflected through the plane and
+                // carried through the portal rotation — the identical computation that placed the
+                // first object's crossing half, so the two are complements by construction.
+                byte destHalf = SeamOccupancy.halfOf(
+                    SeamRegistry.mapDir(binding, emptyDir.getOpposite()));
+                SeamOccupancy.claim(dest, binding.destPos(), destHalf);
+                SeamOccupancy.broadcast(dest, binding.destPos());
+            }
+        }
+        if (!ctx.getPlayer().getAbilities().instabuild) {
+            stack.shrink(1);
+        }
+        if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+            SeamFractionalProbe.onSeamCell(orig, "COMPLETE",
+                "two-object placement filled the " + (emptyHalf == SeamOccupancy.HALF_POSITIVE
+                    ? "POSITIVE" : "NEGATIVE") + " " + axis + " half (now="
+                    + SeamOccupancy.occupancyOf(level, orig) + ", level="
+                    + (level.isClientSide() ? "CLIENT" : "SERVER") + ")");
+        }
+        return net.minecraft.world.InteractionResult.SUCCESS;
+    }
+
     /** Forget a cell's owner halves — the object was broken or the cell replaced wholesale. */
     public static void forgetPlacement(net.minecraft.world.level.Level level, BlockPos cell) {
         if (level != null) {
