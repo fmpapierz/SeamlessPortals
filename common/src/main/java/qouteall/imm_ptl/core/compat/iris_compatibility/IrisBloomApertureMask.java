@@ -237,10 +237,31 @@ public final class IrisBloomApertureMask {
     // ===== once-only log latches (keyed by reason family — the two-flag-latch discipline; a
     // per-frame render-thread log is the known ~130ms log4j-stall class) ==========================
     private static final Set<String> warnedOnce = new HashSet<>();
-    private static boolean liveLogged = false;
     private static boolean missWarned = false;
-    private static boolean mbShapeInfoLogged = false;
     private static long lastProbeNanos = 0L;
+
+    // ===== plan announcements: CONTENT-KEYED, not latched ========================================
+    // These two were `boolean` latches, reset only in teardown(). teardown() runs from
+    // PortalRenderer.switchRenderer -> onSwitchedAway, i.e. a RENDERER switch — NOT a pipeline
+    // rebuild. An in-game shaderpack option change (every Motion-Blur toggle is one) mints a new
+    // CompositeRenderer, so the WeakHashMap misses and a NEW plan is built and cached — and then
+    // announced NOTHING, because the latch was still set from the previous pipeline.
+    //
+    // MEASURED, in this worktree's own log (run of 2026-08-02 22:47:14): one
+    // `[C3-BLOOM] LIVE: pass=composite5 idx=4` at 22:47:36, followed by FOUR `Using shaderpack:`
+    // pipeline rebuilds (22:48:22, 22:50:44, 22:51:14, 22:51:32) and ZERO re-announcements. The
+    // reader cannot tell whether the live plan is still composite5/idx=4 or silently flipped to
+    // composite4/idx=3 — which is the entire difference between "the mask runs BEFORE the bloom
+    // gather" and "the mask runs after it and cannot suppress the ring".
+    //
+    // This exact class of staleness already cost one full false-refutation cycle
+    // (MB_SMEAR_VERDICT.md §2: a stale MB-OFF plan line was read as evidence against the MB-ON
+    // analysis). The teardown()-side reset added in response was the RIGHT idea in the WRONG
+    // place. Keying the announcement on its own CONTENT removes the failure mode structurally: a
+    // plan that differs from the last announced one always re-announces, wherever it was built,
+    // and an identical plan never spams. Log-only; no render-path effect.
+    private static String announcedLivePlan = null;
+    private static String announcedMbShape = null;
 
     // ===== the mask GL program (§3.4 — trivial texelFetch passthrough; NO pack math) =============
     private static final String VERTEX_SRC = """
@@ -382,15 +403,12 @@ public final class IrisBloomApertureMask {
             programReady = false;
         }
         planCache.clear();
-        // The plan is rebuilt on every pipeline teardown, but these two latches were CLASS-lifetime —
-        // so after an in-game shaderpack option change the new plan was computed and then reported
-        // NOTHING. That cost a full false-refutation cycle: toggling the pack's Motion Blur mid-session
-        // left the log showing the stale MB-OFF plan (`pass=composite4 idx=3 reads=ALT`) while the
-        // live plan was actually `pass=composite5 idx=4 reads=MAIN`, and the stale line was read as
-        // evidence that the MB analysis was wrong. Reset them with the cache they describe, so a
-        // rebuilt plan always re-announces itself. Log-only; no render-path effect.
-        liveLogged = false;
-        mbShapeInfoLogged = false;
+        // Belt only. The announcements are CONTENT-keyed now (see their declarations), so they
+        // re-emit on any real change without needing a reset here — which matters because this
+        // method is NOT reached on a pipeline rebuild, only on a renderer switch. Clearing them
+        // with the cache they describe keeps a fresh session announcing from a clean slate.
+        announcedLivePlan = null;
+        announcedMbShape = null;
     }
 
     // =============================================================================================
@@ -471,11 +489,17 @@ public final class IrisBloomApertureMask {
         // BEFORE the last c0 write (composite4 writes c0 itself when MB is on) regresses to
         // exactly today's ring; this once-only INFO makes that attributable instead of silent.
         int[] lastDb = (int[]) fPassDrawBuffers.get(passes.get(lastC0Writer));
-        if (lastDb.length > 1 && !mbShapeInfoLogged) {
-            mbShapeInfoLogged = true;
-            LOGGER.info("[Seamless Portals] [C3-BLOOM] last colortex0 writer also writes other"
-                + " draw buffers (motion-blur shape) — if the bloom ring persists, disable the"
-                + " pack's Motion Blur");
+        // Content-keyed (see the announcedMbShape declaration): the signature is recorded on EVERY
+        // build, not only on the MB-shaped ones, so an ON -> OFF -> ON toggle re-announces rather
+        // than staying silent on the second ON.
+        String mbShape = "lastC0Writer=" + lastC0Writer + " db=" + java.util.Arrays.toString(lastDb);
+        if (!mbShape.equals(announcedMbShape)) {
+            announcedMbShape = mbShape;
+            if (lastDb.length > 1) {
+                LOGGER.info("[Seamless Portals] [C3-BLOOM] last colortex0 writer also writes other"
+                    + " draw buffers (motion-blur shape, {}) — if the bloom ring persists, disable"
+                    + " the pack's Motion Blur", mbShape);
+            }
         }
         int maskIndex = lastC0Writer + 1;
         Object maskPass = passes.get(maskIndex);
@@ -722,11 +746,15 @@ public final class IrisBloomApertureMask {
         // 11. Commit + liveness + the FIX2 error drain.
         a.consumed = true;
         IPGlobal.irisBloomMaskCount++;
-        if (!liveLogged) {
-            liveLogged = true;
-            LOGGER.info("[C3-BLOOM] LIVE: pass={} idx={} reads={} tex={} {}x{} fmt=0x{}",
-                plan.passName, plan.maskIndex, plan.readAlt ? "ALT" : "MAIN",
-                tex, w, h, Integer.toHexString(fmt));
+        // Content-keyed (see the announcedLivePlan declaration). Re-announces whenever ANY field
+        // changes — pack option toggle, pipeline rebuild, window resize — and never repeats an
+        // identical line, so the newest LIVE line in a log is always the plan in force.
+        String livePlan = "pass=" + plan.passName + " idx=" + plan.maskIndex
+            + " reads=" + (plan.readAlt ? "ALT" : "MAIN")
+            + " tex=" + tex + " " + w + "x" + h + " fmt=0x" + Integer.toHexString(fmt);
+        if (!livePlan.equals(announcedLivePlan)) {
+            announcedLivePlan = livePlan;
+            LOGGER.info("[C3-BLOOM] LIVE: {}", livePlan);
         }
         // FIX2 (verifier-2): a nonzero error here (e.g. dropped repaint draws on an incomplete
         // FBO) means the clear may have landed WITHOUT the repaint — a persistent-black-window

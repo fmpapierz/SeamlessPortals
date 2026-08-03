@@ -152,3 +152,120 @@ to `SeamlessConfigScreen` are UNREACHABLE at the default flag — that screen on
 **Known open, unrelated to these three:** a `GL_INVALID_OPERATION: Invalid format` from iris
 `RenderTargets.copyPreHandDepth` during a nested cross-dim render (3 occurrences, only at nether
 pipeline creation, parked); `maxPortalLayer` is never synced to dedicated servers.
+
+---
+
+## §7 LEG 1 — RUN, 2026-08-02 23:2x. THE SET IS ONE FAMILY, AND IT IS NOT WHAT THE REPORTS SAY
+
+**Configuration (MEASURED from `shaderpacks/ComplementaryReimagined_r5.8.1.zip.txt`, mtime 22:51,
+matching the last `Using shaderpack:` reload at 22:51:32 — so this is the live state, not a default):**
+
+| option | live value | pack default | source |
+|---|---|---|---|
+| `BLOOM_ENABLED` | **`-1` = OFF** | `1` | `shaders/lang/en_US.lang:644` `value.BLOOM_ENABLED.-1=OFF` |
+| `MOTION_BLUR_EFFECT` | `1` = ON | `-1` (off) | `shaders/lib/common.glsl:146` |
+| `MOTION_BLURRING_STRENGTH` | **`2.00` (slider max)** | `1.00` | `shaders/lib/common.glsl:147` |
+
+`composite4.glsl:65` guards the entire `BloomTile` gather behind `#if BLOOM_ENABLED == 1`. **With the
+user's live options the bloom gather is not in the compiled shader at all.**
+
+### §7a The observations (user, verbatim-derived — authoritative, outrank every inference here)
+
+| # | observation |
+|---|---|
+| 1 | **B (sliver) is ROTATION-driven.** Present only when the camera is whipped around. Only *very slight* on the **VERTICAL edges** when strafing. |
+| 2 | **B survives Motion Blur OFF** — "even smaller, even slighter sliver on the vertical edges". MB makes it *far* worse but does not create it. |
+| 3 | **B survives pack Bloom OFF** — it was observed in the table's configuration above. |
+| 4 | **A (player halo) is ROTATION-driven and 100% MB.** Present when whipping the camera, absent when strafing, **gone entirely with MB off**. |
+| 5 | **OPEN AIR: the SLIVER is absent — but the PLAYER HALO IS NOT.** A needs no adjacent geometry; B does. |
+| 6 | **C is not a separate report.** "The window shifts against its frame" is observation 1 seen during strafe. Discriminator 4 answered: C ≡ B. |
+| 7 | **The sliver carries the PORTAL VIEW's colour**, i.e. destination content — not frame-block colour and not a generic white band. (User: "i think".) |
+| 8 | **There IS a separate bloom artifact, in the same edge area.** Report B was two things wearing one description. |
+
+### §7a-bis ★ CORRECTION TO MY OWN FIRST READING (same session, before it reached any code)
+
+The first draft of §7b below unified A and B as one mechanism on the strength of "open air = no issues".
+**That was wrong, and the user corrected it within the hour: the player halo reproduces on an open-air
+portal.** So the adjacency constraint applies to B ONLY, and it is the thing that SEPARATES them:
+
+- **A** needs a portal and a player in front of it. No adjacent geometry. Pure MB (dies with MB off).
+- **B** needs geometry touching the aperture. Survives MB off. Carries destination colour.
+
+They are two bugs that happen to share a trigger (fast rotation) and a location (the window boundary).
+Recorded because the unification was written down before it was checked — exactly the failure this
+project's discipline exists to catch, and it was caught by asking the user rather than by any analysis.
+
+### §7b What this settles, and what it kills
+
+- **The four handoff discriminators are largely overtaken.** Discriminator 2 is answered (yes, B survives
+  MB off). Discriminator 4 is answered (C ≡ B). Discriminator 3 is now near-worthless as stated: with
+  bloom OFF there is no gather for the aperture mask to protect, and B is present anyway.
+- **The premise of report B is wrong.** It is filed as a "bloom issue". It is not: it reproduces with the
+  pack's bloom compiled out. Bloom may modulate its appearance; it does not cause it.
+- **The binding constraint is observation 5.** Any candidate mechanism that would also fire on an
+  open-air portal is refuted on its face. The artifact requires geometry ADJACENT to the aperture.
+- **The second binding constraint is "vertical edges under horizontal motion".** Yaw and strafe both
+  produce predominantly horizontal screen-space velocity, which smears across *vertical* edges. That is
+  the signature of a **pre-existing static edge defect being dragged by a velocity-driven filter**, not of
+  a defect the filter creates.
+- **Working shape (INFERRED, not yet measured):** one static, near-sub-visible band at the aperture
+  boundary which motion blur amplifies by dragging it along the velocity vector. ~~A is the same dragging
+  at the player's silhouette edge~~ — **struck, see §7a-bis: A reproduces in open air, so it is a separate
+  bug.** This is a hypothesis. It has not been instrumented.
+
+### §7d THE ARCHITECTURAL FACT THAT FRAMES BOTH BUGS (MEASURED, two independent confirmations)
+
+**The main frame's ENTIRE pack post stack runs BEFORE the portal is stamped.**
+
+`MixinGameRenderer_IPPostLevelAnchor.java:79-92` anchors at `@At(INVOKE, target="LevelRenderer;render(",
+shift=AFTER)` inside `GameRenderer.renderLevel`. Iris's `finalizeLevelRendering()` — the composite chain
+*and* the final pass — is invoked from `MixinLevelRenderer`, i.e. **inside** `LevelRenderer.render`.
+Independently established twice: by this arc's recon, and previously in `MB_SMEAR_VERDICT.md` §1b(4).
+
+Consequences, both structural:
+
+1. When the main chain's **non-local** operators run — motion blur (`composite4.glsl:139-171`, and note it
+   has **zero depth rejection**: `mbwg += 1.0` unconditional), TAA (composite6), FXAA (composite7), and
+   the unsharp sharpen in `final.glsl:63-76` — the aperture region of the main frame still holds
+   **main-world** content. Under a shaderpack the mod draws nothing at the portal plane
+   (`OverlayRendering.java:81-88` refuses the swirl with shaders on; `PortalPlaceholderBlock.java:150-151`
+   is `RenderShape.INVISIBLE`), so it is ordinary geometry seen through the doorway.
+2. `IrisCompatPaste.stampPortalArea` then replaces the aperture **interior only**
+   (`:456-458`, into `deferred`, blit-back to main). Whatever those operators deposited on the
+   **exterior** side of the aperture silhouette is never repainted.
+
+**`final.glsl:56-61` is anisotropic, and it points the right way.** All four unsharp taps use `viewD.x`:
+```
+vec2( viewD.x, 0.0), vec2( 0.0, viewD.x), vec2(-viewD.x, 0.0), vec2( 0.0, -viewD.x)
+```
+`viewD = 1.0/vec2(viewWidth, viewHeight)` (`:54`). The two *vertical* taps therefore sample at the
+*horizontal* pixel pitch — under one pixel on a 16:9 window — so the filter responds ~1.8× more strongly
+to **vertical** edges than horizontal ones. `IMAGE_SHARPENING` defaults to `5` (`lib/common.glsl:145`) and
+is **absent from the user's sidecar, so the default is in force**. An unsharp mask is precisely a
+"thin bright line at a contrast edge" generator, and the pack's own option text warns of it
+(`lang/en_US.lang:675`: "subtle brightness changes"). This is the only measured x/y anisotropy anywhere in
+the stack and it matches observation 1's vertical-edge bias without needing anything else to be anisotropic.
+
+**★ This also re-opens C3-BLOOM as a candidate for B, for a reason the handoff never considered.**
+`IrisBloomApertureMask` CLEARS colortex0 to black outside the aperture (`:656`) and repaints only the
+aperture (`:713-724`). That clear happens at `maskIndex`, which is **before composite6 (TAA), composite7
+(FXAA) and `final`'s sharpen in both the MB-ON and MB-OFF plans**. Those three then see a hard
+content-to-black edge exactly at the aperture, and unsharp's overshoot on the *bright* side of such an
+edge is a **bright rim just inside the window, made of window content** — which is exactly what the user
+describes, colour included. The recon ranked this candidate 5th and refuted it on two grounds ("the
+dilation is isotropic" and "it can only produce a dark band"); **both refutations dissolve once the
+sharpen kernel is in the picture** — the anisotropy comes from `final.glsl`, not from the mask, and the
+sign is bright-on-the-bright-side, not dark. Lever: `-PdisableIrisBloomApertureMask=true`. Treat as a
+live candidate, not a closed one.
+
+### §7c Instrument fix landed before the leg (log-only)
+
+`IrisBloomApertureMask`'s `liveLogged` / `mbShapeInfoLogged` were boolean latches reset only in
+`teardown()` — which runs from `PortalRenderer.switchRenderer → onSwitchedAway`, i.e. a **renderer
+switch, not a pipeline rebuild**. Every shaderpack option change is a pipeline rebuild. **MEASURED in
+this worktree's own log (run of 22:47:14):** one `[C3-BLOOM] LIVE: pass=composite5 idx=4` at 22:47:36,
+then FOUR `Using shaderpack:` rebuilds and ZERO re-announcements. Replaced with **content-keyed**
+announcements: any change in the announced string re-emits, an identical plan never repeats, and the
+newest `LIVE:` line in a log is always the plan in force. This is the same staleness class that cost a
+full false-refutation cycle in `MB_SMEAR_VERDICT.md` §2; the reset added then was the right idea in the
+wrong place.
