@@ -42,25 +42,37 @@ public abstract class MultiPlayerGameModeSecondaryBreakMixin {
         if (mc.level == null || mc.player == null) {
             return;
         }
-        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(mc.level, pos);
-        if (sec == null) {
-            return;
-        }
         var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(mc.level, pos);
         if (seam == null) {
             return;
         }
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(mc.level, pos);
         for (var binding : seam.bindings()) {
             if (binding == null || binding.cut() == null) {
                 continue;
             }
-            byte playerHalf = SeamOccupancy.halfOfEye(mc.player, pos,
-                binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
-            if (playerHalf == sec.half()) {
+            // Same unified rule as the server: local = own side, through-window = beyond the far
+            // plane, no legitimate line = no break predicted.
+            byte playerHalf = SeamFractional.viewerTargetableHalf(
+                mc.level, pos, binding, mc.player);
+            if (playerHalf == 0) {
+                cir.setReturnValue(false);
+                return;
+            }
+            if (sec != null && playerHalf == sec.half()) {
                 // Predict the SECONDARY's removal only. The vanilla path below this cancel would
                 // have removed the primary's blockstate and cascaded into the dest client level.
                 SeamOccupancy.setSecondary(mc.level, pos, null);
                 cir.setReturnValue(true);
+                return;
+            }
+            byte owned = SeamOccupancy.occupancyOf(mc.level, pos);
+            if ((owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE)
+                && playerHalf != owned) {
+                // Single-object cell, breaker's half empty: predict NO break, matching the server's
+                // refusal, so the client never phantom-removes a block it cannot legitimately reach.
+                cir.setReturnValue(false);
+                return;
             }
             return;
         }
