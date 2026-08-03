@@ -187,6 +187,10 @@ public final class IrisBloomApertureMask {
     private static Field fPassName;          // CompositeRenderer$Pass.name (String)
     private static Field fPassComputes;      // CompositeRenderer$Pass.computes (ComputeProgram[])
     private static Field fPassReadsFromAlt;  // CompositeRenderer$Pass.stageReadsFromAlt (ImmutableSet<Integer>)
+    /** OPTIONAL — {@code CompositeRenderer$Pass.mipmappedBuffers} (ImmutableSet&lt;Integer&gt;).
+     *  {@code null} ⇒ the IS5-BLOOMMB gatherer retarget is unavailable and {@link #buildPlan}
+     *  resolves exactly the legacy index. Bound in its OWN try (see {@link #ensureReflection}). */
+    private static Field fPassMipmapped;
 
     // ===== the per-pipeline plan =================================================================
     /** noop=true plans are permanent fast-path skips (BEGIN/PREPARE/DEFERRED instances, or a
@@ -197,14 +201,18 @@ public final class IrisBloomApertureMask {
         final boolean readAlt;
         final String passName;
         final RenderTargets renderTargets;
+        /** IS5-BLOOMMB: true when the gatherer retarget moved the index off `lastC0Writer + 1`.
+         *  Reported on the LIVE line so an A/B leg can be attributed from the log alone. */
+        final boolean retargeted;
 
         MaskPlan(boolean noop, int maskIndex, boolean readAlt,
-                 String passName, RenderTargets renderTargets) {
+                 String passName, RenderTargets renderTargets, boolean retargeted) {
             this.noop = noop;
             this.maskIndex = maskIndex;
             this.readAlt = readAlt;
             this.passName = passName;
             this.renderTargets = renderTargets;
+            this.retargeted = retargeted;
         }
     }
 
@@ -262,6 +270,8 @@ public final class IrisBloomApertureMask {
     // and an identical plan never spams. Log-only; no render-path effect.
     private static String announcedLivePlan = null;
     private static String announcedMbShape = null;
+    /** IS5-BLOOMMB: the whole-chain census, same content-keyed discipline. */
+    private static String announcedPlanCensus = null;
 
     // ===== the mask GL program (§3.4 — trivial texelFetch passthrough; NO pack math) =============
     private static final String VERTEX_SRC = """
@@ -409,6 +419,7 @@ public final class IrisBloomApertureMask {
         // with the cache they describe keeps a fresh session announcing from a clean slate.
         announcedLivePlan = null;
         announcedMbShape = null;
+        announcedPlanCensus = null;
     }
 
     // =============================================================================================
@@ -419,7 +430,7 @@ public final class IrisBloomApertureMask {
         if (reason != null) {
             lastDisarmReason = reason;
         }
-        return new MaskPlan(true, -1, false, null, null);
+        return new MaskPlan(true, -1, false, null, null, false);
     }
 
     private static MaskPlan buildPlan(CompositeRenderer renderer) throws Exception {
@@ -434,7 +445,7 @@ public final class IrisBloomApertureMask {
             // BEGIN/PREPARE/DEFERRED instances: permanent fast-path no-op, no WARN (normal).
             // ShadowCompositeRenderer is a separate class in net.irisshaders.iris.shadows
             // (verifier-1 F2) — never matched by the mixin's target at all.
-            return new MaskPlan(true, -1, false, null, null);
+            return new MaskPlan(true, -1, false, null, null, false);
         }
         ImmutableList<?> passes = (ImmutableList<?>) fPasses.get(renderer);
         RenderTargets rts = (RenderTargets) fRenderTargets.get(renderer);
@@ -486,8 +497,9 @@ public final class IrisBloomApertureMask {
                 + " mask point (bloom likely gathered in final)");
         }
         // Amendment 3: the DRAWBUFFERS:30 motion-blur shape — a VALID plan whose gatherer runs
-        // BEFORE the last c0 write (composite4 writes c0 itself when MB is on) regresses to
-        // exactly today's ring; this once-only INFO makes that attributable instead of silent.
+        // BEFORE the last c0 write (composite4 writes c0 itself when MB is on) regressed to
+        // exactly today's ring. IS5-BLOOMMB (below) now RETARGETS that shape instead; this INFO
+        // stays because it names the shape in the log and is what led to the diagnosis.
         int[] lastDb = (int[]) fPassDrawBuffers.get(passes.get(lastC0Writer));
         // Content-keyed (see the announcedMbShape declaration): the signature is recorded on EVERY
         // build, not only on the MB-shaped ones, so an ON -> OFF -> ON toggle re-announces rather
@@ -502,12 +514,152 @@ public final class IrisBloomApertureMask {
             }
         }
         int maskIndex = lastC0Writer + 1;
+
+        // ===== IS5-BLOOMMB — THE GATHERER RETARGET ==============================================
+        // maskIndex = lastC0Writer + 1 assumes the last colortex0 WRITER sits before the bloom
+        // GATHERER. Under Complementary Reimagined it does — until the pack's Motion Blur is on.
+        // Then composite4, WHICH IS ITSELF THE GATHERER (composite4.glsl:65-84, BloomTile), flips
+        // /* DRAWBUFFERS:3 */ to /* DRAWBUFFERS:30 */ (:180-184), becomes the last c0 writer, and
+        // pushes the mask one pass PAST the gather. The mask then runs successfully every frame —
+        // MEASURED masks=10148 misses=0 — and is completely inert.
+        //
+        //   MB OFF: lastC0Writer=2 (composite3, db=[0])   -> maskIndex 3, BEFORE the gather, works
+        //   MB ON : lastC0Writer=3 (composite4, db=[3,0]) -> maskIndex 4, AFTER  the gather, inert
+        //
+        // USER A/B 2026-08-03, one variable, both directions: Bloom ON + MB OFF -> ring "goes
+        // away"; Bloom ON + MB ON -> "comes back". The log printed the plan flipping idx=4 ->
+        // idx=3 -> idx=4 at the two toggle moments. Full record: MB_BLOOM_SEAM_HANDOFF.md §7f.
+        //
+        // THE SIGNAL IS THE MIP DECLARATION, NOT THE DRAW BUFFERS. A pass that samples colortex0's
+        // mip pyramid is non-local BY DEFINITION, and no pack can do it without declaring
+        //   const bool colortex0MipmapEnabled = true;
+        // which iris parses into Pass.mipmappedBuffers (javap-confirmed on the pinned jar). In
+        // composite4.glsl that declaration is at :18, inside #ifdef FRAGMENT_SHADER and under NO
+        // other conditional — so unlike the draw buffers it is MOTION-BLUR-INVARIANT, which is
+        // precisely the property a selector needs here.
+        //
+        // WHY lastDb.length > 1 IS IN THE CONDITION, and it is not a gatherer test. It is a
+        // blast-radius short-circuit that makes the SHIPPED, USER-CONFIRMED MB-OFF PATH
+        // STRUCTURALLY UNREACHABLE by this change rather than merely unaffected in practice:
+        // composite3.glsl:160 is /* DRAWBUFFERS:0 */, length 1, so with Motion Blur off the &&
+        // short-circuits before passMipGathersC0 is ever called and the legacy index is produced
+        // by code this block cannot reach. That is a proof, not a promise.
+        //
+        // WHAT WAS DELIBERATELY NOT USED:
+        //  - "drawBuffers.length == 1" as the gatherer test — composite1.glsl:337 is
+        //    /* DRAWBUFFERS:05 */, a default-reachable multi-buffer c0 write, and on a pack where
+        //    every c0 write is multi-buffer the rule yields lastC0Writer = -1 and hard-disarms a
+        //    working feature.
+        //  - retargeting onto EVERY mip-gathering pass — composite3.glsl:19 declares the same
+        //    mipmap constant under #if WORLD_BLUR > 0, and its DOF branch REPLACES the frame from
+        //    18 c0 mip taps (:79 onward). Masking there would push a second non-local reader's
+        //    dark fringe straight into the visible image. WORLD_BLUR defaults to 0
+        //    (lib/common.glsl:162), but the narrow rule never selects composite3 regardless.
+        //
+        // BOUNDS: the `lastC0Writer == passes.size() - 1` disarm above runs BEFORE this, so the
+        // override can only ever produce maskIndex <= passes.size() - 2. No new edge case.
+        // Everything downstream (readAlt, passName, and the texture the mask mutates) is resolved
+        // from passes.get(maskIndex), so it retargets itself with no further change.
+        //
+        // ★ THE DEFAULT IS PROVISIONAL. Masking before composite4 also blackens the source of its
+        // motion blur, which samples colortex0 at LOD 0 with 9 taps clamped to the SCREEN, not to
+        // the aperture (composite4.glsl:141), with reach linear in MOTION_BLURRING_STRENGTH (the
+        // user runs 2.00, the slider maximum). The trade — a bright bloom ring for a possible dark
+        // MB fringe inside the window — is ARITHMETICALLY ZERO AT REST (at velocity == 0 all nine
+        // taps collapse onto the fragment's own texel), so a stationary A/B WILL PASS EVEN IF THE
+        // FRINGE IS SEVERE. It must be judged under sustained fast yaw, with -PdebugTintBloomMask
+        // on so the fringe reads as a magenta->black ramp that can be measured in pixels. If that
+        // ramp is unacceptable this flag's default flips and the level-0 restore stage is built.
+        if (!IPGlobal.BLOOM_MASK_GATHERER_RETARGET_DISABLED_LEVER
+            && lastDb.length > 1
+            && passMipGathersC0(passes.get(lastC0Writer))
+        ) {
+            maskIndex = lastC0Writer;
+        }
+        final boolean retargeted = maskIndex == lastC0Writer;
+
         Object maskPass = passes.get(maskIndex);
         @SuppressWarnings("unchecked")
         ImmutableSet<Integer> readsFromAlt = (ImmutableSet<Integer>) fPassReadsFromAlt.get(maskPass);
         boolean readAlt = readsFromAlt != null && readsFromAlt.contains(0);
         String passName = (String) fPassName.get(maskPass);
-        return new MaskPlan(false, maskIndex, readAlt, passName, rts);
+        announcePlan(passes, lastC0Writer, maskIndex, retargeted);
+        return new MaskPlan(false, maskIndex, readAlt, passName, rts, retargeted);
+    }
+
+    /**
+     * True when {@code pass} samples colortex0's mip pyramid — i.e. it is a NON-LOCAL colortex0
+     * reader, which for this purpose is the definition of "the gatherer".
+     *
+     * <p>Returns false rather than throwing on every unhappy path, so an iris drift or an
+     * unexpected pass shape degrades to the legacy index (today's behaviour) and never to a crash
+     * in the render path.
+     *
+     * <p>The {@code instanceof Collection} test is the {@code ComputeOnlyPass} guard, not
+     * defensive padding: {@code CompositeRenderer$ComputeOnlyPass extends Pass} (javap-confirmed as
+     * a separate class on the pinned jar) and its construction path never assigns
+     * {@code mipmappedBuffers}, so the field reads null there. The class already carries the twin
+     * defence for {@code drawBuffers} a few lines above ("ComputeOnlyPass shape (never sets
+     * drawBuffers)").
+     */
+    private static boolean passMipGathersC0(Object pass) {
+        try {
+            if (fPassMipmapped == null) {
+                return false;
+            }
+            Object v = fPassMipmapped.get(pass);
+            return (v instanceof java.util.Collection<?> c) && c.contains(0);
+        }
+        catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * IS5-BLOOMMB — the per-pipeline PLAN census. Content-keyed like the other two announcements,
+     * so a pipeline rebuild that changes the chain re-emits and one that does not stays silent.
+     *
+     * <p><b>Why this is not decoration.</b> Every A/B in this arc is adjudicated on which pass the
+     * mask landed on relative to the gatherer, and until now the log could not say what the chain
+     * looked like — only which index was chosen. That cost this arc one wrong verdict already: a
+     * leg that disabled the mask was read as exonerating its mechanism, when the previous leg's log
+     * already showed the mask landing past the gather and therefore inert by construction. The
+     * {@code mip=} column is the specific thing that was missing.
+     */
+    private static void announcePlan(ImmutableList<?> passes, int lastC0Writer, int maskIndex,
+                                     boolean retargeted) {
+        StringBuilder sb = new StringBuilder(256);
+        sb.append("lastC0Writer=").append(lastC0Writer)
+            .append(" maskIndex=").append(maskIndex)
+            .append(retargeted ? " sel=gatherer" : " sel=legacy")
+            .append(" mipField=").append(fPassMipmapped == null ? "UNAVAILABLE" : "ok")
+            .append(" |");
+        for (int p = 0; p < passes.size(); p++) {
+            Object pass = passes.get(p);
+            String name;
+            String db;
+            String mip;
+            try {
+                name = String.valueOf(fPassName.get(pass));
+                int[] d = (int[]) fPassDrawBuffers.get(pass);
+                db = d == null ? "null" : java.util.Arrays.toString(d);
+                Object m = fPassMipmapped == null ? null : fPassMipmapped.get(pass);
+                mip = m == null ? "-" : String.valueOf(m);
+            }
+            catch (Throwable t) {
+                // A census row must never be able to break a plan build.
+                name = "<unreadable>";
+                db = "?";
+                mip = "?";
+            }
+            sb.append(' ').append(p).append(':').append(name)
+                .append(" db=").append(db).append(" mip=").append(mip).append(" |");
+        }
+        String plan = sb.toString();
+        if (!plan.equals(announcedPlanCensus)) {
+            announcedPlanCensus = plan;
+            LOGGER.info("[C3-BLOOM] PLAN: {}", plan);
+        }
     }
 
     private static MaskPlan noopWarnPlan(String reason) {
@@ -542,6 +694,27 @@ public final class IrisBloomApertureMask {
             fPassReadsFromAlt = passClass.getDeclaredField("stageReadsFromAlt");
             fPassReadsFromAlt.setAccessible(true);
             reflectReady = true;
+            // IS5-BLOOMMB: mipmappedBuffers is OPTIONAL and is bound in its OWN try DELIBERATELY.
+            // javap on the pinned jar (iris-1.11.2+26.2-fabric) confirms
+            //   com.google.common.collect.ImmutableSet<java.lang.Integer> mipmappedBuffers;
+            // package-private, non-final, declared beside stageReadsFromAlt. But an iris rename of
+            // THIS field must not be able to take down the whole feature: inside the shared try
+            // above, one NoSuchFieldException would fall through to the catch, leave reflectReady
+            // false, and route every plan to noopPlan("reflection failed") — killing the MB-OFF
+            // masking that is ALREADY SHIPPED AND USER-CONFIRMED WORKING. Nested, the same rename
+            // degrades to "fPassMipmapped == null ⇒ no retarget ⇒ the ring returns under MB ON",
+            // which is exactly today's behaviour and nothing worse.
+            try {
+                fPassMipmapped = passClass.getDeclaredField("mipmappedBuffers");
+                fPassMipmapped.setAccessible(true);
+            }
+            catch (Throwable mip) {
+                fPassMipmapped = null;
+                warnOnce("reflect-mip", "[Seamless Portals] [C3-BLOOM] CompositeRenderer$Pass"
+                    + ".mipmappedBuffers is unreadable (iris drift?) — the gatherer retarget is"
+                    + " OFF, so the bloom ring returns when the pack's Motion Blur is on. The"
+                    + " Motion-Blur-OFF masking is unaffected.", mip);
+            }
         } catch (Throwable t) {
             warnOnce("reflect", "[Seamless Portals] [C3-BLOOM] iris reflection failed — aperture"
                 + " mask disabled (behavior = pre-fix bloom ring)", t);
@@ -749,7 +922,8 @@ public final class IrisBloomApertureMask {
         // Content-keyed (see the announcedLivePlan declaration). Re-announces whenever ANY field
         // changes — pack option toggle, pipeline rebuild, window resize — and never repeats an
         // identical line, so the newest LIVE line in a log is always the plan in force.
-        String livePlan = "pass=" + plan.passName + " idx=" + plan.maskIndex
+        String livePlan = (plan.retargeted ? "sel=gatherer " : "sel=legacy ")
+            + "pass=" + plan.passName + " idx=" + plan.maskIndex
             + " reads=" + (plan.readAlt ? "ALT" : "MAIN")
             + " tex=" + tex + " " + w + "x" + h + " fmt=0x" + Integer.toHexString(fmt);
         if (!livePlan.equals(announcedLivePlan)) {
