@@ -246,7 +246,122 @@ is **absent from the user's sidecar, so the default is in force**. An unsharp ma
 (`lang/en_US.lang:675`: "subtle brightness changes"). This is the only measured x/y anisotropy anywhere in
 the stack and it matches observation 1's vertical-edge bias without needing anything else to be anisotropic.
 
-**★ This also re-opens C3-BLOOM as a candidate for B, for a reason the handoff never considered.**
+### §7e ★ LEG 2 — THE SLIVER IS INSIDE THE STAMP FOOTPRINT (2026-08-03 00:2x, USER-OBSERVED)
+
+**Config:** `-PdebugStampSolid=true -PdebugTintStamp=true -PbloomMaskProbe=true`, everything else at
+shipped defaults. **Levers verified on the LIVE JVM** (PID 542644, `IS5-RC [1/3]` block): all three
+present; `isIrisBloomApertureMaskActive() = ACTIVE`, `isIrisDestPrevCameraActive() = ACTIVE`.
+
+Both flags together make every stamped fragment write the vertex colour directly, ignoring the sample —
+the whole window renders **flat magenta**, which is an exact visual readout of the stamp's pixel
+footprint (`IPGlobal.java:777-788`, `IrisCompatPaste.java:486-490`).
+
+> **User, whipping the camera at a framed portal: "magenta clean to the edge, no sliver".**
+
+**What that settles, in both directions:**
+
+- The sliver lies **INSIDE** the stamp's footprint. It is **destination content**, already wrong in the
+  dest image before the stamp copies it. (It also independently corroborates observation 7 — the user's
+  "I think the sliver is the portal view behind it" — from a completely different kind of evidence.)
+- **The stamp is EXONERATED.** It is not under-covering, not off by a pixel, not mis-registered against
+  the frame. C3 (cross-program registration) and C6 (depth-tie) are refuted for B.
+- **C1 is refuted FOR B.** The main chain's post stack does deposit main-world content outside the
+  aperture silhouette — that is measured and still true — but whatever it deposits is not this sliver,
+  because this sliver vanishes when the stamped region is painted over. *C1 remains live for artifact
+  **A**, which was deliberately not judged on this leg (magenta destroys A's colour evidence).*
+- **The search space collapses to the DEST composite chain**, and to one question: *what in the
+  destination chain knows where the aperture is at all?* The dest world is rendered FULL SCREEN; the
+  aperture is not a feature of that image. Exactly one thing in the dest chain draws the aperture
+  footprint into it — `IrisBloomApertureMask`. That makes it the leading candidate by elimination, not
+  by affinity.
+
+**Next leg (running): `-PdisableIrisBloomApertureMask=true`.** A one-variable A/B of a DEFAULT-ON
+feature. Sliver gone ⇒ the mask is the cause. Sliver unchanged ⇒ the mask is innocent and something
+else in the dest chain is drawing an aperture-shaped edge, which would be a genuinely new finding.
+
+### §7f ★★★ ROOT CAUSE OF THE BLOOM SLIVER — PROVEN IN BOTH DIRECTIONS (2026-08-03 00:44)
+
+**Motion Blur silently relocates the C3-BLOOM aperture mask past the point where it works.**
+
+`buildPlan` picks `maskIndex = lastC0Writer + 1` (`IrisBloomApertureMask.java:480`), where `lastC0Writer`
+is the last composite pass whose `drawBuffers` contains 0 (`:439-462`). That rule assumes the last c0
+**writer** sits before the bloom **gatherer**. Under Complementary Reimagined it does — until Motion Blur
+is switched on. Then `composite4`, *which is itself the gatherer* (`composite4.glsl:65-84`, `BloomTile`),
+flips `/* DRAWBUFFERS:3 */` → `/* DRAWBUFFERS:30 */` (`:180-184`), becomes the last c0 writer, and pushes
+the mask one pass **after** the gather. The mask then runs successfully every frame and is inert.
+
+| | `lastC0Writer` | `maskIndex` | mask lands | artifact |
+|---|---|---|---|---|
+| MB OFF | 2 (`composite3`, `db=[0]`) | 3 | **before** the gather | **GONE** |
+| MB ON | 3 (`composite4`, `db=[3,0]`) | 4 | **after** the gather | **PRESENT** |
+
+**User A/B, one variable (the pack's Motion Blur toggle), everything else at shipped defaults:**
+*Bloom ON + MB OFF → "goes away". Bloom ON + MB ON → "comes back".*
+
+**Log corroboration, same session, independent of the user's eyes** (run started 00:38:23):
+```
+00:43:35  [C3-BLOOM] last colortex0 writer also writes other draw buffers
+                     (motion-blur shape, lastC0Writer=3 db=[3, 0])
+00:43:35  [C3-BLOOM] LIVE: pass=composite5 idx=4 reads=MAIN     <- MB ON,  artifact PRESENT
+00:44:44  Using shaderpack: ...                                    (rebuild; user set MB OFF)
+00:44:47  [C3-BLOOM] LIVE: pass=composite4 idx=3 reads=ALT      <- MB OFF, artifact GONE
+00:45:19  Using shaderpack: ...                                    (rebuild; user set MB ON)
+00:45:20  [C3-BLOOM] LIVE: pass=composite5 idx=4 reads=MAIN     <- MB ON,  artifact BACK
+throughout: masks=10148 misses=0    (the mask fires every frame in BOTH plans)
+```
+
+**★ The instrument fix from §7c is what made this leg readable.** Under the old class-lifetime
+`liveLogged` latch, only the FIRST of those three lines would have printed; both toggles would have been
+invisible and the leg would have rested on the user's eyes alone. It also printed `lastC0Writer=3
+db=[3, 0]`, which the old message could not say at all.
+
+**This is `MB_SMEAR_HANDOFF.md` §1c** — "the MB bloom-ring commission, premise CONFIRMED, work SUSPENDED"
+— reaching the top of the queue, exactly as `MB_BLOOM_SEAM_HANDOFF` §2 guessed. And the ledger at
+`IrisBloomApertureMask.java:100-104` predicted this shape in writing ("MB-ON Complementary … mask
+inertly: exactly today's ring, never worse").
+
+### §7f-bis ★ CORRECTION — LEG 3 WAS UNINFORMATIVE AND I READ IT AS A REFUTATION
+
+Leg 3 (`-PdisableIrisBloomApertureMask=true`, sliver still present) was reported to the user as "the mask
+is innocent". **That was wrong.** Leg 2's log shows the mask was landing at `idx=4`, i.e. already inert
+against the ring by construction. Switching off a feature that is already inert cannot change anything,
+so the leg could not have gone the other way and carried no information about the mechanism — only about
+its *placement*. Two distinct claims were collapsed into one:
+
+- *(a)* "the mask **as it currently lands** does not affect the sliver" — MEASURED, true, and predicted;
+- *(b)* "the aperture-mask **mechanism** cannot fix the sliver" — never established, and now REFUTED.
+
+**Rule earned: before running an A/B on a feature, check the log for whether that feature is in a
+configuration where it could possibly bite.** The plan line was in the previous leg's log the whole time.
+
+### §7f-ter ★ THE PACK OPTIONS DRIFTED MID-ARC — pin them in every future leg
+
+Between leg 1 and leg 3 the sidecar was rewritten and `BLOOM_ENABLED` / `IMAGE_SHARPENING` **disappeared
+from it, i.e. reverted to their defaults (Bloom ON, Sharpening 5)**, while `FXAA_STRENGTH` went 75→70,
+`TAA_JITTER`→2, and lightshafts / SSAO / `DISTANT_LIGHT_BOKEH` were switched off. So leg 1 (bloom OFF)
+and leg 3 (bloom ON) were **not comparable**, and the "sliver" judged in each may not be the same artifact
+— which is precisely why the user's own "there is a separate bloom artifact alongside the sliver" was
+right and my merge of them was not. **Pack options are user-side state the harness does not control:
+read `shaderpacks/<pack>.txt` at the START of every leg and record it beside the lever block.**
+
+### §7g THE REMAINING OPEN ITEMS (do not lose these — the bloom ring is only one of them)
+
+1. **The MB-OFF residual sliver.** With Bloom OFF *and* MB OFF the user still reported "an even smaller
+   even slighter sliver on the vertical edges". That is a different, much weaker artifact and is
+   unexplained. Leading candidate remains the pack's unsharp filter (`final.glsl:56-76`, `viewD.x`
+   anisotropy — see §7d), never tested; `IMAGE_SHARPENING → OFF` is a single in-game slider.
+2. **Artifact A, the third-person player halo.** Untouched. MB-only, rotation-only, reproduces in OPEN
+   AIR, so it does not share the sliver's adjacency constraint. Leading candidate: `composite4`'s motion
+   blur has **zero depth rejection** (`:139-171`, `mbwg += 1.0` unconditional), so the player's colour is
+   smeared past its silhouette, and the stamp — whose coverage is decided by depth, which MB does not
+   affect — re-cuts that trail at a hard edge and refills the overhang with destination colour.
+3. **The bloom-ring fix itself**, designed but not yet built. The hard part is that `composite4` reads
+   colortex0 **twice**: the gather at LODs 2-8 (`:65-84`) and the motion blur at LOD 0 (`:141`, 9 taps,
+   clamped to the SCREEN not the aperture, reach scaling with `MOTION_BLURRING_STRENGTH`, which the user
+   runs at the slider maximum 2.00). Masking before the gather therefore also blackens the motion-blur
+   source, risking a **dark MB fringe inside the window** in place of the bright ring.
+
+**★ C3-BLOOM as a candidate for B, for a reason the handoff never considered.**
 `IrisBloomApertureMask` CLEARS colortex0 to black outside the aperture (`:656`) and repaints only the
 aperture (`:713-724`). That clear happens at `maskIndex`, which is **before composite6 (TAA), composite7
 (FXAA) and `final`'s sharpen in both the MB-ON and MB-OFF plans**. Those three then see a hard
