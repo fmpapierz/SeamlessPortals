@@ -3852,6 +3852,16 @@ public class CrossingSmoke implements FabricClientGameTest {
                 // Placed after the player-place bracket, which leaves both sides AIR, and before the
                 // frame-break gate, which stages its own state on this same bottom-row cell.
                 rsSeamCollisionGate(context, new BlockPos(fx, py + 1, fz));
+                // THE OBJECT BREAK-BOTH GATE — reproduces the 2026-08-02 live round 10 trail
+                // headlessly: breaking a crossing (mirror-side) primary must clear the origin
+                // primary too, with each side promoting its own surviving secondary.
+                rsObjectBreakBothGate(context, new BlockPos(fx, py + 1, fz), "CROSS-DIM");
+                // AND THE SAME-DIM DISCRIMINATOR. The cross-dim run went GREEN on the first
+                // attempt while the user's live pair — a /portal-made SAME-DIM pair — showed the
+                // defect. One variable at a time: identical mechanics, identical assertions, the
+                // pair built with the user's exact commands (make_portal +
+                // complete_bi_way_bi_faced_portal), differing only in dimension topology.
+                rsObjectBreakBothSameDimGate(context);
                 // BOTTOM OPENING ROW, not the mid-height cell the mirror gate uses. Support is
                 // vanilla (user clarification §0.2): a rail at mid-height sits on another aperture
                 // cell holding the noCollision placeholder, so when teardown wipes those cells with
@@ -4592,7 +4602,19 @@ public class CrossingSmoke implements FabricClientGameTest {
                         && com.warwa.seamlessportals.passthrough.SeamOccupancy
                             .occupancyOf(mc.level, cell) != 0);
                 });
-                if (!sourceRecorded.get()) {
+                if (!com.warwa.seamlessportals.passthrough.SeamFractional.active()) {
+                    // ★ LEVER-AWARE, INVERTING (the master-off matrix row went red demanding a
+                    // claim the lever correctly forbids — the seventh assume-the-state defect of
+                    // the day, this time caught by the matrix before commit). With the fractional
+                    // model OFF nothing may claim: asserting ZERO recorded occupancy proves the
+                    // lever cleanly severs the whole pipe, which is worth more than skipping.
+                    if (sourceRecorded.get() || recorded.get()) {
+                        e2e.set("*** REGRESSION *** the fractional model is DISABLED, yet occupancy"
+                            + " was recorded (source=" + sourceRecorded.get() + " crossing="
+                            + recorded.get() + "). -PdisableSeamFractional is not severing the"
+                            + " claim pipe.");
+                    }
+                } else if (!sourceRecorded.get()) {
                     e2e.set("SOURCE half not recorded on the CLIENT at " + cell + " after a real"
                         + " BlockItem.place — the client-side claim in the place bracket did not"
                         + " run or did not stick.");
@@ -5426,6 +5448,239 @@ public class CrossingSmoke implements FabricClientGameTest {
         SeamlessPortalsConstants.LOGGER.info(
             LOG + "RS SEAM COLLISION GATE PASS — model is {}. {}",
             com.warwa.seamlessportals.passthrough.SeamFractional.describe(), detail.get());
+    }
+
+    /**
+     * ★ THE OBJECT BREAK-BOTH GATE — the live round 10 defect, reproduced headlessly from its own
+     * probe trail (23:25:40: PROMOTE fired at the broken cell, but NO "cleared counterpart" line
+     * and zero events at the origin cell — object 1's origin half survived the breaking of its
+     * crossing half, and every later placement was adjudicated against diverged object records).
+     *
+     * <p>Stages the full two-object state exactly as the placement paths build it, then breaks the
+     * CROSSING side's primary with a real bracketed break ({@code writeAsPlayer} arms the same
+     * PLAYER_BREAK context as {@code ServerPlayerGameMode}), and asserts the whole of user decision
+     * §2a.0: the broken object's OTHER half clears, and EACH side promotes its own surviving
+     * secondary. Lever-aware trivially: under {@code -PdisableSeamFractional} there are no owner
+     * halves and the leg self-skips with a log line rather than passing vacuously.
+     */
+    private static void rsObjectBreakBothGate(
+        ClientGameTestContext context, BlockPos cell, String tag
+    ) {
+        if (!com.warwa.seamlessportals.passthrough.SeamFractional.active()) {
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS OBJECT BREAK-BOTH GATE [" + tag
+                + "] SKIPPED — the fractional model is disabled, so owner halves do not exist in"
+                + " this configuration.");
+            return;
+        }
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<String> detail = new AtomicReference<>("");
+
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            if (ow == null) { failure.set("no overworld"); return; }
+            var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cell);
+            var binding = seam == null ? null : seam.bindings().stream()
+                .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                .filter(b -> b.cut() != null)
+                .findFirst().orElse(null);
+            if (binding == null) { failure.set("no mirrorable binding with a cut at " + cell); return; }
+            ServerLevel dest = server.getLevel(binding.destDim());
+            if (dest == null) { failure.set("destination level missing"); return; }
+            BlockPos destPos = binding.destPos();
+            dest.getChunk(destPos.getX() >> 4, destPos.getZ() >> 4);
+            var axis = binding.srcFacing().getAxis();
+            try {
+                // ---- STAGE object 1 exactly as placement builds it: claim the owner half FIRST
+                // (the HEAD-claim ordering), then the bracketed write, which mirrors and claims the
+                // crossing half.
+                writeAsPlayer(ow, cell, Blocks.AIR.defaultBlockState());
+                writeAsPlayer(dest, destPos, Blocks.AIR.defaultBlockState());
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cell);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cell, null);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(dest, destPos);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(dest, destPos, null);
+
+                byte srcHalf = com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE;
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cell, srcHalf);
+                writeAsPlayer(ow, cell, Blocks.STONE.defaultBlockState());
+                byte destOwned = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(dest, destPos);
+                // PRECONDITION, not assumption: the mirror wrote and the crossing half was claimed.
+                if (!dest.getBlockState(destPos).is(Blocks.STONE)
+                    || (destOwned != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE
+                        && destOwned != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE)) {
+                    failure.set("STAGING — object 1 did not mirror+claim: destState="
+                        + dest.getBlockState(destPos).getBlock() + " destOwned=" + destOwned);
+                    return;
+                }
+                // ---- STAGE object 2 as the secondary path builds it (both sides + complements).
+                byte secSrcHalf = com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(srcHalf);
+                byte secDestHalf = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .otherHalf(destOwned);
+                var gold = Blocks.GOLD_BLOCK.defaultBlockState();
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cell,
+                    new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold, secSrcHalf));
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(dest, destPos,
+                    new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(
+                        gold.rotate(binding.stateRotation()), secDestHalf));
+
+                // ---- THE BREAK, on the CROSSING side — the direction the live round proved broken.
+                writeAsPlayer(dest, destPos, Blocks.AIR.defaultBlockState());
+
+                var destAfter = dest.getBlockState(destPos);
+                var srcAfter = ow.getBlockState(cell);
+                byte srcOwnedAfter = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, cell);
+                var srcSecAfter = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(ow, cell);
+                detail.set("destAfter=" + destAfter.getBlock() + " srcAfter=" + srcAfter.getBlock()
+                    + " srcOwnedAfter=" + srcOwnedAfter + " srcSecAfter="
+                    + (srcSecAfter == null ? "null" : srcSecAfter.state().getBlock()));
+                // (1) the broken cell promotes its own secondary
+                if (!destAfter.is(Blocks.GOLD_BLOCK)) {
+                    failure.set("the BROKEN cell did not promote its surviving secondary — expected"
+                        + " gold block at " + destPos + ", found " + destAfter.getBlock());
+                    return;
+                }
+                // (2) ★ THE DEFECT: the object's ORIGIN half must clear, and the origin cell must
+                // promote ITS secondary — stone gone, pink standing.
+                if (srcAfter.is(Blocks.STONE)) {
+                    failure.set("*** THE LIVE ROUND 10 DEFECT *** breaking the CROSSING half left"
+                        + " the ORIGIN half standing — stone survives at " + cell + " after its"
+                        + " counterpart at " + destPos + " was broken. Break-both is"
+                        + " direction-dependent.");
+                    return;
+                }
+                if (!srcAfter.is(Blocks.GOLD_BLOCK)) {
+                    failure.set("the origin cleared but did not promote its secondary — expected"
+                        + " gold block at " + cell + ", found " + srcAfter.getBlock());
+                    return;
+                }
+                if (srcSecAfter != null) {
+                    failure.set("the origin promoted but its secondary record was not consumed"
+                        + " (still " + srcSecAfter.state().getBlock() + ")");
+                    return;
+                }
+            } finally {
+                // Restore for the frame-break gate that runs next on this cell.
+                writeAsPlayer(ow, cell, Blocks.AIR.defaultBlockState());
+                writeAsPlayer(dest, destPos, Blocks.AIR.defaultBlockState());
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cell);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cell, null);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(dest, destPos);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(dest, destPos, null);
+            }
+        });
+
+        String f = failure.get();
+        if (f != null) {
+            throw new AssertionError(LOG + "RS OBJECT BREAK-BOTH GATE [" + tag + "] FAILED: " + f);
+        }
+        SeamlessPortalsConstants.LOGGER.info(
+            LOG + "RS OBJECT BREAK-BOTH GATE [" + tag + "] PASS — breaking the crossing half"
+                + " cleared the origin and both sides promoted their secondaries. {}", detail.get());
+    }
+
+    /**
+     * ★ THE SAME-DIM DISCRIMINATOR — stages the user's EXACT live construction ({@code portal
+     * make_portal} + {@code complete_bi_way_bi_faced_portal}, both cells in the overworld) and runs
+     * the identical break-both body on it. Exists because the cross-dim run went green while the
+     * live same-dim pair showed the defect: one variable, held apart deliberately.
+     */
+    private static void rsObjectBreakBothSameDimGate(ClientGameTestContext context) {
+        if (!com.warwa.seamlessportals.passthrough.SeamFractional.active()
+            || AperturePassthroughLever.DISABLED
+            || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS OBJECT BREAK-BOTH GATE [SAME-DIM]"
+                + " SKIPPED — fractional or mirroring disabled.");
+            return;
+        }
+        final int cx = 8200, cy = 100, cz = 8200;
+        final Vec3 destCenter = new Vec3(cx + 0.5, cy + 1.0 - 50, cz + 60 + 0.5);
+        AtomicReference<Vec3> playerBefore = new AtomicReference<>(null);
+        try {
+            runOnServer(context, server -> {
+                var players = server.getPlayerList().getPlayers();
+                if (!players.isEmpty()) {
+                    playerBefore.set(players.get(0).position());
+                }
+            });
+            // The repro3 staging recipe verbatim (floor gap so the aim ray hits the target's top).
+            runCommands(context, List.of(
+                "forceload add " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 76),
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                    + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz + 2) + " "
+                    + (cx + 6) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
+                "setblock " + cx + " " + (cy - 1) + " " + cz + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                    + (cx + 6) + " " + (cy - 51) + " " + (cz + 64) + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 50) + " " + (cz + 54) + " "
+                    + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
+                "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 27"
+            ));
+            context.waitTicks(10);
+            runCommands(context, List.of(
+                "execute as @p at @p run portal make_portal 1 2 minecraft:overworld "
+                    + destCenter.x + " " + destCenter.y + " " + destCenter.z));
+            context.waitTicks(10);
+            runCommands(context, List.of(
+                "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 5",
+                "execute as @p at @p run portal complete_bi_way_bi_faced_portal"));
+            context.waitTicks(20);
+            runCommands(context, List.of(
+                "tp @p " + (cx + 3.5) + " " + cy + " " + (cz + 4.5) + " 180 0"));
+
+            final BlockPos cellS = new BlockPos(cx, cy, cz);
+            AtomicReference<Boolean> bound = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 30 && !bound.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    if (cell != null && cell.bindings().stream().anyMatch(b ->
+                        b.isMirrorable() && b.cut() != null)) {
+                        bound.set(true);
+                    }
+                });
+                if (!bound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!bound.get()) {
+                throw new AssertionError(LOG + "RS OBJECT BREAK-BOTH GATE [SAME-DIM] FIXTURE"
+                    + " INVALID — the command-built same-dim pair never bound a mirrorable seam"
+                    + " with a cut at " + cellS);
+            }
+            rsObjectBreakBothGate(context, cellS, "SAME-DIM");
+        } finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    for (var portal : ow.getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(cx - 6, cy - 56, cz - 6,
+                            cx + 6, cy + 6, cz + 66), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                runCommands(context, List.of(
+                    "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                        + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+                    "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                        + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
+                    "forceload remove " + (cx - 16) + " " + (cz - 16) + " "
+                        + (cx + 16) + " " + (cz + 76)
+                ));
+                Vec3 back = playerBefore.get();
+                if (back != null) {
+                    runCommands(context, List.of(
+                        "tp @p " + back.x + " " + back.y + " " + back.z));
+                }
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(
+                    LOG + "RS OBJECT BREAK-BOTH GATE [SAME-DIM] cleanup failed", t);
+            }
+        }
     }
 
     /**
