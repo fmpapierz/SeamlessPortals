@@ -315,6 +315,14 @@ public class MyGameRenderer {
         if (BlockManipulationClient.remotePointedDim == newDimension) {
             client.hitResult = BlockManipulationClient.remoteHitResult;
         }
+        // ★ SEAM WHOLE-OBJECT SELECTION (user order 2026-08-03): a locally-targeted seam object
+        // outlines its FAR half through the window too — one block, two charts. Never competes
+        // with the remote swap above (that fires only when pointing THROUGH the portal, where the
+        // local hit is the MISS placeholder and farHit is null).
+        else if (com.warwa.seamlessportals.render.SeamCounterpartOutline.farDim == newDimension
+            && com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit != null) {
+            client.hitResult = com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit;
+        }
         if (!PortalRendering.shouldRenderHitResult()) {
             client.hitResult = null;
         }
@@ -601,6 +609,14 @@ public class MyGameRenderer {
         ((IEParticleManager) client.particleEngine).ip_setWorld(newWorld);
         if (BlockManipulationClient.remotePointedDim == newDimension) {
             client.hitResult = BlockManipulationClient.remoteHitResult;
+        }
+        // ★ SEAM WHOLE-OBJECT SELECTION (user order 2026-08-03): a locally-targeted seam object
+        // outlines its FAR half through the window too — one block, two charts. Never competes
+        // with the remote swap above (that fires only when pointing THROUGH the portal, where the
+        // local hit is the MISS placeholder and farHit is null).
+        else if (com.warwa.seamlessportals.render.SeamCounterpartOutline.farDim == newDimension
+            && com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit != null) {
+            client.hitResult = com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit;
         }
         if (!PortalRendering.shouldRenderHitResult()) {
             client.hitResult = null;

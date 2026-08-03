@@ -129,6 +129,22 @@ public class SeamlessPortalsModFabric implements ModInitializer {
             // -Dseamlessportals.disableAperturePassthrough=true it registers listeners that
             // immediately return rather than changing the init sequence.
             com.warwa.seamlessportals.passthrough.AperturePassthroughInit.init();
+            // ★ FRACTIONAL OCCUPANCY JOIN SYNC (FRACTIONAL_DESIGN.md §3). Occupancy is the one
+            // piece of seam state a client cannot derive (it records placements), and the live
+            // broadcast only reaches players who are ONLINE when the write happens. A joining
+            // player gets every persisted entry of every level — all dims deliberately, matching
+            // the broadcast's own policy (a seam cell is visible cross-dim through a window), with
+            // the client's PENDING stash absorbing dims whose ClientLevel does not exist yet.
+            net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.JOIN.register(
+                (handler, sender, server) -> {
+                    if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLED) {
+                        return;
+                    }
+                    for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
+                        com.warwa.seamlessportals.passthrough.SeamOccupancySavedData
+                            .sendAllTo(level, handler.getPlayer());
+                    }
+                });
             // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
             // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
             // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally

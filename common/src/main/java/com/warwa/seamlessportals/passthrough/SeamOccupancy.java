@@ -74,11 +74,23 @@ public final class SeamOccupancy {
         return local >= planeOffset ? HALF_POSITIVE : HALF_NEGATIVE;
     }
 
+    /**
+     * ★ WRITE-THROUGH TO THE SAVEDDATA — server side only, at every mask mutation. The
+     * {@code instanceof ServerLevel} guard (not {@code !isClientSide}) is deliberate and matches
+     * {@link #broadcast}: it is what keeps client packet-application from ever touching the store.
+     */
+    private static void persistMask(Level level, long key) {
+        if (level instanceof net.minecraft.server.level.ServerLevel sl) {
+            SeamOccupancySavedData.get(sl).recordMask(key, map(level).get(key));
+        }
+    }
+
     /** Record that an object occupies {@code half} of {@code cell}. Idempotent. */
     public static void claim(Level level, BlockPos cell, byte half) {
         Long2ByteMap m = map(level);
         long key = cell.asLong();
         m.put(key, (byte) (m.get(key) | half));
+        persistMask(level, key);
     }
 
     /** Release one half. Removes the entry entirely once neither half is owned. */
@@ -91,11 +103,13 @@ public final class SeamOccupancy {
         } else {
             m.put(key, now);
         }
+        persistMask(level, key);
     }
 
     /** Forget this cell entirely — the block was broken or replaced wholesale. */
     public static void clear(Level level, BlockPos cell) {
         map(level).remove(cell.asLong());
+        persistMask(level, cell.asLong());
     }
 
     /**
@@ -104,10 +118,11 @@ public final class SeamOccupancy {
      */
     public static void set(Level level, BlockPos cell, byte mask) {
         if (mask == 0) {
-            clear(level, cell);
+            map(level).remove(cell.asLong());
         } else {
             map(level).put(cell.asLong(), mask);
         }
+        persistMask(level, cell.asLong());
     }
 
     /** The occupancy mask for a cell: 0 when nothing here, else some combination of the two halves. */
@@ -192,6 +207,9 @@ public final class SeamOccupancy {
             secondaryMap(level).remove(cell.asLong());
         } else {
             secondaryMap(level).put(cell.asLong(), secondary);
+        }
+        if (level instanceof net.minecraft.server.level.ServerLevel sl) {
+            SeamOccupancySavedData.get(sl).recordSecondary(cell.asLong(), secondary);
         }
     }
 

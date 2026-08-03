@@ -163,6 +163,63 @@ public class BlockManipulationServer {
         }
         
         /**
+         * ★ CROSS-DIM CREATIVE PICK (user order 2026-08-03; 26.2 divergence from IP). On 1.19 the
+         * pick was resolved CLIENT-side, so IP's level/hitResult swap covered it for free. 26.2
+         * moved resolution into {@code ServerGamePacketListenerImpl.handlePickItemFromBlock}, which
+         * reads {@code player.level()} — the ported client swap sent the remote pos into the WRONG
+         * dimension, silently picking nothing. This callable is an
+         * {@code @IPVanillaCopy} of that handler (+ its private {@code tryPickItem}), with two
+         * substitutions: the level comes from the DIMENSION ARGUMENT, and the reach gate is the
+         * portal-aware {@code canPlayerReach} instead of the Euclidean same-dim check.
+         *
+         * <p>The {@code hasInfiniteMaterials() && includeData} gate is preserved verbatim — dropping
+         * it would let survival players request NBT-laden clones.
+         */
+        public static void processPickItemFromBlock(
+            ServerPlayer player,
+            ResourceKey<Level> dimension,
+            BlockPos pos,
+            boolean includeDataRequested
+        ) {
+            ServerLevel world = player.server.getLevel(dimension);
+            Validate.notNull(world, "missing %s", dimension.identifier());
+            if (!canPlayerReach(dimension, player, pos)) {
+                return;
+            }
+            if (!world.isLoaded(pos)) {
+                return;
+            }
+            net.minecraft.world.level.block.state.BlockState blockState = world.getBlockState(pos);
+            boolean includeData = player.hasInfiniteMaterials() && includeDataRequested;
+            net.minecraft.world.item.ItemStack itemStack =
+                blockState.getCloneItemStack(world, pos, includeData);
+            if (itemStack.isEmpty()) {
+                return;
+            }
+            // BE data intentionally NOT copied cross-dim: seam secondaries refuse BEs anyway, and
+            // vanilla's addBlockDataToItem is private with a reporter context — the plain clone
+            // covers every legitimate cross-window pick. (IPVanillaCopy divergence, recorded.)
+            // tryPickItem vanilla-copy (SGPLI is private):
+            if (itemStack.isItemEnabled(world.enabledFeatures())) {
+                net.minecraft.world.entity.player.Inventory inventory = player.getInventory();
+                int slot = inventory.findSlotMatchingItem(itemStack);
+                if (slot != -1) {
+                    if (net.minecraft.world.entity.player.Inventory.isHotbarSlot(slot)) {
+                        inventory.setSelectedSlot(slot);
+                    } else {
+                        inventory.pickSlot(slot);
+                    }
+                } else if (player.hasInfiniteMaterials()) {
+                    inventory.addAndPickItem(itemStack);
+                }
+                player.connection.send(
+                    new net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket(
+                        inventory.getSelectedSlot()));
+                player.inventoryMenu.broadcastChanges();
+            }
+        }
+
+        /**
          * {@link qouteall.imm_ptl.core.mixin.client.interaction.MixinMultiPlayerGameMode#ip_redirectPacket}
          */
         @SuppressWarnings("JavadocReference")

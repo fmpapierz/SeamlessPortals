@@ -2416,6 +2416,49 @@ public class SecondaryWorldRenderCore {
                         sameDimSubmitStorage, destCameraState);
                 }
 
+                // ★ SAME-DIM TARGETED-BLOCK OUTLINE (user order 2026-08-03 — the ledgered
+                // "same-dim passes stay outline-less" gap CLOSED). Two legitimate hits can want
+                // drawing in this pass: the through-window target (remotePointedDim equals this
+                // dimension for a same-dim pair) and the seam whole-object counterpart
+                // (SeamCounterpartOutline.farHit — the far half of a locally-targeted object).
+                // The extract invoker reads client.hitResult against the extractor's own level
+                // (the shared level here — exactly right), so swap it in for the extract's
+                // duration only; the invoker touches no one-shot state (entity/BE safety class).
+                {
+                    net.minecraft.world.phys.HitResult sameDimOutlineHit = null;
+                    if (qouteall.imm_ptl.core.block_manipulation.BlockManipulationClient
+                            .remotePointedDim == client.level.dimension()
+                        && qouteall.imm_ptl.core.block_manipulation.BlockManipulationClient
+                            .remoteHitResult != null) {
+                        sameDimOutlineHit = qouteall.imm_ptl.core.block_manipulation
+                            .BlockManipulationClient.remoteHitResult;
+                    } else if (com.warwa.seamlessportals.render.SeamCounterpartOutline.farDim
+                            == client.level.dimension()
+                        && com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit != null) {
+                        sameDimOutlineHit =
+                            com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit;
+                    }
+                    boolean sameDimRenderOutline = sameDimOutlineHit != null
+                        && ((GameRendererAccessorMixin) client.gameRenderer)
+                            .seamlessportals$invokeShouldRenderBlockOutline();
+                    if (sameDimRenderOutline) {
+                        net.minecraft.world.phys.HitResult saved = client.hitResult;
+                        client.hitResult = sameDimOutlineHit;
+                        try {
+                            ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                                .seamlessportals$invokeExtractBlockOutline(
+                                    newCamera, sameDimScratchLRS);
+                        } finally {
+                            client.hitResult = saved;
+                        }
+                        if (sameDimScratchLRS.blockOutlineRenderState != null) {
+                            submitDestBlockOutline(sameDimScratchLRS, sameDimSubmitStorage);
+                        }
+                    } else {
+                        sameDimScratchLRS.blockOutlineRenderState = null;
+                    }
+                }
+
                 Matrix4fStack mv = RenderSystem.getModelViewStack();
                 mv.pushMatrix();
                 mv.mul(destViewMatrix);

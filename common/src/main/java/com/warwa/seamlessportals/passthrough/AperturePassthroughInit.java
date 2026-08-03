@@ -114,6 +114,10 @@ public final class AperturePassthroughInit {
             }
             for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
                 SeamJournal.drain(level);
+                // Fractional occupancy hydrate — once per level per load (the flag lives on the
+                // SavedData instance, fresh per world start). Per-tick placement is deliberate:
+                // it also covers dynamically-created levels, which a SERVER_STARTED hook misses.
+                SeamOccupancySavedData.hydrateOnce(level);
             }
             // (b) rail continuity: reset the per-tick cross-write budget and serve cold-far-chunk
             // retries that have warmed up.

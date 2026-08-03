@@ -305,6 +305,7 @@ public final class SeamMirror {
         // the provenance of the vanished occupant is void.
         if (newState.isAir() && !AperturePassthroughLever.DISABLE_SEAM_BREAK_UNMARK) {
             ((SeamIndexHolder) level).seamlessportals$mirrorCreatedCells().remove(pos.asLong());
+            SeamOccupancySavedData.persistMirrorCreated(level, pos.asLong(), false);
         }
 
         SeamWriteSource source = SeamWriteContext.sourceFor(pos);
@@ -550,6 +551,7 @@ public final class SeamMirror {
                 }
             }
             holder.seamlessportals$mirrorCreatedCells().remove(destKey);
+            SeamOccupancySavedData.persistMirrorCreated(dest, destKey, false);
             return;
         }
 
@@ -596,6 +598,7 @@ public final class SeamMirror {
         // the refinement guard above requires it — so skipping the add loses nothing.
         if (!refinementOnly) {
             holder.seamlessportals$mirrorCreatedCells().add(destKey);
+            SeamOccupancySavedData.persistMirrorCreated(dest, destKey, true);
             // ★ THE CROSSING HALF (FRACTIONAL_DESIGN.md §2a.0). The mirror writes a whole BlockState
             // — Minecraft has no other way to put material in a cell — so "half a block" is
             // expressed by recording WHICH half this object owns here. Without this claim the
@@ -804,6 +807,7 @@ public final class SeamMirror {
                     traceEnd(dest, destPos, written, carried, serverLevel, src, "bind-reconcile");
                     forceClientSync(serverLevel, dest, destPos);
                     ((SeamIndexHolder) dest).seamlessportals$mirrorCreatedCells().add(destPos.asLong());
+                    SeamOccupancySavedData.persistMirrorCreated(dest, destPos.asLong(), true);
                     reconciled++;
                     done++;
                     break;   // one write per cell; the faces share a destination
@@ -1011,6 +1015,7 @@ public final class SeamMirror {
                     frameBreakCleared++;
                 }
                 holder.seamlessportals$mirrorCreatedCells().remove(key);
+                SeamOccupancySavedData.persistMirrorCreated(serverLevel, key, false);
             }
             if (AperturePassthroughLever.SEAM_MIRROR_PROBE) {
                 StringBuilder cells = new StringBuilder();
