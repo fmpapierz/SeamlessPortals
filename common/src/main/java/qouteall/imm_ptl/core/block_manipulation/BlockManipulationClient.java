@@ -141,6 +141,11 @@ public class BlockManipulationClient {
                 );
             }
         });
+        // ★ SEAM WHOLE-OBJECT SELECTION (user order 2026-08-03): from the frame's FINAL targeting,
+        // derive the targeted seam object's OTHER half so both halves outline as one block —
+        // near→far via the portal shells, far→near via the main extract. Separate store on
+        // purpose: remotePointedDim doubles as the interaction router and must not be synthesized.
+        com.warwa.seamlessportals.render.SeamCounterpartOutline.update(client);
     }
     
     private static double getCurrentTargetDistance() {

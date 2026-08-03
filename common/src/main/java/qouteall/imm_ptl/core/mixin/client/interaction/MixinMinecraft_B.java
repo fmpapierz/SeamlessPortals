@@ -122,19 +122,22 @@ public abstract class MixinMinecraft_B {
     )
     private void wrapPickBlock(Minecraft instance, Operation<Void> original) {
         if (BlockManipulationClient.isPointingToPortal()) {
-            ClientLevel remoteWorld = ClientWorldLoader.getWorld(BlockManipulationClient.remotePointedDim);
-            ClientLevel oldWorld = this.level;
-            HitResult oldTarget = this.hitResult;
-
-            level = remoteWorld;
-            hitResult = BlockManipulationClient.remoteHitResult;
-
-            try {
-                original.call(instance);
-            }
-            finally {
-                level = oldWorld;
-                hitResult = oldTarget;
+            // ★ 26.2 INVERSION (user order 2026-08-03): pick resolution moved SERVER-side —
+            // ServerboundPickItemFromBlockPacket is handled against player.level(), so the old
+            // level/hitResult field swap here sent the remote pos into the WRONG dimension and the
+            // pick silently failed. Skip vanilla entirely and RPC the dimension-tagged pick to
+            // BlockManipulationServer, which resolves it in the DEST level under the portal-aware
+            // reach gate. (The old swap-based path is unreachable dead weight on 26.2 — removed
+            // rather than kept as a trap. Ctrl reads the same way pickBlockOrEntity does.)
+            if (BlockManipulationClient.remoteHitResult
+                    instanceof net.minecraft.world.phys.BlockHitResult bhr
+                && bhr.getType() != HitResult.Type.MISS) {
+                qouteall.q_misc_util.api.McRemoteProcedureCall.tellServerToInvoke(
+                    "qouteall.imm_ptl.core.block_manipulation.BlockManipulationServer.RemoteCallables.processPickItemFromBlock",
+                    BlockManipulationClient.remotePointedDim,
+                    bhr.getBlockPos(),
+                    ((Minecraft) (Object) this).hasControlDown()
+                );
             }
         }
         else {
