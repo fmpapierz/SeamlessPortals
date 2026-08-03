@@ -10,7 +10,6 @@ public class SeamlessPortalsConfig {
 
     private final Map<PortalType, PortalTypeConfig> portalConfigs = new EnumMap<>(PortalType.class);
 
-    private int maxPortalRenderDepth = 1;
     private int portalRenderDistance = 8;
     /** "auto" = IP-style graduated dest depth by portal distance; false = fixed full {@link #portalRenderDistance}. */
     private boolean autoRenderDistance = true;
@@ -35,6 +34,13 @@ public class SeamlessPortalsConfig {
     private boolean seamlessTeleportation = true;
     private boolean projectilePassThrough = true;
     private int cameraSmoothingTicks = 5;
+
+    // IS5-REC NOTE: the shaders-ON recursion depth, the vanilla depth and the deep-recursion lag
+    // guard deliberately DO NOT live here. They live in IPConfig (config/immersive_portals.json +
+    // the Mod Menu screen that actually opens at the default flag). A parallel copy existed here
+    // briefly and was deleted: IPConfig.onConfigChanged writes IPGlobal.maxPortalLayer from
+    // IPModMain.init, which runs AFTER loadFrom below, so this copy was overwritten every boot
+    // while this file kept reporting the value the user set. Do not reintroduce it.
 
     private SeamlessPortalsConfig() {
         portalConfigs.put(PortalType.NETHER, new PortalTypeConfig(true));
@@ -99,14 +105,6 @@ public class SeamlessPortalsConfig {
                         catch (NumberFormatException nfe) { /* keep default */ }
                     }
                 }
-                String depth = props.getProperty("maxPortalRenderDepth");
-                if (depth != null) INSTANCE.setMaxPortalRenderDepth(Integer.parseInt(depth.trim()));
-                String en = props.getProperty("enablePortalRendering");
-                if (en != null) INSTANCE.setEnablePortalRendering(Boolean.parseBoolean(en.trim()));
-                String unb = props.getProperty("unboundedClientChunkStore");
-                if (unb != null) INSTANCE.unboundedClientChunkStore = Boolean.parseBoolean(unb.trim());
-                String spec = props.getProperty("speculativePrewarm");
-                if (spec != null) INSTANCE.speculativePrewarm = Boolean.parseBoolean(spec.trim());
                 // Entity-portal migration master switch (D3). Seed the load-time flag from the same
                 // file the mixin plugin reads, so the two never disagree within a session. seedIfUnset
                 // is a no-op if the plugin already resolved it (read-once semantics).
@@ -132,7 +130,6 @@ public class SeamlessPortalsConfig {
                 INSTANCE.autoRenderDistance ? "auto" : String.valueOf(INSTANCE.portalRenderDistance));
             props.setProperty("entityLoadDistance",
                 INSTANCE.entityLoadDistanceChunks < 0 ? "max" : String.valueOf(INSTANCE.entityLoadDistanceChunks));
-            props.setProperty("maxPortalRenderDepth", String.valueOf(INSTANCE.maxPortalRenderDepth));
             props.setProperty("enablePortalRendering", String.valueOf(INSTANCE.enablePortalRendering));
             props.setProperty("unboundedClientChunkStore", String.valueOf(INSTANCE.unboundedClientChunkStore));
             props.setProperty("speculativePrewarm", String.valueOf(INSTANCE.speculativePrewarm));
@@ -153,7 +150,14 @@ public class SeamlessPortalsConfig {
                     + "# entityLoadDistance: chunks around the dest portal within which destination\n"
                     + "#   entities are streamed so they show + move in the portal view. \"max\" (default)\n"
                     + "#   = the render distance; a smaller number limits it (fewer entities/packets).\n"
-                    + "#   Edit and restart to change.");
+                    + "#   Edit and restart to change.\n"
+                    + "# PORTAL RECURSION DEPTH IS NOT CONFIGURED HERE. maxPortalLayer (no\n"
+                    + "#   shaderpack), irisRecursionDepth (with a shaderpack) and\n"
+                    + "#   irisRecursionLagGuard all live in config/immersive_portals.json, and in\n"
+                    + "#   the Mod Menu config screen. They were briefly duplicated into this file\n"
+                    + "#   and removed again: that copy was applied BEFORE the one in\n"
+                    + "#   immersive_portals.json, so it was silently overwritten on every launch\n"
+                    + "#   while this file kept reporting whatever had been set.");
             }
         } catch (Exception e) {
             com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.warn(
@@ -188,8 +192,7 @@ public class SeamlessPortalsConfig {
         return portalConfigs.get(type);
     }
 
-    public int getMaxPortalRenderDepth() { return maxPortalRenderDepth; }
-    public void setMaxPortalRenderDepth(int depth) { this.maxPortalRenderDepth = Math.max(0, Math.min(3, depth)); }
+
 
     /**
      * The destination loading/mesh DEPTH cap (chunks) — the analogue of IP's

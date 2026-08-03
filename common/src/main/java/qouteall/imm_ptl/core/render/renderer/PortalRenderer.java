@@ -110,6 +110,33 @@ public abstract class PortalRenderer {
     // will be called when rendering portal
     public void onBeforeHandRendering(Matrix4f modelView) {}
 
+    /**
+     * IS5-REC — the NESTED portal pass, dispatched at the tail of a full-pipeline dest render
+     * ({@code SecondaryWorldRenderCore.maybeRunNestedPortalLayer}) so that a portal seen INSIDE a
+     * portal window renders its own destination instead of flat pass-through.
+     *
+     * <p><b>Why this is a separate hook and not {@code onBeforeHandRendering}.</b> IP recursed by
+     * re-entering the nested {@code renderLevel}'s own hooks. That is structurally impossible here:
+     * the IS0 anchor injects into {@code GameRenderer.renderLevel}, while the nested dest render
+     * calls {@code LevelRenderer.render} directly (SecondaryWorldRenderCore ~:1905), so the anchor's
+     * bytecode is never reached and fires exactly once per frame. The nested pass therefore needs
+     * its own entry point, and it must do ONLY the per-layer work (snapshot / portal loop / stamp /
+     * blit-back) — never the once-per-frame work the anchor owns (the temporal-target save, the
+     * shadow-composite suppressor install, the prev-uniform heal).
+     *
+     * <p>Base body is EMPTY and this is called for the {@code IPCGlobal.renderer} slot, which is
+     * typed {@code PortalRenderer} — every renderer except the iris compat one correctly does
+     * nothing. The shaders-OFF stencil family never even reaches the dispatch site:
+     * {@code renderWorldFullPipeline} has exactly two call sites, both inside
+     * {@code IrisCompatOn262Renderer}, so shaders-OFF is unreachable by construction and stays a
+     * clean control leg.
+     *
+     * @param destDrawViewMatrix the view matrix the nested {@code render()} was driven with — passed
+     *                           through rather than re-read, because on a cross-dim pass the main
+     *                           {@code cameraRenderState} still holds the SOURCE camera.
+     */
+    public void renderNestedPortalLayer(Matrix4f destDrawViewMatrix) {}
+
     // this will NOT be called when rendering portal
     public abstract void prepareRendering();
 
@@ -264,7 +291,22 @@ public abstract class PortalRenderer {
     }
 
     public static double getRenderRange() {
-        double range = client.options.getEffectiveRenderDistance() * 16;
+        // IS5-WDIST (2026-08-02): the BASE distance is now configurable —
+        // IPGlobal.portalWindowRenderDistance, in chunks, 0 = follow the vanilla render distance
+        // (the shipped default, byte-identical to the previous expression, and what the config's
+        // per-entry reset button restores).
+        //
+        // ONLY the base is overridden. Everything below still applies on top, deliberately:
+        //   * the isLaggy / reducedPortalRendering clamp to 16 — that is lag PROTECTION, and a user
+        //     raising the distance is asking for more range, not for the safety net removed;
+        //   * the deep-layer divide, which keeps far mirror recursion from rendering N times;
+        //   * the large-scale portal multiplier and its 32-chunk ceiling.
+        // Overriding the whole method instead would have silently discarded all three.
+        int configuredChunks = IPGlobal.portalWindowRenderDistance;
+        int baseChunks = configuredChunks > 0
+            ? configuredChunks
+            : client.options.getEffectiveRenderDistance();
+        double range = baseChunks * 16;
         if (RenderStates.isLaggy || IPGlobal.reducedPortalRendering) {
             range = 16;
         }
@@ -353,6 +395,11 @@ public abstract class PortalRenderer {
     public void invokeWorldRendering(
         WorldRenderInfo worldRenderInfo
     ) {
+        // TP-XDIM census: the THIRD dest-driver branch. Shaders-OFF the active renderer is the
+        // stencil family, whose invokeWorldRendering is this base method — without this call the
+        // census's invoke= column would read NOT-CALLED on a frame that definitely rendered, i.e. a
+        // hole that reads as a measurement. Log-only, DEFAULT OFF, never throws.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteInvokeWorldRendering(2);
         MyGameRenderer.renderWorldNew(
             worldRenderInfo,
             Runnable::run

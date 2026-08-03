@@ -248,6 +248,14 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         ProjectionMatrixBuffer instance, Matrix4f projectionMatrix, Operation<GpuBufferSlice> original
     ) {
         RenderStates.capturedMainPassBobbedProjection = new Matrix4f(projectionMatrix);
+        // IS-BOB: relocation discriminator + optional 1Hz probe (zero iris reach-in). Under a
+        // pack iris strips bob+spin from this upload => the arg bit-equals the pristine base;
+        // vanilla path => it differs. Causally locked to whether iris will mulLocal the modelview.
+        qouteall.imm_ptl.core.compat.iris_compatibility.IrisBobSync.onMainProjectionCaptured(
+            projectionMatrix,
+            gameRenderState().levelRenderState.cameraRenderState != null
+                ? gameRenderState().levelRenderState.cameraRenderState.projectionMatrix : null
+        );
         return original.call(instance, projectionMatrix);
     }
 
@@ -257,6 +265,12 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         CameraRenderState cameraRenderState = gameRenderState().levelRenderState.cameraRenderState;
         cameraRenderState.viewRotationMatrix = TransformationManager.processTransformation(
             mainCamera, cameraRenderState.viewRotationMatrix
+        );
+        // IS-BOB: per-frame COPY of the pre-bob V (iris mulLocal-mutates this exact object later
+        // in the frame; the R13k line above replaces the object every frame — never cache the
+        // reference). Program-order AFTER the replacement — no mixin-priority dependence.
+        qouteall.imm_ptl.core.compat.iris_compatibility.IrisBobSync.onExtractBaseViewCaptured(
+            cameraRenderState.viewRotationMatrix
         );
     }
 

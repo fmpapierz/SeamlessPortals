@@ -8,6 +8,7 @@
     "warwa"
   ],
   "license": "All Rights Reserved",
+  "icon": "assets/immersive_portals/icon.png",
   "environment": "*",
   "entrypoints": {
     "main": [

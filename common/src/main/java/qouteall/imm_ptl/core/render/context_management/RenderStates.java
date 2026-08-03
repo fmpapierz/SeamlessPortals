@@ -76,6 +76,30 @@ public class RenderStates {
     private static float partialTick = 0;
 
     public static Set<ResourceKey<Level>> renderedDimensions = new HashSet<>();
+
+    /**
+     * IS5-LIGHTMAP — dimensions whose lightmap has been primed THIS FRAME, marked at the moment of
+     * priming rather than when the dest render finishes.
+     *
+     * <p>The first-visit lightmap prime in {@code MyGameRenderer.switchAndRenderTheWorldFullPipeline}
+     * used to guard on {@link #isDimensionRendered}, which is fed by
+     * {@code PortalRendering.onEndPortalWorldRendering} — and that runs AFTER the nested render
+     * returns (PortalRenderer:356 invoke, :370 mark). One layer deep that was fine. Under recursion a
+     * chain that REVISITS a dimension (A-&gt;B-&gt;A, or any same-dim chain) re-enters the prime for a
+     * dimension still in flight, drives the SAME {@code Lightmap} object's ring buffer a second time
+     * inside one GPU submit, and crashes:
+     * {@code IllegalStateException: Cannot wait on a fence for the current submit}
+     * (GlFence.awaitCompletion via MappableRingBuffer.currentBuffer). USER-HIT at depth 3+ after ~2
+     * minutes.
+     *
+     * <p>This is the same hazard class the clouds and weather suppression in
+     * {@code SecondaryWorldRenderCore} already cites by name for shared-state passes — the lightmap
+     * has the identical shape and was simply not covered, because nothing could reach it twice per
+     * frame before recursion existed.
+     *
+     * <p>Marked BEFORE the render, so re-entry during the render is what it actually excludes.
+     */
+    public static final Set<ResourceKey<Level>> lightmapPrimedDimensions = new HashSet<>();
     public static List<List<WeakReference<Portal>>> lastPortalRenderInfos = new ArrayList<>();
     public static List<List<WeakReference<Portal>>> portalRenderInfos = new ArrayList<>();
     public static int portalsRenderedThisFrame = 0;// mixins to sodium use that
@@ -149,6 +173,7 @@ public class RenderStates {
         partialTick = newPartialTick;
 
         renderedDimensions.clear();
+        lightmapPrimedDimensions.clear();
         lastPortalRenderInfos = portalRenderInfos;
         portalRenderInfos = new ArrayList<>();
         portalsRenderedThisFrame = 0;
@@ -188,19 +213,78 @@ public class RenderStates {
             if (ClientPerformanceMonitor.getMinimumFps() > 15) {
                 isLaggy = false;
             }
+            else {
+                // Hold the notice for the ~5s window opened by the transition below, then go quiet
+                // for the rest of the clamp. USER-DECIDED: "make it so the lag attack proof only
+                // shows once for 5 seconds" — long enough to read and act on, not a permanent
+                // banner. An earlier revision repeated it for the whole clamp duration and that was
+                // too much.
+                holdLaggyNotice();
+            }
         }
         else {
             if (lastPortalRenderInfos.size() > 10) {
                 if (ClientPerformanceMonitor.getAverageFps() < 8 || ClientPerformanceMonitor.getMinimumFps() < 6) {
-                    // 26.2: Gui.setOverlayMessage moved to the split-out Hud (Hud.java:1225),
-                    // reached via the public field Gui.hud (Gui.java:72).
-                    MyRenderHelper.client.gui.hud.setOverlayMessage(
-                        Component.translatable("imm_ptl.laggy"),
-                        false
-                    );
                     isLaggy = true;
+                    // Opens the ~5s notice window. Animated on this first show only: the pulse is
+                    // what catches the eye at the moment the clamp engages, and the one re-show
+                    // inside the window is steady so it stays readable.
+                    laggyNoticeWindowEndMs = System.currentTimeMillis() + LAGGY_NOTICE_WINDOW_MS;
+                    showLaggyNotice(true);
                 }
             }
+        }
+    }
+
+    /** ~5s: how long the lag-clamp notice stays up, once, per time the clamp engages. */
+    private static final long LAGGY_NOTICE_WINDOW_MS = 5000L;
+
+    /** Wall-clock end of the current notice window; 0 when no notice is being held. */
+    private static long laggyNoticeWindowEndMs = 0L;
+
+    private static long lastLaggyNoticeMs = 0L;
+
+    /**
+     * Holds the notice on screen for {@link #LAGGY_NOTICE_WINDOW_MS} after the clamp engages, then
+     * goes quiet for the remainder of the clamp.
+     *
+     * <p>The re-show is needed because vanilla's overlay message has a FIXED ~60-tick (~3 s)
+     * lifetime that cannot be extended directly — so a single call cannot span 5 seconds. One
+     * re-issue partway through bridges the gap. That makes the window approximate (~5-5.5 s), which
+     * is the right trade against mixing into {@code Hud}'s timer just to control a notice.
+     *
+     * <p>Shown ONCE PER ENGAGEMENT, not once per session: if the clamp releases and later re-engages
+     * the player is told again, because by then it is news again.
+     */
+    private static void holdLaggyNotice() {
+        long now = System.currentTimeMillis();
+        if (now >= laggyNoticeWindowEndMs) {
+            return; // window closed — stay quiet for the rest of the clamp
+        }
+        if (now - lastLaggyNoticeMs < 2000L) {
+            return; // current message still on screen
+        }
+        showLaggyNotice(false);
+    }
+
+    /**
+     * Red + bold because the default styling reads as an incidental status line, and this one is
+     * reporting that a setting the player configured has been overridden.
+     *
+     * <p>26.2: {@code Gui.setOverlayMessage} moved to the split-out {@code Hud} (Hud.java:1225),
+     * reached via the public field {@code Gui.hud} (Gui.java:72).
+     */
+    private static void showLaggyNotice(boolean animate) {
+        lastLaggyNoticeMs = System.currentTimeMillis();
+        try {
+            MyRenderHelper.client.gui.hud.setOverlayMessage(
+                Component.translatable("imm_ptl.laggy")
+                    .withStyle(net.minecraft.ChatFormatting.RED, net.minecraft.ChatFormatting.BOLD),
+                animate
+            );
+        }
+        catch (Throwable ignored) {
+            // A HUD notice must never be able to break the render path it is reporting on.
         }
     }
 

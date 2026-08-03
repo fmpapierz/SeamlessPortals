@@ -106,6 +106,71 @@ dependencies {
     }
 }
 
+// ===== C2 JIT PROTECTION =====================================================================
+// FULL RECORD: migration/C2_JIT_PROTECTION.md — the defect, the seven victims, the evidence that
+// retired the six excludes, the reproduction recipe, and the traps. Read it before changing this.
+//
+// SHORT VERSION. HotSpot's C2 crashes compiling the portal occlusion-query chain: it inlines that
+// chain into ONE unit of 312-597 methods and dies at a fixed point in it (EXCEPTION_ACCESS_VIOLATION
+// on "C2 CompilerThread0", all-jvm.dll frames, zero Java frames, always faulting 0x2c with RAX=0).
+// Not vendor-specific — reproduced on Temurin 25.0.2 and Zulu 25.0.4.
+//
+// SIX `exclude` ROWS WERE THE MITIGATION UNTIL 2026-08-02 and are now RETIRED. They never converged:
+// excluding a method just makes C2 re-root the same weld on a neighbour, which is why there were six
+// and not one. They also forced six PER-FRAME RENDER METHODS to run interpreted forever, and left
+// the shaders-OFF stencil renderer — identical call shape — completely unprotected.
+//
+// REPLACED BY ONE `dontinline` ON THE LEAF. It sits BELOW every observed crash root, so C2 cannot
+// re-root; it keeps everything JIT-compiled; and it covers both renderer families.
+// PROVEN (leg E2, 2026-08-02) on all three pre-registered criteria: the flag bit (4x
+// "disallowed by CompileCommand"), the victim's compilation unit collapsed 385 -> 0 inlines, and it
+// survived 1088.8 s = 2.06x the 528.6 s at which the same recipe crashed unprotected.
+//
+// Shared by the three run blocks that carry protection (client, clientSodium, crossingGametest) so
+// they cannot drift apart — they previously held three hand-maintained copies of the same six rows.
+ext.c2JitArgs = { ->
+    List<String> args = []
+
+    if (project.findProperty('c2NoProtection') == 'true') {
+        // NOTHING. The reproduction config, and the ONLY one that can prove anything about the
+        // defect — a protected run cannot crash, so it also cannot exonerate. See §6 of the doc.
+    }
+    else if (project.findProperty('c2LegacyExcludes') == 'true') {
+        // THE REVERT PATH — the historical six, preserved verbatim rather than deleted, because they
+        // were load-bearing for weeks and one 18-minute leg is convincing rather than conclusive.
+        // Victims 1-3 are the occlusion-query path; 4 and 5 are the TWO compilable forms of the same
+        // lambda (proxy bridge + synthetic body — excluding one never covers the other); 6 is the
+        // Zulu crash that disproved the vendor theory.
+        // Single-quoted Groovy is REQUIRED so `$$` is not interpolated.
+        args += [
+            '-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility',
+            '-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk',
+            '-XX:CompileCommand=exclude,qouteall.imm_ptl.core.render.GlQueryObject::performQuery',
+            '-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer$$Lambda*::run',
+            '-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::lambda$*',
+            '-XX:CompileCommand=exclude,qouteall.imm_ptl.core.compat.iris_compatibility.IrisCompatOn262Renderer::doRenderPortal'
+        ]
+    }
+    else {
+        // THE DEFAULT, since 2026-08-02.
+        args += ['-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea']
+    }
+
+    if (project.findProperty('c2Inlining') == 'true') {
+        // Structured per-compilation XML in the run dir. NOT CompileCommand=PrintInlining, which
+        // writes to stdout — loom interleaves that with the game log and the trees arrive as
+        // fragments with no root, so unit SIZE (the whole gate) is unmeasurable. Learned the hard way.
+        args += [
+            '-XX:+UnlockDiagnosticVMOptions',
+            '-XX:+LogCompilation',
+            '-XX:LogFile=c2_inlining.xml',
+            '-XX:+PrintInlining'
+        ]
+    }
+
+    return args
+}
+
 loom {
     def aw = project(':common').file('src/main/resources/seamlessportals.accesswidener')
     if (aw.exists()) {
@@ -117,32 +182,117 @@ loom {
             client()
             setConfigName('Fabric Client')
             runDir('runs/client')
-            // S19 live-round crash (2026-07-18, hs_err_pid318288): EXCEPTION_ACCESS_VIOLATION
-            // inside jvm.dll on "C2 CompilerThread2" while JIT-compiling
-            // PortalRenderInfo::renderAndDecideVisibility — a Temurin 25.0.2 HotSpot C2
-            // compiler defect (pure jvm.dll frames; not the render thread, not the driver,
-            // not mod logic; fired ~when the method crossed the tier-4 threshold after a few
-            // portal teleports). Surgical mitigation: exclude that ONE method from JIT
-            // compilation (runs interpreted/C1 — negligible, it's a small dispatch method).
-            // Re-test on future JDK updates; remove when a fixed Temurin lands.
-            // (The crossing gametest run carries the same flag — same JVM, same hot method;
-            // without it the suite gate could go flaky on the same defect.)
-            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
-            // IS0 probe-round crash (2026-07-20, hs_err_pid248404): the SAME Temurin 25.0.2
-            // C2-CompilerThread jvm.dll EXCEPTION_ACCESS_VIOLATION class, new victim method
-            // (CompileTask = vanilla IOWorker::storePendingChunk, during world save; crash on
-            // CompilerThread0, not any game thread — not mod logic, not the IS0 probes). Same
-            // surgical mitigation, same removal condition as the exclude above.
-            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // C2 JIT protection — see migration/C2_JIT_PROTECTION.md and ext.c2JitArgs
+            // at the top of this file. Default: one dontinline on the leaf. Levers:
+            // -Pc2LegacyExcludes (the historical six), -Pc2NoProtection (reproduce), -Pc2Inlining.
+            c2JitArgs().each { vmArg(it) }
             // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // TP-XDIM FRAME CENSUS (2026-07-28; log-only, DEFAULT OFF): classifies every in-world
+            // frame by what renderCrossPortalView() did (11 codes) plus three independently-woven
+            // witnesses of what actually ran (renderLevel / IS0 anchor / AFTER_TRANSLUCENT_TERRAIN) —
+            //   .\gradlew.bat :fabric:runClient -PtpXdimCensus=true
+            if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
+            if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-REC recursive portal layers (shaders ON). A/B in BOTH directions:
+            //   .gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPortalRecursion=true
+            // and the depth sweep / exact one-layer behavioural repro:
+            //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
+            if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
+            if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
+            if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         server {
             server()
             setConfigName('Fabric Server')
             runDir('runs/server')
+            // TP-XDIM frame census — row present for LEVER-ROW PARITY only (the census is
+            // client-render-thread-only and this is a dedicated server; the property reaches the
+            // JVM and nothing reads it). A lever whose row exists in some blocks and not others is
+            // exactly how earlier legs on this project were voided.
+            if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
+            if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-REC recursive portal layers (shaders ON). A/B in BOTH directions:
+            //   .gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPortalRecursion=true
+            // and the depth sweep / exact one-layer behavioural repro:
+            //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
+            if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
+            if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
+            if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         // S19-E live Sodium/Iris compat run. Sodium/Iris are compileOnly by default (see the
         // dependencies block), so this run only actually LOADS them when the matching runtime
@@ -155,11 +305,11 @@ loom {
             client()
             setConfigName('Fabric Client + Sodium')
             runDir('runs/client-sodium')
-            // Same Temurin 25.0.2 HotSpot C2 defect mitigation as the `client` run above
-            // (EXCEPTION_ACCESS_VIOLATION JIT-compiling PortalRenderInfo::renderAndDecideVisibility).
-            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
-            // + the second victim method (IS0 probe round, hs_err_pid248404 — see the client run).
-            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+
+            // C2 JIT protection — see migration/C2_JIT_PROTECTION.md and ext.c2JitArgs
+            // at the top of this file. Default: one dontinline on the leaf. Levers:
+            // -Pc2LegacyExcludes (the historical six), -Pc2NoProtection (reproduce), -Pc2Inlining.
+            c2JitArgs().each { vmArg(it) }
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -194,6 +344,326 @@ loom {
             // (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
             if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
+            // IS5-P phantom fix A/B (2026-07-22): the iris temporal-target guard is DEFAULT-ON; pass this to
+            // force it OFF and reproduce the whole-screen phantom overlay (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisTemporalGuard=true
+            if (project.findProperty('disableIrisTemporalGuard') == 'true') { vmArg('-Dseamlessportals.disableIrisTemporalGuard=true') }
+            // IS5-L in-portal-fullbright fix A/B (2026-07-22): the iris per-frame-uniform re-upload (counter
+            // bump around the dest render) is DEFAULT-ON; pass this to force it OFF and reproduce the
+            // direction-dependent fullbright (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPerFrameRefresh=true
+            if (project.findProperty('disableIrisPerFrameRefresh') == 'true') { vmArg('-Dseamlessportals.disableIrisPerFrameRefresh=true') }
+            // IS5-L in-portal-fullbright PROBE (migration/FULLBRIGHT_HANDOFF.md §5): DEFAULT-OFF,
+            // log-only. Arms IrisFullbrightProbe — the main-vs-dest per-frame lighting-uniform compare
+            // (cross-pass COUNTER + glGetUniformfv of gbufferModelView/celestial + the reflected
+            // CapturedRenderingState source) that settles which of the §4 hypotheses the fullbright is —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PfullbrightProbe=true
+            if (project.findProperty('fullbrightProbe') == 'true') { vmArg('-Dseamlessportals.fullbrightProbe=true') }
+            // IS5-W shadow-alias probe (theory-restart wf_2d369c84-97c fold §3): DEFAULT-OFF,
+            // log-only. Tests the adjudicated scope-collapse mechanism (the C2-1 per-layer batches
+            // serving BOTH the dest shadow and dest camera scopes): batch fill provenance split by
+            // scope, in-scope rosters, list identity collisions + woven-RSM snapshot state, and a
+            // 12x12 whole-shadow-map occupancy grid logged WITH the player's yaw —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshadowAliasProbe=true
+            if (project.findProperty('shadowAliasProbe') == 'true') { vmArg('-Dseamlessportals.shadowAliasProbe=true') }
+            // §2b dest-entity funnel probe (1Hz [ENT-PROBE] lines; default OFF):
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PentityProbe=true
+            if (project.findProperty('entityProbe') == 'true') { vmArg('-Dseamlessportals.entityProbe=true') }
+            // §2b compat same-dim entity fill A/B (2026-07-24): DEFAULT-ON; pass this to force it OFF and
+            // reproduce the empty-window signature ([ENT-PROBE] fsd=0 sub=0) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCompatSameDimEntities=true
+            if (project.findProperty('disableCompatSameDimEntities') == 'true') { vmArg('-Dseamlessportals.disableCompatSameDimEntities=true') }
+            // §2c source-particle cull A/B (2026-07-25): DEFAULT-ON; pass this to force it OFF and restore
+            // the shaders-OFF+Fabulous behind-plane particle bleed over the window —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSourceParticleCull=true
+            if (project.findProperty('disableSourceParticleCull') == 'true') { vmArg('-Dseamlessportals.disableSourceParticleCull=true') }
+            // IS-BOB iris bob-sync A/B (2026-07-25): DEFAULT-ON; pass to force OFF and restore the
+            // shaders-ON relative bob (world bobs, window static) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisBobSync=true
+            if (project.findProperty('disableIrisBobSync') == 'true') { vmArg('-Dseamlessportals.disableIrisBobSync=true') }
+            // IS-BOB 1Hz [BOB-SYNC] probe (default OFF):
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PbobSyncProbe=true
+            if (project.findProperty('bobSyncProbe') == 'true') { vmArg('-Dseamlessportals.bobSyncProbe=true') }
+            // §2g portal-ticket despawn suppress A/B (2026-07-25): DEFAULT-ON; pass to force OFF and
+            // reproduce the same-dim portal mob-vanish (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PdisableTicketDespawnSuppress=true
+            if (project.findProperty('disableTicketDespawnSuppress') == 'true') { vmArg('-Dseamlessportals.disableTicketDespawnSuppress=true') }
+            // IS5-FF A/B (§2h): disable the nested shadowcomp suppression (Ultra colored-light phantom returns) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableNestedShadowComposite=true
+            if (project.findProperty('disableNestedShadowComposite') == 'true') { vmArg('-Dseamlessportals.disableNestedShadowComposite=true') }
+            // IS5-FF 1Hz probe (default OFF):
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PnestedShadowCompositeProbe=true
+            if (project.findProperty('nestedShadowCompositeProbe') == 'true') { vmArg('-Dseamlessportals.nestedShadowCompositeProbe=true') }
+            // §2g Probe A despawn-removal logger (default OFF; server-side [DESPAWN-PROBE] lines) —
+            //   .\gradlew.bat :fabric:runClientSodium -PdespawnProbe=true
+            if (project.findProperty('despawnProbe') == 'true') { vmArg('-Dseamlessportals.despawnProbe=true') }
+            // IS5-W FIX 1 A/B (2026-07-23): the shadow-scope clip suppression (the yaw-keyed shadow-wash
+            // killer) is DEFAULT-ON; pass this to force it OFF and reproduce the wash (attribution proof;
+            // the ShadowAliasProbe [FIX-1] counters classify the leg) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableShadowScopeClipFix=true
+            if (project.findProperty('disableShadowScopeClipFix') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeClipFix=true') }
+            // IS5-W FIX 2+3 A/B (2026-07-23): the shadow/camera scope split + per-upload layer-batch clear
+            // are DEFAULT-ON (one shared lever); pass this to force both OFF (expected: wave STAYS gone —
+            // these are correctness/hygiene fixes for the scope collapse, not the wash carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableShadowScopeIsolation=true
+            if (project.findProperty('disableShadowScopeIsolation') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeIsolation=true') }
+            // IS5-G ghost-wave DISCRIMINATOR (2026-07-23): tint the IrisCompatPaste STAMP magenta —
+            // ghost turns magenta => the ghost IS the stamp's paint overreaching the aperture (B3);
+            // window magenta but ghost full-color => snapshot/other carrier. Run 2 (same session):
+            //   /imm_ptl_client_debug debug_no_stamp_depth_clamp enable   (splits clamp-wedge (b))
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugTintStamp=true
+            if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
+            // IS5-G dest-pass TAA-history clear A/B (2026-07-23): the ghost-terrain fix is DEFAULT-ON;
+            // pass this to force it OFF and reproduce the source-over-dest ghost (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisDestTaaClear=true
+            if (project.findProperty('disableIrisDestTaaClear') == 'true') { vmArg('-Dseamlessportals.disableIrisDestTaaClear=true') }
+            // IS5-PH prev-uniform heal A/B (2026-07-23): the ghost-terrain ROOT fix (re-tick iris's frame
+            // notifier after the portal renders so previousCameraPosition stays MAIN-valued) is DEFAULT-ON;
+            // pass this to force it OFF and reproduce the camera-tracked source-over-terrain ghost —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisablePrevUniformHeal=true
+            if (project.findProperty('disablePrevUniformHeal') == 'true') { vmArg('-Dseamlessportals.disablePrevUniformHeal=true') }
+            // IS5-ACT heal RETARGET (2026-07-26) — DEFAULT-ON fix: the heal ticks the PRE-LOOP main
+            // pipeline instead of iris's manager slot, which after a cross-dim nested render holds
+            // the DEST pipeline. Pass this to restore the old, poisoning resolution for A/B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHealRetarget=true
+            if (project.findProperty('disableHealRetarget') == 'true') { vmArg('-Dseamlessportals.disableHealRetarget=true') }
+            // IS5-MB dest-composite GATE PROBE (2026-07-26) — LOG-ONLY, default OFF. Reads
+            // ProgramUniforms.lastFrame vs SystemTimeUniforms.COUNTER plus the REAL
+            // cameraPosition/previousCameraPosition uniform storage at the composite4 (motion-blur)
+            // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
+            if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
+            // IS5-MB per-chain previous-frame camera correction — **DEFAULT ON**. Fixes the measured
+            // same-dim portal-window smear: with a portal in view the dest content's composite4 reads
+            // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
+            // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
+            // Pass this to force it OFF and reproduce the smear (attribution both directions) —
+            // ** DEFAULT ON — USER-CONFIRMED LIVE 2026-07-26 ("FINALLY NOT BLURRY"). Corrects both blur
+            // drivers on the same-dim portal window: the camera pair (|cam-prev| 721.852 -> 0.001, blur
+            // span 136.3 -> 1.7 px) and the matrix pair, while preserving genuine motion blur when the
+            // player is actually moving. Pass this to force it OFF and reproduce the smear: **
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PdisableIrisDestPrevCamera=true
+            if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
+            // MATRIX-HALF A/B, re-added and now meaningful: the correction writes BOTH the previous
+            // camera and the previous matrices, because they are two independent blur drivers (rows
+            // with a zero camera offset still blurred 57-102 px on a nonzero idMV). Pass this to write
+            // the CAMERA half only and isolate driver A from driver B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PirisDestPrevCameraNoMatrices=true
+            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // Chain-match limit in blocks, DEFAULT 4.0 — the furthest a composite chain's camera may
+            // plausibly travel in one frame. It is the definition of "same chain", NOT a safety margin:
+            // 16.0 was tried and is DANGEROUS (wider than an ordinary doorway portal's offset, so it
+            // would adopt the destination camera as the main view's history). Lower it to tighten —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=2.0
+            if (project.hasProperty('irisDestPrevCameraMaxDelta')) { vmArg("-Dseamlessportals.irisDestPrevCameraMaxDelta=${project.property('irisDestPrevCameraMaxDelta')}") }
+            // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
+            // names every pass actually seen, so this is never guesswork —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraPass=composite4
+            if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
+            if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
+            // IS5-MB ATTRIBUTION A/B (2026-07-26, DIAGNOSTIC): drop the portal stamp's DEPTH WRITE, to
+            // test whether the stamped DEST depth is what makes composite4 compute a huge PER-PIXEL
+            // velocity inside the window. If the blur vanishes with this set, that is the mechanism.
+            // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
+            if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-SEAM §2d DEPTH-TEST DISCRIMINATOR (2026-07-27, DIAGNOSTIC): swap the stamp to a
+            // sibling with the depth state FULLY DISABLED (test AND write). Band fills in => the
+            // GEQUAL test vs the snapshot depth was rejecting the stamp at the seam; band PERSISTS
+            // => depth rejection is NOT THE SOLE cause — do NOT exonerate depth from this leg alone
+            // (the pipeline still paints SAMPLED content, so black dest content keeps the band
+            // black regardless of depth); run the -PdebugStampSolid ladder (handoff §2d matrix).
+            // Check the IS5-RC STAMP PIPELINE line before adjudicating —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthTest=true
+            if (project.findProperty('disableStampDepthTest') == 'true') { vmArg('-Dseamlessportals.disableStampDepthTest=true') }
+            // IS5-SEAM SOLID-PAINT DISCRIMINATOR (2026-07-27, DIAGNOSTIC): the magenta tint is a
+            // MULTIPLY and is blind on black content — this stamps solid vColor (WHITE; MAGENTA if
+            // combined with -PdebugTintStamp), ignoring the sample. Band turns solid => fragments
+            // pass and the black is the SAMPLED dest content; band stays black => no fragment
+            // survives there. Composes with -PdisableStampDepthTest ONLY (with
+            // -PdisableStampDepthWrite the write stays ON — SOLID+NO-WRITE is deliberately not
+            // built; the once-only IS5-RC line says so) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugStampSolid=true
+            if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            // IS5-SEAM CROSSING-WINDOW CLIP RELAX — **DEFAULT ON** (2026-07-27). The measured black
+            // seam band = the inner clip voiding grazing aperture rays in the crossing window
+            // (IS5-SEAM-ARM census: fullyVoid=6 nearStraddle=38 across three crossings, feed
+            // coherent at 0.0000). The fix ramps the clip camera-side inside the window
+            // (FrontClipping.innerClipCorrectionForCrossing — derivation there); far from the
+            // portal it is bit-identical to IP's -ADJUSTMENT. Pass this to force it OFF and
+            // reproduce the band (attribution both directions; the ARM census counters return) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSeamClipRelax=true
+            if (project.findProperty('disableSeamClipRelax') == 'true') { vmArg('-Dseamlessportals.disableSeamClipRelax=true') }
+            // IS5-SEAM-CONTENT band-content probe (DIAGNOSTIC, default OFF — blocking 1Hz readback
+            // inside the crossing window): classifies the band pixels' dest depth — ~0.0 (reversed-Z
+            // FAR) = nothing drew (void class); substantially >0 = painted black (pack-pass class) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PseamContentProbe=true
+            if (project.findProperty('seamContentProbe') == 'true') { vmArg('-Dseamlessportals.seamContentProbe=true') }
+            // C4-SEAM — THE BLACK SEAM BAND's root-cause fix, **DEFAULT ON** (2026-07-27): the
+            // C3-BLOOM mask's repaints now draw under DEPTH CLAMP (raster parity with the stamp);
+            // without it the crossing sliver rasterized for the stamp but near-clipped away for
+            // the mask, and the stamp copied the mask's cleared black = the band. Pass this to
+            // force the UNCLAMPED repaints and reproduce the band (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableBloomMaskSeamClamp=true
+            if (project.findProperty('disableBloomMaskSeamClamp') == 'true') { vmArg('-Dseamlessportals.disableBloomMaskSeamClamp=true') }
+            // IS5-HAND — seam hand-slicing fix, **DEFAULT ON** (2026-07-27): the stamp vertex
+            // shader caps NDC z at 0.5 so the depth-clamped crossing sliver stops GEQUAL-painting
+            // the portal view over the iris-baked hand (measured hand slice 0.5556..0.5569).
+            // Pass this to swap in the verbatim pre-cap shader and reproduce the slicing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampHandDepthCap=true
+            if (project.findProperty('disableStampHandDepthCap') == 'true') { vmArg('-Dseamlessportals.disableStampHandDepthCap=true') }
+            // IS5-HAND V2 — the hand-slicing ROOT-CAUSE fix, **DEFAULT ON** (2026-07-27): iris's
+            // hand passes draw at glDepthRange(0.999, 1.0) inside the crossing window so the
+            // measured hand slice beats the seam's grazing shell (which shredded the hand IN THE
+            // MAIN FRAME — hand-region probe). Check the once-only "IS5-HAND depth bracket ARMED"
+            // line before adjudicating any leg. Pass this to force it OFF and reproduce —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
+            if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // IS5-HAND-FUNC (2026-07-28, DEFAULT OFF — premise REFUTED by the draw-time dump:
+            // hand draws re-apply their own LEQUAL per draw; the HEAD force is inert for them.
+            // Opt-in experiment lever only) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PenableHandDepthFuncFix=true
+            if (project.findProperty('enableHandDepthFuncFix') == 'true') { vmArg('-Dseamlessportals.enableHandDepthFuncFix=true') }
+            // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF — four blocking 1Hz
+            // readbacks inside the crossing window): captures the hand-region pixels at anchor /
+            // post-snapshot / post-stamp / post-blit and diffs — the first changed hop names the
+            // eater's stage by construction (handoff §00a) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandStageDiff=true
+            if (project.findProperty('handStageDiff') == 'true') { vmArg('-Dseamlessportals.handStageDiff=true') }
+            // IS5-HAND-INLVL in-renderLevel stage points (DIAGNOSTIC, default OFF — five blocking
+            // 1Hz readbacks inside the crossing window): captures the hand-region column at the
+            // HEAD/RETURN of iris's two hand passes (LIVE draw FBO + iris colortex0) and at the
+            // compat anchor — splits "hand never drawn" from "drawn then composite-eaten"
+            // (handoff §00a instrument 1) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandInLevelProbe=true
+            if (project.findProperty('handInLevelProbe') == 'true') { vmArg('-Dseamlessportals.handInLevelProbe=true') }
+            // IS5-STAMP-EXEC executed-state probe (DIAGNOSTIC, default OFF — pure GL gets after
+            // the stamp draw): dumps the ACTUAL program + vertex-shader source (cap present?) +
+            // depth func/mask/clamp/range the stamp executed under — the ground-truth audit of
+            // the stage-C cap anomaly (handoff §00a instrument 2) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampExecProbe=true
+            if (project.findProperty('stampExecProbe') == 'true') { vmArg('-Dseamlessportals.stampExecProbe=true') }
+            // IS5-HAND-TAP iris HandRenderer canRender-vs-submit tap (DIAGNOSTIC, default OFF —
+            // log-only): per-pass canRender result + six-condition decomposition + body-entry
+            // proof + viewport/scissor, 1 Hz in-window + 0.1 Hz ambient CONTROL rows — splits
+            // "gate declines the hand" from "body runs but nothing rasterizes" (handoff §00c) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandSubmitTap=true
+            if (project.findProperty('handSubmitTap') == 'true') { vmArg('-Dseamlessportals.handSubmitTap=true') }
+            // IS5-HAND-LOC full-frame hand LOCATOR (DIAGNOSTIC, default OFF — heavy 0.5Hz
+            // readbacks): 12x8 grid diff across renderSolid on mainRT color+depth AND
+            // colortex0 MAIN+ALT, ambient AND window — ground-truths WHERE the visible hand
+            // paints and into which target, then whether that footprint vanishes in-window —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandLocator=true
+            if (project.findProperty('handLocator') == 'true') { vmArg('-Dseamlessportals.handLocator=true') }
+            // IS5-HAND-DRAW draw-time state dump (DIAGNOSTIC, default OFF): the COMPLETE GL
+            // state at REAL hand-feature draws (trySetup RETURN, pre-draw-call), 1Hz, window
+            // and ambient — the only read that survives per-draw state applies and pass-tail
+            // resets; the window-vs-ambient field diff names the eater —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandDrawDump=true
+            if (project.findProperty('handDrawDump') == 'true') { vmArg('-Dseamlessportals.handDrawDump=true') }
+            // IS5-STAMP-EAT (2026-07-28) — THE CANDIDATE HAND FIX: bind the LEQUAL stamp
+            // sibling. The survival table caught the stamp overpainting the hand between the
+            // anchor and the blit-back; under the measured small-is-near convention LEQUAL
+            // makes the aperture lose to everything nearer than it (the hand) while still
+            // beating the far scene it replaces —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampLequal=true
+            if (project.findProperty('stampLequal') == 'true') { vmArg('-Dseamlessportals.stampLequal=true') }
+            // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
+            // to settle whether the near-plane clip's removed area is the black seam band. Expect the
+            // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableAperturePlaneClip=true
+            if (project.findProperty('disableAperturePlaneClip') == 'true') { vmArg('-Dseamlessportals.disableAperturePlaneClip=true') }
+            // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF).
+            // Counts EVERY Program.use() in the process and, for the motion-blur pass, logs all six
+            // gbuffer matrices, both camera vectors, the two never-before-measured inverse-consistency
+            // checks (max|M*Minv - I|), and a CPU replay of composite4's own velocity arithmetic over a
+            // 3x3x3 screen/depth grid — reported as the blur span in PIXELS. Emits one block per second
+            // listing every bind of the most recent frame plus the whole second's bind-count range —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true
+            if (project.findProperty('compositeCensus') == 'true') { vmArg('-Dseamlessportals.compositeCensus=true') }
+            // Rename the deeply-measured pass if the roster line shows the pack calls it something else
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PcompositeCensusPasses=composite4,composite5
+            if (project.hasProperty('compositeCensusPasses')) { vmArg("-Dseamlessportals.compositeCensusPasses=${project.property('compositeCensusPasses')}") }
+            // C3-BLOOM aperture-mask A/B + probes (§2f, 2026-07-25): the dark-environment bloom
+            // RING fix is DEFAULT-ON; pass the first to force it OFF and reproduce the ring
+            // (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisBloomApertureMask=true
+            if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugTintBloomMask=true
+            if (project.findProperty('debugTintBloomMask') == 'true') { vmArg('-Dseamlessportals.debugTintBloomMask=true') }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugBloomMaskBlackout=true
+            if (project.findProperty('debugBloomMaskBlackout') == 'true') { vmArg('-Dseamlessportals.debugBloomMaskBlackout=true') }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PbloomMaskProbe=true
+            if (project.findProperty('bloomMaskProbe') == 'true') { vmArg('-Dseamlessportals.bloomMaskProbe=true') }
+            // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
+            // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
+            // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PactProbe=true -PactVolumeProbe=true
+            if (project.findProperty('actProbe') == 'true') { vmArg('-Dseamlessportals.actProbe=true') }
+            if (project.findProperty('actVolumeProbe') == 'true') { vmArg('-Dseamlessportals.actVolumeProbe=true') }
+            // IS5-ACT ROUND-2 dispatch witness (log-only, default OFF; REQUIRES -PactProbe).
+            // 2 log-only iris mixins (ComputeProgram.dispatch HEAD + ShadowCompositeRenderer
+            // .renderAll HEAD) + GL uniform/image-binding queries, one capture per armed portal
+            // window, folded into the existing 1Hz emit —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PactProbe=true -PactVolumeProbe=true -PactDispatchProbe=true
+            if (project.findProperty('actDispatchProbe') == 'true') { vmArg('-Dseamlessportals.actDispatchProbe=true') }
+            // TP-XDIM FRAME CENSUS (2026-07-28; log-only, DEFAULT OFF, never throws into the render
+            // path). THE run block for this arc — the defect needs a real shaderpack. Classifies
+            // every in-world frame by what renderCrossPortalView() did (11 codes) plus three
+            // independently-woven witnesses of what actually ran (renderLevel / the IS0 anchor /
+            // the AFTER_TRANSLUCENT_TERRAIN driver). One batched log call per ~1 s window, plus a
+            // one-shot ARMED line, a one-shot TARGET ACQUIRED line, and a VOID-LEG watchdog —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PtpXdimCensus=true
+            if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
+            // Opt-in GL add-on: TWO glIsEnabled state queries per frame at the census frame boundary
+            // (stencil + scissor). No readbacks, no barriers, never inside a pass. Run it as its OWN
+            // leg — do not mix it into a primary A/B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PtpXdimCensus=true -PtpXdimCensusGl=true
+            if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-REC recursive portal layers (shaders ON). A/B in BOTH directions:
+            //   .gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPortalRecursion=true
+            // and the depth sweep / exact one-layer behavioural repro:
+            //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
+            if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
+            if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
+            if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         // Automated title-card capture via the Fabric client-gametest API.
         // Drives a real client: creates a world, builds + lights a portal,
@@ -216,6 +686,55 @@ loom {
             // runs every registered entrypoint otherwise; each test class
             // no-ops unless selected).
             property('seamlessportals.gametest.only', 'titlecard')
+            // TP-XDIM frame census (mirror of the clientSodium lever). This run is iris-ABSENT and
+            // never enters third person, so no row will ever read TARGET ACQUIRED — but the census
+            // still emits a full window block ~1 Hz for every in-world frame, which on a gametest
+            // leg competes with the log rotation. Byte-inert without the property.
+            if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
+            if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-REC recursive portal layers (shaders ON). A/B in BOTH directions:
+            //   .gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPortalRecursion=true
+            // and the depth sweep / exact one-layer behavioural repro:
+            //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
+            if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
+            if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
+            if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
         // S15 entity-crossing smoke on the UNIFIED path (EXECUTION_PLAN §S15,
         // D4.6 — re-run at every later stage). Own run dir: its config is
@@ -228,14 +747,10 @@ loom {
             property('fabric.client.gametest', 'true')
             property('fabric.client.gametest.modid', project.mod_id)
             property('seamlessportals.gametest.only', 'crossing')
-            // Same Temurin C2 mitigation as the client run above (verify wf_b94c1d5e-5f8:
-            // same JVM + the suite teleports enough to heat the method — without this the
-            // 8-leg gate could go flaky on the same JVM defect).
-            vmArg('-XX:CompileCommand=exclude,qouteall.imm_ptl.core.portal.PortalRenderInfo::renderAndDecideVisibility')
-            // + the second victim method (IS0 probe round, hs_err_pid248404: CompilerThread0
-            // died JIT-compiling IOWorker::storePendingChunk during the suite's world saves —
-            // same jvm.dll defect class, not mod logic; see the client run's note).
-            vmArg('-XX:CompileCommand=exclude,net.minecraft.world.level.chunk.storage.IOWorker::storePendingChunk')
+            // C2 JIT protection — see migration/C2_JIT_PROTECTION.md and ext.c2JitArgs
+            // at the top of this file. Default: one dontinline on the leaf. Levers:
+            // -Pc2LegacyExcludes (the historical six), -Pc2NoProtection (reproduce), -Pc2Inlining.
+            c2JitArgs().each { vmArg(it) }
             // IS1 diagnostics: repeated hot-loop exceptions (the row-1 batching AIOOBE) get
             // stack-elided by HotSpot fast-throw, making crash reports frameless. Keep frames.
             vmArg('-XX:-OmitStackTraceInFastThrow')
@@ -268,6 +783,273 @@ loom {
             // (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
             if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
+            // IS5-P phantom fix A/B (2026-07-22): the iris temporal-target guard is DEFAULT-ON; pass this to
+            // force it OFF and reproduce the whole-screen phantom overlay (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisTemporalGuard=true
+            if (project.findProperty('disableIrisTemporalGuard') == 'true') { vmArg('-Dseamlessportals.disableIrisTemporalGuard=true') }
+            // IS5-L in-portal-fullbright fix A/B (2026-07-22): the iris per-frame-uniform re-upload (counter
+            // bump around the dest render) is DEFAULT-ON; pass this to force it OFF and reproduce the
+            // direction-dependent fullbright (attribution proof) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPerFrameRefresh=true
+            if (project.findProperty('disableIrisPerFrameRefresh') == 'true') { vmArg('-Dseamlessportals.disableIrisPerFrameRefresh=true') }
+            // IS5-L in-portal-fullbright PROBE (migration/FULLBRIGHT_HANDOFF.md §5): DEFAULT-OFF,
+            // log-only (mirror of the clientSodium lever). The suite runs iris-ABSENT, so the probe
+            // self-disarms on the first draw (iris ClassNotFound) — byte-inert for the 8-leg gate
+            // without the property; armed only for a manual iris run —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PfullbrightProbe=true
+            if (project.findProperty('fullbrightProbe') == 'true') { vmArg('-Dseamlessportals.fullbrightProbe=true') }
+            // IS5-W shadow-alias probe (mirror of the clientSodium lever). The suite runs
+            // iris-ABSENT, so the probe quietly disarms on first emit — byte-inert for the
+            // 8-leg gate without the property —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PshaderpackViews=true -PshadowAliasProbe=true
+            if (project.findProperty('shadowAliasProbe') == 'true') { vmArg('-Dseamlessportals.shadowAliasProbe=true') }
+            // §2b dest-entity funnel probe (1Hz [ENT-PROBE] lines; default OFF):
+            //   .\gradlew.bat :fabric:runCrossingGametest -PentityProbe=true
+            if (project.findProperty('entityProbe') == 'true') { vmArg('-Dseamlessportals.entityProbe=true') }
+            // §2b compat same-dim entity fill A/B (2026-07-24): DEFAULT-ON; suite runs iris-absent so this
+            // is inert there — kept for lever-row parity —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableCompatSameDimEntities=true
+            if (project.findProperty('disableCompatSameDimEntities') == 'true') { vmArg('-Dseamlessportals.disableCompatSameDimEntities=true') }
+            // §2c source-particle cull A/B (2026-07-25): DEFAULT-ON; lever-row parity —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableSourceParticleCull=true
+            if (project.findProperty('disableSourceParticleCull') == 'true') { vmArg('-Dseamlessportals.disableSourceParticleCull=true') }
+            // IS-BOB iris bob-sync A/B (2026-07-25): DEFAULT-ON; iris-absent => inert; lever-row parity —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableIrisBobSync=true
+            if (project.findProperty('disableIrisBobSync') == 'true') { vmArg('-Dseamlessportals.disableIrisBobSync=true') }
+            // IS-BOB 1Hz [BOB-SYNC] probe (default OFF; lever-row parity):
+            //   .\gradlew.bat :fabric:runCrossingGametest -PbobSyncProbe=true
+            if (project.findProperty('bobSyncProbe') == 'true') { vmArg('-Dseamlessportals.bobSyncProbe=true') }
+            // §2g despawn-suppress A/B + probe (2026-07-25): suite mobs are a Cow
+            // (removeWhenFarAway=false) + thrown items with the gametest player nearby — the fix is
+            // structurally inert there; rows kept for lever-row parity —
+            if (project.findProperty('disableTicketDespawnSuppress') == 'true') { vmArg('-Dseamlessportals.disableTicketDespawnSuppress=true') }
+            if (project.findProperty('despawnProbe') == 'true') { vmArg('-Dseamlessportals.despawnProbe=true') }
+            // IS5-FF A/B + probe (§2h): iris-absent => the suppressor class never loads; lever-row parity —
+            if (project.findProperty('disableNestedShadowComposite') == 'true') { vmArg('-Dseamlessportals.disableNestedShadowComposite=true') }
+            if (project.findProperty('nestedShadowCompositeProbe') == 'true') { vmArg('-Dseamlessportals.nestedShadowCompositeProbe=true') }
+            // IS5-W FIX 1 + FIX 2/3 A/B (mirrors of the clientSodium levers; the suite runs iris-ABSENT,
+            // so both fixes are inert there — isRenderingShadowMap() is constant false) —
+            if (project.findProperty('disableShadowScopeClipFix') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeClipFix=true') }
+            if (project.findProperty('disableShadowScopeIsolation') == 'true') { vmArg('-Dseamlessportals.disableShadowScopeIsolation=true') }
+            if (project.findProperty('disableIrisDestTaaClear') == 'true') { vmArg('-Dseamlessportals.disableIrisDestTaaClear=true') }
+            if (project.findProperty('disablePrevUniformHeal') == 'true') { vmArg('-Dseamlessportals.disablePrevUniformHeal=true') }
+            // IS5-ACT heal RETARGET (2026-07-26) — DEFAULT-ON fix: the heal ticks the PRE-LOOP main
+            // pipeline instead of iris's manager slot, which after a cross-dim nested render holds
+            // the DEST pipeline. Pass this to restore the old, poisoning resolution for A/B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHealRetarget=true
+            if (project.findProperty('disableHealRetarget') == 'true') { vmArg('-Dseamlessportals.disableHealRetarget=true') }
+            // IS5-MB dest-composite GATE PROBE (2026-07-26) — LOG-ONLY, default OFF. Reads
+            // ProgramUniforms.lastFrame vs SystemTimeUniforms.COUNTER plus the REAL
+            // cameraPosition/previousCameraPosition uniform storage at the composite4 (motion-blur)
+            // pass, for BOTH the MAIN and the DEST role. ~2 lines/sec, no GL state change —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PmbGateProbe=true
+            if (project.findProperty('mbGateProbe') == 'true') { vmArg('-Dseamlessportals.mbGateProbe=true') }
+            // IS5-MB per-chain previous-frame camera correction — **DEFAULT ON**. Fixes the measured
+            // same-dim portal-window smear: with a portal in view the dest content's composite4 reads
+            // cameraPosition=DEST but previousCameraPosition=PLAYER, |cam-prev|=511.088 held constant
+            // for 22 stationary seconds, a 265.8 PIXEL blur span (IS5-CEN census, 2026-07-26).
+            // Pass this to force it OFF and reproduce the smear (attribution both directions) —
+            // ** DEFAULT ON — USER-CONFIRMED LIVE 2026-07-26 ("FINALLY NOT BLURRY"). Corrects both blur
+            // drivers on the same-dim portal window: the camera pair (|cam-prev| 721.852 -> 0.001, blur
+            // span 136.3 -> 1.7 px) and the matrix pair, while preserving genuine motion blur when the
+            // player is actually moving. Pass this to force it OFF and reproduce the smear: **
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PdisableIrisDestPrevCamera=true
+            if (project.findProperty('disableIrisDestPrevCamera') == 'true') { vmArg('-Dseamlessportals.disableIrisDestPrevCamera=true') }
+            // MATRIX-HALF A/B, re-added and now meaningful: the correction writes BOTH the previous
+            // camera and the previous matrices, because they are two independent blur drivers (rows
+            // with a zero camera offset still blurred 57-102 px on a nonzero idMV). Pass this to write
+            // the CAMERA half only and isolate driver A from driver B —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PirisDestPrevCameraNoMatrices=true
+            if (project.findProperty('irisDestPrevCameraNoMatrices') == 'true') { vmArg('-Dseamlessportals.irisDestPrevCameraNoMatrices=true') }
+            // Chain-match limit in blocks, DEFAULT 4.0 — the furthest a composite chain's camera may
+            // plausibly travel in one frame. It is the definition of "same chain", NOT a safety margin:
+            // 16.0 was tried and is DANGEROUS (wider than an ordinary doorway portal's offset, so it
+            // would adopt the destination camera as the main view's history). Lower it to tighten —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraMaxDelta=2.0
+            if (project.hasProperty('irisDestPrevCameraMaxDelta')) { vmArg("-Dseamlessportals.irisDestPrevCameraMaxDelta=${project.property('irisDestPrevCameraMaxDelta')}") }
+            // Guarded-pass override (comma-separated; default "composite4"). The once-only roster line
+            // names every pass actually seen, so this is never guesswork —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PirisDestPrevCameraPass=composite4
+            if (project.hasProperty('irisDestPrevCameraPass')) { vmArg("-Dseamlessportals.irisDestPrevCameraPass=${project.property('irisDestPrevCameraPass')}") }
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdestPrevCameraProbe=true
+            if (project.findProperty('destPrevCameraProbe') == 'true') { vmArg('-Dseamlessportals.destPrevCameraProbe=true') }
+            // IS5-G stamp tint (mirror of the clientSodium row for lever parity — the solid rows
+            // below advertise the MAGENTA composition, so the block that carries them must be able
+            // to deliver it; the suite runs iris-ABSENT so this is inert there) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdebugTintStamp=true
+            if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
+            // IS5-MB ATTRIBUTION A/B (2026-07-26, DIAGNOSTIC): drop the portal stamp's DEPTH WRITE, to
+            // test whether the stamped DEST depth is what makes composite4 compute a huge PER-PIXEL
+            // velocity inside the window. If the blur vanishes with this set, that is the mechanism.
+            // COST while set: re-opens the #13 two-portal "second paints over the first" artifact —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampDepthWrite=true
+            if (project.findProperty('disableStampDepthWrite') == 'true') { vmArg('-Dseamlessportals.disableStampDepthWrite=true') }
+            // IS5-SEAM §2d depth-test discriminator (mirror of the clientSodium row for lever-row
+            // parity; the suite runs iris-ABSENT so the lever is inert there — see that block for
+            // the full adjudication note) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableStampDepthTest=true
+            if (project.findProperty('disableStampDepthTest') == 'true') { vmArg('-Dseamlessportals.disableStampDepthTest=true') }
+            // IS5-SEAM solid-paint discriminator (mirror of the clientSodium row for lever-row
+            // parity; the suite runs iris-ABSENT so the lever is inert there) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdebugStampSolid=true
+            if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            // IS5-SEAM crossing-window clip relax A/B (mirror; DEFAULT-ON; the suite runs
+            // iris-ABSENT so the compat full-pipeline arm never executes there — inert;
+            // lever-row parity) —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PdisableSeamClipRelax=true
+            if (project.findProperty('disableSeamClipRelax') == 'true') { vmArg('-Dseamlessportals.disableSeamClipRelax=true') }
+            // IS5-SEAM-CONTENT band-content probe (DIAGNOSTIC, default OFF — blocking 1Hz readback
+            // inside the crossing window): classifies the band pixels' dest depth — ~0.0 (reversed-Z
+            // FAR) = nothing drew (void class); substantially >0 = painted black (pack-pass class) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PseamContentProbe=true
+            if (project.findProperty('seamContentProbe') == 'true') { vmArg('-Dseamlessportals.seamContentProbe=true') }
+            // C4-SEAM — THE BLACK SEAM BAND's root-cause fix, **DEFAULT ON** (2026-07-27): the
+            // C3-BLOOM mask's repaints now draw under DEPTH CLAMP (raster parity with the stamp);
+            // without it the crossing sliver rasterized for the stamp but near-clipped away for
+            // the mask, and the stamp copied the mask's cleared black = the band. Pass this to
+            // force the UNCLAMPED repaints and reproduce the band (attribution both directions) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableBloomMaskSeamClamp=true
+            if (project.findProperty('disableBloomMaskSeamClamp') == 'true') { vmArg('-Dseamlessportals.disableBloomMaskSeamClamp=true') }
+            // IS5-HAND — seam hand-slicing fix, **DEFAULT ON** (2026-07-27): the stamp vertex
+            // shader caps NDC z at 0.5 so the depth-clamped crossing sliver stops GEQUAL-painting
+            // the portal view over the iris-baked hand (measured hand slice 0.5556..0.5569).
+            // Pass this to swap in the verbatim pre-cap shader and reproduce the slicing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStampHandDepthCap=true
+            if (project.findProperty('disableStampHandDepthCap') == 'true') { vmArg('-Dseamlessportals.disableStampHandDepthCap=true') }
+            // IS5-HAND V2 — the hand-slicing ROOT-CAUSE fix, **DEFAULT ON** (2026-07-27): iris's
+            // hand passes draw at glDepthRange(0.999, 1.0) inside the crossing window so the
+            // measured hand slice beats the seam's grazing shell (which shredded the hand IN THE
+            // MAIN FRAME — hand-region probe). Check the once-only "IS5-HAND depth bracket ARMED"
+            // line before adjudicating any leg. Pass this to force it OFF and reproduce —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
+            if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // IS5-HAND-FUNC (2026-07-28, DEFAULT OFF — premise REFUTED by the draw-time dump:
+            // hand draws re-apply their own LEQUAL per draw; the HEAD force is inert for them.
+            // Opt-in experiment lever only) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PenableHandDepthFuncFix=true
+            if (project.findProperty('enableHandDepthFuncFix') == 'true') { vmArg('-Dseamlessportals.enableHandDepthFuncFix=true') }
+            // IS5-HAND-STAGE four-point stage diff (DIAGNOSTIC, default OFF — four blocking 1Hz
+            // readbacks inside the crossing window): captures the hand-region pixels at anchor /
+            // post-snapshot / post-stamp / post-blit and diffs — the first changed hop names the
+            // eater's stage by construction (handoff §00a) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandStageDiff=true
+            if (project.findProperty('handStageDiff') == 'true') { vmArg('-Dseamlessportals.handStageDiff=true') }
+            // IS5-HAND-INLVL in-renderLevel stage points (DIAGNOSTIC, default OFF — five blocking
+            // 1Hz readbacks inside the crossing window): captures the hand-region column at the
+            // HEAD/RETURN of iris's two hand passes (LIVE draw FBO + iris colortex0) and at the
+            // compat anchor — splits "hand never drawn" from "drawn then composite-eaten"
+            // (handoff §00a instrument 1) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandInLevelProbe=true
+            if (project.findProperty('handInLevelProbe') == 'true') { vmArg('-Dseamlessportals.handInLevelProbe=true') }
+            // IS5-STAMP-EXEC executed-state probe (DIAGNOSTIC, default OFF — pure GL gets after
+            // the stamp draw): dumps the ACTUAL program + vertex-shader source (cap present?) +
+            // depth func/mask/clamp/range the stamp executed under — the ground-truth audit of
+            // the stage-C cap anomaly (handoff §00a instrument 2) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampExecProbe=true
+            if (project.findProperty('stampExecProbe') == 'true') { vmArg('-Dseamlessportals.stampExecProbe=true') }
+            // IS5-HAND-TAP iris HandRenderer canRender-vs-submit tap (DIAGNOSTIC, default OFF —
+            // log-only): per-pass canRender result + six-condition decomposition + body-entry
+            // proof + viewport/scissor, 1 Hz in-window + 0.1 Hz ambient CONTROL rows — splits
+            // "gate declines the hand" from "body runs but nothing rasterizes" (handoff §00c) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandSubmitTap=true
+            if (project.findProperty('handSubmitTap') == 'true') { vmArg('-Dseamlessportals.handSubmitTap=true') }
+            // IS5-HAND-LOC full-frame hand LOCATOR (DIAGNOSTIC, default OFF — heavy 0.5Hz
+            // readbacks): 12x8 grid diff across renderSolid on mainRT color+depth AND
+            // colortex0 MAIN+ALT, ambient AND window — ground-truths WHERE the visible hand
+            // paints and into which target, then whether that footprint vanishes in-window —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandLocator=true
+            if (project.findProperty('handLocator') == 'true') { vmArg('-Dseamlessportals.handLocator=true') }
+            // IS5-HAND-DRAW draw-time state dump (DIAGNOSTIC, default OFF): the COMPLETE GL
+            // state at REAL hand-feature draws (trySetup RETURN, pre-draw-call), 1Hz, window
+            // and ambient — the only read that survives per-draw state applies and pass-tail
+            // resets; the window-vs-ambient field diff names the eater —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandDrawDump=true
+            if (project.findProperty('handDrawDump') == 'true') { vmArg('-Dseamlessportals.handDrawDump=true') }
+            // IS5-STAMP-EAT (2026-07-28) — THE CANDIDATE HAND FIX: bind the LEQUAL stamp
+            // sibling. The survival table caught the stamp overpainting the hand between the
+            // anchor and the blit-back; under the measured small-is-near convention LEQUAL
+            // makes the aperture lose to everything nearer than it (the hand) while still
+            // beating the far scene it replaces —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampLequal=true
+            if (project.findProperty('stampLequal') == 'true') { vmArg('-Dseamlessportals.stampLequal=true') }
+            // IS5-SEAM attribution (DIAGNOSTIC ONLY): pass every aperture triangle through UNCLIPPED,
+            // to settle whether the near-plane clip's removed area is the black seam band. Expect the
+            // S14.36 sky wedges to return while set — that is also the proof the lever took effect —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableAperturePlaneClip=true
+            if (project.findProperty('disableAperturePlaneClip') == 'true') { vmArg('-Dseamlessportals.disableAperturePlaneClip=true') }
+            // IS5-CEN THE PER-FRAME COMPOSITE BIND CENSUS (2026-07-26, DIAGNOSTIC, default OFF).
+            // Counts EVERY Program.use() in the process and, for the motion-blur pass, logs all six
+            // gbuffer matrices, both camera vectors, the two never-before-measured inverse-consistency
+            // checks (max|M*Minv - I|), and a CPU replay of composite4's own velocity arithmetic over a
+            // 3x3x3 screen/depth grid — reported as the blur span in PIXELS. Emits one block per second
+            // listing every bind of the most recent frame plus the whole second's bind-count range —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true
+            if (project.findProperty('compositeCensus') == 'true') { vmArg('-Dseamlessportals.compositeCensus=true') }
+            // Rename the deeply-measured pass if the roster line shows the pack calls it something else
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcompositeCensus=true -PcompositeCensusPasses=composite4,composite5
+            if (project.hasProperty('compositeCensusPasses')) { vmArg("-Dseamlessportals.compositeCensusPasses=${project.property('compositeCensusPasses')}") }
+            // C3-BLOOM aperture-mask A/B + probes (§2f; the suite runs iris-ABSENT => the mixin
+            // is unwoven and the mask byte-inert; rows kept for lever-row parity) —
+            if (project.findProperty('disableIrisBloomApertureMask') == 'true') { vmArg('-Dseamlessportals.disableIrisBloomApertureMask=true') }
+            if (project.findProperty('debugTintBloomMask') == 'true') { vmArg('-Dseamlessportals.debugTintBloomMask=true') }
+            if (project.findProperty('debugBloomMaskBlackout') == 'true') { vmArg('-Dseamlessportals.debugBloomMaskBlackout=true') }
+            if (project.findProperty('bloomMaskProbe') == 'true') { vmArg('-Dseamlessportals.bloomMaskProbe=true') }
+            // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
+            // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
+            // for lever-row parity) —
+            if (project.findProperty('actProbe') == 'true') { vmArg('-Dseamlessportals.actProbe=true') }
+            if (project.findProperty('actVolumeProbe') == 'true') { vmArg('-Dseamlessportals.actVolumeProbe=true') }
+            // IS5-ACT round-2 (the suite runs iris-ABSENT => both mixins are declined by
+            // IPCompatMixinPlugin and ActDispatchProbe disarms on ClassNotFoundException —
+            // structurally inert; row kept for lever-row parity) —
+            if (project.findProperty('actDispatchProbe') == 'true') { vmArg('-Dseamlessportals.actDispatchProbe=true') }
+            // TP-XDIM frame census (mirror of the clientSodium lever; the suite runs iris-ABSENT,
+            // so irisNow prints the NO-IRIS-FACADE sentinel — row kept for lever-row parity).
+            if (project.findProperty('tpXdimCensus') == 'true') { vmArg('-Dseamlessportals.tpXdimCensus=true') }
+            if (project.findProperty('tpXdimCensusGl') == 'true') { vmArg('-Dseamlessportals.tpXdimCensusGl=true') }
+            // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
+            // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
+            // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
+            // per-frame gbuffer setup, while its shader programs still substitute. The fix routes
+            // that one layer-0 caller to the full-pipeline driver (IP's own architecture — IP's
+            // cross-view frame ran a nested full renderLevel). Pass this to force the pre-fix route
+            // and REPRODUCE the explosion — the A/B leg that proves the fix —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewFullPipeline=true
+            if (project.findProperty('disableCrossViewFullPipeline') == 'true') { vmArg('-Dseamlessportals.disableCrossViewFullPipeline=true') }
+            // TP-XDIM ESCAPE HATCH (DEFAULT OFF): decline the cross-portal view while a shaderpack
+            // is running — vanilla renderLevel renders the frame and the third-person camera clips
+            // into the portal wall (IP's pre-cross-view behaviour: ugly, never corrupt). The
+            // fallback if the route above proves unusable, and this arc's NEGATIVE discriminator
+            // (explosion SURVIVES it => the cross-view path is not the carrier) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossViewSuppressUnderPack=true
+            if (project.findProperty('crossViewSuppressUnderPack') == 'true') { vmArg('-Dseamlessportals.crossViewSuppressUnderPack=true') }
+            // XWIN REVERSE WINDOW INSIDE THE CROSS VIEW — DEFAULT ON (2026-07-29). On a cross-view
+            // frame the dest world now renders correctly but NO portal window was drawn inside it,
+            // so the player's body — which is in the other dimension — was invisible. The DECOMPOSED
+            // core has always had this slot (Step 10.10), which is why shaders-OFF already shows the
+            // window (M0, user-confirmed); the FULL-PIPELINE core was missing its twin. Pass this to
+            // force the pre-fix route and REPRODUCE the missing window — the A/B that proves it —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossViewReverseWindow=true
+            if (project.findProperty('disableCrossViewReverseWindow') == 'true') { vmArg('-Dseamlessportals.disableCrossViewReverseWindow=true') }
+            // IS5-REC recursive portal layers (shaders ON). A/B in BOTH directions:
+            //   .gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisPortalRecursion=true
+            // and the depth sweep / exact one-layer behavioural repro:
+            //   -PirisMaxPortalLayer=1 (identical to the pre-IS5-REC guard) | =2 (default) | =3
+            if (project.findProperty("disableIrisPortalRecursion") == "true") { vmArg("-Dseamlessportals.disableIrisPortalRecursion=true") }
+            // IS5-TERM A/B: restore the solid-black terminal portal at the recursion bound (shaders OFF).
+            if (project.findProperty("drawTerminalPortalAsBlack") == "true") { vmArg("-Dseamlessportals.drawTerminalPortalAsBlack=true") }
+            // IS5-XREC A/B: restore the no-recursion-inside-the-cross-view-window scope limit.
+            if (project.findProperty("disableCrossViewRecursion") == "true") { vmArg("-Dseamlessportals.disableCrossViewRecursion=true") }
+            if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
+            if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
+            // IS5-XCUT NEAR FLOOR MOVED TO THE FRAGMENT STAGE — DEFAULT ON (2026-08-01). The stamp's
+            // floor was applied PER VERTEX; depth interpolates screen-affine, so that TILTED the
+            // interpolated depth plane instead of clamping it, and one clip-produced vertex ~0.1 mm
+            // from the eye skewed the whole plane => a straight depth boundary that SWEEPS across
+            // the portal window as the camera pans near the seam. Now applied per fragment.
+            // Pass this to force the old per-vertex floor back and REPRODUCE the swept cut —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
+            if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
     }
 }

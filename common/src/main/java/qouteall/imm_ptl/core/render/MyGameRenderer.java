@@ -306,6 +306,11 @@ public class MyGameRenderer {
         // switch (note: it will no longer switch the world that client player is in )
         ((IEMinecraftClient) client).ip_setWorldRenderer(worldRenderer);
         client.level = newWorld;
+        // TP-XDIM census: client.level is the DEST from here until the restore below — the ONLY
+        // window in which the dest render's iris state is observable. Every read taken outside it
+        // resolves to the SOURCE and can never disagree about the dimension (the trap
+        // ActSeedProbe.endPortal's javadoc already records). Log-only, DEFAULT OFF, never throws.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipeline();
         ieGameRenderer.ip_setLightmapTextureManager(helper.lightmapTexture);
 
         client.player.noPhysics = true;
@@ -357,8 +362,15 @@ public class MyGameRenderer {
 
         //update lightmap (G20: updateLightTexture(0) first-visit prime -> extract+render once via the
         // mod's proven per-dim Lightmap driver; virtual-camera config is S13 driver-core).
-        if (!RenderStates.isDimensionRendered(newDimension)
-            && !qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap // S14.38 lever
+        // IS5-LIGHTMAP: same re-entry guard as the full-pipeline twin. isDimensionRendered is fed by
+        // onEndPortalWorldRendering, which runs AFTER the nested render returns, so a chain that
+        // REVISITS a dimension re-primes the same Lightmap object while its render is still in
+        // flight. Shaders-ON that crashed with "Cannot wait on a fence for the current submit"; this
+        // DECOMPOSED path has the identical shape and recurses just as deep shaders-OFF
+        // (maxPortalLayer is settable to 10+), so it is guarded too rather than waiting for a report.
+        if (!qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap // S14.38 lever
+            && !RenderStates.isDimensionRendered(newDimension)
+            && RenderStates.lightmapPrimedDimensions.add(newDimension)
         ) {
             helper.updateAndRender(newCamera, RenderStates.getPartialTick());
         }
@@ -431,6 +443,10 @@ public class MyGameRenderer {
             });
         } finally {
             SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+
+            // TP-XDIM census: the LAST read while client.level is still the DEST (the restore
+            // below puts the source back). Log-only, DEFAULT OFF, never throws.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipelineEnd();
 
             //recover
             modelViewStack.popMatrix();
@@ -593,6 +609,10 @@ public class MyGameRenderer {
         // switch (pairing: SWAP-IN, same order)
         ((IEMinecraftClient) client).ip_setWorldRenderer(worldRenderer);
         client.level = newWorld;
+        // TP-XDIM census: same slot, same reason as the decomposed sibling — client.level is the
+        // DEST from here to the restore, the only window where the dest render's iris state can be
+        // read at all. Log-only, DEFAULT OFF, never throws.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipeline();
         ieGameRenderer.ip_setLightmapTextureManager(helper.lightmapTexture);
 
         client.player.noPhysics = true;
@@ -625,9 +645,20 @@ public class MyGameRenderer {
 
         IrisInterface.invoker.setPipeline(worldRenderer, null);
 
-        // first-visit lightmap prime (pairing: identical).
-        if (!RenderStates.isDimensionRendered(newDimension)
-            && !qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap
+        // first-visit lightmap prime (pairing: identical, PLUS the IS5-LIGHTMAP re-entry guard).
+        //
+        // isDimensionRendered alone is NOT sufficient under recursion: it is fed by
+        // PortalRendering.onEndPortalWorldRendering, which runs AFTER the nested render returns
+        // (PortalRenderer:356 invoke, :370 mark). So a chain that REVISITS a dimension re-enters this
+        // prime while that dimension's render is still in flight, drives the SAME Lightmap object's
+        // ring buffer twice inside one GPU submit, and crashes with
+        // "Cannot wait on a fence for the current submit". Marking at PRIME time is what closes it —
+        // see RenderStates.lightmapPrimedDimensions.
+        // Lever first so it stays byte-inert when set; the set ADD is last because it has a side
+        // effect and must only fire when we are actually about to prime.
+        if (!qouteall.imm_ptl.core.IPGlobal.debugSkipDestLightmap
+            && !RenderStates.isDimensionRendered(newDimension)
+            && RenderStates.lightmapPrimedDimensions.add(newDimension)
         ) {
             helper.updateAndRender(newCamera, RenderStates.getPartialTick());
         }
@@ -660,6 +691,10 @@ public class MyGameRenderer {
             profiler.pop();
         } finally {
             SodiumInterface.invoker.switchContextWithCurrentWorldRenderer(newSodiumContext);
+
+            // TP-XDIM census: the LAST read while client.level is still the DEST (pairing with the
+            // decomposed sibling). Log-only, DEFAULT OFF, never throws.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteDestPipelineEnd();
 
             // recover (pairing: RESTORE, exact decomposed order)
             modelViewStack.popMatrix();

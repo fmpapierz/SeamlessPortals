@@ -21,13 +21,127 @@ public class IPConfig implements ConfigData {
     
     // client visible configs
     
+    // IS5-REC (2026-08-02): @ConfigEntry.BoundedDiscrete(min = 0, max = 10) REMOVED. Cloth renders a
+    // bounded int as a SLIDER and an unbounded one as a TYPED FIELD, and the bound was the only
+    // thing preventing values like 20 or 100 — which the user explicitly asked for. Free-typed here
+    // and in config/immersive_portals.json.
+    //
+    // THIS IS THE ENGINE BOUND and the single source of truth for it. A parallel
+    // seamlessportals.properties knob was briefly added and is now DELETED: onConfigChanged below
+    // writes IPGlobal.maxPortalLayer from IPModMain.init, which runs AFTER
+    // SeamlessPortalsConfig.loadFrom, so the other knob was overwritten every boot while its file
+    // kept reporting the value the user set. Two writers, one static, no arbitration — do not
+    // reintroduce one.
     @ConfigEntry.Category("client")
-    @ConfigEntry.BoundedDiscrete(min = 0, max = 10)
     @ConfigEntry.Gui.Tooltip
     public int maxPortalLayer = 5;
+
+    /**
+     * IS5-REC — recursion depth WHEN AN IRIS SHADERPACK IS ON. Separate from
+     * {@link #maxPortalLayer} because a shaders-ON layer is a FULL pack-shaded world render
+     * (gbuffer + shadow pass + composite chain), a categorically heavier unit than a stencil layer.
+     * 1 = the pre-feature behaviour (a portal seen inside a portal is flat pass-through).
+     *
+     * <p>CAPPED BY {@link #maxPortalLayer}: the engine refuses to render portal content past that
+     * ({@code PortalRenderer.renderPortalContent}), so raising this alone does nothing — raise both.
+     *
+     * <p>VRAM: each layer a scene ACTUALLY REACHES allocates its own full-screen colour+depth target
+     * (~16.6 MB at 1920x1080, ~66 MB at 3840x2160). Allocation is lazy, so a high value costs
+     * nothing until such a scene exists; a genuinely 100-deep one would hold ~1.7 GB at 1080p.
+     */
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
-    public boolean lagAttackProof = true;
+    public int irisRecursionDepth = 5;
+
+    /**
+     * IS5-REC — OFF by default (user-decided 2026-08-02). Reduces the shaders-ON recursion depth
+     * automatically while the frame rate is low.
+     *
+     * <p>Exists because the engine's own mirror-room protection CANNOT cover deep recursion:
+     * {@code RenderStates.updateIsLaggy} only consults the frame rate once >10 dest renders happened
+     * in the previous frame, and a deep SINGLE chain makes about one render per layer — five or six,
+     * never eleven. MEASURED: the depth-5 leg reported {@code isLaggy=false} on all 166 rows, which
+     * proves only that the gate could not fire, not that the frame rate was fine.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public boolean irisRecursionLagGuard = false;
+
+    /**
+     * How far from the player a portal will still render its WINDOW, in chunks. {@code 0} = follow
+     * the render distance, and what the per-entry reset button restores.
+     *
+     * <p><b>"Follow the render distance" was previously a fiction and is now true.</b>
+     * {@code getRenderRange()} did compute {@code renderDistance * 16} — 512 blocks at render
+     * distance 32 — but the ENTITY TRACKING gate capped portals at 5 chunks
+     * ({@code Portal.clientTrackingRange(6)} = 96 blocks, tested as
+     * {@code distanceToSource * 16 + 8 <= range}), so a portal further than ~88 blocks was never
+     * sent to the client and the window vanished there regardless of any setting. USER-MEASURED as
+     * "about 89 blocks regardless of the settings i choose". {@code MixinTrackedEntity} now widens
+     * that gate for Portal entities to follow this value, defaulting to the server load distance.
+     *
+     * <p>Consumed by {@code PortalRenderer.getRenderRange}, whose sole consumer is
+     * {@code shouldSkipRenderingPortal}: a portal further than this from the camera is culled and
+     * its window is not drawn. Raising it means distant portals keep showing their destination;
+     * lowering it culls them sooner and is the cheapest way to claw back frames in a portal-dense
+     * build.
+     *
+     * <p>DISTINCT from {@code portalRenderDistance} in seamlessportals.properties, which controls how
+     * many chunks DEEP the destination is loaded and meshed. This one is how far AWAY you can stand
+     * and still see the window at all. Setting this high while that stays low gives you distant
+     * windows onto a shallow destination.
+     *
+     * <p>Unbounded in the GUI so it is a typed field rather than a slider, but clamped to 0..32 on
+     * apply — 32 is the vanilla render-distance maximum, past which the source chunks the culling is
+     * measured against do not exist anyway. The downstream deep-layer divide and the large-scale
+     * portal multiplier in getRenderRange still apply on top, unchanged.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int portalWindowRenderDistance = 0;
+
+    /**
+     * IS5-REACH — load nested portal levels as deeply as the first one.
+     *
+     * <p>ON (default): every level uses the same distance graduation as layer 1 — full view distance
+     * within 5 blocks of that portal, 2/3 within 15, 1/3 beyond. OFF: the original flat
+     * {@code viewDistance / 4} for every level below the first, which at view distance 32 is 8
+     * chunks against layer 1's 32.
+     *
+     * <p>Note this is what makes {@link #indirectLoadingRadiusCap} MEAN anything for deep levels: the
+     * radius is {@code min(target, cap)}, and with the target pinned at a quarter the cap could never
+     * bind, so raising it had no effect below layer 1.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public boolean deepPortalLoadingReach = true;
+
+    /**
+     * IS5-KEEP — how long portal-loaded chunks stay resident after nothing is watching them, in
+     * units of 13 ticks. Default 4 (~2.6 s), IP's original. Negative = never unload while the player
+     * is online.
+     *
+     * <p>Unbounded in the GUI on purpose so Cloth renders a TYPED field rather than a slider — the
+     * useful range spans "a couple of seconds" to "indefinite" and no slider covers that sensibly.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int chunkUnloadDelayGenerations = 4;
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    // DEFAULT FLIPPED TO FALSE (2026-08-02, user decision). When this engages it clamps portal
+    // recursion to ONE layer (PortalRendering.getMaxPortalLayer), which reads as "recursion is
+    // broken" rather than as a protection doing its job — the user lost time to exactly that before
+    // the on-screen notice was made readable. Its trigger also became far easier to hit once
+    // recursion depth became user-settable: it needs >10 destination renders in the previous frame,
+    // which a depth-5 chain never reached but a depth-10 one clears easily.
+    //
+    // WHAT IS GIVEN UP, stated rather than buried: this is the mirror-room lag-attack guard. With it
+    // off, a deliberately hostile build (a room of portals facing each other) can drive a client's
+    // frame rate down with nothing to stop it. That matters on multiplayer servers with untrusted
+    // builders; it does not on a singleplayer or trusted world. Turning it back on restores the
+    // clamp, and it now announces itself for ~5s when it engages.
+    public boolean lagAttackProof = false;
     @ConfigEntry.Category("client")
     public boolean enableCrossPortalSound = true;
     @ConfigEntry.Category("client")
@@ -196,6 +310,29 @@ public class IPConfig implements ConfigData {
         IPGlobal.enableMirrorCreation = enableMirrorCreation;
         IPGlobal.doCheckGlError = doCheckGlError;
         IPGlobal.maxPortalLayer = maxPortalLayer;
+        // IS5-REC. The -P dev lever PINS the depth for A/B legs, so the config must not overwrite it
+        // — a lever that stops governing halfway through a run is how three legs of this project got
+        // voided. Clamped to a resource ceiling, not a taste one: see the field's VRAM note.
+        if (!IPGlobal.IRIS_MAX_LAYER_PINNED_BY_LEVER) {
+            IPGlobal.irisMaxPortalLayer =
+                Math.max(1, Math.min(IPGlobal.IRIS_RECURSION_DEPTH_CEILING, irisRecursionDepth));
+        }
+        IPGlobal.irisRecursionLagGuard = irisRecursionLagGuard;
+        // Clamp on APPLY rather than in the GUI: leaving the field unbounded is what makes Cloth
+        // render a typed box instead of a slider, so the clamp has to live here. 0 = follow the
+        // vanilla render distance (the shipped default, and what the reset button restores).
+        //
+        // CLAMP IN PLACE, not just into IPGlobal — the same form the bounded ints above use
+        // (indirectLoadingRadiusCap / regularPortalLengthLimit / scaleLimit). AutoConfig runs this
+        // save listener BEFORE serializing, so writing the field back is what makes the GUI box and
+        // immersive_portals.json agree with what the engine actually runs. Clamping only the static
+        // would leave a typed 50 displayed and persisted as 50 forever while the engine ran 32 —
+        // state that disagrees with itself and no line anywhere to reconcile it.
+        portalWindowRenderDistance = Mth.clamp(portalWindowRenderDistance, 0, 32);
+        IPGlobal.portalWindowRenderDistance = portalWindowRenderDistance;
+        IPGlobal.deepPortalLoadingReach = deepPortalLoadingReach;
+        IPGlobal.chunkUnloadDelayGenerations = chunkUnloadDelayGenerations;
+        IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;
         IPGlobal.netherPortalFindingRadius = portalSearchingRange;

@@ -94,6 +94,151 @@ public class FrontClipping {
 
     public static final double ADJUSTMENT = 0.01;
 
+    // ===== IS5-SEAM CROSSING-WINDOW RELAX (2026-07-27; DEFAULT-ON fix, A/B OFF via
+    // -Dseamlessportals.disableSeamClipRelax) ==========================================
+    //
+    // THE MEASURED MECHANISM (IS5-SEAM-ARM census; feed proven coherent, maxAbsFeedErr=0.0000 on
+    // 95/95 rows): the black band at the portal seam is the inner clip WORKING AS DESIGNED on
+    // crossing frames. Two measured frame classes:
+    //   - fullyVoid (planeW >= 0, 6 frames across three crossings): the RENDER camera
+    //     (partialTick + view bob) sits ON/past the armed plane before the tick-keyed crossing
+    //     fires — every aperture ray starts kept-side and points away: whole-aperture void (the
+    //     fast-crossing FLASH).
+    //   - nearStraddle (planeW in (-0.1, 0), 38 frames): the eye is 1-11 cm short of the plane;
+    //     the aperture mesh rasterizes the sliver past the seam line whose rays GRAZE the plane —
+    //     t_cross = eyeDist/sin(theta) is meters long, so their near-side dest content is culled
+    //     (the slow-crossing SUSTAINED band).
+    // IP arms the IDENTICAL plane (ip-source RectangularPortalShape.getInnerClipping +
+    // MixinLevelRenderer -ADJUSTMENT, verified) — IP fills those pixels with its UNCLIPPED sky;
+    // a deferred shaderpack has no such filler, hence pure black, shaders-ON only.
+    //
+    // THE FIX: ramp the inner clip camera-side as the eye enters the crossing window. The
+    // LOAD-BEARING INVARIANT (panel-corrected — this is weaker than "clearance exceeds the
+    // near-plane corner reach", and it is what actually prevents the void): a rasterized
+    // aperture ray can only void when the RENDER EYE is on the CLIPPED side of the armed plane
+    // (eye kept-side => every aperture ray traverses kept space first and its near dest content
+    // draws). So the fix holds the eye KEPT-side of the armed plane, with margin, throughout the
+    // whole zone where the seam sliver can rasterize. The "extra" content this keeps is the
+    // dest-side doorway interior the eye is physically inside mid-crossing — the correct
+    // seamless view. Far from the portal the correction is bit-identical to IP's -ADJUSTMENT.
+    //
+    // Geometry (all along the KEPT normal; camToPlane = n.(cam - pos), NEGATIVE pre-crossing):
+    //   eyeDist(corr) = camToPlane - corr        (the armed plane's clip distance at the eye)
+    //   hold eyeDist == CLEARANCE while d = -camToPlane <= SLIVER_ZONE, ramp to the IP constant
+    //   by RAMP_END.
+    /** The kept-side margin held at the eye through the sliver zone. Budget: view-bob translation
+     *  erodes the effective clearance by dot(nView, bobT) (viewSpacePlaneW), up to ~0.1 at a
+     *  sprint bob peak — 0.20 keeps >= ~0.1 margin over it. */
+    public static final double CROSSING_EYE_CLEARANCE = 0.20;
+    /** Largest camera-to-plane distance at which the seam sliver can rasterize = the near-plane
+     *  corner reach: 0.05 x corner secant = 0.087 (FOV 70, 16:9), 0.154 (Quake Pro), ~0.19
+     *  (Quake Pro 21:9) — and MC's movement fovModifier multiplies further (sprint x1.15 =>
+     *  ~0.21-0.26; sprinting is the TYPICAL crossing state). 0.30 covers those with margin.
+     *  KNOWN LIMIT: dest-world units — a SCALED crossing portal changes the camera-unit ratio;
+     *  the ARM census's armedVoidRisk counter is the live detector for a shortfall. */
+    public static final double SLIVER_ZONE = 0.30;
+    /** Where the relax has fully ramped out to IP's constant -ADJUSTMENT. */
+    public static final double RAMP_END = 0.60;
+
+    // ===== V2 (2026-07-27, same day): SUSPEND, don't shift — the plane-shift relax was measured
+    // INSUFFICIENT. With v1 provably armed (ARM census: armedVoidRisk=0 on 33/33, corr to −0.49,
+    // feedErr=0.0000) the band persisted, and the IS5-SEAM-CONTENT depth probe named the reason:
+    // the band pixels hold geometry at depth 0.995–1.0 (reversed-Z EXTREME NEAR) painted pure
+    // black — the kept slab's UNLIT near-side wall faces (interior faces get zero light). The
+    // shift traded clip-void black for unlit-geometry black. The user-validated reference is the
+    // front_clipping-disable leg: with the clip FULLY OFF the crossing view is correct (the lit
+    // jamb/room faces closer to the camera cover the unlit ones). So inside the crossing window
+    // the inner clip is SUSPENDED outright (the validated content), the v1 ramp covers
+    // (SUSPEND_ZONE, RAMP_END) for continuity, and IP's constant applies beyond. The clip's
+    // purpose (hide near-side occluders when viewing the window from afar) does not apply while
+    // the eye is in the doorway.
+    /** Camera-to-plane distance below which the inner clip is fully suspended for the pass. */
+    public static final double SUSPEND_ZONE = 0.35;
+
+    /**
+     * V2 gate: true when the full-pipeline dest arm should SUSPEND the inner clip for this pass
+     * (the crossing window; same lever/Mirror/layer gates as the correction). The caller routes
+     * to an unconditional store reset instead of {@code setupInnerClipping} — identical to the
+     * user-validated {@code front_clipping disable} content for the AMBIENT dest arm (terrain
+     * and un-bracketed draws; {@code PerEntityClipBracket}'s per-entity planes remain active),
+     * window-gated and inner-only.
+     */
+    public static boolean shouldSuspendInnerClipForCrossing(
+        @Nullable Plane plane, @Nullable Portal renderingPortal, Vec3 renderCameraPos
+    ) {
+        if (plane == null || IPGlobal.SEAM_CLIP_RELAX_DISABLED_LEVER) {
+            return false;
+        }
+        if (renderingPortal instanceof qouteall.imm_ptl.core.portal.Mirror) {
+            return false;
+        }
+        if (PortalRendering.getPortalLayer() > 1) {
+            return false;
+        }
+        Vec3 n = plane.normal();
+        Vec3 p = plane.pos();
+        double camToPlane = n.x * (renderCameraPos.x - p.x)
+            + n.y * (renderCameraPos.y - p.y)
+            + n.z * (renderCameraPos.z - p.z);
+        return -camToPlane < SUSPEND_ZONE; // also true once the eye is past the plane (d < 0)
+    }
+
+    /**
+     * The correction to pass to {@link #setupInnerClipping} for a full-pipeline dest render:
+     * IP's constant {@code -ADJUSTMENT} far from the plane, smoothly relaxed camera-side inside
+     * the crossing window (derivation above). Returns exactly {@code -ADJUSTMENT} when the lever
+     * disables the relax, the plane is null, the camera is beyond {@link #RAMP_END}, the
+     * rendering portal is a Mirror, or the pass is a NESTED recursion layer.
+     *
+     * <p>relax(d) = max(0, min(CLEARANCE − ADJUSTMENT + d,
+     *                          (CLEARANCE − ADJUSTMENT + SLIVER_ZONE)·(RAMP_END − d)/(RAMP_END − SLIVER_ZONE)))
+     * — the first term holds {@code eyeDist == CLEARANCE} through the window (and naturally
+     * decays for d < 0, where the eye's own depth already provides clearance); the second is the
+     * continuity ramp; both meet at {@code d == SLIVER_ZONE}.
+     *
+     * <p><b>Documented trade-off (panel-adjudicated, accepted):</b> the relax keys on DISTANCE,
+     * not on an actual crossing — a player leaning within {@link #RAMP_END} of a crossable portal
+     * without crossing sees up to {@code CLEARANCE + SLIVER_ZONE} (0.50) blocks of near-side dest
+     * content through the aperture that IP would clip. That content is the dest doorway's
+     * interior; the ramp keeps the transition continuous (no pop), and the alternative — a black
+     * band on every crossing — is strictly worse.
+     */
+    public static double innerClipCorrectionForCrossing(
+        @Nullable Plane plane, @Nullable Portal renderingPortal, Vec3 renderCameraPos
+    ) {
+        double base = -ADJUSTMENT;
+        if (plane == null || IPGlobal.SEAM_CLIP_RELAX_DISABLED_LEVER) {
+            return base;
+        }
+        // MIRROR EXCLUSION: a mirror is never CROSSED, so the crossing window never legitimately
+        // applies — relaxing there would surface a slab of the mirrored space's near-side
+        // geometry whenever the player walks up close. Mirrors keep IP's constant.
+        if (renderingPortal instanceof qouteall.imm_ptl.core.portal.Mirror) {
+            return base;
+        }
+        // LAYER-1 GATE (panel): only the OUTERMOST portal window is physically crossable, and the
+        // layer-inheritance branch of getActiveClippingPlane can hand a nested pass a transformed
+        // OUTER portal's plane (including an outer Mirror's — which the instanceof above cannot
+        // see). Nested layers keep IP's constant: no benefit, only exposure.
+        if (PortalRendering.getPortalLayer() > 1) {
+            return base;
+        }
+        Vec3 n = plane.normal();
+        Vec3 p = plane.pos();
+        double camToPlane = n.x * (renderCameraPos.x - p.x)
+            + n.y * (renderCameraPos.y - p.y)
+            + n.z * (renderCameraPos.z - p.z);
+        double d = -camToPlane; // positive pre-crossing, negative once the render eye is past
+        if (d >= RAMP_END) {
+            return base;
+        }
+        double hold = CROSSING_EYE_CLEARANCE - ADJUSTMENT + d;
+        double ramp = (CROSSING_EYE_CLEARANCE - ADJUSTMENT + SLIVER_ZONE)
+            * (RAMP_END - d) / (RAMP_END - SLIVER_ZONE);
+        double relax = Math.max(0.0, Math.min(hold, ramp));
+        return base - relax;
+    }
+
     // S13-L: |det(3x3) − 1| threshold below which the model-view is treated as a rigid rotation (no scale)
     // and the proven forward-rotate fast path is taken (bit-identical unscaled render). A pure-rotation
     // product accumulates only ~1e-6 float error in its determinant, while any real portal scale k=1/s
@@ -158,7 +303,9 @@ public class FrontClipping {
      * n·p_rel + c > 0) and writes it into the single com.warwa view-space plane store that
      * GlCommandEncoderClipMixin uploads to gl_ClipDistance[0]: planeXYZ = the clip normal carried to eye
      * space by {@link #rotateClipNormalToViewSpace} (R·n for the unscaled common case, the covector
-     * inverse-transpose M⁻ᵀ·n under a scaling model-view — S13-L), planeW = c. Kept half-space is preserved
+     * inverse-transpose M⁻ᵀ·n under a scaling model-view — S13-L), planeW = c — except under a
+     * translation-carrying MV (the IS-BOB bobbed dest matrix), where {@link #viewSpacePlaneW} adds the
+     * lever-gated exact W-term. Kept half-space is preserved
      * exactly (see class SIGN NOTE). Gated by
      * {@code IPGlobal.enableClippingMechanism}, mirroring IP's enableClipping() guard; isClippingEnabled
      * is set in lockstep with the com.warwa gl_ClipDistance enable that restore(...,true) performs.
@@ -170,17 +317,41 @@ public class FrontClipping {
         Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, modelView);
         com.warwa.seamlessportals.render.FrontClipping.restore(
             new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
-                nView.x, nView.y, nView.z, (float) beforeModelView[3], true
+                nView.x, nView.y, nView.z,
+                viewSpacePlaneW(beforeModelView, modelView, nView), true
             )
         );
         isClippingEnabled = true;
     }
 
     /**
+     * IS-BOB H2 (panel wf_22f132bb-257): with a TRANSLATION-carrying model-view (MV = POSE·V, the
+     * iris bob-sync's bobbed dest matrix; t = col3(POSE) since col3(V)=0) the eye-space clip
+     * evaluation {@code dot((MV·p).xyz, planeXYZ) + planeW} gains a spurious
+     * {@code dot(planeXYZ, t)}; the exact form is {@code planeW = c − dot(planeXYZ, col3(MV))} —
+     * using the PASSED matrix's m30/31/32 makes the form exact under ANY factorization. Lever-gated
+     * + exact-zero-guarded: every translation-free caller (all shaders-OFF/stencil feeds — camera
+     * rotation matrices) and every lever-OFF session computes bit-identical planeW with zero new
+     * float ops. Lever-ON also CORRECTS the pre-existing bounded main-pass error when iris's
+     * bobbed field reaches per-entity clip captures (adjudication A2/R4).
+     */
+    private static float viewSpacePlaneW(
+        double[] beforeModelView, Matrix4f modelView, Vector3f nView
+    ) {
+        float w = (float) beforeModelView[3];
+        if (IPGlobal.isIrisBobSyncActive()
+            && (modelView.m30() != 0f || modelView.m31() != 0f || modelView.m32() != 0f)) {
+            w -= nView.x * modelView.m30() + nView.y * modelView.m31() + nView.z * modelView.m32();
+        }
+        return w;
+    }
+
+    /**
      * The single place IP's world-space clip NORMAL {@code n = beforeModelView[0..2]} is turned into the
      * mod's EYE-space plane store (planeXYZ). {@code planeW = c = beforeModelView[3]} is written unchanged
-     * by the callers (the S11-B/D4.4 SIGN NOTE convention). See the class SIGN NOTE (S13-L) for the full
-     * derivation; in brief:
+     * by the callers for every translation-free MV (the S11-B/D4.4 SIGN NOTE convention) — under a
+     * translation-carrying MV the callers route through {@link #viewSpacePlaneW} (IS-BOB H2).
+     * See the class SIGN NOTE (S13-L) for the full derivation; in brief:
      *
      * <ul>
      *   <li>The 26.2 clip shader evaluates in EYE space:
@@ -360,18 +531,22 @@ public class FrontClipping {
      * store. {@code planeXYZ} is the clip normal carried to eye space by {@link #rotateClipNormalToViewSpace}
      * — the forward column-form rotate {@code R·n} for the unscaled common case (bit-identical; do NOT "fix"
      * to {@code mulTranspose} — S11-A anti-fix guard), the covector inverse-transpose {@code M⁻ᵀ·n} under a
-     * scaling model-view (S13-L). {@code planeW = c}, {@code enabled = true}. {@code viewRotation} is the
-     * world→view model-view the 26.2 draw applies to the camera-relative submit poses; its translation
-     * column is dropped (only the 3x3 linear block is used).
+     * scaling model-view (S13-L). {@code planeW} via the shared {@link #viewSpacePlaneW} helper (= c for
+     * every translation-free MV; the IS-BOB W-term otherwise), {@code enabled = true}. {@code viewRotation}
+     * is the world→view model-view the 26.2 draw applies to the camera-relative submit poses; the normal
+     * transform uses only its 3x3 linear block, the W-term reads its translation column.
      */
     private static com.warwa.seamlessportals.render.FrontClipping.Snapshot toViewSpaceSnapshot(
         double[] beforeModelView, Matrix4f viewRotation
     ) {
         // Same eye-space covector transform as feedViewSpacePlane (S13-L): rotation-only for the unscaled
-        // common case (bit-identical), inverse-transpose under a scaling model-view. planeW = c unchanged.
+        // common case (bit-identical), inverse-transpose under a scaling model-view. planeW via the
+        // SHARED helper (IS-BOB H2 — writer parity with feedViewSpacePlane is MANDATORY: dest-pass
+        // PerEntityClipBracket captures consume the bobbed destCameraState.viewRotationMatrix).
         Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, viewRotation);
         return new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
-            nView.x, nView.y, nView.z, (float) beforeModelView[3], true
+            nView.x, nView.y, nView.z,
+            viewSpacePlaneW(beforeModelView, viewRotation, nView), true
         );
     }
 

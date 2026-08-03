@@ -87,10 +87,25 @@ public abstract class QuadParticleGroupMixin {
     private boolean seamlessportals$cullBehindPortal(
             Frustum frustum, double x, double y, double z) {
         // D3 EXCLUSIVITY GATE (A5 — the block-era PortalParticleClip cull call inside this KEEP'd
-        // substrate mixin). Flag ON → IP render-side clipping (FrontClipping + CrossPortalEntityRenderer)
-        // owns particle clipping, so skip the block-era portal cull but KEEP vanilla frustum culling.
-        // Flag OFF (default) → falls through to the full block-era cull below, unchanged.
-        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+        // substrate mixin) — §2c AMENDED (2026-07-25): the old flag-ON premise ("IP render-side
+        // clipping owns particle clipping") is REFUTED — FrontClipping.setupOuterClipping is
+        // dead/uncalled and vanilla particle programs carry no clip. Live + recon-proven bleed
+        // mechanism (shaders-OFF + Fabulous/Improved Transparency): translucent particles draw
+        // into the SEPARATE framegraph particles target whose depth was copied BEFORE the portal
+        // window drew (26.2 LevelRenderer :429-431 copy vs the AFTER_TRANSLUCENT_TERRAIN portal
+        // draw), so behind-plane source particles pass the stale test and the transparency
+        // composite paints them OVER the window (iris force-disables Fabulous ⇒ shaders-ON never
+        // bleeds; the mod's own dest-side Fabulous guard documents the identical class). So
+        // flag-ON now ALSO runs the geometric cull (graphics-mode-independent, removes the
+        // particle at extract) — lever-gated DEFAULT-ON. The flag-ON portal ROSTER is the IP
+        // Portal ENTITIES via IPMcHelper (PortalParticleClip §2c repoint — the block-era tracker
+        // is empty flag-ON; final-diff verify catch).
+        // Flag-ON dest passes CANNOT reach this redirect (S14.40 MixinParticleEngine HEAD-cancels
+        // the vanilla dest extract; ip_extractIsolated bypasses this class), so the cull only
+        // ever sees the MAIN extract: main camera + source-world portals — correct semantics.
+        // The isDestExtracting belt below defends that invariant anyway.
+        if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()
+            && !qouteall.imm_ptl.core.IPGlobal.isSourceParticleCullActive()) {
             return frustum.pointInFrustum(x, y, z);
         }
         // Vanilla cull first (cheap; frustum check is fast).
@@ -101,7 +116,9 @@ public abstract class QuadParticleGroupMixin {
         // INSIDE the portal view, already bounded by the stencil mask — and
         // applying it (source-dim portals vs dest-dim positions/camera) would
         // wrongly drop them. So render all in-frustum dest particles.
-        if (com.warwa.seamlessportals.render.PortalContextSwitch.isRenderingPortal) {
+        // (Block-era discriminator + the flag-ON belt — see the gate note above.)
+        if (com.warwa.seamlessportals.render.PortalContextSwitch.isRenderingPortal
+            || qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
             return true;
         }
         // Additional cull: particle behind any active portal from camera.
@@ -109,8 +126,24 @@ public abstract class QuadParticleGroupMixin {
         if (seamlessportals$currentCamera != null
             && PortalParticleClip.isPositionBehindPortal(
                 x, y, z, seamlessportals$currentCamera)) {
+            // §2c liveness + confirm counter (probe-read as spc=; once-only ACTIVE line) —
+            // flag-ON ONLY (verify-fold finding 2: block-era cull hits must stay byte-identical
+            // including logging; the lever the ACTIVE line names is inoperative block-era).
+            if (com.warwa.seamlessportals.config.SeamlessPortalsConfig.isEntityPortals()) {
+                qouteall.imm_ptl.core.IPGlobal.sourceParticleCullCount++;
+                if (!seamlessportals$cullLivenessLogged) {
+                    seamlessportals$cullLivenessLogged = true;
+                    qouteall.q_misc_util.Helper.log(
+                        "[sourceParticleCull] ACTIVE — first behind-portal source particle culled "
+                            + "(A/B lever -Dseamlessportals.disableSourceParticleCull)");
+                }
+            }
             return false;
         }
         return true;
     }
+
+    /** §2c once-only liveness latch (render thread). */
+    @Unique
+    private static boolean seamlessportals$cullLivenessLogged = false;
 }

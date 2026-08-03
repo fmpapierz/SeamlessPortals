@@ -47,11 +47,14 @@ public class SeamlessConfigScreen extends Screen {
                 cfg.getPortalRenderDistance(), cfg::setPortalRenderDistance));
         y += rowH;
 
-        // Recursive portal-through-portal render depth.
-        this.addRenderableWidget(new IntSlider(x, y, w, 20,
-                "Max recursive portal depth", 0, 3,
-                cfg.getMaxPortalRenderDepth(), cfg::setMaxPortalRenderDepth));
-        y += rowH;
+        // IS5-REC: the former "Max recursive portal depth" slider (0..3) is DELETED. It had NO
+        // consumer anywhere in the tree — nothing outside its own getter/setter ever read the value,
+        // so dragging it did nothing at all. Portal recursion depth (vanilla AND shaderpack) plus
+        // the deep-recursion lag guard now live in IPConfig, i.e. config/immersive_portals.json and
+        // the Cloth screen — which is the screen the Mod Menu button ACTUALLY opens at the default
+        // entityPortals=true (ModMenuIntegration:38-40 routes THIS screen only when the flag is
+        // OFF, the state in which no portal engine runs at all). Adding them here would have made
+        // them unreachable for every real user.
 
         // Master "render through portals" toggle.
         this.addRenderableWidget(new Button.Builder(renderingLabel(cfg), b -> {

@@ -44,9 +44,72 @@ import qouteall.imm_ptl.core.teleportation.ClientTeleportationManager;
 public class CrossPortalViewRendering {
     public static final Minecraft client = Minecraft.getInstance();
 
+    /**
+     * TP-XDIM — THE FRAME-REPLACEMENT LATCH. TRUE exactly while this class's render bracket is on
+     * the stack: portal LAYER 0 (no pushPortalLayer), {@code mainRenderTarget()} is the GENUINE
+     * main target, and vanilla {@code renderLevel} has been elided by
+     * {@code MixinGameRenderer.seamlessportals$redirectRenderingWorld}.
+     *
+     * <p><b>Why a latch and not {@code PortalRendering.isRendering()}:</b> every other dest render
+     * in this mod runs INSIDE {@code pushPortalLayer}, so {@code isRendering()==TRUE} is the
+     * re-entrancy guard the design leans on. A frame-REPLACING render is a nested renderLevel at
+     * LAYER 0, where {@code isRendering()} is FALSE — the three consumers below are blind to it by
+     * construction. Pushing a layer instead is NOT an option: it would arm the inner clip plane,
+     * and IP's cross view is unclipped (the camera is on the far side; the whole dest world is
+     * visible, there is no aperture).
+     *
+     * <p><b>Why POSITIVE and not {@code !GuiPortalRendering.isRendering()}:</b> a negative test
+     * would hand a full-pipeline main-target clobber to the next layer-0 caller anyone adds,
+     * silently. Opt IN.
+     *
+     * <p>Consumers: (1) {@code IrisCompatOn262Renderer.invokeWorldRendering} — the D23 split;
+     * (2) the Fabric AFTER_TRANSLUCENT_TERRAIN driver; (3)
+     * {@code PerEntityClipBracket.onMainPassBeforeTranslucentTerrain}; and (4) XWIN —
+     * {@code SecondaryWorldRenderCore.maybeRunCrossViewPortalPass}, the ONLY consumer that reads
+     * the latch POSITIVELY (it fires the reverse-window pass precisely because this is a cross-view
+     * frame, where the IS0 anchor cannot). (2) and (3) exist because
+     * fabric level-render events RE-FIRE inside a real nested renderLevel (the doubly-load-bearing
+     * guard documented at {@code IrisCompatOn262Renderer.onBeforeTranslucentRendering}) — under the
+     * DECOMPOSED cross-view driver no framegraph runs and neither event fires at all, so honoring
+     * the latch makes the two routes behaviour-identical at those seams. The no-regression argument
+     * is structural, not empirical.
+     *
+     * <p>Render thread only. Cleared as the FIRST statement of the finally so no throw can strand
+     * it — a stranded TRUE would silently kill the F1 driver and the entity bracket for the rest of
+     * the session (the silent-portal-death class).
+     */
+    private static boolean renderingCrossPortalView = false;
+
+    public static boolean isRenderingCrossPortalView() {
+        return renderingCrossPortalView;
+    }
+
     // if rendered, return true
     public static boolean renderCrossPortalView() {
+        // TP-XDIM census (log-only, DEFAULT OFF, never throws; fully-qualified calls so this file
+        // gains no import — the IrisCompatOn262Renderer precedent for qouteall -> com.warwa probe
+        // calls). EVERY exit below is noted with its own code: "it did not render" must never
+        // collapse into one unreadable bucket.
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteEnter();
         if (!IPGlobal.enableCrossPortalView) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_GATE_OFF);
+            return false;
+        }
+
+        // TP-XDIM ESCAPE HATCH (-PcrossViewSuppressUnderPack, DEFAULT OFF). Decline the cross view
+        // while a shaderpack is actually running: vanilla renderLevel then renders the frame
+        // normally and the third-person camera sees the SOURCE world from inside the portal wall
+        // (IP's pre-cross-view behaviour — clipping, NEVER corruption). The documented-limitation
+        // fallback if the full-pipeline route proves unusable live, AND this arc's strongest
+        // NEGATIVE discriminator: if the explosion SURVIVES this lever, the cross-view path is not
+        // the carrier and the TP-XDIM hypothesis is refuted outright. Gated on isShaders() (not on
+        // the pack-views flag) so it is inert for shaders-OFF users and the whole gametest suite.
+        if (IPGlobal.CROSS_VIEW_SUPPRESS_UNDER_PACK_LEVER
+            && qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.invoker.isShaders()
+        ) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_SUPPRESSED_UNDER_PACK);
             return false;
         }
 
@@ -61,6 +124,10 @@ public class CrossPortalViewRendering {
             || client.getCameraEntity() == null
             || RenderStates.originalCamera == null
         ) {
+            // TP-XDIM: re-derive WHICH of the five sub-conditions tripped, in this guard's own
+            // short-circuit order. The production guard is deliberately NOT split into five ifs —
+            // a drift in the census's copy can only mis-LABEL a row, never mis-render a frame.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExitPrecondition();
             return false;
         }
 
@@ -101,13 +168,23 @@ public class CrossPortalViewRendering {
         ).orElse(null);
 
         if (portalHit == null) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_NO_PORTAL_HIT);
             return false;
         }
 
         Portal portal = portalHit.getFirst();
         Vec3 hitPos = portalHit.getSecond();
 
+        // TP-XDIM: physicalPlayerHeadPos and realCameraPos are BOTH in SOURCE space here — the only
+        // space in which a signed distance to the SOURCE portal plane means anything (the
+        // renderingCameraPos derived below is already dest-transformed).
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.notePortalHit(
+            portal, physicalPlayerHeadPos, realCameraPos);
+
         if (!portal.canTeleportEntity(cameraEntity)) {
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.X_PORTAL_REJECTS_CAMERA);
             return false;
         }
 
@@ -155,11 +232,23 @@ public class CrossPortalViewRendering {
         // IP-faithful projection for a bob-free cross view. The next normal frame recaptures.
         RenderStates.capturedMainPassBobbedProjection = null;
 
+        // TP-XDIM: the render bracket is about to be entered — this is the point past which the
+        // frame is committed to being rendered HERE instead of by vanilla renderLevel. irisPre is
+        // captured now so it can be compared with irisPost below (the pipeline-slot leak question).
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.notePreRender(
+            renderingCameraPos, isThirdPerson());
+
         qouteall.imm_ptl.core.render.renderer.PortalRenderer.switchToCorrectRenderer();
         IPCGlobal.renderer.prepareRendering();
+        // TP-XDIM: armed AFTER prepareRendering (a stencil-disable belt; it renders nothing) and
+        // BEFORE the invoke — the latch covers exactly the window in which a framegraph can run.
+        renderingCrossPortalView = true;
         try {
             IPCGlobal.renderer.invokeWorldRendering(worldRenderInfo);
         } finally {
+            // TP-XDIM: FIRST statement of the finally, ahead of every other unwind step, so no
+            // throw anywhere below can strand the latch TRUE.
+            renderingCrossPortalView = false;
             IPCGlobal.renderer.finishRendering();
             // S14.29 leak class (verify fold; the exact GuiPortalRendering.java:115-120 hardening):
             // the dest core's defensive Step-10.13 finally re-enables GL_STENCIL_TEST with EQUAL(0),
@@ -168,8 +257,15 @@ public class CrossPortalViewRendering {
             // and the whole GUI pass draw stencil-tested. 26.2 vanilla owns no stencil state to
             // restore it; IP exited cross-view frames stencil-disabled.
             org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_STENCIL_TEST);
+            // TP-XDIM: LAST statement of the finally. NOTE the honest limit — an UNCAUGHT throw
+            // from the render bracket propagates past this method and out of GameRenderer.render,
+            // so the census's TAIL row-builder never runs: that frame emits NO ROW AT ALL and the
+            // buffered window is lost with it. This capture is visible on the normal path only.
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.notePostRender();
         }
 
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteExit(
+            com.warwa.seamlessportals.render.TpXdimFrameCensus.X_RENDERED);
         return true;
     }
 

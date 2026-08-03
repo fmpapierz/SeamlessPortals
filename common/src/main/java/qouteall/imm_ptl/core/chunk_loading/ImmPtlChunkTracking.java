@@ -172,9 +172,17 @@ public class ImmPtlChunkTracking {
         );
         
         chunkLoaders.addAll(playerInfo.additionalChunkLoaders);
-        
+
         MinecraftServer server = player.level().getServer();
-        
+
+        // §2g (verify-fold FIX-1): the player's own view-distance square must NOT count as
+        // portal-fed for the despawn suppressor — ChunkLoader is a record (structural equals),
+        // so identity vs the direct loader discriminates it. additionalChunkLoaders correctly
+        // count as portal-fed (mod-held chunks vanilla would not load). Degenerate miss: a
+        // same-dim portal dest loader structurally EQUAL to the direct loader marks non-fed —
+        // rare, fails toward vanilla despawn (safe direction).
+        ChunkLoader playerDirect = ChunkVisibility.playerDirectLoader(player);
+
         for (ChunkLoader chunkLoader : chunkLoaders) {
             ResourceKey<Level> dimension = chunkLoader.dimension();
             var chunkRecordMap = getDimChunkWatchRecords(dimension);
@@ -188,13 +196,16 @@ public class ImmPtlChunkTracking {
             playerInfo.visibleDimensions.add(dimension);
             
             ImmPtlChunkTickets ticketInfo = ImmPtlChunkTickets.get(world);
-            
+
+            // §2g: everything except the player's own direct view square is portal-fed.
+            boolean portalFed = !chunkLoader.equals(playerDirect);
+
             chunkLoader.foreachChunkPos((dim, x, z, distanceToSource) -> {
                 long chunkPos = ChunkPos.pack(x, z);
                 var records =
                     chunkRecordMap.computeIfAbsent(chunkPos, k -> new Object2ObjectOpenHashMap<>());
-                
-                ticketInfo.markForLoading(chunkPos, distanceToSource, generationCounter);
+
+                ticketInfo.markForLoading(chunkPos, distanceToSource, generationCounter, portalFed);
                 
                 records.compute(player, (k, record) -> {
                     boolean isBoundary = distanceToSource == chunkLoader.radius();
@@ -308,24 +319,56 @@ public class ImmPtlChunkTracking {
         }
     }
     
+    /**
+     * How many GENERATIONS a chunk survives after nothing is watching it any more.
+     *
+     * <p>One generation is {@link #updateInterval} = 13 ticks, so the shipped default of 4 is about
+     * 2.6 seconds. The consumer is the {@code generationCounter - record.lastWatchGeneration >
+     * delayUnloadGenerations} test above: raising this keeps portal-destination chunks resident
+     * after you look away, so glancing back and forth does not re-stream them.
+     *
+     * <p>IS5-KEEP — now configurable ({@code IPGlobal.chunkUnloadDelayGenerations}):
+     * <ul>
+     *   <li><b>negative</b> = never unload while the player is online. The adaptive shrink below is
+     *       skipped entirely, because it would otherwise defeat the setting the moment retention did
+     *       its job: keeping chunks longer IS what pushes the loaded count past its thresholds.</li>
+     *   <li><b>above the default</b> = honoured as asked, adaptive shrink also skipped — the player
+     *       has explicitly accepted the memory cost, and shrinking it back would make the setting
+     *       appear to do nothing exactly when it started working.</li>
+     *   <li><b>default or lower</b> = IP's original behaviour, adaptive shrink intact.</li>
+     * </ul>
+     */
     // unload chunks earlier if the player loads many chunks
     private static int getDelayUnloadGenerationForPlayer(ServerPlayer player) {
+        int configured = IPGlobal.chunkUnloadDelayGenerations;
+
+        if (configured < 0) {
+            // Indefinite. Not Integer.MAX_VALUE: generationCounter is an int that increments every
+            // 13 ticks and the test is a SUBTRACTION, so a max-value delay would overflow into
+            // negative and start unloading everything. A large finite value cannot.
+            return Integer.MAX_VALUE / 4;
+        }
+
+        if (configured > defaultDelayUnloadGenerations) {
+            return configured;
+        }
+
         PlayerChunkLoading playerInfo = getPlayerInfo(player);
         if (playerInfo == null) {
-            return defaultDelayUnloadGenerations;
+            return configured;
         }
-        
+
         int loadedChunks = playerInfo.loadedChunks;
-        
+
         if (loadedChunks > 2000) {
             return 1;
         }
-        
+
         if (loadedChunks > 1200) {
             return 2;
         }
-        
-        return defaultDelayUnloadGenerations;
+
+        return configured;
     }
     
     private static Object2ObjectOpenHashMap<ResourceKey<Level>, LongOpenHashSet> refreshAdditionalChunkLoaders(MinecraftServer server) {
@@ -349,7 +392,8 @@ public class ImmPtlChunkTracking {
                 @Override
                 public void consume(ResourceKey<Level> dimension, int x, int z, int distanceToSource) {
                     long chunkPos = ChunkPos.pack(x, z);
-                    dimTicketManager.markForLoading(chunkPos, distanceToSource, generationCounter);
+                    // §2g: global additional loaders are mod-held (vanilla would not load) ⇒ portal-fed.
+                    dimTicketManager.markForLoading(chunkPos, distanceToSource, generationCounter, true);
                     set.add(chunkPos);
                 }
             });
@@ -578,7 +622,8 @@ public class ImmPtlChunkTracking {
         ImmPtlChunkTickets dimTicketManager = ImmPtlChunkTickets.get(world);
         
         chunkLoader.foreachChunkPos((dim, x, z, distanceToSource) -> {
-            dimTicketManager.markForLoading(ChunkPos.pack(x, z), distanceToSource, generationCounter);
+            // §2g: global additional loaders are mod-held (vanilla would not load) ⇒ portal-fed.
+            dimTicketManager.markForLoading(ChunkPos.pack(x, z), distanceToSource, generationCounter, true);
         });
     }
     

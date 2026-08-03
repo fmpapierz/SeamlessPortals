@@ -264,12 +264,23 @@ public class ViewAreaRenderer {
      * until the returned {@link MeshData}'s vertex bytes have been uploaded (the returned mesh
      * references the builder's native memory). Returns null when every triangle clipped away.
      */
+    /** IS5-SEAM clip census for the LAST {@link #buildPortalViewAreaMesh} call. Public so the stamp can
+     *  report what the near-plane clip actually did on the frames that show the black seam flash —
+     *  the previous round logged only the "mesh came back null" branch, which never fired, leaving the
+     *  alternative (mesh survives but is partially clipped) unmeasured. */
+    public static int clipTrisKept = 0;
+    public static int clipTrisClipped = 0;
+    public static int clipTrisDropped = 0;
+
     public static MeshData buildPortalViewAreaMesh(
         Vec3 fogColor, Portal portal,
         Vec3 cameraPos, float partialTick,
         Matrix4f modelViewMatrix,
         ByteBufferBuilder byteBuffer
     ) {
+        clipTrisKept = 0;
+        clipTrisClipped = 0;
+        clipTrisDropped = 0;
         {
             BufferBuilder bufferBuilder = new BufferBuilder(
                 byteBuffer, PrimitiveTopology.TRIANGLES, DefaultVertexFormat.POSITION_COLOR
@@ -319,13 +330,31 @@ public class ViewAreaRenderer {
                         "   [aperture tri] vz=(%.3f,%.3f,%.3f) in=(%b,%b,%b)", z0, z1, z2, in0, in1, in2));
                 }
 
+                // IS5-SEAM ATTRIBUTION LEVER (diagnostic). The census proved the aperture mesh is
+                // never null and never fully dropped, but IS partially clipped on the approach
+                // (clipped=2 on 13 of 23 rows from ~1.2 blocks in) — so the stamp covers only the
+                // surviving part and the black band is the remainder. Whether that removed area is
+                // what you SEE is still an inference, and inference has been wrong all night. This
+                // lever passes every triangle through unclipped: if the black band disappears, the
+                // clip is the cause; if it persists, the clip is innocent and the band comes from
+                // somewhere else. COST while set: re-opens the S14.36 sky-wedge artifact that this
+                // clip exists to prevent, so expect wedges — their presence also confirms the lever
+                // actually took effect. Diagnostic only, never ship it on.
+                if (qouteall.imm_ptl.core.IPGlobal.APERTURE_PLANE_CLIP_DISABLED_LEVER) {
+                    clipTrisKept++;
+                    rawOutput.accept(p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z);
+                    return;
+                }
                 if (in0 && in1 && in2) {
+                    clipTrisKept++;
                     rawOutput.accept(p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z);
                     return;
                 }
                 if (!in0 && !in1 && !in2) {
+                    clipTrisDropped++;
                     return; // fully behind the camera plane — can never be visible aperture
                 }
+                clipTrisClipped++;
 
                 // Sutherland-Hodgman clip against viewZ = -EPS, keeping the in-front side.
                 double[][] src = {

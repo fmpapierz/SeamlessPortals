@@ -189,7 +189,55 @@ public abstract class MixinTrackedEntity implements IETrackedEntity {
         );
 
         // no need to clamp it with render distance, as we check chunk watch records now
-        int effectiveRange = getEffectiveRange();
+        int rangeBlocks = getEffectiveRange();
+
+        // IS5-WDIST: WITHOUT THIS, THE PORTAL WINDOW RENDER DISTANCE SETTING CANNOT RAISE ANYTHING.
+        //
+        // getEffectiveRange() derives from the EntityType's clientTrackingRange, and Portal declares
+        // 6 chunks (Portal.java:122) = 96 blocks. The gate below is
+        // `rec.distanceToSource * 16 + 8 <= effectiveRange`, so 5 chunks (88) passes and 6 (104)
+        // fails: an ordinary portal more than ~5 chunks away is NEVER SENT TO THE CLIENT. The client
+        // cull that the config feeds (PortalRenderer.getRenderRange) only ever sees portals that
+        // arrived, so every configured value from 6 to 32 behaved identically to 6 — the setting
+        // worked as a reducer and was inert in the direction the user actually asked for. Found by
+        // an adversarial pass hunting exactly this, then confirmed against the tracking gate.
+        //
+        // Widening here rather than raising clientTrackingRange because that is a registration-time
+        // constant and this needs to follow a live config value. The chunk WATCH RECORD remains the
+        // real bound — see the comment directly above: a portal in a chunk the player does not track
+        // has no record at all, so this can never reach past the player's loaded radius. That is
+        // also why the config maximum is 32, the vanilla render-distance maximum.
+        //
+        // Portals only, and only when the setting is non-default: at 0 this block is inert and every
+        // entity keeps its vanilla tracking exactly as before.
+        // IS5-WDIST: 0 = ORIGINAL BEHAVIOUR, any explicit value = WINDOW AND CONTENT TIED.
+        //
+        // At 0 this block is inert and the vanilla gate stands: Portal.clientTrackingRange(6) = 96
+        // blocks, tested as distanceToSource * 16 + 8 <= range, so the window stops at ~88 blocks.
+        // That is deliberately INSIDE ChunkVisibility's 8-chunk (128-block) destination-loading
+        // range, which is why the original never showed a blank window — the window died before its
+        // content did.
+        //
+        // An earlier revision made 0 mean "follow the render distance". That was reverted at the
+        // user's direction after it produced exactly the artifact the two ranges disagreeing
+        // predicts: USER-MEASURED, the frame stayed visible out to ~512 blocks while the destination
+        // stopped loading at 128, so the window went BLANK from ~146 blocks out and only refilled
+        // coming back inside ~127 (the ~19-block band is chunk granularity — the loader search is a
+        // chunk-aligned Chebyshev square, so the flip point depends on where in the chunk each of
+        // you sits, and the diagonal reaches further than the axis).
+        //
+        // Above 0, ChunkVisibility's visiblePortalRangeChunks follows this SAME value, so the
+        // destination loads exactly as far as the window can be seen. One number, no gap, in either
+        // mode. The cost of that is real and lands on whoever raises it: destinations loading for
+        // portals up to 32 chunks away is why IP capped this at 8 to begin with.
+        if (qouteall.imm_ptl.core.IPGlobal.portalWindowRenderDistance > 0
+            && entity instanceof qouteall.imm_ptl.core.portal.Portal
+        ) {
+            rangeBlocks = Math.max(
+                rangeBlocks, qouteall.imm_ptl.core.IPGlobal.portalWindowRenderDistance * 16);
+        }
+        // Effectively-final copy for the lambdas below (the widen above reassigns).
+        final int effectiveRange = rangeBlocks;
 
         seenBy.removeIf(connection -> {
             ServerPlayer player = connection.getPlayer();

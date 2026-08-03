@@ -9,6 +9,7 @@
     "sodium.IESodiumCameraTimingControl",
     "sodium.MixinSodiumRenderSectionManager",
     "sodium.MixinSodiumRenderRegion",
+    "sodium.MixinSodiumRenderRegionManager_PortalBatchClear",
     "sodium.MixinSodiumFlawlessFrames",
     "sodium.MixinSodiumShaderManagerCompilationCache_ClipSourcePatch",
     "sodium.MixinSodiumGLDrawContext_ClipUpload",
@@ -18,8 +19,20 @@
     "sodium.MixinSodiumOcclusionCuller_CaveCull",
     "sodium.MixinSodiumProbe_ShaderSources",
     "sodium.MixinSodiumProbe_GlCommandEncoder",
+    "sodium.MixinSodiumFullbrightProbe_GlCommandEncoder",
     "sodium.MixinSodiumChunkRenderList_Probe",
-    "iris.MixinIrisSodiumTransformPatcher_ClipInject"
+    "iris.MixinIrisHandRenderer_SeamDepthBracket",
+    "iris.MixinIrisHandRenderer_SubmitTap",
+    "iris.MixinIrisHandDrawState_GlCommandEncoder",
+    "iris.MixinIrisSodiumTransformPatcher_ClipInject",
+    "iris.MixinIrisCompositeRenderer_BloomApertureMask",
+    "iris.MixinIrisCompositeRenderer_DestPrevWrite",
+    "iris.MixinIrisCompositeRenderer_DestPrevRestore",
+    "iris.MixinIrisComputeProgram_ActDispatch",
+    "iris.MixinIrisShadowCompositeRenderer_ActRenderAll",
+    "iris.MixinIrisCompositeRenderer_Census",
+    "iris.MixinIrisCompositeRenderer_CensusPostWrite",
+    "iris.MixinIrisProgram_Census"
   ],
   "injectors": {
     "defaultRequire": 1

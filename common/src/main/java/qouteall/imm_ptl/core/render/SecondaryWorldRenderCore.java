@@ -65,6 +65,7 @@ import qouteall.imm_ptl.core.render.context_management.FogRendererContext;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
 import qouteall.imm_ptl.core.render.context_management.RenderStates;
 import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
+import qouteall.imm_ptl.core.render.renderer.PortalRenderer;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -190,7 +191,10 @@ public class SecondaryWorldRenderCore {
     // distinct-buffer-per-call + DEFERRED close.
     private static final java.util.List<GpuBuffer> frameTransientUbos = new java.util.ArrayList<>();
 
-    static GpuBufferSlice registerFrameTransientUbo(GpuBuffer buffer) {
+    // public (C3-BLOOM verifier FIX1): same-package consumers (IrisCompatPaste) always compiled,
+    // but IrisBloomApertureMask (qouteall.imm_ptl.core.compat.iris_compatibility) rides the same
+    // frame-transient ledger for its mask-mesh vertex buffer — package-private did not compile.
+    public static GpuBufferSlice registerFrameTransientUbo(GpuBuffer buffer) {
         frameTransientUbos.add(buffer);
         return buffer.slice();
     }
@@ -410,6 +414,9 @@ public class SecondaryWorldRenderCore {
         // (a prior session's throw must not keep the pass dead or mute its log).
         sameDimEntitiesSwallowLogged = false;
         sameDimEntityThrowCount = 0;
+        // §2b: same for the compat same-dim fill's fence (adjudication F — the house pattern).
+        compatSameDimSwallowLogged = false;
+        compatSameDimEntityThrowCount = 0;
         closeFrameTransientUbos(); // S14.30: disposal path
         // S18.3: dispose the per-dest-dim cloud isolation (AutoCloseable GPU ring buffers) + drop
         // the mirrored texture (a new session's resource state re-mirrors at the first render TAIL).
@@ -762,6 +769,11 @@ public class SecondaryWorldRenderCore {
                         }
                         finally {
                             isDestExtracting = false;
+                        }
+                        // §2b probe: dest-level census + extract output (decomposed route).
+                        if (EntityVisibilityProbe.ENABLED) {
+                            EntityVisibilityProbe.recordDestExtract(
+                                "x", destLevel, destLRS.entityRenderStates.size());
                         }
                         // S18 DEST PARTICLES (the §5 designed item LANDED — user-reported gap:
                         // break/fire particles absent in windows): the flag-ON global engine already
@@ -1408,6 +1420,23 @@ public class SecondaryWorldRenderCore {
             ((CameraInvokerMixin) newCamera).seamlessportals$setCapturedFrustum(destFrustum);
         }
 
+        // ===== Step 3b — IS-BOB iris bob-sync: draw-only bobbed dest view ========================
+        // Per-PORTAL apply of the per-FRAME pose (panel wf_22f132bb-257). destViewMatrix (RAW)
+        // keeps feeding the CULL legs (the destFrustum above + the Step-9' cull drive) = vanilla
+        // bob-free-cull parity + the C2 async-tree rule; destDrawViewMatrix feeds the three DRAW
+        // consumers (camera-state set, clip feed, render arg). A null pose (not relocated /
+        // shaders-off / lever-off / stale frame) => alias => byte-identical to pre-fix. The fresh
+        // copy in getScaledPoseForDestPass is LOAD-BEARING: iris's setGbufferModelView ALIASES
+        // the render arg (verify fold FIX-2) — never fold into a shared scratch.
+        Matrix4f destDrawViewMatrix = destViewMatrix;
+        Matrix4f irisBobPose = qouteall.imm_ptl.core.compat.iris_compatibility.IrisBobSync
+            .getScaledPoseForDestPass(PortalRendering.getExtraModelViewScaling());
+        if (irisBobPose != null) {
+            // POSE_s · V_dest — PRE-multiply (eye space, mirroring iris's own mulLocal(bobStack);
+            // post-multiply would bob in dest-world axes = the classic S13-M order error).
+            destDrawViewMatrix = new Matrix4f(destViewMatrix).mulLocal(irisBobPose);
+        }
+
         // ===== Step 4 — camera render state (scratch object for shared state) ====================
         SectionRenderDispatcher dispatcher = destRenderer.sectionRenderDispatcher();
         Vec3 savedDispatcherCamPos = null;
@@ -1427,7 +1456,10 @@ public class SecondaryWorldRenderCore {
         }
 
         newCamera.extractRenderState(destCameraState, partialTick);
-        destCameraState.viewRotationMatrix.set(destViewMatrix);
+        // IS-BOB C5b (H1 dual-set): the nested render feeds prepareChunkRenders from THIS FIELD
+        // while sodium terrain rides the render ARG — setting BOTH to the same bobbed matrix is
+        // correct under either plumbing resolution.
+        destCameraState.viewRotationMatrix.set(destDrawViewMatrix);
         destCameraState.projectionMatrix.set(destProjection);
         if (destCameraState.entityRenderState != null) {
             destCameraState.entityRenderState.bob = 0.0f;
@@ -1467,6 +1499,21 @@ public class SecondaryWorldRenderCore {
         // restore it (nested full-pipeline passes stack correctly). Armed at the belt arm below.
         com.warwa.seamlessportals.render.FullPipelineClipState.State savedFullPipelineClip =
             com.warwa.seamlessportals.render.FullPipelineClipState.save();
+        // §2b COMPAT SAME-DIM ENTITIES (2026-07-24): swap holders for the Step-9.5-SD pre-render()
+        // fill of the SHARED main LRS (entities/BEs/particle groups). Assigned only when the fill
+        // runs; the outermost finally strand-clears + restores PER-LIST (null-guarded — the
+        // verify-fold FIX-2 shape: no flag window between the first swap and a throw). Particle
+        // refs are MANDATORY-restore (S14.41: next frame's reset() must clear() the SHARED group
+        // accumulators through these refs). savedMainEntityStateCount = the verify-fold FIX-1:
+        // lastEntityRenderStateCount is READ by LevelExtractor.entityStatistics() (the F3 "E:"
+        // line, rendered after the portal pass) — preserve it through the swap.
+        List<net.minecraft.client.renderer.entity.state.EntityRenderState>
+            savedMainEntityStates = null;
+        List<net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState>
+            savedMainBlockEntityStates = null;
+        List<net.minecraft.client.renderer.state.level.ParticleGroupRenderState>
+            savedMainParticleGroups = null;
+        int savedMainEntityStateCount = 0;
         try {
             // ===== Step 6 — dest FOG, HOISTED BEFORE the Step-5 extract (IS2 FIX-F; port-note ====
             // IS-iris-shaders-on §3.2) — the verbatim decomposed body (FIX-6 rain bracket +
@@ -1536,6 +1583,11 @@ public class SecondaryWorldRenderCore {
                         }
                         finally {
                             isDestExtracting = false;
+                        }
+                        // §2b probe: dest-level census + extract output (full-pipeline route).
+                        if (EntityVisibilityProbe.ENABLED) {
+                            EntityVisibilityProbe.recordDestExtract(
+                                "f", destLevel, destLRS.entityRenderStates.size());
                         }
                         // Isolated world-filtered particle fill (S18 dest particles; render()'s
                         // submitFeatures submits particlesRenderState like any pass).
@@ -1626,6 +1678,62 @@ public class SecondaryWorldRenderCore {
                 logSameDimSupplyProbe(destDim);
             }
 
+            // ===== Step 9.5-SD — same-dim dest ENTITIES (+BEs +particles) for the nested render ==
+            // (§2b fix, probe-proven gap: [ENT-PROBE] dp>0 sub=0 — the nested render()'s own
+            // submitFeatures (26.2 LevelRenderer.java:174 -> submitEntities :281 -> the :282 clear)
+            // drains whatever sits in destLRS at invoke time, and for SHARED-STATE passes the main
+            // pass already consumed+cleared those lists; the compat route never calls the decomposed
+            // renderPortalEntitiesSameDim.) Fill the shared LRS with a PORTAL-camera isolated
+            // extract — the renderPortalEntitiesSameDim discipline (ERD prepare + isDestExtracting
+            // bracket: the IP isOnDestinationSide hide, C2-1e/D5 neutralizes, the fade-gate bypass)
+            // — so the nested render submits them through ITS OWN iris pipeline (gbuffers entity
+            // phase: pack-shaded/fogged; a post-render() renderAllFeatures would draw OUTSIDE
+            // iris's deferred pipeline and composite wrong under deferred packs). Placement is
+            // AFTER Step-9': the sodium BE walk (0.9.1 LevelExtractorMixin cancel ->
+            // SWR.extractBlockEntities -> RSM.getRenderLists, javap) must see the D1-swapped
+            // portal context's renderLists, which ip_driveDestTerrainSetup just refreshed.
+            // Main-LRS contents are swapped OUT first — this also forecloses the nested
+            // re-submit of the MAIN pass's still-resident particle groups at the dest camera
+            // (submitFeatures never clears particlesRenderState, :286) — and the outermost
+            // finally strand-clears + restores per-list. Cross-dim (!sharedState) is
+            // byte-untouched (Step-5 is its extract). debugSkipSameDimEntities = the decomposed
+            // pass's attribution lever, honored here for A/B parity. NOTE (verify fold FIX-3):
+            // the iris SHADOW pass is fill-INDEPENDENT — iris owns a private LevelRenderState and
+            // runs its own entity extract (ShadowRenderer bytecode), which is why entity shadows
+            // showed even pre-fix.
+            if (sharedState && IPGlobal.isCompatSameDimEntitiesActive()
+                && !IPGlobal.debugSkipSameDimEntities
+                && compatSameDimEntityThrowCount < 3
+            ) {
+                if ((!destLRS.entityRenderStates.isEmpty()
+                        || !destLRS.blockEntityRenderStates.isEmpty())
+                    && !compatSameDimNonEmptyWarned
+                ) {
+                    // §2b once-only WARN (dark-path discipline): the post-main-anchor invariant
+                    // (entity/BE lists drained by the main pass) failed — the swap keeps us
+                    // safe; the WARN names the surprise.
+                    compatSameDimNonEmptyWarned = true;
+                    qouteall.q_misc_util.Helper.err(
+                        "[compatSameDimEntities] main LRS entity/BE lists NON-EMPTY at the "
+                            + "post-main anchor (ent=" + destLRS.entityRenderStates.size()
+                            + " be=" + destLRS.blockEntityRenderStates.size()
+                            + ") — swapped out + restored (once-only)");
+                }
+                savedMainEntityStateCount = destLRS.lastEntityRenderStateCount;
+                savedMainEntityStates = new ArrayList<>(destLRS.entityRenderStates);
+                destLRS.entityRenderStates.clear();
+                savedMainBlockEntityStates = new ArrayList<>(destLRS.blockEntityRenderStates);
+                destLRS.blockEntityRenderStates.clear();
+                // S14.41 shape: empty the LIST, never clear() the shared group accumulators.
+                savedMainParticleGroups =
+                    new ArrayList<>(destLRS.particlesRenderState.particles);
+                destLRS.particlesRenderState.particles.clear();
+                fillSameDimStatesForNestedRender(
+                    destRenderer, destLRS, newCamera, destFrustum,
+                    deltaTracker, partialTick, destLevel
+                );
+            }
+
             // Dest diffuse lighting (mc.level == dest under the shell swap): the nested render()'s
             // feature draws read the lighting state; restored to SOURCE in the finally.
             MyGameRenderer.resetDiffuseLighting();
@@ -1654,10 +1762,42 @@ public class SecondaryWorldRenderCore {
             // by the vanilla GlCommandEncoderClipMixin + sodium MixinSodiumGLDrawContext_ClipUpload
             // guards (port-note §4.0). The finally re-asserts disableClipping() after render().
             GL11.glDisable(GL11.GL_STENCIL_TEST);
-            FrontClipping.setupInnerClipping(
-                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
-                destViewMatrix, -FrontClipping.ADJUSTMENT
-            );
+            // IS5-SEAM crossing-window relax (DEFAULT ON, -PdisableSeamClipRelax to A/B): the
+            // correction is IP's constant -ADJUSTMENT far from the plane and ramps camera-side
+            // inside the crossing window so no rasterized aperture ray has its dest content
+            // culled (the measured black-band mechanism — FrontClipping derivation). The plane is
+            // resolved ONCE and shared with the arm + census so all three see the same object.
+            qouteall.q_misc_util.my_util.Plane seamActivePlane =
+                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null;
+            qouteall.imm_ptl.core.portal.Portal seamRenderingPortal =
+                PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null;
+            double seamClipCorrection = FrontClipping.innerClipCorrectionForCrossing(
+                seamActivePlane, seamRenderingPortal, destCameraPos);
+            // IS5-SEAM V2: inside the crossing window SUSPEND the inner clip for this pass — the
+            // depth probe measured the v1 plane-shift keeping UNLIT near-side wall faces (black
+            // at depth ~1.0), while the user-validated front_clipping-disable content is correct
+            // (the lit faces cover them). Equivalence scope (verify-fold): identical to the
+            // front_clipping-disable state for the AMBIENT dest arm — terrain and un-bracketed
+            // draws; PerEntityClipBracket's per-entity planes remain active, and the outer clip
+            // is untouched. The com.warwa store is reset DIRECTLY (unconditional) so the
+            // suspended state is guaranteed by this branch itself — the mirror-guarded qouteall
+            // disableClipping() alone would no-op when already-disabled and the state would rest
+            // on ambient invariants (a future direct-store arm would then freeze a STALE plane
+            // into FullPipelineClipState while the census counted the frame as SUSPENDED).
+            boolean seamSuspend = FrontClipping.shouldSuspendInnerClipForCrossing(
+                seamActivePlane, seamRenderingPortal, destCameraPos);
+            if (seamSuspend) {
+                FrontClipping.disableClipping();
+                com.warwa.seamlessportals.render.FrontClipping.disable();
+            }
+            else {
+                FrontClipping.setupInnerClipping(
+                    seamActivePlane,
+                    // IS-BOB C6: the clip plane must follow the DRAW transform (the bobbed matrix
+                    // carries a translation column; FrontClipping's planeW term compensates it).
+                    destDrawViewMatrix, seamClipCorrection
+                );
+            }
             // IS3 V6 FOLD — FREEZE the just-armed view-space plane into the pass-scoped full-pipeline
             // override. render() runs submitFeatures (its entity submit) BEFORE the framegraph terrain
             // execute, and M4 (MixinLevelRenderer_CrossPortalEntity submitEntities-TAIL) disarms the
@@ -1677,6 +1817,15 @@ public class SecondaryWorldRenderCore {
             else {
                 com.warwa.seamlessportals.render.FullPipelineClipState.disarm();
             }
+            // IS5-SEAM-ARM census (2026-07-27; always-on, log-only, 1 Hz within 3 blocks of the
+            // plane). Born as the pre-fix hypothesis test (its first run measured the crossing
+            // window: baselineVoid=6 / baselineStraddle=38, feed coherent at 0.0000); now the
+            // relax fix's VERIFICATION instrument: the baseline counters mark crossing seconds in
+            // every leg, and armedVoidRisk is the health check (relax ON => must be 0; the
+            // -PdisableSeamClipRelax leg reproduces the pre-fix signature). Class javadoc has the
+            // full counter semantics and the D4.4 sign conventions.
+            com.warwa.seamlessportals.render.SeamClipArmCensus.note(
+                seamActivePlane, armedClipPlane, destCameraPos, seamClipCorrection, seamSuspend);
             // §4.7 discriminator probe — arm a 1Hz capture window for this full-pipeline pass
             // (lever-gated -Dseamlessportals.clipProbe; byte-inert at the default). The vanilla
             // trySetup handler feeds it per-draw; endPass() dumps in the finally.
@@ -1696,6 +1845,15 @@ public class SecondaryWorldRenderCore {
                 destDrawProjection,
                 mainCameraState.projectionMatrix,
                 destCameraPos);
+            // IS5-W shadow-alias probe (theory-restart fold §3) — ARM a 1Hz capture for this dest
+            // pass. Its per-access feeds live in MixinSodiumRenderRegion (the adjudicated collapse
+            // seams); endPass() emits the provenance/roster/identity/occupancy block in the finally.
+            // Lever-gated -Dseamlessportals.shadowAliasProbe; byte-inert at the default.
+            com.warwa.seamlessportals.render.ShadowAliasProbe.beginPass(destCameraPos);
+            // IS5-ACT gate probe — PORTAL bracket open (same try/finally that pairs ShadowAliasProbe
+            // above). Snapshots the iris ShadowRenderer statics so endPortal can prove a shadow pass
+            // ran INSIDE this nested dest render. Log-only; never throws.
+            com.warwa.seamlessportals.render.ActSeedProbe.beginPortal(destDim, sharedState, destCameraPos);
             // §8-14 LRS-identity HARD assert immediately before render() (port-note §1-E):
             // extract writes the extractor's LRS; render() reads the renderer's field — a
             // divergence here silently drops entities/clouds/particles.
@@ -1749,7 +1907,9 @@ public class SecondaryWorldRenderCore {
                 deltaTracker,
                 destRenderOutline,
                 destCameraState,
-                destViewMatrix,
+                // IS-BOB C5: the draw modelview (iris captures gbufferModelView from this arg —
+                // BY REFERENCE, which is why destDrawViewMatrix is a fresh per-portal object).
+                destDrawViewMatrix,
                 destFogBuffer,
                 destFogData.color,
                 WorldRenderInfo.getTopRenderInfo().doRenderSky
@@ -1783,6 +1943,29 @@ public class SecondaryWorldRenderCore {
                 // throw happened before the swap.
                 if (savedSectionUpdateStates != null) {
                     destLRS.sectionUpdateRenderStates.addAll(savedSectionUpdateStates);
+                }
+                // §2b strand-clear + restore (paired with Step-9.5-SD), PER-LIST null-guarded
+                // (verify-fold FIX-2: a saved list is non-null iff ITS swap ran — no flag window).
+                // Normal path: the nested submitFeatures' :282/:284 clears already emptied the
+                // entity/BE lists (clearing empty lists is free); on a render() throw this drops
+                // the portal-camera strands that would otherwise ride the SHARED main LRS into
+                // the next portal pass / next frame. Particles: OUR fresh isolated states are
+                // dropped and the MAIN pass's group refs restored, so next frame's
+                // LevelRenderState.reset() clears the shared accumulators exactly as vanilla
+                // expects (the S14.41 flow, byte-identical). FIX-1: the F3 "E:" statistic int
+                // rides the entity-list guard.
+                if (savedMainEntityStates != null) {
+                    destLRS.entityRenderStates.clear();
+                    destLRS.entityRenderStates.addAll(savedMainEntityStates);
+                    destLRS.lastEntityRenderStateCount = savedMainEntityStateCount;
+                }
+                if (savedMainBlockEntityStates != null) {
+                    destLRS.blockEntityRenderStates.clear();
+                    destLRS.blockEntityRenderStates.addAll(savedMainBlockEntityStates);
+                }
+                if (savedMainParticleGroups != null) {
+                    destLRS.particlesRenderState.particles.clear();
+                    destLRS.particlesRenderState.particles.addAll(savedMainParticleGroups);
                 }
                 destLRS.cameraRenderState = savedSharedCameraState;
                 destLRS.cloudColor = savedSharedCloudColor;
@@ -1819,6 +2002,17 @@ public class SecondaryWorldRenderCore {
             // angle resolve to the dest — the [3] stale-global cross-check. Byte-inert at default;
             // disarms itself on any reflection/GL failure.
             com.warwa.seamlessportals.render.ShadowEmptinessProbe.endPass();
+            // IS5-W shadow-alias probe — CAPTURE + dump this pass's scope-collapse evidence
+            // (batch provenance split by shadow/camera scope, in-scope rosters, list identity
+            // collisions + woven-RSM snapshot state, and the whole-map occupancy grid + yaw).
+            com.warwa.seamlessportals.render.ShadowAliasProbe.endPass();
+            // IS5-ACT gate probe — PORTAL bracket close + capture. THIS SLOT IS LOAD-BEARING:
+            // client.level is still the DEST here (MyGameRenderer:595 sets it, :669 restores it in
+            // switchAndRenderTheWorldFullPipeline's own finally, which has not run yet), so
+            // Iris.getCurrentDimension() and getPipelineNullable() both resolve to the DEST. The
+            // same read taken in IrisCompatOn262Renderer.invokeWorldRendering's finally would see
+            // the SOURCE dimension. Log-only; never throws.
+            com.warwa.seamlessportals.render.ActSeedProbe.endPortal();
             // §8-3(c) — re-run SOURCE setupFog so any capture-at-setupFog observer serves SOURCE
             // fog for the frame's remainder (block-era Step-9 discipline). Compute-only for the
             // UBO on 26.2; the shared AtmosphericFogEnvironment takes one extra lerp step toward
@@ -1837,6 +2031,216 @@ public class SecondaryWorldRenderCore {
             DrawCallTrace.record("<<< renderDestWorldFullPipeline dim=" + destDim.identifier()
                 + " " + DrawCallTrace.mvTop());
         }
+
+        // ===== XWIN — THE CROSS-VIEW PORTAL PASS (the full-pipeline core's missing Step-10.10) ==
+        // The DECOMPOSED core has always had this slot, at :1180
+        //     IPCGlobal.renderer.onBeforeTranslucentRendering(destViewMatrix);
+        // which is why a SHADERS-OFF cross-view frame already draws the reverse window (the stencil
+        // family renders portals in that hook — LIVE-CONFIRMED by the M0 gate, 2026-07-29: "the
+        // window is there with shaders off"). The full-pipeline core has NO such slot — everything
+        // happens inside its one render() call — so on a shaders-ON cross-view frame no portal
+        // window is drawn at all and the player, being in the other dimension, is simply invisible
+        // (user-reported after 4be60e0; ledgered gap #7 of that fix). THIS IS THAT TWIN, at the only
+        // correct point for the compat renderer: AFTER render(), because its workhorse snapshots the
+        // FINISHED frame, stamps the portal area, and blits back.
+        //
+        // Placed after the try/finally, deliberately:
+        //   * every pass-scoped probe bracket is CLOSED here (ClipDiscriminator / ShadowEmptiness /
+        //     ShadowAlias endPass, ActSeedProbe.endPortal) — those are single-slot statics, so the
+        //     window's own beginPass/beginPortal must NEST, not interleave; at the render() INVOKE
+        //     slot each inner endPass would close the outer's window and silently corrupt every
+        //     diagnostic this arc depends on;
+        //   * stencil and clip are hard-neutralized (the raw GL_CLIP_DISTANCE0 kill included, which
+        //     exists because the per-draw uploaders re-assert it with raw glEnable so
+        //     disableClipping() can no-op) — the window's nested pass arms its own from scratch;
+        //   * client.level / levelRenderer / mainCamera / lightmap / sodium context are STILL DEST
+        //     (switchAndRenderTheWorldFullPipeline's finally restores them and has not run) — the
+        //     same load-bearing property ActSeedProbe.endPortal's javadoc documents for this slot;
+        //   * destDrawViewMatrix is in scope (declared outside the try) and is the EXACT object
+        //     handed to render() as arg 5.
+        // LEDGER (accepted, not a defect): the Globals UBO was restored to the SOURCE camera before
+        // this point. The aperture and occlusion-query draws carry their own matrices and write no
+        // color or depth, and the nested window render re-runs its own Step 8.
+        maybeRunCrossViewPortalPass(destDrawViewMatrix);
+
+        // ===== IS5-REC — THE NESTED PORTAL LAYER (recursive portal views, shaders ON) ===========
+        // ADDED AFTER the XWIN call, which is left BYTE-UNTOUCHED. That is deliberate: the reverse
+        // window landed days ago (9cf9d46), is DEFAULT ON and user-visible, and restructuring its
+        // gate in the same commit that has to prove recursion would put a working feature inside the
+        // blast radius of a leg that must attribute a single change.
+        maybeRunNestedPortalLayer(destDrawViewMatrix);
+    }
+
+    /**
+     * IS5-REC — dispatch the portal pass for the layer this dest render just produced, so a portal
+     * seen INSIDE a portal window renders its own destination instead of flat pass-through.
+     *
+     * <p><b>Why here, and not by re-entering the anchor.</b> IP recursed by re-entering the nested
+     * {@code renderLevel}'s own hooks. On 26.2 that is structurally impossible: the IS0 anchor
+     * injects into {@code GameRenderer.renderLevel} while the nested dest render calls
+     * {@code destRenderer.render(...)} directly ({@link #renderDestWorldFullPipeline} ~:1905), a
+     * different method — so the anchor's bytecode is never reached and it fires exactly once per
+     * frame (MEASURED: {@code is0=YES(x1)} on 381/381 baseline census rows). The nested pass needs
+     * its own entry point, and this is the only correct place for it.
+     *
+     * <p><b>Why THIS slot specifically</b> — the same properties {@link #maybeRunCrossViewPortalPass}
+     * documents, and they are what make recursion safe rather than merely possible:
+     * <ul>
+     *   <li>{@code client.level}, {@code levelRenderer}, {@code mainCamera} and the sodium context
+     *       are STILL DEST ({@code switchAndRenderTheWorldFullPipeline}'s finally has not run). This
+     *       is decisive: {@code getPortalsToRender} enumerates {@code client.level}, so anywhere the
+     *       context has been restored would enumerate the WRONG WORLD's portals.</li>
+     *   <li>The core's own finally has ALREADY closed — shared camera state, entity states, clip
+     *       (including the raw {@code GL_CLIP_DISTANCE0} kill) and all four single-slot probe
+     *       brackets. So a nested layer inherits nothing it would have to save, and for the
+     *       same-dim case layer 1's shared-state save/restore pair CLOSES before layer 2 opens its
+     *       own. Sequential, never overlapping — which is why the frame-scoped singletons need no
+     *       stack discipline at this slot.</li>
+     *   <li>{@code destDrawViewMatrix} is the EXACT object handed to {@code render()} as arg 5.
+     *       Threaded, never re-read: on a cross-dim pass the main {@code cameraRenderState} still
+     *       holds the SOURCE camera, so re-reading it would hand a dest-world portal the source view
+     *       rotation. Copied defensively because iris ALIASES that argument as
+     *       {@code gbufferModelView}.</li>
+     * </ul>
+     *
+     * <p><b>Unreachable shaders-OFF by construction</b>, not by promise:
+     * {@code MyGameRenderer.renderWorldFullPipeline} has exactly two call sites, both inside
+     * {@code IrisCompatOn262Renderer}. The stencil family and {@code GuiPortalRendering} route to
+     * {@code renderWorldNew} and never enter this method — so the shaders-OFF oracle stays a clean
+     * control leg across the whole A/B.
+     *
+     * <p><b>What this must NOT do.</b> Only {@code doRenderPortal}'s guard is relaxed for recursion.
+     * The F1 ({@code AFTER_TRANSLUCENT_TERRAIN}) and F2 ({@code BEFORE_TRANSLUCENT_TERRAIN}) Fabric
+     * listeners RE-FIRE inside every nested full-pipeline render, and their {@code isRendering()}
+     * early-returns are LOAD-BEARING, not defensive — MEASURED on the baseline: shaders-ON rows read
+     * {@code f1=YES:flagON(fired=2 reentrantSkips=1)}, exactly one skip per nested render, while
+     * shaders-OFF (decomposed, no re-fire) reads {@code fired=1 reentrantSkips=0}. If those guards
+     * were ever relaxed as a concept, F1 would run {@code switchToCorrectRenderer} +
+     * {@code prepareRendering} + {@code onBeforeTranslucentRendering(destPose)} +
+     * {@code finishRendering} inside every nested render — a second, unindexed portal dispatch that
+     * also overwrites {@code passingModelView} with the dest pose.
+     */
+    private static void maybeRunNestedPortalLayer(Matrix4f destDrawViewMatrix) {
+        if (IPGlobal.IRIS_PORTAL_RECURSION_DISABLED_LEVER) {
+            return; // A/B leg: reproduces the one-layer frame byte-for-byte
+        }
+        int layer = PortalRendering.getPortalLayer();
+        if (layer == 0) {
+            return; // layer 0 belongs to the IS0 anchor (or, on a cross-view frame, to XWIN above)
+        }
+        // IS5-XREC (2026-08-02): the Stage-3 cross-view EXCLUSION IS LIFTED. It used to return here
+        // on isRenderingCrossPortalView(), which is why third person with the camera past a portal
+        // showed the other dimension through the reverse window but every portal INSIDE that window
+        // stayed flat — user-reported: "when the camera is in the opposite dim as the player, the
+        // portals in the player dim dont recurse".
+        //
+        // THE TWO DISPATCHES PARTITION CLEANLY BY LAYER, which is what makes lifting it safe:
+        //   layer 0 on a cross-view frame -> maybeRunCrossViewPortalPass (XWIN) owns the pass; this
+        //       method has already returned at the `layer == 0` check above, so no double dispatch.
+        //   layer >= 1 -> XWIN returns at its own isRendering() floor, so only this method runs.
+        // Mutually exclusive by construction at every layer, on cross-view and normal frames alike.
+        //
+        // ★ LEVER DEPENDENCY ON A CROSS-VIEW FRAME — ONE-WAY, INHERENT, AND I FIRST GOT IT WRONG.
+        //
+        // On a cross-view frame this dispatch is DOWNSTREAM of two other levers, and both of them
+        // silently disable cross-view recursion as a side effect:
+        //   * -PdisableCrossViewReverseWindow makes maybeRunCrossViewPortalPass return at its head,
+        //     so the LAYER-0 portal pass never runs, so nothing ever pushes a portal layer, so this
+        //     method is never reached above layer 0.
+        //   * -PdisableCrossViewFullPipeline routes invokeWorldRendering to the decomposed fallback
+        //     (IrisCompatOn262Renderer:771), which never enters renderDestWorldFullPipeline at all,
+        //     so this dispatch site does not exist on that frame.
+        // The dependency is INHERENT, not a defect: you cannot recurse inside a window that was
+        // never drawn. It is one-way — -PdisableCrossViewRecursion does NOT affect the window.
+        //
+        // The staging plan predicted an entanglement here and prescribed moving the reverse-window
+        // lever to fix it. I checked its stated MECHANISM (that lever being tested first inside a
+        // SHARED method), found it inapplicable because these are separate methods, and wrongly
+        // concluded the entanglement itself was absent — refuting a mechanism is not refuting the
+        // claim. The plan's conclusion was right for a reason it did not name. Moving the lever
+        // would NOT have fixed it either, since the dependency is structural rather than ordering.
+        //
+        // CONSEQUENCE FOR ANYONE RUNNING AN A/B: to attribute cross-view recursion, vary ONLY
+        // -PdisableCrossViewRecursion. A leg that also carries -PdisableCrossViewReverseWindow or
+        // -PdisableCrossViewFullPipeline has two variables and cannot attribute either.
+        if (IPGlobal.CROSS_VIEW_RECURSION_DISABLED_LEVER
+            && CrossPortalViewRendering.isRenderingCrossPortalView()
+        ) {
+            return; // A/B leg: restores the Stage-3 scope limit on command
+        }
+        if (layer >= IPGlobal.effectiveIrisMaxPortalLayer()) {
+            return; // the shaders-ON depth bound (also collapses to 1 under RenderStates.isLaggy)
+        }
+        if (RenderStates.getRenderedPortalNum() >= IPGlobal.irisMaxDestRenders) {
+            // COUNT THE CUT. This return used to be silent, which made budgetCuts= print 0 at the
+            // exact moment the budget was what truncated the chain — a reader would conclude either
+            // "depth N works" or "recursion mysteriously caps", and both readings are wrong. The
+            // in-loop cut in doRenderPortal was counted; this entry-gate one was not.
+            IPGlobal.noteNestedBudgetCut();
+            return; // per-frame pack-shaded render budget
+        }
+        PortalRenderer renderer = IPCGlobal.renderer;
+        if (renderer == null) {
+            return;
+        }
+        // ORDER IS LOAD-BEARING (the 2f9d7b8 lesson): count BEFORE any call that can emit the
+        // once-per-session RunConfigReport block, or the counter whose job is to prove this ran
+        // prints 0 inside that very block.
+        IPGlobal.noteNestedPortalLayerPass();
+        renderer.renderNestedPortalLayer(new Matrix4f(destDrawViewMatrix));
+    }
+
+    /**
+     * XWIN gate — fires the portal pass exactly ONCE per cross-portal-view frame, on the LAYER-0
+     * dest render only.
+     *
+     * <p><b>Reach.</b> {@code renderDestWorldFullPipeline} is only ever entered from
+     * {@code IrisCompatOn262Renderer.invokeWorldRendering} (the cross-view layer-0 branch and the
+     * nested own-portal-loop branch) via {@code MyGameRenderer.renderWorldFullPipeline}. The
+     * shaders-OFF stencil family and {@code GuiPortalRendering} both route to the DECOMPOSED
+     * {@code renderWorldNew} and never enter this method — so this gate is structurally unreachable
+     * outside shaders-ON, and byte-inert on every other frame after one static boolean read.
+     *
+     * <p><b>The hook PAIR, in normal-frame order</b> — capture, then draw. This is not two ideas:
+     * it is exactly what a normal frame runs (the Fabric AFTER_TRANSLUCENT_TERRAIN driver sets
+     * {@code passingModelView}; the IS0 anchor then consumes it), and what the decomposed core's
+     * Step 10.10 already does for its own family. For {@code IrisCompatOn262Renderer} the first
+     * call's entire effect is {@code passingModelView = mv} plus a stencil-disable belt — and that
+     * assignment is LOAD-BEARING: the F1 driver is skipped on a cross-view frame, so without it the
+     * field still holds the LAST NORMAL FRAME's SOURCE-space matrix, and the cull frustum, the
+     * aperture mesh, the occlusion query and the stamp would every one of them be wrong.
+     *
+     * <p><b>The matrix is threaded, never re-read.</b> On a cross-dim frame {@code sharedState} is
+     * false, so the MAIN {@code gameRenderState}'s {@code cameraRenderState} still holds the SOURCE
+     * camera — re-reading it would hand a dest-world portal the source view rotation. This is the
+     * {@code render()} argument itself; iris ALIASES it as {@code gbufferModelView}, hence the
+     * defensive copies.
+     *
+     * <p><b>Recursion.</b> {@code !isRendering()} is the floor: the cross-view latch stays TRUE
+     * through the window's own nested render, so only the layer-0 pass gets through. Three
+     * IP-verbatim belts back it up ({@code onBeforeHandRendering}'s guard,
+     * {@code doRenderPortal}'s guard, and {@code renderPortalContent}'s maxPortalLayer test).
+     */
+    private static void maybeRunCrossViewPortalPass(Matrix4f destDrawViewMatrix) {
+        if (IPGlobal.CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER) {
+            return; // A/B leg: reproduces today's no-window frame byte-for-byte
+        }
+        if (!CrossPortalViewRendering.isRenderingCrossPortalView()) {
+            return; // a normal frame — the IS0 anchor owns the pass
+        }
+        if (PortalRendering.isRendering()) {
+            return; // THE RECURSION FLOOR — this is the window's own nested render
+        }
+        PortalRenderer renderer = IPCGlobal.renderer;
+        if (renderer == null) {
+            return;
+        }
+        // ORDER IS LOAD-BEARING (the 2f9d7b8 lesson): count BEFORE any call that can emit the
+        // once-per-session RunConfigReport block, or the counter proving this ran prints 0 in it.
+        IPGlobal.noteCrossViewReverseWindowPass();
+        com.warwa.seamlessportals.render.TpXdimFrameCensus.noteXWinPass();
+        renderer.onBeforeTranslucentRendering(new Matrix4f(destDrawViewMatrix)); // capture
+        renderer.onBeforeHandRendering(new Matrix4f(destDrawViewMatrix));        // draw
     }
 
     // One-shot latch for the §2.1-1 FRD isolation assert log.
@@ -2115,6 +2519,18 @@ public class SecondaryWorldRenderCore {
             LevelRendererAccessorMixin acc = (LevelRendererAccessorMixin) destRenderer;
             SubmitNodeStorage storage = acc.seamlessportals$getSubmitNodeStorage();
             if (storage == null) {
+                // §2b once-only WARN (was a SILENT skip — dark-path discipline): a null storage
+                // aborts the WHOLE cross-dim dest entity/BE/outline pass for this frame.
+                if (!portalEntitiesStorageNullLogged) {
+                    portalEntitiesStorageNullLogged = true;
+                    qouteall.q_misc_util.Helper.err(
+                        "[renderPortalEntities] SubmitNodeStorage is NULL — dest entity pass "
+                            + "skipped (once-only warn; recurrences count in [ENT-PROBE] "
+                            + "STORAGE-NULL=)");
+                }
+                if (EntityVisibilityProbe.ENABLED) {
+                    EntityVisibilityProbe.storageNullSkips++;
+                }
                 return;
             }
             // S18.5 — dest targeted-block outline delivery (S18 (d)-round log-audit CORRECTION,
@@ -2173,6 +2589,19 @@ public class SecondaryWorldRenderCore {
 
     // S14.28: one-shot latch for the renderPortalEntities swallow log.
     private static boolean portalEntitiesSwallowLogged = false;
+    // §2b: one-shot latch for the storage-null warn (the formerly-silent skip above).
+    private static boolean portalEntitiesStorageNullLogged = false;
+
+    /** §2b probe: latch-state summary for the [ENT-PROBE] line (x = cross-dim swallow seen,
+     *  sn = storage-null seen, sd = same-dim swallowed-throw count toward the 3-strike
+     *  dead-latch — 3/3 means the same-dim entity pass is session-disabled; fsd = the same
+     *  fence for the compat full-pipeline Step-9.5-SD fill). */
+    public static String entityProbeLatchSummary() {
+        return "x=" + (portalEntitiesSwallowLogged ? 1 : 0)
+            + " sn=" + (portalEntitiesStorageNullLogged ? 1 : 0)
+            + " sd=" + sameDimEntityThrowCount + "/3"
+            + " fsd=" + compatSameDimEntityThrowCount + "/3";
+    }
 
     /**
      * S18.5 (corrected form) — the dest-pass targeted-block outline submit: an @IPVanillaCopy-class
@@ -2348,6 +2777,11 @@ public class SecondaryWorldRenderCore {
                 }
                 TeleportFlashProbe.sameDimEntitiesExtracted +=
                     sameDimScratchLRS.entityRenderStates.size();
+                // §2b probe: same-dim census + extract output.
+                if (EntityVisibilityProbe.ENABLED) {
+                    EntityVisibilityProbe.recordDestExtract(
+                        "sd", client.level, sameDimScratchLRS.entityRenderStates.size());
+                }
 
                 ((LevelRendererAccessorMixin) destRenderer).seamlessportals$invokeSubmitEntities(
                     new com.mojang.blaze3d.vertex.PoseStack(), sameDimScratchLRS, sameDimSubmitStorage);
@@ -2437,12 +2871,131 @@ public class SecondaryWorldRenderCore {
             // registrations would otherwise linger keyed to a dead identity, with any deferred
             // Mechanism-B brackets orphaned).
             sameDimEntityThrowCount++;
+            if (sameDimEntityThrowCount == 3) {
+                // §2b once-only WARN (dark-path discipline): the third swallowed throw trips the
+                // session dead-latch at the method HEAD — same-dim portal entities OFF from here.
+                qouteall.q_misc_util.Helper.err(
+                    "[renderPortalEntitiesSameDim] DEAD-LATCH TRIPPED (3 swallowed throws) — "
+                        + "same-dim portal entity pass DISABLED for the rest of the session");
+            }
             qouteall.imm_ptl.core.render.PerEntityClipBracket.evictPassState(sameDimSubmitStorage);
             sameDimSubmitStorage = new net.minecraft.client.renderer.SubmitNodeStorage();
             if (!sameDimEntitiesSwallowLogged) {
                 sameDimEntitiesSwallowLogged = true;
                 qouteall.q_misc_util.Helper.err(
                     "[renderPortalEntitiesSameDim] swallowed (first per session): " + t);
+                t.printStackTrace();
+            }
+        }
+    }
+
+    // ===== §2b — compat same-dim fill: the renderPortalEntitiesSameDim EXTRACT discipline ========
+    // re-aimed at the SHARED main LRS so the nested full-pipeline render()'s own submitFeatures
+    // (and therefore iris's gbuffers entity phase) draws the states. NO submit/renderAllFeatures
+    // here — the woven form's point is that the nested render owns the draw (the scratch trio's
+    // submit half is deliberately not ported; the main FRD's PreparedFrame is CLOSED at the
+    // post-main anchor, so the nested prepareFrame cycle is legal — it already runs today with an
+    // empty list). Throw fence: entities are non-critical — a throw clears the partial fill (the
+    // nested render draws terrain entity-less, exactly the pre-fix behavior), counts toward a
+    // 3-strike session dead-latch (reset in cleanUp()), and never escapes into the terrain pass.
+    private static int compatSameDimEntityThrowCount = 0;
+    private static boolean compatSameDimSwallowLogged = false;
+    private static boolean compatSameDimNonEmptyWarned = false;
+    private static boolean compatSameDimLivenessLogged = false;
+
+    private static void fillSameDimStatesForNestedRender(
+        LevelRenderer destRenderer, LevelRenderState destLRS,
+        net.minecraft.client.Camera newCamera,
+        net.minecraft.client.renderer.culling.Frustum destFrustum,
+        net.minecraft.client.DeltaTracker deltaTracker,
+        float partialTick, ClientLevel destLevel
+    ) {
+        try {
+            net.minecraft.client.renderer.entity.EntityRenderDispatcher erd =
+                destRenderer.entityRenderDispatcher();
+            // LevelExtractor.extract:121's prepare, for the PORTAL camera (shouldRender/extract
+            // read dispatcher.camera). No local restore: the full-pipeline SHELL's finally
+            // re-prepares the OUTER camera (MyGameRenderer switchAndRenderTheWorldFullPipeline
+            // RESTORE row — stronger than the decomposed pass's parity gesture).
+            erd.prepare(newCamera, client.crosshairPickEntity);
+            // isDestExtracting keys: MixinEntityRenderDispatcher -> shouldRenderEntityNow (the
+            // IP isOnDestinationSide hide; PortalRendering.isRendering() is TRUE — we are inside
+            // doRenderPortal's pushed layer), LevelRendererEntityVisibilityMixin C2-1e
+            // (fade bypass + sodium force-true), MixinSodiumRenderSectionManager D5, and the
+            // S14.40 MixinParticleEngine mid-frame-extract cancel.
+            isDestExtracting = true;
+            try {
+                ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                    .seamlessportals$invokeExtractVisibleEntities(
+                        newCamera, destFrustum, deltaTracker, destLRS);
+            }
+            finally {
+                isDestExtracting = false;
+            }
+            // §2b probe: compat-same-dim census + extract output (route "fsd").
+            if (EntityVisibilityProbe.ENABLED) {
+                EntityVisibilityProbe.recordDestExtract(
+                    "fsd", destLevel, destLRS.entityRenderStates.size());
+            }
+
+            // Same-dim BLOCK ENTITIES (the S18.4 family, compat form): the compat route always
+            // has sodium (iris 1.11.2 fmj hard-depends sodium 0.9.x), so the invoker routes to
+            // SWR.extractBlockEntities -> RSM.getRenderLists — the D1-swapped portal context's
+            // renderLists, fresh from Step-9' (the call-site placement contract). Prep the
+            // shared BE dispatcher with the portal camera (tryExtractRenderState keys on the
+            // prepared pos; NOT restored — the ERD-parity class, every extract re-prepares).
+            // Dev-row note (verify-fold ledger): under LEVER-forced compat WITHOUT sodium the
+            // vanilla BE walk iterates the shell's fresh empty visibleSections — 0 BEs; benign
+            // (that config has no portal terrain either).
+            destRenderer.blockEntityRenderDispatcher().prepare(newCamera.position());
+            ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                .seamlessportals$invokeExtractVisibleBlockEntities(
+                    newCamera, partialTick, destLRS);
+
+            // Same-dim PARTICLES — the isolated world-filtered extract (fresh caller-owned
+            // states; the shared per-group accumulators untouched — S14.41 fully honored).
+            // The nested submitFeatures submits particlesRenderState like any pass (:286).
+            // Fabulous is structurally off under a pack (iris forbids it) but the gate is
+            // kept for uniformity with the cross-dim Step-5 fill.
+            if (!IPGlobal.debugAllowDestParticleExtract
+                && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
+                    .ip_extractIsolated(
+                        destLRS.particlesRenderState,
+                        new Frustum(destFrustum).offset(-3.0F),
+                        newCamera, partialTick, destLevel);
+            }
+
+            // Once-only liveness INFO + the confirm counter (self-run-round readable).
+            IPGlobal.compatSameDimEntityFillCount++;
+            if (!compatSameDimLivenessLogged) {
+                compatSameDimLivenessLogged = true;
+                qouteall.q_misc_util.Helper.log(
+                    "[compatSameDimEntities] ACTIVE — first same-dim compat fill: ent="
+                        + destLRS.entityRenderStates.size()
+                        + " be=" + destLRS.blockEntityRenderStates.size()
+                        + " particleGroups=" + destLRS.particlesRenderState.particles.size()
+                        + " (A/B lever -Dseamlessportals.disableCompatSameDimEntities)");
+            }
+        } catch (Throwable t) {
+            // Entities are non-critical; the nested render must still draw terrain. Drop the
+            // partial fill NOW (the caller's finally also strand-clears, but clearing here keeps
+            // THIS pass's nested submit honest too).
+            destLRS.entityRenderStates.clear();
+            destLRS.blockEntityRenderStates.clear();
+            destLRS.particlesRenderState.particles.clear();
+            compatSameDimEntityThrowCount++;
+            if (compatSameDimEntityThrowCount == 3) {
+                // §2b once-only WARN: the third swallowed throw trips the session dead-latch at
+                // the call-site gate — compat same-dim entities OFF from here.
+                qouteall.q_misc_util.Helper.err(
+                    "[compatSameDimEntities] DEAD-LATCH TRIPPED (3 swallowed throws) — "
+                        + "compat same-dim entity fill DISABLED for the rest of the session");
+            }
+            if (!compatSameDimSwallowLogged) {
+                compatSameDimSwallowLogged = true;
+                qouteall.q_misc_util.Helper.err(
+                    "[compatSameDimEntities] swallowed (first per session): " + t);
                 t.printStackTrace();
             }
         }

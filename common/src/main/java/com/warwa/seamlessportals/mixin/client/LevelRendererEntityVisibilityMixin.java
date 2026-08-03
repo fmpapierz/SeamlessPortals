@@ -85,6 +85,10 @@ public class LevelRendererEntityVisibilityMixin {
             // (javap), so the BLOCKER-1b null-RSM degrade state would NPE mid-extract.
             if (qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface
                 .invoker.isSodiumPresent()) {
+                // §2b probe: count the C2-1e neutralize firing (nv in the [ENT-PROBE] line).
+                if (qouteall.imm_ptl.core.render.EntityVisibilityProbe.ENABLED) {
+                    qouteall.imm_ptl.core.render.EntityVisibilityProbe.neutralizeVanilla++;
+                }
                 cir.setReturnValue(true);
                 return;
             }

@@ -7,6 +7,20 @@ plugins {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(project.java_version)
 
+// TOOLCHAIN VENDOR — OPT-IN, unset by default (2026-08-01, the Temurin 25.0.2 C2 crash test).
+// The language-version pin alone is NOT deterministic when two JDKs of that version are installed:
+// with Zulu 25.0.4 and the Gradle-provisioned Temurin 25.0.2 both detected, setting
+// org.gradle.java.installations.paths + auto-download=false was NOT enough — loom's runClient was
+// MEASURED still launching on eclipse_adoptium-25 (read off the live process command line, not
+// inferred). Only a vendor spec makes the choice deterministic, and it must be here because loom
+// derives the run task's launcher from this same toolchain.
+// Opt-in via -PjdkVendor / gradle.properties so the default build is unchanged for anyone else:
+//   .\gradlew.bat :fabric:runClientSodium -PjdkVendor=AZUL
+if (project.hasProperty('jdkVendor') && project.jdkVendor?.trim()) {
+    java.toolchain.vendor = JvmVendorSpec.matching(project.jdkVendor.trim())
+    logger.lifecycle("[toolchain] ${project.name}: JDK ${project.java_version} vendor pinned to '${project.jdkVendor.trim()}'")
+}
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }

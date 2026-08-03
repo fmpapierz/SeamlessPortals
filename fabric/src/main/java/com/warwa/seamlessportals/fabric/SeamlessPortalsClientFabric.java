@@ -132,7 +132,28 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // (StencilPortalRenderer.buildMainFrustum:66-70). Copied defensively: it feeds getPortalsToRender's
             // frustum + FrontClipping.updateInnerClipping + ViewAreaRenderer, none of which may mutate it.
             LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
-                if (PortalRendering.isRendering()) {
+                // TP-XDIM census witness #3: this driver lives INSIDE renderLevel, so it cannot
+                // fire on a frame CrossPortalViewRendering rendered instead. Both the fired and
+                // the re-entrant-skip cases report, so "driver did not fire" is never confused
+                // with "driver fired and early-returned". No lever test needed here — noteF1Driver's
+                // own first statement is the folded lever test.
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.noteF1Driver("flagON");
+                // TP-XDIM: isRendering() is the re-entrancy guard for layer>=1 nested renders. A
+                // FRAME-REPLACING cross-view render is a nested renderLevel at LAYER 0, where
+                // isRendering() is FALSE — this event would otherwise fire UNGUARDED inside the
+                // dest render, re-running switchToCorrectRenderer / prepareRendering /
+                // onBeforeTranslucentRendering / finishRendering and overwriting passingModelView
+                // with the DEST pose. Under the DECOMPOSED cross-view driver no framegraph runs and
+                // this event never fires at all, so honoring the latch keeps the two routes
+                // behaviour-identical. LOAD-BEARING for any renderer whose
+                // onBeforeTranslucentRendering renders portals (the stencil family's does):
+                // without it a layer-0 nested render recurses.
+                if (PortalRendering.isRendering()
+                    || qouteall.imm_ptl.core.render.CrossPortalViewRendering
+                        .isRenderingCrossPortalView()
+                ) {
+                    com.warwa.seamlessportals.render.TpXdimFrameCensus
+                        .noteF1Driver("skipped-reentrant");
                     return;
                 }
                 Minecraft client = Minecraft.getInstance();
@@ -175,6 +196,10 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // migration/inventory/current-mod-render.md. Any historical "blank curtain" had a
             // different mechanism. See GameRendererPortalPrepareMixin for the old diagnosis.
             LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context -> {
+                // TP-XDIM census witness #3, flag-OFF family. Instrumenting BOTH driver families is
+                // mandatory: a census that watched only the flag-ON driver could not tell "the
+                // driver did not fire" from "we are on the other driver family".
+                com.warwa.seamlessportals.render.TpXdimFrameCensus.noteF1Driver("stencil");
                 StencilPortalRenderer.renderPortals();
             });
 

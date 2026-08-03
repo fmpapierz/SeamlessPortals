@@ -125,6 +125,23 @@ public abstract class GlCommandEncoderClipMixin {
         boolean clipEnabledThisDraw = false;
 
         if (loc >= 0) {
+            // IS5-W FIX 1 — SHADOW-SCOPE CLIP SUPPRESSION (mirror of the sodium uploader's; fix
+            // panel wf_a2d7890c-115). This per-batch trySetup uploader ALSO fires inside the dest
+            // SHADOW pass and would re-overwrite the sodium uploader's keep-all with the armed
+            // camera-space plane — which the shadow program evaluates against the SUN's model-view
+            // (the wrong-space half-space that clips the dest casters out of the shadow map = the
+            // yaw-keyed wash). Suppress identically: keep-all upload, no enable re-assert.
+            if (clipArmed && qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface
+                .invoker.isRenderingShadowMap()) {
+                if (qouteall.imm_ptl.core.IPGlobal.isShadowScopeClipFixActive()) {
+                    GL20.glUniform4f(loc, 0f, 0f, 0f, 1f);
+                    qouteall.imm_ptl.core.IPGlobal.shadowScopeClipSuppressedCount++;
+                    ClipDiscriminatorProbe.recordDraw(programId, loc, clipArmed, false);
+                    return;
+                }
+                // A/B baseline (fix lever OFF): count the un-suppressed armed shadow upload.
+                qouteall.imm_ptl.core.IPGlobal.shadowScopeClipArmedUploadCount++;
+            }
             // Upload the armed plane (keep-all {0,0,0,1} when clipping is disabled — byte-neutral).
             // Under the full-pipeline override, source the FROZEN belt plane — the live store was
             // reset to keep-all by M4's mid-pass disableClipping(), so reading it would clip nothing.
