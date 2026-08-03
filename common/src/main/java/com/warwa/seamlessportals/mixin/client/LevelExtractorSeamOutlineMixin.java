@@ -47,6 +47,10 @@ public abstract class LevelExtractorSeamOutlineMixin {
     private void seamlessportals$nearHalfIn(
         Camera camera, LevelRenderState state, CallbackInfo ci
     ) {
+        // Outline draw shapes are FULL for seam cells while this flag is up — see the flag's
+        // javadoc. Set unconditionally (main pass AND the invoked dest/same-dim extracts), because
+        // the merged-box rule applies to every pass that draws a seam outline.
+        SeamCounterpartOutline.extractingOutline = true;
         seamlessportals$swapped = false;
         if (PortalRendering.isRendering()) {
             return;
@@ -65,6 +69,7 @@ public abstract class LevelExtractorSeamOutlineMixin {
     private void seamlessportals$nearHalfOut(
         Camera camera, LevelRenderState state, CallbackInfo ci
     ) {
+        SeamCounterpartOutline.extractingOutline = false;
         if (seamlessportals$swapped) {
             Minecraft.getInstance().hitResult = seamlessportals$savedHit;
             seamlessportals$savedHit = null;
