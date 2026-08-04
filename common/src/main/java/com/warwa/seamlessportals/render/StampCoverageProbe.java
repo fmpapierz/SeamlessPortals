@@ -89,7 +89,59 @@ public final class StampCoverageProbe {
     private static boolean armReported = false;
     private static long lastNanos = 0L;
 
+    /** Content-keyed, so a stable geometry announces once and a CHANGE always announces. */
+    private static String announcedSnapshotGeometry = null;
+
     private StampCoverageProbe() {
+    }
+
+    /**
+     * IS5-COV GEOMETRY WITNESS — called at the snapshot, immediately before
+     * {@code deferred.fb.copyDepthFrom(mainRT)}.
+     *
+     * <p><b>Why this is ALWAYS ON and not behind the probe lever.</b> The stamp's depth test is
+     * only meaningful if the depth it tests was copied 1:1 from the buffer that rasterized it. A
+     * copy between render targets of DIFFERENT dimensions cannot be a 1:1 texel move — it has to
+     * scale — and scaling a depth buffer dilates every silhouette by roughly a pixel. That is
+     * precisely the measured defect: MEASURED 2026-08-03, an occluder's depth footprint is 1-2 px
+     * wider than its colour footprint (raw per-pixel dump: colour {@code c0b0ad} carrying the
+     * block's bit-identical depth {@code 0.975007} one pixel before the bark at {@code 574439}).
+     * A silent size mismatch would explain it, would be invariant to every shaderpack filtering
+     * option (all four were separately refuted by live legs), would be present at rest, and would
+     * look worse under motion.
+     *
+     * <p>A mismatch is a DEFECT, not a diagnostic curiosity, so it must never be able to happen
+     * without a line in the log. Content-keyed like the C3-BLOOM plan announcement, whose
+     * class-lifetime latch predecessor cost this project a full false-refutation cycle: a stable
+     * geometry prints once, and any change always re-announces. Log-only; never throws.
+     */
+    public static void noteSnapshotGeometry(RenderTarget mainRT, RenderTarget deferred) {
+        try {
+            if (mainRT == null || deferred == null) {
+                return;
+            }
+            boolean match = mainRT.width == deferred.width && mainRT.height == deferred.height;
+            String key = "main=" + mainRT.width + "x" + mainRT.height
+                + " deferred=" + deferred.width + "x" + deferred.height
+                + " match=" + match;
+            if (key.equals(announcedSnapshotGeometry)) {
+                return;
+            }
+            announcedSnapshotGeometry = key;
+            if (match) {
+                LOGGER.info(P + "snapshot geometry {} — copyDepthFrom is a 1:1 texel move.", key);
+            }
+            else {
+                LOGGER.warn(P + "snapshot geometry {} — MISMATCH. copyDepthFrom cannot be a 1:1"
+                    + " texel move at these sizes; it must scale, and scaling a depth buffer"
+                    + " DILATES every silhouette. This is the leading candidate for the occluder"
+                    + " ring (source terrain visible in a 1-2 px band around anything standing"
+                    + " between the camera and a portal window).", key);
+            }
+        }
+        catch (Throwable t) {
+            // a witness must never be able to break the thing it is witnessing
+        }
     }
 
     /**
