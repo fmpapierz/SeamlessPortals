@@ -80,6 +80,94 @@ public final class SeamFractional {
     }
 
     /**
+     * ★ ROUND 27 — CONDUCTION FOLLOWS THE CUT (user decision REVISED from the 2026-08-02
+     * "conduction reports whole"): "the signal from seam side a transmits to the block on side b
+     * that is one block further ... the blocks adjacent to the seam block are getting signal
+     * which is also incorrect." A cut seam cell relays vanilla signal ONLY out of its owned-side
+     * axis face; every other exit is the seam's territory, where cross-seam transmission is the
+     * signal bridge's job (RS (c)), carried through the portal — never around it.
+     *
+     * <p>Direction convention, verified at the call sites: {@code hasNeighborSignal(q)} queries
+     * {@code getSignal(q.relative(d), d)}, so the emitter's exit face toward the querier is
+     * {@code d.getOpposite()}.
+     */
+    public static boolean blocksSignalTowards(BlockGetter level, BlockPos pos, Direction dir) {
+        if (!supportActive() || !(level instanceof net.minecraft.world.level.Level lvl)) {
+            return false;
+        }
+        byte owned = SeamOccupancy.occupancyOf(lvl, pos);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return false;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        if (binding == null || binding.cut() == null) {
+            return false;
+        }
+        Direction ownedDir = Direction.get(
+            owned == SeamOccupancy.HALF_POSITIVE
+                ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+            binding.srcFacing().getAxis());
+        return dir.getOpposite() != ownedDir;
+    }
+
+    /**
+     * ★ ROUND 27 — is the CLIENT camera on the empty half of this cut cell? Drives particle
+     * suppression ({@code ClientLevelSeamParticleMixin}): the empty side must see nothing of the
+     * block, including its ambient particles. {@code halfFromHit} is a pure side-of-plane test, so
+     * it is valid for any point, not just near hits. Client-only call sites.
+     */
+    public static boolean cameraOnEmptyHalf(net.minecraft.world.level.Level level, BlockPos pos) {
+        if (!active() || !level.isClientSide()) {
+            return false;
+        }
+        byte owned = SeamOccupancy.occupancyOf(level, pos);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return false;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        if (binding == null || binding.cut() == null) {
+            return false;
+        }
+        net.minecraft.world.phys.Vec3 cam = net.minecraft.client.Minecraft.getInstance()
+            .gameRenderer.mainCamera().position();
+        byte camHalf = SeamOccupancy.halfFromHit(cam, pos,
+            binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+        return camHalf != owned;
+    }
+
+    /** Reentrancy guard for {@link #secondarySturdy} — the nested isFaceSturdy re-enters the hook. */
+    private static final ThreadLocal<Boolean> STURDY_REENTRY =
+        ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /**
+     * ★ ROUND 27 — SUPPORT ON A TWO-OBJECT CELL consults BOTH occupants (user: torch on side A +
+     * block on side B, redstone dust on top of the B block "gets rejected"; fine when side A holds
+     * a normal block). Vanilla asks only the PRIMARY, so a non-sturdy primary vetoed the solid
+     * second object. A cell is face-sturdy if EITHER occupant is — the placed thing rests on
+     * whichever occupant is under it, which is the same "must be able to place" reading the whole
+     * two-object model runs on.
+     */
+    public static boolean secondarySturdy(
+        BlockGetter level, BlockPos pos, Direction dir,
+        net.minecraft.world.level.block.SupportType type
+    ) {
+        if (!supportActive() || STURDY_REENTRY.get()
+            || !(level instanceof net.minecraft.world.level.Level lvl)) {
+            return false;
+        }
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(lvl, pos);
+        if (sec == null) {
+            return false;
+        }
+        STURDY_REENTRY.set(Boolean.TRUE);
+        try {
+            return sec.state().isFaceSturdy(level, pos, dir, type);
+        } finally {
+            STURDY_REENTRY.set(Boolean.FALSE);
+        }
+    }
+
+    /**
      * Whether a mirror-admitted seam cell's block is genuinely divided by the portal plane.
      *
      * <p>Every arm of the model consults exactly this, so there is one place to A/B and one place

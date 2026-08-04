@@ -115,4 +115,61 @@ public abstract class BlockStateBaseFractionalMixin {
             cir.setReturnValue(false);
         }
     }
+
+    // ★ ROUND 27 — the "deliberately NOT hooked" list above SHRANK by user decision revision:
+    // conduction now follows the cut (a cut cell relays vanilla signal only out of its owned-side
+    // axis face; the seam signal bridge owns cross-seam transmission), and isFaceSturdy consults
+    // the SECOND occupant so a non-sturdy primary cannot veto placements resting on the solid
+    // second object. isRedstoneConductor / isCollisionShapeFullBlock / getBlockSupportShape remain
+    // unhooked — their whole-cube answers are still what keeps rails and dust ON the seam cell
+    // alive (the original soul-sand reading).
+
+    @Inject(
+        method = "getSignal(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)I",
+        at = @At("RETURN"),
+        cancellable = true,
+        require = 1
+    )
+    private void seamlessportals$signalFollowsTheCut(
+        BlockGetter level, BlockPos pos, net.minecraft.core.Direction direction,
+        CallbackInfoReturnable<Integer> cir
+    ) {
+        if (cir.getReturnValueI() > 0
+            && SeamFractional.blocksSignalTowards(level, pos, direction)) {
+            cir.setReturnValue(0);
+        }
+    }
+
+    @Inject(
+        method = "getDirectSignal(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)I",
+        at = @At("RETURN"),
+        cancellable = true,
+        require = 1
+    )
+    private void seamlessportals$directSignalFollowsTheCut(
+        BlockGetter level, BlockPos pos, net.minecraft.core.Direction direction,
+        CallbackInfoReturnable<Integer> cir
+    ) {
+        if (cir.getReturnValueI() > 0
+            && SeamFractional.blocksSignalTowards(level, pos, direction)) {
+            cir.setReturnValue(0);
+        }
+    }
+
+    @Inject(
+        method = "isFaceSturdy(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;Lnet/minecraft/world/level/block/SupportType;)Z",
+        at = @At("RETURN"),
+        cancellable = true,
+        require = 1
+    )
+    private void seamlessportals$eitherOccupantSturdy(
+        BlockGetter level, BlockPos pos, net.minecraft.core.Direction direction,
+        net.minecraft.world.level.block.SupportType type,
+        CallbackInfoReturnable<Boolean> cir
+    ) {
+        if (!cir.getReturnValueZ()
+            && SeamFractional.secondarySturdy(level, pos, direction, type)) {
+            cir.setReturnValue(true);
+        }
+    }
 }
