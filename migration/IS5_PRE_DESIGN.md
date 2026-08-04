@@ -233,10 +233,24 @@ OUTER try, so the identity-mismatch return — the discriminator correctly rejec
 begin/prepare/deferred instances of the same `renderAll` method — consumed every pending slot on
 its way out. First begin-chain invocation after any capture zeroed the pool; the main chain saw
 zero pending; the WARN couldn't fire off an already-zero counter. On-screen symptom: windows
-empty on armed frames (views cancelled, nothing stamped). FIXED: consumption scoped to the
-MATCHED main-chain invocation only (hash below). The instrument lesson stands: the CONTRADICTION
-of two absent lines was the entire diagnosis — witnesses that fire on both outcomes are what made
-the defect findable without a screenshot.
+empty on armed frames (views cancelled, nothing stamped). FIXED `fa45b98`: consumption scoped to
+the MATCHED main-chain invocation only. The instrument lesson stands: the CONTRADICTION of two
+absent lines was the entire diagnosis — witnesses that fire on both outcomes are what made the
+defect findable without a screenshot.
+
+### S6 LEG 2 (2026-08-04 02:47) — STAMP FIRING; ONE DEFECT, USER-REPORTED
+
+GREEN: everything from leg 1 plus `stamp pass ran at main renderAll HEAD — stamped=1` and a
+`stamped=2` two-portal frame (the per-VIEW capture list working), zero breaks, zero WARNs.
+
+**DEFECT (user: "with shaders on, portal window is completely invisible"):** the raw-GL stamp
+used the shipped stamp's DECLARED compare (GEQUAL) — the exact §6 trap ("never design from the
+declaration"). `stamped=N` with zero GL errors while nothing shows = draws issued, every window
+fragment depth-rejected: under the MEASURED small-is-near buffer (39/39), plane (~0.5) >= far
+scene (~0.98) is false. The vanilla RenderPass abstraction translates the declared compare; raw
+GL does not. FIXED (hash below): `GL_LEQUAL` — plane ≤ far-scene passes (window paints), plane ≤
+nearer-occluder fails (occlusion correct). Depth-write semantics unchanged. `stamped=` joins
+`masks=` in the never-a-gate ledger: counters record draws issued, never effect achieved.
 
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 

@@ -806,11 +806,18 @@ public final class IrisStageConsistentComposite {
             GlStateManager._disableScissorTest();
             GlStateManager._disableBlend(0);
             GlStateManager._disableCull();
-            // Depth: the SHIPPED stamp's declared state — GEQUAL + WRITE ON. Never redesigned
-            // from the declared-vs-executed puzzle (§4 of the design); the live A/B with the
-            // solid/tint levers is the verification, exactly as it was for the shipped stamp.
+            // Depth compare: LEQUAL — derived from the MEASURED buffer convention, not the
+            // shipped stamp's declaration. S6 leg 2 (2026-08-04 02:47) proved the declared-GEQUAL
+            // trap live: stamped=1/2 with zero GL errors while the window was COMPLETELY
+            // INVISIBLE — draws issued, every window fragment depth-rejected (plane ~0.5 >= far
+            // scene ~0.98 is false under the measured small-is-near buffer, 39/39
+            // clipDepthMode=NEGATIVE_ONE_TO_ONE). The shipped stamp's GEQUAL goes through the
+            // vanilla RenderPass abstraction, whose EXECUTED func demonstrably differs from the
+            // declaration (OCCLUDER_RING_HANDOFF §6: "never design from the declaration") — raw
+            // GL gets no such translation. Under small-is-near: plane <= far-scene passes (the
+            // window paints), plane <= nearer-occluder fails (occlusion correct).
             GlStateManager._enableDepthTest();
-            GlStateManager._depthFunc(GL11.GL_GEQUAL);
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
             GlStateManager._depthMask(true);
             if (!IPGlobal.debugNoStampDepthClamp) {
                 CHelper.enableDepthClamp();
