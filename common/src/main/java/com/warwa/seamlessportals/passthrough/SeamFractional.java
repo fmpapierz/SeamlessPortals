@@ -476,23 +476,33 @@ public final class SeamFractional {
                 // seam-clip renderer uses: this cell outlines in this window only if its owned
                 // half lies beyond the rendering portal's plane.
                 byte ownedW = SeamOccupancy.occupancyOf(lvl, pos);
-                if (ownedW == SeamOccupancy.HALF_POSITIVE
-                    || ownedW == SeamOccupancy.HALF_NEGATIVE) {
+                SeamOccupancy.Secondary secW = SeamOccupancy.secondaryOf(lvl, pos);
+                boolean singleW = ownedW == SeamOccupancy.HALF_POSITIVE
+                    || ownedW == SeamOccupancy.HALF_NEGATIVE;
+                if (singleW || secW != null) {
                     qouteall.imm_ptl.core.portal.Portal rp = qouteall.imm_ptl.core.render
                         .context_management.PortalRendering.getRenderingPortal();
                     if (rp != null) {
                         // The half-space this window SHOWS is the one you travel INTO after
                         // crossing: the portal's inverse normal carried through its transform
-                        // (coordinate-space safe for cross-dim and 7M same-dim alike). Outline
-                        // only if this cell's material lies in that half.
+                        // (coordinate-space safe for cross-dim and 7M same-dim alike). Serve
+                        // WHICHEVER occupant's material lies in that half — round 25's report
+                        // ("outline stops at seam ... switches based on what was placed
+                        // first/second") was this branch consulting the PRIMARY mask only, so
+                        // the second object's far half got empty() in its own window.
                         net.minecraft.world.phys.Vec3 inward = rp.transformLocalVecNonScale(
                             rp.getNormal().scale(-1.0));
                         Direction visDir = Direction.getApproximateNearest(
                             inward.x, inward.y, inward.z);
                         byte visibleHalf = SeamOccupancy.halfOf(visDir);
-                        if (ownedW != visibleHalf) {
-                            return net.minecraft.world.phys.shapes.Shapes.empty();
+                        if (singleW && ownedW == visibleHalf) {
+                            return null;   // primary's full cube; the window clip trims it
                         }
+                        if (secW != null && secW.half() == visibleHalf) {
+                            // The SECOND object's far half: its own full shape, window-trimmed.
+                            return secondaryShapeOf(secW, level, pos);
+                        }
+                        return net.minecraft.world.phys.shapes.Shapes.empty();
                     }
                 }
                 return null;
