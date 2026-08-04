@@ -42,6 +42,21 @@ public final class IrisStageConsistentComposite {
     // ---- weave witnesses (once-only; the log line is the proof the mixin applied) ----
     private static boolean captureSeamWitnessed = false;
     private static boolean stampSeamWitnessed = false;
+    private static boolean frameStartWitnessed = false;
+
+    /**
+     * S3 frame-start witness — proves the shift=BEFORE anchor dispatched into the compat
+     * renderer on the live JVM. Content is invariant, so a plain once-only latch is safe.
+     */
+    public static void noteFrameStartAnchorLive(String rendererName, int layer) {
+        if (frameStartWitnessed) return;
+        frameStartWitnessed = true;
+        LOGGER.info(
+            "[Seamless Portals] [IS5-PRE] frame-start anchor LIVE (renderer={}, layer={}) — "
+                + "S3 skeleton: arm decision falls back to OLD path until S4 lands the loop",
+            rendererName, layer
+        );
+    }
 
     // ---- per-view arm (set by the frame-start loop in S3; consumed by the capture seam) ----
     /** Non-null while a frame-start-loop-initiated nested view is rendering. S3 sets/clears it. */

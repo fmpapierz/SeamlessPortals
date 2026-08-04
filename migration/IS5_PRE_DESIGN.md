@@ -173,3 +173,24 @@ S1 flag+lever+RC line+doc · S2 iris-facing mixins inert + reflection surfaces +
 S3 frame-start anchor+arm+brackets (flag-gated) · S4 captures+stamp+recursion re-aim ·
 S5 query consumption+cap · S6 live legs (enable lever), both directions + C2 unit-size leg →
 default flip. KILL RULE: any witness contradicting §4 stops the stage, not the leg after it.
+
+### STAGE LEDGER (update at every stage commit)
+
+- **S1 LANDED** `1b28c3c` — `IPGlobal.STAGE_CONSISTENT_COMPOSITE` (static-final, dev default
+  OFF, `-PstageConsistentComposite=true`); run-block rows in clientSodium + crossingGametest.
+- **S2 LANDED** `d8acde1` — `MixinIrisRenderingPipeline_PreCompositeCapture` (cancellable INVOKE
+  inject, require=1), `MixinIrisCompositeRenderer_PreCompositeStamp` (renderAll HEAD, require=0),
+  `IrisStageConsistentComposite` coordinator (dormant; arm token null until S3 arms). **BOTH WEAVE
+  WITNESSES PROVEN ON THE LIVE JVM** (2026-08-04 01:11:20, `latest.log:732` stamp seam,
+  `:793` capture seam, `path=OLD armed=false`, zero mixin errors) — the V2 must-settle item
+  (new-class weave on IrisRenderingPipeline) is CLOSED.
+- **S3 LANDED (skeleton)** — `PortalRenderer.ip_onFrameStartBeforeMainRender` (empty base; only
+  the compat renderer overrides ⇒ stencil family untouched), the shift=BEFORE sibling inject in
+  `MixinGameRenderer_IPPostLevelAnchor` (path-flag-gated, calls `switchToCorrectRenderer()` first
+  per the judge), and the compat override whose ARM DECISION currently falls back to OLD
+  unconditionally with a once-only witness. **S4 must land:** the §3.1 real arm decision
+  (reflection surfaces: pass-0 `stageReadsFromAlt` side + `FrameCounter.count` write probe at mod
+  init), the relocated portal loop with the brackets (§3.7 distant-offset counter, §3.8 tracker
+  save/restore, §3.9 temporal guard + resize edge, §3.10 weather), per-view capture list (§3.5),
+  the capture+cancel body, the stamp body with the triple discriminator (§1.3), recursion re-aim
+  (§1 three mainRT dereferences), then S5 query consumption (§1.4/§3.3).

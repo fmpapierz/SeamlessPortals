@@ -252,6 +252,39 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
     }
 
     /**
+     * IS5-PRE S3 — the FRAME-START entry ({@code migration/IS5_PRE_DESIGN.md} §1.1/§3.1), fired
+     * by the IS0 anchor's shift=BEFORE sibling, only when the path flag is on. Owns the ONE
+     * mechanism-wide ARM decision per frame (judge-mandated: no half-armed states — if any
+     * precondition fails, the ENTIRE old path runs this frame, loudly once).
+     *
+     * <p><b>S3 skeleton state:</b> the arm decision structure + live witness only. The relocated
+     * portal loop, the brackets (counter distant-offset, tracker save/restore, temporal guard,
+     * weather), and the capture arming land in S4 — until then the decision is a permanent
+     * fall-back-to-OLD with the reason printed, so a dev-lever launch is honest about what runs.
+     */
+    @Override
+    public void ip_onFrameStartBeforeMainRender(Matrix4f unbobbedView) {
+        // The anchor already gates on the static-final path flag; belt here for direct callers.
+        if (!IPGlobal.STAGE_CONSISTENT_COMPOSITE) {
+            return;
+        }
+        if (PortalRendering.isRendering()) {
+            return; // never re-enter from a nested render
+        }
+        if (client.level == null || client.player == null) {
+            return; // mid-packet frame class: skip, never assert
+        }
+        // ---- THE ARM DECISION (design §3.1) — evaluated once, before any view renders ----
+        // S4 adds: reflection surfaces resolved (pass-0 read side, FrameCounter write probe),
+        // real composite pass 0 exists, capture buffers allocatable. Until S4 lands the decision
+        // is FALL BACK TO OLD unconditionally — printed once so the leg record can never mistake
+        // a dev launch for the live new path.
+        IrisStageConsistentComposite.noteFrameStartAnchorLive(
+            this.getClass().getSimpleName(), PortalRendering.getPortalLayer()
+        );
+    }
+
+    /**
      * §2.2-3 — THE WORKHORSE, fired by the IS0 post-main anchor (after iris finalized the main
      * frame; before hand). Snapshot → per-portal loop → blit-back.
      */
