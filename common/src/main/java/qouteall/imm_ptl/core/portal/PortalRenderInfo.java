@@ -256,5 +256,35 @@ public class PortalRenderInfo implements AutoCloseable {
         return decision;
     }
     
+    /**
+     * IS5-PRE ({@code migration/IS5_PRE_DESIGN.md} §1.4/§3.3) — CONSUME-ONLY visibility for the
+     * frame-start portal loop. Reads the query ISSUED at the end of the PREVIOUS frame (the
+     * post-main anchor's query-only pass) and never issues or reads a same-frame query: at frame
+     * start the main depth is CLEARED (GameRenderer.render clears colour+depth before
+     * renderLevel), so a query draw there would be garbage, and the two same-frame stall
+     * fallbacks of {@link #renderAndDecideVisibility} are replaced by the caller's default
+     * (render-if-unknown under a per-frame cap).
+     *
+     * <p>Returns {@code null} when no last-frame answer exists (first appearance, or a
+     * frame-index gap wiped the history). {@code getVisibility} performs the this→last rotation
+     * exactly as the issuer would; both run in the SAME frameIndex, so the issuer's later call
+     * this frame does not rotate again (V1's rotation invariant).
+     */
+    public static @Nullable Boolean consumeLastFrameVisibility(Portal portal) {
+        if (!IPGlobal.offsetOcclusionQuery) {
+            return null; // no offset-query scheme => nothing to consume; caller's default applies
+        }
+        PortalRenderInfo renderInfo = get(portal);
+        Visibility visibility =
+            renderInfo.getVisibility(WorldRenderInfo.getRenderingDescription());
+        GlQueryObject lastFrameQuery = visibility.lastFrameQuery;
+        if (lastFrameQuery == null) {
+            return null;
+        }
+        boolean visible = lastFrameQuery.fetchQueryResult();
+        renderInfo.updatePredictionStatus(visibility, visible);
+        return visible;
+    }
+
     private static final Cleaner CLEANER = Cleaner.create();
 }

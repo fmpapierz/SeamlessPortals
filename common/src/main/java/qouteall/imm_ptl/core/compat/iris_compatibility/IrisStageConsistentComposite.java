@@ -83,21 +83,8 @@ public final class IrisStageConsistentComposite {
     private static boolean captureSeamWitnessed = false;
     private static boolean stampSeamWitnessed = false;
 
-    /**
-     * S3/S4a frame-start witness — proves the shift=BEFORE anchor dispatched into the compat
-     * renderer, and reports the ARM DECISION's live status. CONTENT-KEYED (the C3-BLOOM lesson:
-     * a boolean latch on a value that changes is a bug generator) — any change in the decision
-     * string re-emits; an identical decision never repeats.
-     */
-    public static void noteFrameStartAnchorLive(String rendererName, int layer) {
-        String decision = decideArmForFrame();
-        String announcement = "renderer=" + rendererName + " layer=" + layer
-            + " armDecision=" + (decision == null ? "ARMED" : ("OLD-PATH(" + decision + ")"));
-        if (announcement.equals(lastFrameStartAnnouncement)) return;
-        lastFrameStartAnnouncement = announcement;
-        LOGGER.info("[Seamless Portals] [IS5-PRE] frame-start anchor LIVE — {}", announcement);
-    }
-
+    /** Content-keyed frame-start announcement state (the C3-BLOOM lesson: a boolean latch on a
+     *  value that changes is a bug generator) — any change in the decision string re-emits. */
     private static String lastFrameStartAnnouncement = null;
 
     // =============================================================================================
@@ -189,10 +176,187 @@ public final class IrisStageConsistentComposite {
         if (mechanismBroken) return "mechanism-broken(" + mechanismBreakReason + ")";
         if (!ensureReflection()) return "reflection-unavailable";
         if (!proveFrameCounterWrite()) return "counter-write-unproven";
-        // S4b lands: resolve the MAIN pipeline + its pass-0 read side here (disarm on
-        // compute-only-pass-0 with no real pass / zero-composite packs), allocate the per-view
-        // capture list, and grant the arm. Until the relocated loop exists, fall back.
-        return "loop-not-landed(S4b)";
+        // Pipeline-shape checks (pass-0 side, real composite pass 0) are deliberately NOT here:
+        // the manager slot holds LAST frame's pipeline at frame start (V5-measured), so per-view
+        // resolution happens at the capture seam and MAIN resolution at the stamp seam — each at
+        // the moment its pipeline is authoritative. A shape failure there breaks the mechanism,
+        // which this decision reports from the next frame on.
+        return null; // ARMED
+    }
+
+    // =============================================================================================
+    // S4b-part3 — the frame-arm lifecycle, counter bracket, speculative gate, and bob machinery
+    // =============================================================================================
+
+    private static boolean frameArmed = false;
+
+    /**
+     * Called by the compat renderer's frame-start hook. Runs the §3.1 arm decision, announces it
+     * content-keyed, and on ARM: recycles the capture pool and opens the frame. Returns whether
+     * the frame-start loop should run (false ⇒ the shipped old path runs at the post anchor).
+     */
+    public static boolean tryArmFrame(String rendererName) {
+        String decision = decideArmForFrame();
+        String announcement = "renderer=" + rendererName
+            + " armDecision=" + (decision == null ? "ARMED" : ("OLD-PATH(" + decision + ")"));
+        if (!announcement.equals(lastFrameStartAnnouncement)) {
+            lastFrameStartAnnouncement = announcement;
+            LOGGER.info("[Seamless Portals] [IS5-PRE] frame-start — {}", announcement);
+        }
+        if (decision != null) return false;
+        beginFrame();
+        frameArmed = true;
+        return true;
+    }
+
+    /** True while this frame's portal loop runs on the new path — the doRenderPortal forks'
+     *  discriminator. NOT consumed by the stamp (which keys on pending captures). */
+    public static boolean isFrameArmed() {
+        return frameArmed;
+    }
+
+    /** The post-main anchor's discriminator: true exactly once per armed frame (consumed), so the
+     *  workhorse can switch to its query-only mode without running the old snapshot/blit path. */
+    public static boolean consumeFrameRanNewPath() {
+        boolean r = frameArmed;
+        frameArmed = false;
+        return r;
+    }
+
+    // ---- §3.3 speculative gate (render-if-unknown, capped) ----
+
+    /** Per-frame cap on layer-0 render-if-unknown speculative renders; beyond it unknown portals
+     *  are skipped for the frame (bounded pop-in). After a frame-index gap wipes ALL query
+     *  history, this is what prevents a render storm (judge-mandated). */
+    private static final int SPECULATIVE_CAP = 4;
+    private static int speculativeRendersThisFrame = 0;
+    private static int speculativeSkipsThisFrame = 0;
+
+    /** The armed-path replacement for testShouldRenderPortal: consume-only + capped default. */
+    public static boolean consumeVisibilityForArmedFrame(Portal portal) {
+        Boolean known = qouteall.imm_ptl.core.portal.PortalRenderInfo
+            .consumeLastFrameVisibility(portal);
+        if (known != null) return known;
+        if (speculativeRendersThisFrame < SPECULATIVE_CAP) {
+            speculativeRendersThisFrame++;
+            return true;
+        }
+        speculativeSkipsThisFrame++;
+        return false;
+    }
+
+    // ---- §3.7 counter bracket (distant-offset — the judged +1 bump ALIASES; see the design) ----
+
+    private static int savedCounterValue = -1;
+
+    /** Reflectively offset FrameCounter.count by 360360 (≡0 mod 8 — dest framemod parity kept;
+     *  unreachable by the natural counter for ~360k frames) so every program the nested renders
+     *  bind records a lastFrame value the MAIN render's binds cannot equal — main re-uploads its
+     *  perFrame uniforms after the loop. No beginFrame() call — TIMER untouched. */
+    public static boolean counterBracketBegin() {
+        if (frameCounterWriteProbe <= 0) return false;
+        try {
+            int n = SystemTimeUniforms.COUNTER.getAsInt();
+            savedCounterValue = n;
+            fFrameCounterCount.setInt(SystemTimeUniforms.COUNTER, (n + 360360) % 720720);
+            return true;
+        } catch (Throwable t) {
+            breakMechanism("counter bracket begin failed", t);
+            return false;
+        }
+    }
+
+    public static void counterBracketEnd() {
+        try {
+            fFrameCounterCount.setInt(SystemTimeUniforms.COUNTER, savedCounterValue);
+        } catch (Throwable t) {
+            breakMechanism("counter bracket end failed", t);
+        }
+    }
+
+    // ---- §3.2 bob recompute (iris bobStack field) + the post-anchor witness ----
+
+    private static boolean bobStackSearched = false;
+    private static Field fBobStack = null;
+    private static final Matrix4f lastUnbobbed = new Matrix4f();
+    private static final Matrix4f lastComputedBobbed = new Matrix4f();
+    private static boolean bobComputedThisFrame = false;
+
+    /** bobbedView = bobStack × unbobbedView (iris's mulLocal semantics). The woven @Unique field
+     *  is found by name-contains scan (mixin renaming tolerance); absent/null ⇒ unbobbed
+     *  passthrough. Feeds ONLY IrisBobSync's dest-pose derive — stamp geometry never depends on
+     *  it (stamp matrices resolve at stamp time from the F1-captured passingModelView). */
+    public static Matrix4f computeBobbedView(Matrix4f unbobbed) {
+        lastUnbobbed.set(unbobbed);
+        bobComputedThisFrame = true;
+        if (!bobStackSearched) {
+            bobStackSearched = true;
+            try {
+                for (Field f : net.minecraft.client.Minecraft.getInstance()
+                    .gameRenderer.getClass().getDeclaredFields()) {
+                    if (f.getName().contains("bobStack")) {
+                        f.setAccessible(true);
+                        fBobStack = f;
+                        break;
+                    }
+                }
+                if (fBobStack == null) {
+                    LOGGER.warn("[Seamless Portals] [IS5-PRE] no bobStack field on the woven"
+                        + " GameRenderer — dest bob-lock uses the unbobbed view (coverage"
+                        + " unaffected)");
+                }
+            } catch (Throwable t) {
+                fBobStack = null;
+                LOGGER.warn("[Seamless Portals] [IS5-PRE] bobStack reflection failed — dest"
+                    + " bob-lock uses the unbobbed view", t);
+            }
+        }
+        Matrix4f result = new Matrix4f(unbobbed);
+        if (fBobStack != null) {
+            try {
+                Object stack = fBobStack.get(net.minecraft.client.Minecraft.getInstance().gameRenderer);
+                if (stack instanceof org.joml.Matrix4fc bobStack) {
+                    result = new Matrix4f(bobStack).mul(unbobbed);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        lastComputedBobbed.set(result);
+        return result;
+    }
+
+    private static String lastBobWitness = null;
+
+    /** Post-anchor witness (the AFTER anchor's modelView is the true post-mulLocal product):
+     *  classifies the frame as MUL_APPLIED (recompute proven), MUL_SKIPPED (field==unbobbed —
+     *  iris skipped the mul; the recompute over-applied a stale stack), or MISMATCH. Log-only,
+     *  content-keyed — bob affects the dest-pose nicety, never coverage, so no disarm. */
+    public static void bobWitnessPostAnchor(Matrix4f postMulField) {
+        if (!bobComputedThisFrame) return;
+        bobComputedThisFrame = false;
+        String status;
+        if (postMulField.equals(lastComputedBobbed, 1e-3f)) {
+            status = "MUL_APPLIED(recompute proven)";
+        } else if (postMulField.equals(lastUnbobbed, 1e-3f)) {
+            status = "MUL_SKIPPED(field unbobbed; recompute over-applied a stale stack)";
+        } else {
+            status = "MISMATCH(neither candidate matches — bob source needs re-derivation)";
+        }
+        if (status.equals(lastBobWitness)) return;
+        lastBobWitness = status;
+        LOGGER.info("[Seamless Portals] [IS5-PRE] bob witness: {}", status);
+    }
+
+    private static boolean nestedLayerDeferredNoted = false;
+
+    /** Part3 scope cut, disclosed: nested portal layers (portal-in-portal) are DEFERRED on the
+     *  new path until the part4 capture-to-capture re-aim — the dispatch returns early when the
+     *  frame is armed. Announced once so a live leg can never mistake it for a regression. */
+    public static void noteNestedLayerDeferred() {
+        if (nestedLayerDeferredNoted) return;
+        nestedLayerDeferredNoted = true;
+        LOGGER.info("[Seamless Portals] [IS5-PRE] nested portal layer requested on an armed frame"
+            + " — DEFERRED until the part4 capture-to-capture re-aim (single-layer new path)");
     }
 
     // =============================================================================================
@@ -445,6 +609,9 @@ public final class IrisStageConsistentComposite {
         capturesPendingThisFrame = 0;
         armedCapture = null;
         stampConsumedThisFrame = false;
+        frameArmed = false;
+        speculativeRendersThisFrame = 0;
+        speculativeSkipsThisFrame = 0;
     }
 
     /**
@@ -644,6 +811,17 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
 
+            // STAMP-TIME MATRICES (design §3.2 note): by renderAll HEAD, THIS frame's true
+            // post-mulLocal passingModelView (the F1 driver's main-render fire is the last
+            // writer before this point — judge-verified last-writer invariant) and the captured
+            // projection are both fresh. The arm-time matrices in the slot are frame-start
+            // values (unbobbed) — using them here would misregister the stamp by the bob offset.
+            Matrix4f mainMv = IrisCompatOn262Renderer.ip_stampModelViewOrNull();
+            Matrix4f mainProj = IrisCompatOn262Renderer.ip_stampProjectionOrNull();
+            if (mainMv == null || mainProj == null) {
+                breakMechanism("stamp-time matrices unavailable (renderer not live?)", null);
+                return;
+            }
             for (CaptureSlot slot : captureSlots) {
                 if (!slot.pending || slot.layer != 0) continue;
                 try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
@@ -651,7 +829,7 @@ public final class IrisStageConsistentComposite {
                 )) {
                     MeshData mesh = ViewAreaRenderer.buildPortalViewAreaMesh(
                         meshTint, slot.portal, slot.cameraPos, slot.partialTick,
-                        slot.modelView, byteBuffer
+                        mainMv, byteBuffer
                     );
                     if (mesh == null) continue; // fully near-plane-clipped — skip, like the stamp
                     int vertexCount;
@@ -673,7 +851,7 @@ public final class IrisStageConsistentComposite {
                             null
                         );
                     matBuf.clear();
-                    new Matrix4f(slot.projection).mul(slot.modelView).get(matBuf);
+                    new Matrix4f(mainProj).mul(mainMv).get(matBuf);
                     GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
                     GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
                 }

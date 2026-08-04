@@ -274,14 +274,77 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         if (client.level == null || client.player == null) {
             return; // mid-packet frame class: skip, never assert
         }
-        // ---- THE ARM DECISION (design §3.1) — evaluated once, before any view renders ----
-        // S4 adds: reflection surfaces resolved (pass-0 read side, FrameCounter write probe),
-        // real composite pass 0 exists, capture buffers allocatable. Until S4 lands the decision
-        // is FALL BACK TO OLD unconditionally — printed once so the leg record can never mistake
-        // a dev launch for the live new path.
-        IrisStageConsistentComposite.noteFrameStartAnchorLive(
-            this.getClass().getSimpleName(), PortalRendering.getPortalLayer()
-        );
+        // THE ARM DECISION (design §3.1) — one mechanism-wide grant per frame; any failure means
+        // the ENTIRE shipped old path runs at the post anchor, announced content-keyed.
+        if (!IrisStageConsistentComposite.tryArmFrame(this.getClass().getSimpleName())) {
+            return;
+        }
+
+        // ---- IS5-PRE FRAME-START LOOP (design §1.1) with its brackets --------------------------
+        // §3.10 weather: the nested same-dim path's weatherRenderState.reset() is the one
+        // shared-LRS mutation with no restore ("refilled by the next MAIN extract" — false at
+        // frame start, where THIS frame's extract already ran and the main render consumes it
+        // AFTER us). Save/restore the two column lists + scalars around the loop.
+        var weather = client.gameRenderer.gameRenderState().levelRenderState.weatherRenderState;
+        var savedRain = new java.util.ArrayList<>(weather.rainColumns);
+        var savedSnow = new java.util.ArrayList<>(weather.snowColumns);
+        float savedWeatherIntensity = weather.intensity;
+        int savedWeatherRadius = weather.radius;
+
+        // §3.7 counter bracket: nested binds record an unreachable lastFrame so the MAIN render
+        // re-uploads every perFrame uniform after the loop (the same-dim starvation inversion).
+        boolean counterBracketed = IrisStageConsistentComposite.counterBracketBegin();
+        // §3.9 temporal guard: same save/restore machinery, new position — the loop now precedes
+        // the main render, so the pollution it undoes would otherwise hit THIS frame's composites.
+        boolean guardSaved = IrisTemporalTargetGuard.save();
+        // §3.8 deliberately ABSENT: no prev-camera bracket — IrisDestPrevCamera corrects at every
+        // guarded composite draw, ordering-independent (pre-registered live check on the first
+        // leg; fallback named in the design). The IS5-PH heal is likewise suppressed in the
+        // workhorse's query-only mode below — a post-frame re-tick here would zero the main
+        // camera delta (the judged V4 trap).
+        ownRenderPortalsDepth++;
+        try {
+            // IS5-FF suppressor, bracket moved with the loop (its premise inverts here: the main
+            // shadowcomp dispatch now runs AFTER us and overwrites dest-seeded state anyway —
+            // kept as the judged cheap belt for accumulating packs).
+            IrisShadowCompositeSuppressor.install();
+            // §3.2: bob product recomputed from iris's woven bobStack (witnessed at the post
+            // anchor); feeds ONLY the dest-pose bob lock — stamp geometry resolves its matrices
+            // at stamp time and never depends on this.
+            Matrix4f bobbedView = IrisStageConsistentComposite.computeBobbedView(unbobbedView);
+            IrisBobSync.deriveFramePose(bobbedView);
+            renderPortals(bobbedView);
+        } finally {
+            ownRenderPortalsDepth--;
+            IrisShadowCompositeSuppressor.uninstall();
+            GL11.glDisable(GL_STENCIL_TEST); // belt parity with the workhorse's neutralize
+            if (guardSaved) {
+                IrisTemporalTargetGuard.restore();
+            }
+            if (counterBracketed) {
+                IrisStageConsistentComposite.counterBracketEnd();
+            }
+            weather.rainColumns.clear();
+            weather.rainColumns.addAll(savedRain);
+            weather.snowColumns.clear();
+            weather.snowColumns.addAll(savedSnow);
+            weather.intensity = savedWeatherIntensity;
+            weather.radius = savedWeatherRadius;
+        }
+    }
+
+    /** IS5-PRE stamp-time matrix sources (design §3.2 note): the stamp at main renderAll HEAD
+     *  reads THIS frame's post-mulLocal passingModelView (the F1 main-render fire is the last
+     *  writer before that point) and the captured projection — never the frame-start values. */
+    public static Matrix4f ip_stampModelViewOrNull() {
+        IrisCompatOn262Renderer r = instance;
+        if (r == null || r.passingModelView == null) return null;
+        return new Matrix4f(r.passingModelView);
+    }
+
+    public static Matrix4f ip_stampProjectionOrNull() {
+        Matrix4f p = getCurrentProjectionMatrix(); // protected static on the base
+        return p == null ? null : new Matrix4f(p);
     }
 
     /**
@@ -295,6 +358,25 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
         if (client.level == null || client.player == null) {
             return; // mid-packet frame class: skip, never assert
+        }
+        // IS5-PRE (design §1.4): on a frame the frame-start loop already ran, this anchor's job
+        // reduces to ISSUING occlusion queries against the finished frame's depth — the
+        // visibility input the NEXT frame's loop consumes. No snapshot, no brackets, no blit:
+        // the stamp already happened inside the main composite chain.
+        if (IrisStageConsistentComposite.consumeFrameRanNewPath()) {
+            // §3.2 witness: this modelView is the true post-mulLocal product — classify the
+            // frame-start bob recompute against it (log-only, content-keyed).
+            IrisStageConsistentComposite.bobWitnessPostAnchor(modelView);
+            // §3.8: suppress the old-path IS5-PH heal — a post-frame re-tick after a
+            // frame-start loop would yield previous==current==main(N), zeroing the main camera
+            // delta (the judged V4 trap). DestPrevCamera's draw-time correction is the cover.
+            anyFullPipelineDestRendered = false;
+            for (Portal portal : getPortalsToRender(modelView)) {
+                // Issue + shipped bookkeeping; the decision is deliberately discarded — it was
+                // already consumed at frame start from LAST frame's query.
+                testShouldRenderPortal(portal, modelView);
+            }
+            return;
         }
         // Fable-fold ledger (port-note §2.5, F-NOTE-2): the S15 mid-packet MISMATCH frame
         // (player.level() != mc.level) is intentionally NOT guarded here — parity with the
@@ -512,6 +594,14 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
      */
     @Override
     public void renderNestedPortalLayer(Matrix4f destDrawViewMatrix) {
+        // IS5-PRE part3 scope cut, disclosed (design ledger): on an armed frame the nested-layer
+        // machinery's three mainRT dereferences (snapshot source, stamp source, blit-back) point
+        // at a target the outer view's content never reaches — the capture-to-capture re-aim is
+        // part4. Until then the new path is single-layer; announced once, never silent.
+        if (IrisStageConsistentComposite.isFrameArmed()) {
+            IrisStageConsistentComposite.noteNestedLayerDeferred();
+            return;
+        }
         if (client.level == null || client.player == null) {
             return;
         }
@@ -623,11 +713,38 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             return;
         }
 
-        if (!testShouldRenderPortal(portal, modelView)) {
+        // IS5-PRE fork (a): on an armed frame the visibility DECISION is consume-only (last
+        // frame's query + the capped render-if-unknown default) — the query DRAW must never run
+        // at frame start, where the main depth is cleared (V5: not stale, DESTROYED). The issue
+        // path lives in the post anchor's query-only mode.
+        if (IrisStageConsistentComposite.isFrameArmed()) {
+            if (!IrisStageConsistentComposite.consumeVisibilityForArmedFrame(portal)) {
+                return;
+            }
+        }
+        else if (!testShouldRenderPortal(portal, modelView)) {
             return;
         }
 
-        if (!isDebugMode && IPGlobal.isIrisBloomApertureMaskActive()) {
+        // IS5-PRE fork (b): arm the capture for this view — consumed by exactly one nested
+        // finalize (the capture mixin). No slot ⇒ skip the view entirely: a view rendered with
+        // no consumer would land its composites in the main target for nothing.
+        boolean is5PreArmedView = false;
+        if (IrisStageConsistentComposite.isFrameArmed() && !isDebugMode) {
+            is5PreArmedView = IrisStageConsistentComposite.armCaptureForView(
+                portal, modelView, getCurrentProjectionMatrix(), PortalRendering.getPortalLayer()
+            );
+            if (!is5PreArmedView) {
+                return;
+            }
+        }
+
+        // IS5-PRE §3.12: the bloom-mask arm is CALL-SITE-gated on the armed frame (mask
+        // internals byte-identical — 4b913a5 undisturbed). With dest composites cancelled the
+        // mask has no consumer; the structural fix (real window content under the main gather)
+        // supersedes it on this path.
+        if (!isDebugMode && !IrisStageConsistentComposite.isFrameArmed()
+            && IPGlobal.isIrisBloomApertureMaskActive()) {
             // C3-BLOOM (§2f): arm the aperture mask for this portal's nested dest composite
             // chain — consumed inside iris's CompositeRenderer.renderAll (the mixin seam), which
             // masks colortex0 to the aperture footprint after its last writer and before the
@@ -701,6 +818,15 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // every subsequent MAIN-chain bind as DEST, i.e. it would fabricate the exact finding the
             // census exists to test for.
             com.warwa.seamlessportals.render.IrisCompositeCensus.disarmWindow();
+        }
+
+        // IS5-PRE fork (c): on an armed view the capture (taken at the nested finalize) IS this
+        // view's output — the stamp happens at the MAIN chain's renderAll HEAD, against
+        // unfiltered content. The entire old post-pop stamp block (clamp bracket, snapshot-side
+        // probes, stampPortalArea into the deferred buffer) is the OLD path's; running it here
+        // would dereference a snapshot that was never taken this frame.
+        if (is5PreArmedView) {
+            return;
         }
 
         // IS5-REC STAGE 2: resolve the deferred buffer we are compositing INTO. We are POST-pop
