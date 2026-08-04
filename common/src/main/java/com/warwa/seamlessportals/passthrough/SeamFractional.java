@@ -524,8 +524,16 @@ public final class SeamFractional {
                 // hit; a centre point cannot pick a side honestly).
                 SeamOccupancy.Secondary s0 = SeamOccupancy.secondaryOf(lvl, pos);
                 byte targetHalf = owned0;
-                if (net.minecraft.client.Minecraft.getInstance().hitResult
-                        instanceof net.minecraft.world.phys.BlockHitResult bhr
+                net.minecraft.world.phys.HitResult curHit =
+                    net.minecraft.client.Minecraft.getInstance().hitResult;
+                if (curHit == com.warwa.seamlessportals.render.SeamCounterpartOutline.nearHit
+                    && com.warwa.seamlessportals.render.SeamCounterpartOutline.nearHitHalf != 0) {
+                    // Round 26: the through-window swap's hit is a synthetic cell CENTRE — a
+                    // point ON the plane picks a side arbitrarily, which is how targeting a
+                    // two-object cell's dest half lost its near half. The swap now carries the
+                    // REAL remote hit's side, mapped through the binding; use it directly.
+                    targetHalf = com.warwa.seamlessportals.render.SeamCounterpartOutline.nearHitHalf;
+                } else if (curHit instanceof net.minecraft.world.phys.BlockHitResult bhr
                     && bhr.getType() != net.minecraft.world.phys.HitResult.Type.MISS
                     && bhr.getBlockPos().equals(pos)) {
                     targetHalf = SeamOccupancy.halfFromHit(

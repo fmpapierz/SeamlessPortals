@@ -58,18 +58,27 @@ public final class SeamCounterpartOutline {
      */
     public static boolean extractingOutline = false;
 
+    /**
+     * ★ Which HALF of the near cell the through-window-targeted object occupies (round 26: the
+     * synthetic cell-centre {@code nearHit} cannot pick a side, so a two-object cell targeted at
+     * its DEST half outlined only that half — the near extract fell back to the primary). Computed
+     * from the REAL remote hit's side of the far plane, mapped through the binding. 0 = unknown.
+     */
+    public static byte nearHitHalf = 0;
+
     /** Recompute both directions from the frame's final targeting. Called from the pick tail. */
     public static void update(Minecraft client) {
         farDim = null;
         farHit = null;
         nearHit = null;
+        nearHitHalf = 0;
         if (client.level == null || client.player == null) {
             return;
         }
         // near -> far: local hit on an owned seam cell.
         if (client.hitResult instanceof BlockHitResult local
             && local.getType() != HitResult.Type.MISS) {
-            var pair = counterpartOf(client.level, local.getBlockPos());
+            var pair = counterpartOf(client.level, local.getBlockPos(), local.getLocation());
             if (pair != null) {
                 farDim = pair.dim();
                 farHit = pair.hit();
@@ -87,17 +96,18 @@ public final class SeamCounterpartOutline {
             var remoteLevel = qouteall.imm_ptl.core.ClientWorldLoader
                 .peekWorld(BlockManipulationClient.remotePointedDim);
             if (remoteLevel != null) {
-                var pair = counterpartOf(remoteLevel, remote.getBlockPos());
+                var pair = counterpartOf(remoteLevel, remote.getBlockPos(), remote.getLocation());
                 if (pair != null && pair.dim().equals(client.level.dimension())) {
                     nearHit = pair.hit();
+                    nearHitHalf = pair.mappedHalf();
                 }
             }
         }
     }
 
-    private record Counterpart(ResourceKey<Level> dim, BlockHitResult hit) {}
+    private record Counterpart(ResourceKey<Level> dim, BlockHitResult hit, byte mappedHalf) {}
 
-    private static Counterpart counterpartOf(Level level, BlockPos cell) {
+    private static Counterpart counterpartOf(Level level, BlockPos cell, Vec3 hitLoc) {
         byte owned = SeamOccupancy.occupancyOf(level, cell);
         boolean anyObject = owned != 0 || SeamOccupancy.secondaryOf(level, cell) != null;
         if (!anyObject) {
@@ -111,11 +121,24 @@ public final class SeamCounterpartOutline {
             if (b == null || !b.isMirrorable() || b.cut() == null || b.destPos() == null) {
                 continue;
             }
+            // Which half of the COUNTERPART cell continues the targeted object: the real hit's
+            // side of this cell's plane, carried through the binding the way the crossing itself
+            // is (an object occupies OPPOSITE relative sides at its two cells — claimCrossingHalf's
+            // own mapDir(ownedDir.getOpposite()) rule, inverted here from the hit side).
+            byte hereHalf = SeamOccupancy.halfFromHit(hitLoc, cell,
+                b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
+            net.minecraft.core.Direction hereDir = net.minecraft.core.Direction.get(
+                hereHalf == SeamOccupancy.HALF_POSITIVE
+                    ? net.minecraft.core.Direction.AxisDirection.POSITIVE
+                    : net.minecraft.core.Direction.AxisDirection.NEGATIVE,
+                b.srcFacing().getAxis());
+            byte mappedHalf = SeamOccupancy.halfOf(
+                SeamRegistry.mapDir(b, hereDir.getOpposite()));
             // Outline-only hit: position/face are cosmetic (the box comes from the far cell's own
             // half-aware getShape); UP keeps vanilla's face-dependent tinting neutral.
             return new Counterpart(b.destDim(), new BlockHitResult(
                 Vec3.atCenterOf(b.destPos()), net.minecraft.core.Direction.UP,
-                b.destPos(), false));
+                b.destPos(), false), mappedHalf);
         }
         return null;
     }
