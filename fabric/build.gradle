@@ -164,6 +164,7 @@ loom {
             // SEAM CLIP (renderer): DEFAULT OFF by user decision 2026-07-27 (fractional model is the
             // chosen direction; the clip is kept as its renderer). One-line re-enable:
             if (project.findProperty('enableSeamClip') == 'true') { vmArg('-Dseamlessportals.enableSeamClip=true') }
+            if (project.findProperty('disableSeamClip') == 'true') { vmArg('-Dseamlessportals.disableSeamClip=true') }
             if (project.findProperty('seamClipProbe') == 'true') { vmArg('-Dseamlessportals.seamClipProbe=true') }
             // RS (b) PROBE LEVER — DEFAULT-OFF.
             if (project.findProperty('seamRailProbe') == 'true') { vmArg('-Dseamlessportals.seamRailProbe=true') }
@@ -376,6 +377,7 @@ loom {
             // SEAM CLIP (renderer): DEFAULT OFF by user decision 2026-07-27 (fractional model is the
             // chosen direction; the clip is kept as its renderer). One-line re-enable:
             if (project.findProperty('enableSeamClip') == 'true') { vmArg('-Dseamlessportals.enableSeamClip=true') }
+            if (project.findProperty('disableSeamClip') == 'true') { vmArg('-Dseamlessportals.disableSeamClip=true') }
             if (project.findProperty('seamClipProbe') == 'true') { vmArg('-Dseamlessportals.seamClipProbe=true') }
             if (project.findProperty('seamRailProbe') == 'true') { vmArg('-Dseamlessportals.seamRailProbe=true') }
             // RS (c) FIX LEVERS — redstone signal across the seam (see the client block's rows).

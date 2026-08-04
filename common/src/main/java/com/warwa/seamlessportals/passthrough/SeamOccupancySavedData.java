@@ -254,6 +254,25 @@ public class SeamOccupancySavedData extends SavedData {
         return sb.append(']').toString();
     }
 
+    /**
+     * Send EVERY level's persisted entries to one player. Called on join and on every world
+     * change: a dimension change runs the client's {@code ClientWorldLoader.cleanUp()}, which
+     * discards every per-dim ClientLevel and the occupancy duck maps with them — for ALL
+     * dimensions, not just the one left (RS-SEAM-EMPTINESS discriminator, 2026-08-03). Masks
+     * REPLACE on apply, so calling this twice for one hop is harmless.
+     */
+    public static void resendAllToPlayer(net.minecraft.server.level.ServerPlayer player) {
+        // 26.2: ServerPlayer has no getServer(); route through the level, like broadcast().
+        net.minecraft.server.MinecraftServer server =
+            player.level() instanceof ServerLevel sl ? sl.getServer() : null;
+        if (server == null) {
+            return;
+        }
+        for (ServerLevel level : server.getAllLevels()) {
+            sendAllTo(level, player);
+        }
+    }
+
     /** Send every persisted entry of this level to ONE player — the late-join sync. */
     public static void sendAllTo(ServerLevel level, net.minecraft.server.level.ServerPlayer player) {
         SeamOccupancySavedData data = level.getDataStorage().get(TYPE);
