@@ -538,18 +538,25 @@ public final class SeamFractional {
             // No legitimate line to this cell: nothing to see, nothing to hit.
             return net.minecraft.world.phys.shapes.Shapes.empty();
         }
-        if (owned == viewerHalf) {
-            return net.minecraft.world.phys.shapes.Shapes.join(
-                original, halfBox(axis, viewerHalf, off),
+        // viewerHalf is a MASK since round 22 (a side-on viewer may target BOTH halves). The
+        // targeting shape is the union of every occupant the viewer may touch — the ray then
+        // picks whichever sub-box it actually hits, which is vanilla semantics.
+        net.minecraft.world.phys.shapes.VoxelShape out =
+            net.minecraft.world.phys.shapes.Shapes.empty();
+        if ((owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE)
+            && (owned & viewerHalf) != 0) {
+            out = net.minecraft.world.phys.shapes.Shapes.join(
+                original, halfBox(axis, owned, off),
                 net.minecraft.world.phys.shapes.BooleanOp.AND);
         }
-        if (sec != null && sec.half() == viewerHalf) {
-            return net.minecraft.world.phys.shapes.Shapes.join(
-                secondaryShapeOf(sec, level, pos), halfBox(axis, viewerHalf, off),
-                net.minecraft.world.phys.shapes.BooleanOp.AND);
+        if (sec != null && (sec.half() & viewerHalf) != 0) {
+            out = net.minecraft.world.phys.shapes.Shapes.or(out,
+                net.minecraft.world.phys.shapes.Shapes.join(
+                    secondaryShapeOf(sec, level, pos), halfBox(axis, sec.half(), off),
+                    net.minecraft.world.phys.shapes.BooleanOp.AND));
         }
-        // The viewer's half is EMPTY: nothing to see, nothing to hit. The ray passes.
-        return net.minecraft.world.phys.shapes.Shapes.empty();
+        // Empty when every permitted half is unoccupied: nothing to see, the ray passes.
+        return out;
     }
 
     /**
@@ -813,8 +820,50 @@ public final class SeamFractional {
         // THIS CELL; through-window means near its COUNTERPART; near neither means no line.
         if (viewer.level() == level
             && viewer.blockPosition().distSqr(cell) <= NEAR_SQ) {
-            return SeamOccupancy.halfOfEye(viewer, cell,
-                binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+            Direction.Axis axis = binding.srcFacing().getAxis();
+            double off = binding.cut().srcPlaneOffset();
+            byte eyeHalf = SeamOccupancy.halfOfEye(viewer, cell, axis, off);
+            // ★ THE SIDE VIEW TARGETS BOTH HALVES (user round 22: "standing at side of portal but
+            // more on side A, i cannot outline the seam block on side b even though i can see
+            // it"). The eye-side-only rule is the far-side break protection, and it is only
+            // justified where the window REPLACES the far half — i.e. when the sight line to the
+            // far half passes through the aperture. From the side it does not: the segment from
+            // the eye to the far half's centre crosses the cut plane laterally OUTSIDE this
+            // cell's own cross-section, the far half is directly visible real geometry, and the
+            // viewer may target it like any block face. Same aperture discrimination the outline
+            // extract uses; the return is a MASK and every caller tests bitwise.
+            net.minecraft.world.phys.Vec3 eye = viewer.getEyePosition();
+            double planeCoord = off + (axis == Direction.Axis.X ? cell.getX()
+                : axis == Direction.Axis.Y ? cell.getY() : cell.getZ());
+            double sign = eyeHalf == SeamOccupancy.HALF_POSITIVE ? -1.0 : 1.0;
+            net.minecraft.world.phys.Vec3 c = net.minecraft.world.phys.Vec3.atCenterOf(cell);
+            net.minecraft.world.phys.Vec3 farCenter = new net.minecraft.world.phys.Vec3(
+                axis == Direction.Axis.X ? planeCoord + sign * 0.25 : c.x,
+                axis == Direction.Axis.Y ? planeCoord + sign * 0.25 : c.y,
+                axis == Direction.Axis.Z ? planeCoord + sign * 0.25 : c.z);
+            double eyeA = axis == Direction.Axis.X ? eye.x
+                : axis == Direction.Axis.Y ? eye.y : eye.z;
+            double farA = axis == Direction.Axis.X ? farCenter.x
+                : axis == Direction.Axis.Y ? farCenter.y : farCenter.z;
+            if (Math.abs(farA - eyeA) > 1.0e-6) {
+                double t = (planeCoord - eyeA) / (farA - eyeA);
+                if (t >= 0 && t <= 1) {
+                    net.minecraft.world.phys.Vec3 hit =
+                        eye.add(farCenter.subtract(eye).scale(t));
+                    boolean throughAperture = switch (axis) {
+                        case X -> hit.y >= cell.getY() && hit.y <= cell.getY() + 1
+                            && hit.z >= cell.getZ() && hit.z <= cell.getZ() + 1;
+                        case Y -> hit.x >= cell.getX() && hit.x <= cell.getX() + 1
+                            && hit.z >= cell.getZ() && hit.z <= cell.getZ() + 1;
+                        case Z -> hit.x >= cell.getX() && hit.x <= cell.getX() + 1
+                            && hit.y >= cell.getY() && hit.y <= cell.getY() + 1;
+                    };
+                    if (!throughAperture) {
+                        return SeamOccupancy.BOTH;   // side view: both halves directly visible
+                    }
+                }
+            }
+            return eyeHalf;
         }
         if (binding.destPos() == null || binding.destDim() == null
             || !viewer.level().dimension().equals(binding.destDim())

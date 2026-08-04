@@ -59,6 +59,23 @@ public abstract class MultiPlayerGameModeSecondaryBreakMixin {
                 cir.setReturnValue(false);
                 return;
             }
+            if (playerHalf == SeamOccupancy.BOTH) {
+                // Round 22: a side-on viewer holds a BOTH mask — narrow to the half the
+                // crosshair actually struck, so the break hits the object being looked at.
+                net.minecraft.world.phys.HitResult pick = mc.player.pick(6.0, 1.0f, false);
+                if (pick instanceof net.minecraft.world.phys.BlockHitResult pickHit
+                    && pickHit.getType() != net.minecraft.world.phys.HitResult.Type.MISS
+                    && pickHit.getBlockPos().equals(pos)) {
+                    playerHalf = SeamOccupancy.halfFromHit(pickHit.getLocation(), pos,
+                        binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+                } else {
+                    byte owned22 = SeamOccupancy.occupancyOf(mc.level, pos);
+                    playerHalf = (owned22 == SeamOccupancy.HALF_POSITIVE
+                        || owned22 == SeamOccupancy.HALF_NEGATIVE) ? owned22
+                        : SeamOccupancy.halfOfEye(mc.player, pos,
+                            binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+                }
+            }
             if (sec != null && playerHalf == sec.half()) {
                 // Predict the SECONDARY's removal only. The vanilla path below this cancel would
                 // have removed the primary's blockstate and cascaded into the dest client level.
