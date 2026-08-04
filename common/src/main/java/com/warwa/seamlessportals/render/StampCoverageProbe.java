@@ -89,6 +89,10 @@ public final class StampCoverageProbe {
     private static boolean armReported = false;
     private static long lastNanos = 0L;
     private static long lastAlignNanos = 0L;
+    /** The stamped x-extent from the most recent post-stamp scan — i.e. where the portal window
+     *  was on the scanned row. This is what AIMS the alignment compare (see its aim block). */
+    private static int lastStampedMin = 0;
+    private static int lastStampedMax = -1;
 
     /** Content-keyed, so a stable geometry announces once and a CHANGE always announces. */
     private static String announcedSnapshotGeometry = null;
@@ -255,6 +259,9 @@ public final class StampCoverageProbe {
         float runMax = runMin;
         int emitted = 0;
         int suppressed = 0;
+        // Record the stamped extent as we go — it is what aims the alignment compare next frame.
+        int stampedMin = Integer.MAX_VALUE;
+        int stampedMax = -1;
 
         for (int x = 1; x <= w; x++) {
             boolean stamped = x < w && isStampMagenta(colors, x);
@@ -265,6 +272,10 @@ public final class StampCoverageProbe {
                 continue;
             }
             int len = x - runStart;
+            if (runStamped) {
+                if (runStart < stampedMin) stampedMin = runStart;
+                if (x - 1 > stampedMax) stampedMax = x - 1;
+            }
             if (emitted < MAX_RUNS) {
                 emitted++;
                 runs.append(" [").append(runStart).append("..").append(x - 1)
@@ -292,6 +303,10 @@ public final class StampCoverageProbe {
                 .append(" busier than the cap; re-aim at a simpler view]");
         }
 
+        if (stampedMax >= 0) {
+            lastStampedMin = stampedMin;
+            lastStampedMax = stampedMax;
+        }
         LOGGER.info(P + "row={} w={} runs={}:{}", y, w, emitted + suppressed, runs);
         dumpEdges(colors, depths, w);
     }
@@ -390,10 +405,28 @@ public final class StampCoverageProbe {
             if (!readRow(mainRT, y, w, mc, md) || !readRow(deferred, y, w, dc, dd)) {
                 return;
             }
-            // Strongest depth discontinuity on the row = the silhouette worth looking at.
+            // ---- AIM ---------------------------------------------------------------------------
+            // MEASURED 2026-08-03: searching the WHOLE row put this compare on ordinary scenery.
+            // The portal windows sat at [552..776] and [1224..1320] while the samples landed at
+            // 126, 207, 240, 352, 1012, 1407, 1559, 2136 — so "2 of 3 silhouettes are clean" was a
+            // statement about random terrain and said NOTHING about the artifact. Third time this
+            // project has been bitten by probe AIM; the difference here is that the data caught it
+            // rather than a wrong conclusion did.
+            //
+            // So: restrict the search to the x-range the STAMP actually covered on the most recent
+            // post-stamp scan — i.e. the portal window, which is the only place the ring can be.
+            // The range is reported on every line so a null result stays attributable to aim.
+            int lo = 1;
+            int hi = w;
+            String aim = "WHOLE-ROW (no stamped extent seen yet — TREAT AS UNAIMED)";
+            if (lastStampedMax > lastStampedMin) {
+                lo = Math.max(1, lastStampedMin);
+                hi = Math.min(w, lastStampedMax + 1);
+                aim = "window[" + lastStampedMin + ".." + lastStampedMax + "]";
+            }
             int at = -1;
             float best = 0.0f;
-            for (int x = 1; x < w; x++) {
+            for (int x = lo; x < hi; x++) {
                 float d = Math.abs(md.get(x) - md.get(x - 1));
                 if (d > best && md.get(x) < 0.9999f && md.get(x - 1) < 0.9999f) {
                     best = d;
@@ -401,11 +434,11 @@ public final class StampCoverageProbe {
                 }
             }
             if (at < 0 || best < 1.0e-5f) {
-                return; // nothing but flat scenery on this row — say nothing rather than noise
+                return; // no silhouette inside the window — say nothing rather than emit noise
             }
-            LOGGER.info(P + "align@{} (strongest depth step on row {}, |dz|={}):\n    MAIN  {}"
-                    + "\n    DEFER {}",
-                at, y, fmt(best), window(mc, md, at, w), window(dc, dd, at, w));
+            LOGGER.info(P + "align@{} (strongest depth step within {} on row {}, |dz|={}):"
+                    + "\n    MAIN  {}\n    DEFER {}",
+                at, aim, y, fmt(best), window(mc, md, at, w), window(dc, dd, at, w));
         }
         catch (Throwable t) {
             disarmed = true;
