@@ -57,6 +57,29 @@ public final class SeamFractional {
     public record OutlineCutPlane(Direction.Axis axis, double offset) {}
 
     /**
+     * ★ REENTRANCY GUARD (round 20's live crash, StackOverflowError): fetching the SECONDARY's
+     * shape inside {@link #outlineShape} calls {@code BlockState.getShape}, and in 26.2 the 2-arg
+     * overload DELEGATES to the intercepted 3-arg one ({@code BlockBehaviour:1069→1073}) — so the
+     * hook re-entered itself for the same cell, whose secondary is still there, forever. While
+     * this flag is up, the hook answers vanilla; the nested fetch gets the secondary's plain model
+     * shape, which is exactly what the half-box clip wants.
+     */
+    private static final ThreadLocal<Boolean> OUTLINE_REENTRY =
+        ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /** The nested-safe secondary shape fetch — see {@link #OUTLINE_REENTRY}. */
+    private static net.minecraft.world.phys.shapes.VoxelShape secondaryShapeOf(
+        SeamOccupancy.Secondary sec, BlockGetter level, BlockPos pos
+    ) {
+        OUTLINE_REENTRY.set(Boolean.TRUE);
+        try {
+            return sec.state().getShape(level, pos);
+        } finally {
+            OUTLINE_REENTRY.set(Boolean.FALSE);
+        }
+    }
+
+    /**
      * Whether a mirror-admitted seam cell's block is genuinely divided by the portal plane.
      *
      * <p>Every arm of the model consults exactly this, so there is one place to A/B and one place
@@ -421,6 +444,9 @@ public final class SeamFractional {
             || !(level instanceof net.minecraft.world.level.Level lvl)) {
             return null;
         }
+        if (OUTLINE_REENTRY.get()) {
+            return null;   // nested secondary-shape fetch: answer vanilla, never recurse
+        }
         // ★ OUTLINE DRAW ≠ TARGETING (user live round: "extra line in the outline at the seam").
         // While extractBlockOutline is capturing the DRAW shape, a seam cell reports FULL — the
         // near pass and the window pass then outline coincident whole cubes that merge into one
@@ -459,7 +485,7 @@ public final class SeamFractional {
                 if (s0 != null) {
                     shape = net.minecraft.world.phys.shapes.Shapes.or(shape,
                         net.minecraft.world.phys.shapes.Shapes.join(
-                            s0.state().getShape(level, pos),
+                            secondaryShapeOf(s0, level, pos),
                             halfBox(axis0, s0.half(), off0),
                             net.minecraft.world.phys.shapes.BooleanOp.AND));
                 }
@@ -503,7 +529,7 @@ public final class SeamFractional {
         }
         if (sec != null && sec.half() == viewerHalf) {
             return net.minecraft.world.phys.shapes.Shapes.join(
-                sec.state().getShape(level, pos), halfBox(axis, viewerHalf, off),
+                secondaryShapeOf(sec, level, pos), halfBox(axis, viewerHalf, off),
                 net.minecraft.world.phys.shapes.BooleanOp.AND);
         }
         // The viewer's half is EMPTY: nothing to see, nothing to hit. The ray passes.
