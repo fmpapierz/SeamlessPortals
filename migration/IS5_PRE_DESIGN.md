@@ -189,10 +189,54 @@ default flip. KILL RULE: any witness contradicting §4 stops the stage, not the 
   inject in `MixinGameRenderer_IPPostLevelAnchor` (path-flag-gated, calls
   `switchToCorrectRenderer()` first per the judge), and the compat override whose ARM DECISION
   currently falls back to OLD unconditionally with a once-only witness.
-- **S4a (gating now)** — reflection surfaces in the coordinator (`compositeRenderer` identity,
+- **S4a LANDED** `c4ef1d4` — reflection surfaces in the coordinator (`compositeRenderer` identity,
   `renderTargets`, `passes`, `stageReadsFromAlt`, `FrameCounter.count` — all javap-pinned) +
   `proveFrameCounterWrite()` live probe + `decideArmForFrame()` real chain (falls back
   `loop-not-landed(S4b)`); frame-start witness now CONTENT-KEYED on the decision string.
+- **S4b-part1 LANDED** `30fd9d4` — per-VIEW capture slots (pooled, format-matched, 16-slot hard
+  bound) + `armCaptureForView` + the COMPLETE capture/cancel body (pass-0 side resolution, both
+  `glCopyImageSubData` copies, unconditional turnOffMips hygiene, `ci.cancel()`), mask-idiom
+  failure discipline (`breakMechanism` → old path from next frame; one-arm-one-finalize enforced).
+- **S4b-part2 LANDED** `bc5cba5` — the STAMP PASS at main renderAll HEAD, complete: triple
+  discriminator (consume-once + !isRendering + `this`==main `compositeRenderer` identity),
+  mod-owned GL program with the SHIPPED depth semantics (nocap vsh + IS5-XCUT per-fragment floor
+  `max(gl_FragCoord.z, 0.001)`, GEQUAL + depth WRITE, C4-SEAM clamp bracket), FBO =
+  colortex0 pass-0-READ side + `addDepthAttachmentBypass(depthtex0)`, u_solid/mesh-tint carrying
+  `-PdebugStampSolid`/`-PdebugTintStamp` identically. Layer≥1 slots deliberately not stamped here
+  (part3's recursion re-aim consumes them). **Everything still dormant** — nothing calls
+  `armCaptureForView` until part3's loop fork.
+- **S4b-part3 NEXT** — the five-call-site fork + frame-start brackets + recursion re-aim per the
+  FORK STRATEGY above; then S5 (query consumption + speculative cap); then S6 live legs.
+
+### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
+
+The judged "save/restore CameraPositionTracker + gbufferPrevious* around the loop" has NO stable
+reflection surface: both live in LAMBDA CAPTURES (`CameraPositionTracker` is a local of
+`addCameraUniforms` reachable only through `FrameUpdateNotifier.listeners` (private
+`List<Runnable>`) capture fields; `CapturedRenderingState` holds NO previous matrices — javap'd).
+Reflecting into lambda capture fields (`arg$1`) is metafactory-shape-fragile — rejected.
+
+INSTEAD: the shipped, user-confirmed `IrisDestPrevCamera` (DEFAULT ON, "FINALLY NOT BLURRY")
+already rewrites prev-camera/prev-matrix uniforms at EVERY guarded composite draw, keyed on the
+bind's OWN camera (per-dest nearest-match) — ordering-independent by construction. Under IS5-PRE
+the main chain binds with current=mainCam while the tracker's previous holds destCam; the
+correction rewrites to the stored main prev entry at the draw. **Expected: no bracket needed.**
+PRE-REGISTERED CHECK for the first live leg: main-frame MB must be correct on portal-visible
+frames (no portal-offset smear on ordinary scenery; window blurs coherently). FALLBACK if it
+fails: enumerate `FrameUpdateNotifier.listeners`, save/restore recognized capture shapes — built
+only on a failed check, never speculatively.
+
+### §3.2 BOB INPUT, RESOLVED (javap'd 2026-08-04 — the invoker recompute is REPLACED)
+
+`bobHurt`/`bobView(CameraRenderState, PoseStack)` are invokable but the SPIN is inline in
+`renderLevel` (replicating its math = drift). Instead: iris's woven `MixinModelViewBobbing`
+`@Unique Matrix4fc bobStack` field on GameRenderer holds THIS frame's full bob+hurt+spin product
+by the BEFORE-invoke anchor (built by the earlier Matrix4f.mul wrap; `mulLocal` semantics ⇒
+`bobbedView = bobStack × unbobbedView`). Reflect the woven GameRenderer for a field whose name
+contains "bobStack" (mixin renaming tolerance); null/absent ⇒ unbobbed passthrough. MANDATORY
+always-on WITNESS at the shift=AFTER anchor: compare `bobStack × unbobbed(BEFORE)` against the
+post-mulLocal field (epsilon, content-keyed WARN, mechanism disarm on sustained mismatch) — the
+recompute is trusted only while the witness holds.
 
 ### S4b FORK STRATEGY (derived from doRenderPortal :590-769, read 2026-08-04)
 
