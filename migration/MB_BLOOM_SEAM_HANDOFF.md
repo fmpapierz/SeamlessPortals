@@ -415,22 +415,91 @@ regen has already consumed the masked level 0).
 **Also never the gate: `masks=` / `misses=`.** MEASURED — this session logged `masks=10148 misses=0`
 while the ring was plainly visible. The counter records draws issued, never outcome achieved.
 
+### §7i ★ IS5-BLOOMMB IS LIVE-CONFIRMED, BOTH DIRECTIONS, NO REGRESSION (2026-08-03 21:1x–21:3x)
+
+Every leg's levers verified on the **live JVM** via the `IS5-RC [1/3]` block, and every plan read from
+the log rather than assumed. Pack options read from `shaderpacks/…zip.txt` at leg time per §7f-ter:
+`MOTION_BLUR_EFFECT=1`, `MOTION_BLURRING_STRENGTH=2.00`, no `BLOOM_ENABLED` line (⇒ bloom ON).
+
+| leg | lever on the live JVM | plan, from the log | user observed |
+|---|---|---|---|
+| **1A** | *(none — default)* | `sel=gatherer pass=composite4 idx=3 reads=ALT` | light bleed **GONE** |
+| **1B** | `disableBloomMaskGathererRetarget = true` | `sel=legacy pass=composite5 idx=4 reads=MAIN` | light bleed **BACK** |
+| **1E** | *(none)*, sustained fast yaw | as 1A; `masks=9187 misses=0`, no WARN, no disarm | **no dark fringe** |
+
+**The stage-0 gate closed, and it passed.** The new `[C3-BLOOM] PLAN:` census printed
+`3:composite4 db=[3, 0] mip=[0]` — converting the design's one INFERRED load-bearing link (that iris
+records colortex0 in composite4's mipmapped set under MB ON) to MEASURED. The pre-registered STOP
+condition was `reads=MAIN` on leg 1A; it came back **`reads=ALT`**, matching the working MB-OFF plan.
+
+**The regression that was most feared did not materialise.** Leg 1E was run under sustained fast yaw
+precisely because the fringe is arithmetically zero at rest; it was clean, and leg 1B is its control at
+the same scene and speed. **IS5-BLOOMMB ships DEFAULT-ON as built; the level-0 restore stage is NOT
+needed** (its design is retained in the workflow record should a future pack shape require it).
+
+Two incidental confirmations from the census: `composite6` mip-gathers **colortex3**, not colortex0, so
+there is no second non-local c0 reader downstream of the mask; and the `LIVE:` line re-emitted by itself
+on a window resize, which is the content-keyed announcement behaving exactly as rebuilt.
+
+### §7j ★★★ THE REMAINING ARTIFACT IS **ONE** BUG, AND IT IS NOT AN EDGE ARTIFACT AT ALL
+
+> **User, 2026-08-03:** *"the sliver is not only for frame blocks, its any block between player and
+> portal window, there is a sliver all around the block where the terrain behind the portal window is
+> showing in the sliver."*
+
+**This merges the "residual sliver" and artifact A (the third-person player halo) into a single bug.**
+The obsidian frame was never special — it was simply the occluder that happened to be there. The player
+is another occluder. The artifact is: **a ring of DESTINATION content around the silhouette of any
+main-world object standing between the camera and the portal window.**
+
+It also retires the framing this whole engagement inherited. The three reports were filed as *portal
+edge* artifacts; two of them are one *occluder silhouette* artifact, and the aperture edge only ever
+appeared special because a frame is the most common occluder.
+
+**Every observation, and what it now constrains:**
+
+| # | observation | status under the merge |
+|---|---|---|
+| O1 | the ring shows DESTINATION content around a MAIN-world occluder | the defining symptom |
+| O2 | MB makes it dramatically worse; survives MB OFF as a much thinner ring | MB is an amplifier, not the cause |
+| O3 | concentrates on VERTICAL edges under horizontal motion; rotation ≫ translation | consistent with a screen-space colour spread |
+| O4 | open-air portal CLEAN — **but the player halo occurs on one** | resolved: no occluder vs the player IS the occluder. The adjacency "constraint" was an artefact of the sample |
+| O5 | pack Bloom ON/OFF: unchanged | the bloom ring was a separate bug, now fixed (§7f/§7h) |
+| O6 | `IMAGE_SHARPENING=0`, **verified written to the sidecar on disk** — unchanged | the pack's unsharp filter is EXONERATED. `final.glsl`'s `viewD.x` anisotropy is real but is not this |
+| O7 | `-PdebugStampSolid` + `-PdebugTintStamp`: "magenta clean to the edge, no sliver" | **CONSISTENT, not contradictory** — if the ring is stamped destination content, painting the stamp flat magenta turns the ring magenta too |
+
+**Leading mechanism (INFERRED, under test):** the stamp's coverage is a **hard depth test**, while the
+occluder's visible **colour** has already been spread outward by non-local passes that run BEFORE the
+stamp — motion blur (`composite4`, and note it has *zero* depth rejection: `mbwg += 1.0` unconditional),
+TAA (`composite6`), FXAA (`composite7`). **Depth is never filtered; colour is.** The ring is exactly the
+gap between the occluder's depth silhouette and its filtered colour silhouette, and the stamp paints
+destination content into it.
+
+**Competing sub-mechanism with the same ~1 px signature, must be separated before believing the above:**
+the main gbuffer is **TAA-jittered** (`TAA_JITTER=2`, "Medium") while the stamp draws with a captured
+projection (`RenderStates.getPortalDrawProjection` → `capturedMainPassBobbedProjection`). If that capture
+is not jittered, coverage and depth disagree sub-pixel every frame, with a different offset each frame.
+
+**★ THE UNCOMFORTABLE IMPLICATION, flagged before it is discovered rather than after.** If the leading
+mechanism holds, this is a property of compositing the portal **after** the pack's antialiasing — which
+is the compat renderer's entire design (§7d). The shaders-OFF path decides coverage with a **stencil**,
+which is exact per-pixel and immune to colour filtering; if that path is clean, that is both the proof
+of the mechanism and the strongest hint at the fix.
+
 ### §7g THE REMAINING OPEN ITEMS (do not lose these — the bloom ring is only one of them)
 
-1. **The MB-OFF residual sliver.** With Bloom OFF *and* MB OFF the user still reported "an even smaller
-   even slighter sliver on the vertical edges". That is a different, much weaker artifact and is
-   unexplained. Leading candidate remains the pack's unsharp filter (`final.glsl:56-76`, `viewD.x`
-   anisotropy — see §7d), never tested; `IMAGE_SHARPENING → OFF` is a single in-game slider.
-2. **Artifact A, the third-person player halo.** Untouched. MB-only, rotation-only, reproduces in OPEN
-   AIR, so it does not share the sliver's adjacency constraint. Leading candidate: `composite4`'s motion
-   blur has **zero depth rejection** (`:139-171`, `mbwg += 1.0` unconditional), so the player's colour is
-   smeared past its silhouette, and the stamp — whose coverage is decided by depth, which MB does not
-   affect — re-cuts that trail at a hard edge and refills the overhang with destination colour.
-3. **The bloom-ring fix itself**, designed but not yet built. The hard part is that `composite4` reads
-   colortex0 **twice**: the gather at LODs 2-8 (`:65-84`) and the motion blur at LOD 0 (`:141`, 9 taps,
-   clamped to the SCREEN not the aperture, reach scaling with `MOTION_BLURRING_STRENGTH`, which the user
-   runs at the slider maximum 2.00). Masking before the gather therefore also blackens the motion-blur
-   source, risking a **dark MB fringe inside the window** in place of the bright ring.
+1. ~~The MB-OFF residual sliver~~ and ~~artifact A, the player halo~~ — **MERGED into one bug, see §7j.**
+   Both are the occluder-silhouette ring. The sharpen candidate is REFUTED by a verified negative (O6).
+2. ~~The bloom-ring fix~~ — **BUILT, SHIPPED, LIVE-CONFIRMED both directions, no regression.** §7h, §7i.
+3. **THE OCCLUDER HALO (§7j) is now the whole of what remains**, and the next step is the in-game
+   discriminator ladder — jitter, then TAA, then FXAA, one variable at a time, each with its prediction
+   registered in advance under each surviving mechanism. Zero code. Available values, verified in the
+   pack: `TAA_JITTER` 0=OFF/1=Low/2=Medium(current)/3=Full; `TAA_MODE` 0=OFF/1=ON(current);
+   `FXAA_DEFINE` -1=OFF/1=ON(current) on the *Performance* screen, `FXAA_STRENGTH` 70;
+   `MOTION_BLUR_EFFECT` -1=OFF/1=ON(current).
+4. **Whether the shaders-OFF stencil path shows it.** `RendererUsingStencil` decides coverage with a
+   stencil — exact per-pixel and immune to colour filtering. If it is clean, that is simultaneously the
+   proof of the mechanism and the strongest available hint at the fix.
 
 **★ C3-BLOOM as a candidate for B, for a reason the handoff never considered.**
 `IrisBloomApertureMask` CLEARS colortex0 to black outside the aperture (`:656`) and repaints only the
