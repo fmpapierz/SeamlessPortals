@@ -243,6 +243,66 @@ public final class SeamClipRenderer {
     private record PlaneKey(Direction keptDir, int planeCoordHalf) {}
 
     /**
+     * The tessellator's world view: single-owned-half seam cells read as AIR, so AO and shade
+     * sampling treat the materially empty halves as open space — the same substitution rule as
+     * {@code LightEngineSeamTransparencyMixin} (light values) and the compile region (meshes).
+     * Everything else delegates to the live level, including the light engine, which is already
+     * seam-transparent.
+     */
+    private record SeamAwareView(ClientLevel level)
+        implements net.minecraft.client.renderer.block.BlockAndTintGetter {
+
+        @Override
+        public net.minecraft.world.level.block.state.BlockState getBlockState(BlockPos pos) {
+            net.minecraft.world.level.block.state.BlockState s = level.getBlockState(pos);
+            if (!s.isAir()) {
+                byte owned = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(level, pos);
+                if (owned == com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE
+                    || owned == com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE) {
+                    return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+                }
+            }
+            return s;
+        }
+
+        @Override
+        public net.minecraft.world.level.CardinalLighting cardinalLighting() {
+            return level.cardinalLighting();
+        }
+
+        @Override
+        public int getBlockTint(BlockPos pos, net.minecraft.world.level.ColorResolver resolver) {
+            return level.getBlockTint(pos, resolver);
+        }
+
+        @Override
+        public net.minecraft.world.level.lighting.LevelLightEngine getLightEngine() {
+            return level.getLightEngine();
+        }
+
+        @Override
+        public net.minecraft.world.level.block.entity.BlockEntity getBlockEntity(BlockPos pos) {
+            return level.getBlockEntity(pos);
+        }
+
+        @Override
+        public net.minecraft.world.level.material.FluidState getFluidState(BlockPos pos) {
+            return level.getFluidState(pos);
+        }
+
+        @Override
+        public int getHeight() {
+            return level.getHeight();
+        }
+
+        @Override
+        public int getMinY() {
+            return level.getMinY();
+        }
+    }
+
+    /**
      * MAIN pass draw site — registered at {@code LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN}
      * (after opaque terrain + entity phases, before translucent terrain and the portal driver, so
      * near halves are depth-buffered before the stencil pass computes window visibility).
@@ -610,6 +670,16 @@ public final class SeamClipRenderer {
             mc.options.ambientOcclusion().get(), false, mc.getBlockColors());
         boolean cutoutLeaves = mc.options.cutoutLeaves().get();
         var modelSet = mc.getModelManager().getBlockStateModelSet();
+        // ★ SEAM-AWARE TESSELLATION VIEW (user live round 17: "lighting is wrong when opposite
+        // side adjacent seam cell has a face touching"). cull=false stopped the shared face being
+        // DISCARDED, but its AO/shade sampling still ran against the REAL level, where the
+        // adjacent seam block reads as a full opaque cube — so the face survived and rendered
+        // DARK. The same single-owned-half → AIR substitution the light engine and the compile
+        // region already apply, applied to the tessellator's own view; brightness comes through
+        // getLightEngine(), which the light-transparency mixin already fixed, so this closes the
+        // last sampler still reading the pre-fractional truth.
+        net.minecraft.client.renderer.block.BlockAndTintGetter seamAwareView =
+            new SeamAwareView(level);
         try {
             for (CellDraw cd : cells) {
                 float ox = (float) (cd.pos().getX() - camPos.x);
@@ -628,7 +698,7 @@ public final class SeamClipRenderer {
                     }
                     b.putBlockBakedQuad(x, y, z, quad, instance);
                 };
-                renderer.tesselateBlock(out, ox, oy, oz, level, cd.pos(), cd.state(),
+                renderer.tesselateBlock(out, ox, oy, oz, seamAwareView, cd.pos(), cd.state(),
                     modelSet.get(cd.state()), cd.state().getSeed(cd.pos()));
                 cellsDrawn++;
                 if (destPass) {
