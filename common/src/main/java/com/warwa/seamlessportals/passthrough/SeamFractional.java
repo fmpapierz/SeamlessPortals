@@ -859,37 +859,57 @@ public final class SeamFractional {
             // cell's own cross-section, the far half is directly visible real geometry, and the
             // viewer may target it like any block face. Same aperture discrimination the outline
             // extract uses; the return is a MASK and every caller tests bitwise.
+            // ★ PROBE THE CORNERS, NOT ONE SYNTHETIC RAY (rounds 22→24 oscillation, ended here).
+            // Every earlier form tested a single eye→far-half-CENTRE segment as the visibility
+            // proxy. That proxy is structurally wrong for a volume: at shallow side angles the
+            // centre hides behind the aperture while the half's visible CORNER sticks out past
+            // the portal edge — so the head-on protection and the side-view grant kept breaking
+            // each other's case. Visibility of a box IS visibility of its extreme points: probe
+            // the far half's outer-face corners (inset from the edges) plus its centre, and grant
+            // the far half if ANY probe's plane-crossing lands outside the seam-indexed aperture
+            // (round 23's whole-aperture rule, kept). Head-on, every probe crosses inside the
+            // aperture and the eye-side-only protection stands exactly as before.
             net.minecraft.world.phys.Vec3 eye = viewer.getEyePosition();
             double planeCoord = off + (axis == Direction.Axis.X ? cell.getX()
                 : axis == Direction.Axis.Y ? cell.getY() : cell.getZ());
-            double sign = eyeHalf == SeamOccupancy.HALF_POSITIVE ? -1.0 : 1.0;
-            net.minecraft.world.phys.Vec3 c = net.minecraft.world.phys.Vec3.atCenterOf(cell);
-            net.minecraft.world.phys.Vec3 farCenter = new net.minecraft.world.phys.Vec3(
-                axis == Direction.Axis.X ? planeCoord + sign * 0.25 : c.x,
-                axis == Direction.Axis.Y ? planeCoord + sign * 0.25 : c.y,
-                axis == Direction.Axis.Z ? planeCoord + sign * 0.25 : c.z);
             double eyeA = axis == Direction.Axis.X ? eye.x
                 : axis == Direction.Axis.Y ? eye.y : eye.z;
-            double farA = axis == Direction.Axis.X ? farCenter.x
-                : axis == Direction.Axis.Y ? farCenter.y : farCenter.z;
-            if (Math.abs(farA - eyeA) > 1.0e-6) {
-                double t = (planeCoord - eyeA) / (farA - eyeA);
-                if (t >= 0 && t <= 1) {
-                    net.minecraft.world.phys.Vec3 hit =
-                        eye.add(farCenter.subtract(eye).scale(t));
-                    // ★ THE WHOLE APERTURE, not just this cell (user round 23: from a diagonal
-                    // side position the sight line crosses the plane inside a NEIGHBOURING
-                    // aperture cell — the this-cell-only cross-section test called that "outside
-                    // the window" and wrongly granted the far half). The crossing point lies
-                    // inside exactly one cell; if THAT cell is seam-indexed, the line passes
-                    // through the window and the far half belongs to the window's view.
-                    BlockPos crossingCell = BlockPos.containing(hit.x, hit.y, hit.z);
-                    boolean throughAperture =
-                        SeamRegistry.lookup(level, crossingCell) != null;
-                    if (!throughAperture) {
-                        return SeamOccupancy.BOTH;   // side view: both halves directly visible
-                    }
+            // The far half's outer face sits on the cell boundary opposite the plane, nudged
+            // inward so probes never land exactly on cell edges.
+            double faceA = eyeHalf == SeamOccupancy.HALF_POSITIVE
+                ? (axis == Direction.Axis.X ? cell.getX() : axis == Direction.Axis.Y ? cell.getY() : cell.getZ()) + 0.05
+                : (axis == Direction.Axis.X ? cell.getX() : axis == Direction.Axis.Y ? cell.getY() : cell.getZ()) + 0.95;
+            double u0 = 0.05, u1 = 0.95, uc = 0.5;
+            double[][] uv = {{uc, uc}, {u0, u0}, {u0, u1}, {u1, u0}, {u1, u1}};
+            boolean anyClear = false;
+            for (double[] p : uv) {
+                net.minecraft.world.phys.Vec3 probe = switch (axis) {
+                    case X -> new net.minecraft.world.phys.Vec3(
+                        faceA, cell.getY() + p[0], cell.getZ() + p[1]);
+                    case Y -> new net.minecraft.world.phys.Vec3(
+                        cell.getX() + p[0], faceA, cell.getZ() + p[1]);
+                    case Z -> new net.minecraft.world.phys.Vec3(
+                        cell.getX() + p[0], cell.getY() + p[1], faceA);
+                };
+                double probeA = axis == Direction.Axis.X ? probe.x
+                    : axis == Direction.Axis.Y ? probe.y : probe.z;
+                if (Math.abs(probeA - eyeA) <= 1.0e-6) {
+                    continue;
                 }
+                double t = (planeCoord - eyeA) / (probeA - eyeA);
+                if (t < 0 || t > 1) {
+                    anyClear = true;   // no plane crossing on the way: direct line
+                    break;
+                }
+                net.minecraft.world.phys.Vec3 hit = eye.add(probe.subtract(eye).scale(t));
+                BlockPos crossingCell = BlockPos.containing(hit.x, hit.y, hit.z);
+                if (SeamRegistry.lookup(level, crossingCell) == null) {
+                    anyClear = true;   // this corner is visible around the aperture
+                    break;
+                }
+            }
+            if (anyClear) {
+                return SeamOccupancy.BOTH;   // side view: the far half is genuinely visible
             }
             return eyeHalf;
         }
