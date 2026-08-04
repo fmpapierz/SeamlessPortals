@@ -3866,6 +3866,13 @@ public class CrossingSmoke implements FabricClientGameTest {
                 // pair built with the user's exact commands (make_portal +
                 // complete_bi_way_bi_faced_portal), differing only in dimension topology.
                 rsObjectBreakBothSameDimGate(context);
+                // THE PIXEL GATE FOR SYMMETRIC EMPTINESS — user live round 15 (2026-08-03): state
+                // and behaviour gates all green while both empty half-spaces PAINTED a full
+                // continuous block ("you go to source side b and you see another full continuous
+                // block spanning from source side b to dest side a, but its not breakable").
+                // Every existing gate reads records; none of them stands where the user stood and
+                // looks. This one does — four measured screenshots on the user's own construction.
+                rsSeamEmptinessGate(context, py);
                 // RELOG PERSISTENCE — stage a two-object cell that SURVIVES the world close, on
                 // its own bi-way pair with a PERSISTENT forceload; the assert runs after leg 5's
                 // worldSave.open(). Full-suite only: RS-only runs never reopen the save.
@@ -7941,6 +7948,456 @@ public class CrossingSmoke implements FabricClientGameTest {
                 SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-CART-C cleanup failed", t);
             }
         }
+    }
+
+    /**
+     * ★ RS SEAM EMPTINESS GATE — the PIXEL gate for symmetric emptiness (user live round 15,
+     * 2026-08-03). Every state gate was green while the user saw both EMPTY half-spaces painted
+     * as a full continuous block from source side B and dest far side ("not breakable from
+     * source side B, or dest side A, only source side a and dest side b" — breaking was right
+     * because the STATE was right; only pixels were wrong). No existing leg stands where the
+     * user stood: the clip gate's fixture is single-faced (no B-face window at all), and the
+     * break/relog gates never render. This leg stages the user's own construction — an IGNITED
+     * cross-dim bi-faced portal — places gold claiming the +Z half, asserts the full state
+     * precondition on BOTH sides first (so a red is unambiguously the RENDERER), then takes four
+     * crosshair-aimed measured screenshots:
+     * <ol>
+     *   <li>source, owner side → GOLD (calibration; red here = fixture fault, not verdict)</li>
+     *   <li>source, far side → NOT gold (the empty half + through-window empty dest half)</li>
+     *   <li>dest, arrive side → GOLD (calibration)</li>
+     *   <li>dest, far side → NOT gold</li>
+     * </ol>
+     * Blue backdrops on both sides of both frames make "empty" measurable: an empty view lands
+     * on blue through the window; the phantom paints gold in front of it.
+     */
+    private static void rsSeamEmptinessGate(ClientGameTestContext context, int py) {
+        final String tag = LOG + "[RS-SEAM-EMPTINESS] ";
+        if (!com.warwa.seamlessportals.passthrough.SeamFractional.active()
+            || AperturePassthroughLever.DISABLED
+            || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
+            SeamlessPortalsConstants.LOGGER.info(tag + "SKIPPED — fractional or mirroring"
+                + " disabled; there is no owner half whose emptiness could be rendered.");
+            return;
+        }
+        if (!com.warwa.seamlessportals.render.SeamClipRenderer.active()) {
+            SeamlessPortalsConstants.LOGGER.info(tag + "SKIPPED — the seam clip renderer is"
+                + " forced off (-PdisableSeamClip, or sodium self-gate); with the model's"
+                + " renderer disabled every seam cell legitimately draws whole, which is the"
+                + " configuration under test in that row, not a defect this gate judges.");
+            return;
+        }
+        // Isolation (teardown lesson at -600): nether counterpart lands at ~(-500,-750) — 250
+        // blocks from the -4000 fixture's (-500,-500) and far outside leg 6a/6b's match windows.
+        final int ex = -4000, ez = -6000;
+        final BlockPos srcCell = new BlockPos(ex, py + 1, ez);
+        final Vec3 srcCenter = Vec3.atCenterOf(srcCell);
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+        AtomicReference<Vec3> destSeen = new AtomicReference<>(null);
+        AtomicReference<BlockPos> destCellRef = new AtomicReference<>(null);
+        AtomicReference<String> destDimId = new AtomicReference<>(null);
+        try {
+            // ---- Source site: pad, air, frame, backdrops, light — in that order (the air fill
+            // would wipe a frame built first) ----
+            runCommands(context, List.of(
+                "forceload add " + (ex - 16) + " " + (ez - 16) + " " + (ex + 16) + " " + (ez + 16),
+                "execute in minecraft:overworld run fill " + (ex - 4) + " " + py + " " + (ez - 9)
+                    + " " + (ex + 5) + " " + py + " " + (ez + 9) + " minecraft:obsidian",
+                "execute in minecraft:overworld run fill " + (ex - 4) + " " + (py + 1) + " "
+                    + (ez - 9) + " " + (ex + 5) + " " + (py + 8) + " " + (ez + 9)
+                    + " minecraft:air",
+                fill(ex - 1, py, ez, ex + 2, py, ez),          // base
+                fill(ex - 1, py + 4, ez, ex + 2, py + 4, ez),  // lintel
+                fill(ex - 1, py + 1, ez, ex - 1, py + 3, ez),  // left column
+                fill(ex + 2, py + 1, ez, ex + 2, py + 3, ez),  // right column
+                // Backdrops: corridor-width blue at z = ez±8, behind both camera spots.
+                "execute in minecraft:overworld run fill " + (ex - 1) + " " + (py + 1) + " "
+                    + (ez - 8) + " " + (ex + 2) + " " + (py + 4) + " " + (ez - 8)
+                    + " minecraft:blue_concrete",
+                "execute in minecraft:overworld run fill " + (ex - 1) + " " + (py + 1) + " "
+                    + (ez + 8) + " " + (ex + 2) + " " + (py + 4) + " " + (ez + 8)
+                    + " minecraft:blue_concrete",
+                "execute in minecraft:overworld run setblock " + (ex + 4) + " " + py + " "
+                    + (ez - 5) + " minecraft:glowstone",
+                "execute in minecraft:overworld run setblock " + (ex + 4) + " " + py + " "
+                    + (ez + 5) + " minecraft:glowstone",
+                "execute in minecraft:overworld run effect give @p minecraft:night_vision"
+                    + " 3600 0 true"
+            ));
+            context.waitTicks(10);
+            runOnServer(context, server ->
+                SeamlessPortalsConstants.LOGGER.info(tag + "ignition fired={}",
+                    qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                        .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                            new BlockPos(ex, py + 1, ez), null)));
+            final net.minecraft.world.phys.AABB srcBox = new net.minecraft.world.phys.AABB(
+                new Vec3(ex - 8, py - 8, ez - 8), new Vec3(ex + 8, py + 8, ez + 8));
+            context.waitFor(mc -> {
+                MinecraftServer s = mc.getSingleplayerServer();
+                if (s == null) return false;
+                ServerLevel ow = s.getLevel(Level.OVERWORLD);
+                return ow != null && ow.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    srcBox, p -> true).size() >= 2;   // BI-FACED is load-bearing: shot 2 looks
+                                                      // through the B face; one entity = no window
+            }, 1200);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                        srcBox, p -> true).stream().findFirst()
+                    .ifPresent(p -> destSeen.set(p.getDestPos()));
+            });
+            if (destSeen.get() == null) {
+                throw new AssertionError(tag + "FIXTURE INVALID — portal exists but has no"
+                    + " destination position");
+            }
+            int dxc = (int) Math.floor(destSeen.get().x), dzc = (int) Math.floor(destSeen.get().z);
+            // Bindings need the far portal ALIVE AND TICKING (mirror-family staging lesson).
+            runCommands(context, List.of(inDim("minecraft:the_nether",
+                "forceload add " + (dxc - 16) + " " + (dzc - 16) + " "
+                    + (dxc + 16) + " " + (dzc + 16))));
+            context.waitTicks(60);
+
+            // ---- Binding precondition + destination discovery ----
+            AtomicReference<String> stageErr = new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, srcCell);
+                if (cell == null) {
+                    stageErr.set("no seam binding at " + srcCell);
+                    return;
+                }
+                for (var b : cell.bindings()) {
+                    if (b.isMirrorable() && b.cut() != null && b.destPos() != null) {
+                        destCellRef.set(b.destPos());
+                        destDimId.set(b.destDim().identifier().toString());
+                        return;
+                    }
+                }
+                stageErr.set("no mirrorable binding with a cut at " + srcCell + ": " + cell);
+            });
+            if (stageErr.get() != null) {
+                throw new AssertionError(tag + "FIXTURE INVALID — " + stageErr.get());
+            }
+            final BlockPos destCell = destCellRef.get();
+            final String destDim = destDimId.get();
+
+            // ---- Nether site: pad, corridors along the dest normal, backdrops, light ----
+            AtomicReference<net.minecraft.core.Direction.Axis> destAxisRef =
+                new AtomicReference<>(null);
+            runOnServer(context, server -> {
+                ServerLevel nether = server.getLevel(
+                    net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(destDim)));
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry
+                    .lookup(nether, destCell);
+                if (cell != null) {
+                    for (var b : cell.bindings()) {
+                        if (b.isMirrorable()) {
+                            destAxisRef.set(b.srcFacing().getAxis());
+                            return;
+                        }
+                    }
+                }
+            });
+            if (destAxisRef.get() == null) {
+                throw new AssertionError(tag + "FIXTURE INVALID — destination cell " + destCell
+                    + " has no mirrorable binding; the far side never bound");
+            }
+            final net.minecraft.core.Direction.Axis dAxis = destAxisRef.get();
+            final int dx = destCell.getX(), dy = destCell.getY(), dz = destCell.getZ();
+            final int sx = dAxis == net.minecraft.core.Direction.Axis.X ? 1 : 0;
+            final int sz = dAxis == net.minecraft.core.Direction.Axis.Z ? 1 : 0;
+            if (sx + sz == 0) {
+                throw new AssertionError(tag + "FIXTURE INVALID — vertical dest plane axis "
+                    + dAxis + "; this leg's camera geometry is horizontal-only");
+            }
+            // SEALED obsidian tunnels, not open-air corridors: the first cut opened into a lava
+            // cave and shot 3's camera drowned in raw terrain 5 blocks from the frame (screenshot
+            // 0002: netherrack and a lava lake, no fixture in sight). Shell first, then hollow.
+            List<String> netherStage = new java.util.ArrayList<>();
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                int ax1 = dx + sx * sgn, az1 = dz + sz * sgn;           // 1 out from the face
+                int ax8 = dx + sx * sgn * 8, az8 = dz + sz * sgn * 8;   // corridor end
+                netherStage.add(inDim(destDim, "fill "
+                    + (Math.min(ax1, ax8) - sz * 2) + " " + (dy - 1) + " "
+                    + (Math.min(az1, az8) - sx * 2) + " "
+                    + (Math.max(ax1, ax8) + sz * 3) + " " + (dy + 4) + " "
+                    + (Math.max(az1, az8) + sx * 3)
+                    + " minecraft:obsidian"));
+                netherStage.add(inDim(destDim, "fill "
+                    + Math.min(ax1 - sz, ax8 - sz) + " " + dy + " " + Math.min(az1 - sx, az8 - sx)
+                    + " "
+                    + Math.max(ax1 + 2 * sz, ax8 + 2 * sz) + " " + (dy + 3) + " "
+                    + Math.max(az1 + 2 * sx, az8 + 2 * sx)
+                    + " minecraft:air"));
+                netherStage.add(inDim(destDim, "fill "
+                    + (ax8 - sz) + " " + dy + " " + (az8 - sx) + " "
+                    + (ax8 + 2 * sz) + " " + (dy + 3) + " " + (az8 + 2 * sx)
+                    + " minecraft:blue_concrete"));
+                netherStage.add(inDim(destDim, "setblock "
+                    + (dx + sx * sgn * 3 + 2 * sz) + " " + (dy - 1) + " "
+                    + (dz + sz * sgn * 3 + 2 * sx) + " minecraft:glowstone"));
+            }
+            runCommands(context, netherStage);
+            context.waitTicks(10);
+
+            // ---- Claim, then write (the real place path claims at HEAD, and the mirror derives
+            // the crossing half FROM the source claim — order is load-bearing) ----
+            com.warwa.seamlessportals.render.SeamClipRenderer.resetMeshTracking();
+            claimOwnerHalfBothSides(context, srcCell,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, srcCell,
+                    net.minecraft.world.level.block.Blocks.GOLD_BLOCK.defaultBlockState());
+            });
+            context.waitTicks(20);
+
+            // ---- STATE PRECONDITION on both sides, so a red below is the RENDERER, not the
+            // pipe (the user confirmed breaking behaves correctly while the pixels lie) ----
+            AtomicReference<String> stateView = new AtomicReference<>("");
+            AtomicReference<Byte> destMaskRef = new AtomicReference<>((byte) 0);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(
+                    net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(destDim)));
+                byte sm = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, srcCell);
+                byte dm = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(nether, destCell);
+                destMaskRef.set(dm);
+                stateView.set("server: srcMask=" + sm + " destMask=" + dm
+                    + " destState=" + nether.getBlockState(destCell).getBlock());
+                if (sm != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE
+                    || (dm != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE
+                        && dm != com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE)
+                    || !nether.getBlockState(destCell).is(
+                        net.minecraft.world.level.block.Blocks.GOLD_BLOCK)) {
+                    stageErr.set("state precondition failed — " + stateView.get());
+                }
+            });
+            if (stageErr.get() != null) {
+                throw new AssertionError(tag + "FIXTURE INVALID — " + stageErr.get());
+            }
+            final net.minecraft.resources.ResourceKey<Level> destKey = net.minecraft.resources.ResourceKey.create(
+                net.minecraft.core.registries.Registries.DIMENSION, net.minecraft.resources.Identifier.parse(destDim));
+            Boolean clientReady = context.computeOnClient(mc ->
+                com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                    .clientRecordOf(Level.OVERWORLD, srcCell.asLong()).mask() != 0
+                && com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                    .clientRecordOf(destKey, destCell.asLong()).mask() != 0);
+            if (!Boolean.TRUE.equals(clientReady)) {
+                throw new AssertionError(tag + "FIXTURE INVALID — the client does not hold both"
+                    + " occupancy records (the sync pipe has its own gate; this leg only judges"
+                    + " pixels on correct state). " + stateView.get());
+            }
+
+            // ---- Shot 1+2: source side. EVERY inter-stand hop goes via a waypoint 12 blocks
+            // off-axis: the first run's straight setPos from z+5.5 to z-4.5 passed THROUGH the
+            // portal quad, the client-first crossing detector fired (screenshot showed the "We
+            // Need to Go Deeper" advancement), and two of the four cameras photographed the wrong
+            // dimension. A 12-block lateral offset makes every cross-plane segment miss the
+            // 2-wide frame by ~8 blocks. Wait for the section recompile first (a stale mesh
+            // screenshot proves nothing — clip-gate lesson). ----
+            long srcDrawBase = com.warwa.seamlessportals.render.SeamClipRenderer.cellsDrawnCount();
+            seamStandIn(context, "minecraft:overworld", ex + 12.5, py + 1, ez + 5.5);
+            seamStandIn(context, "minecraft:overworld", ex + 0.5, py + 1, ez + 5.5);
+            boolean recompiled = false;
+            for (int i = 0; i < 40 && !recompiled; i++) {
+                context.waitTicks(5);
+                recompiled = com.warwa.seamlessportals.render.SeamClipRenderer.meshReplacedAt(
+                    srcCell.getX(), srcCell.getY(), srcCell.getZ());
+            }
+            if (!recompiled) {
+                throw new AssertionError(tag + "the gold cell's section never recompiled after"
+                    + " placement (200 ticks); counters: "
+                    + com.warwa.seamlessportals.render.SeamClipRenderer.counters());
+            }
+            // ★ RENDERER ENGAGEMENT — the round-15 lesson, pixelised: every state gate can be
+            // green while the fractional RENDERER is idle and vanilla paints whole cubes
+            // (measured: cellsDrawn=0 across all four shots). Demand the dynamic draw is
+            // actually running at this fixture before trusting any screenshot.
+            try {
+                context.waitFor(mc -> com.warwa.seamlessportals.render.SeamClipRenderer
+                    .cellsDrawnCount() > srcDrawBase, 200);
+            } catch (Throwable t) {
+                throw new AssertionError(tag + "THE FRACTIONAL RENDERER IS IDLE at the source"
+                    + " fixture — no dynamic seam draw in 200 ticks with the camera on it; every"
+                    + " seam cell is rendering as vanilla's whole cube. counters: "
+                    + com.warwa.seamlessportals.render.SeamClipRenderer.counters(), t);
+            }
+            aimAt(context, ex + 0.5, py + 1.7, ez + 1.0);
+            context.waitTicks(10);
+            double srcOwnerGold = goldFractionAtCenter(context, "rs-seam-empt-src-owner", tag);
+            seamStandIn(context, "minecraft:overworld", ex + 12.5, py + 1, ez - 4.5);
+            seamStandIn(context, "minecraft:overworld", ex + 0.5, py + 1, ez - 4.5);
+            aimAt(context, ex + 0.5, py + 1.7, ez + 0.25);
+            context.waitTicks(10);
+            double srcFarGold = goldFractionAtCenter(context, "rs-seam-empt-src-far", tag);
+
+            // ---- Shot 3+4: destination side. Camera on the material side first (calibration),
+            // then the empty side. matSign: which side of the dest plane holds the material.
+            // Night vision is re-given IN the destination dimension (the first run gave it via
+            // an overworld-scoped @p and the nether shots went dark), and the engagement wait
+            // repeats with a fresh baseline — the destination level has its own seam index. ----
+            int matSign = destMaskRef.get()
+                == com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE ? 1 : -1;
+            double dcx = dx + 0.5, dcz = dz + 0.5;
+            double wpx = 12.0 * sz, wpz = 12.0 * sx;   // perpendicular to the dest plane normal
+            runCommands(context, List.of(inDim(destDim,
+                "effect give @a minecraft:night_vision 3600 0 true")));
+            long destDrawBase = com.warwa.seamlessportals.render.SeamClipRenderer.cellsDrawnCount();
+            seamStandIn(context, destDim,
+                dcx + sx * matSign * 5.0 + wpx, dy, dcz + sz * matSign * 5.0 + wpz);
+            seamStandIn(context, destDim,
+                dcx + sx * matSign * 5.0, dy, dcz + sz * matSign * 5.0);
+            try {
+                context.waitFor(mc -> com.warwa.seamlessportals.render.SeamClipRenderer
+                    .cellsDrawnCount() > destDrawBase, 200);
+            } catch (Throwable t) {
+                throw new AssertionError(tag + "THE FRACTIONAL RENDERER IS IDLE at the"
+                    + " destination fixture — the dest level's seam index never engaged the"
+                    + " dynamic draw (client-side binding or recompile scheduling defect)."
+                    + " counters: "
+                    + com.warwa.seamlessportals.render.SeamClipRenderer.counters(), t);
+            }
+            // ★ THE DISCRIMINATOR PROBE — one line that splits the anti-mask-paint hypothesis
+            // space: if the client's dest record disagrees with the server's mask, the sync/claim
+            // pipe wrote the wrong half and the renderer is innocent; if they agree, the
+            // renderer's kept-side derivation or plane math flipped the draw.
+            context.runOnClient(mc -> {
+                var rec = com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                    .clientRecordOf(destKey, destCell.asLong());
+                byte direct = mc.level == null ? -1
+                    : com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .occupancyOf(mc.level, destCell);
+                SeamlessPortalsConstants.LOGGER.info(tag + "CLIENT DEST RECORD before shots:"
+                    + " resolved mask={} [{}] | direct mc.level({}) read={} | server said {}",
+                    rec.mask(), rec.source(),
+                    mc.level == null ? "null" : mc.level.dimension().identifier(),
+                    direct, destMaskRef.get());
+            });
+            aimAt(context, dcx + sx * matSign * 0.5, dy + 0.7, dcz + sz * matSign * 0.5);
+            context.waitTicks(10);
+            double destOwnerGold = goldFractionAtCenter(context, "rs-seam-empt-dest-owner", tag);
+            seamStandIn(context, destDim,
+                dcx - sx * matSign * 4.5 + wpx, dy, dcz - sz * matSign * 4.5 + wpz);
+            seamStandIn(context, destDim,
+                dcx - sx * matSign * 4.5, dy, dcz - sz * matSign * 4.5);
+            aimAt(context, dcx - sx * matSign * 0.25, dy + 0.7, dcz - sz * matSign * 0.25);
+            context.waitTicks(10);
+            double destFarGold = goldFractionAtCenter(context, "rs-seam-empt-dest-far", tag);
+
+            SeamlessPortalsConstants.LOGGER.info(tag
+                + "srcOwner={} srcFar={} destOwner={} destFar={} destAxis={} matSign={} | {} |"
+                + " counters: {}",
+                String.format("%.2f", srcOwnerGold), String.format("%.2f", srcFarGold),
+                String.format("%.2f", destOwnerGold), String.format("%.2f", destFarGold),
+                dAxis, matSign, stateView.get(),
+                com.warwa.seamlessportals.render.SeamClipRenderer.counters());
+
+            // ---- Verdicts: calibration first (a mis-built fixture must not masquerade as a
+            // phantom verdict), then the two emptiness assertions the user's report names. ----
+            if (srcOwnerGold < 0.5 || destOwnerGold < 0.5) {
+                throw new AssertionError(tag + "CALIBRATION FAILED — the OWNED half is not gold"
+                    + " from its own side (srcOwner=" + srcOwnerGold + " destOwner="
+                    + destOwnerGold + "); the emptiness verdicts below would be meaningless.");
+            }
+            if (srcFarGold > 0.15 || destFarGold > 0.15) {
+                throw new AssertionError(tag + "THE PHANTOM — an EMPTY half-space painted the"
+                    + " block (srcFar=" + srcFarGold + " destFar=" + destFarGold + "; both must"
+                    + " be ~0 — the view should pass through the window to the blue backdrop)."
+                    + " This is the user's round-15 report reproduced: state green, pixels lying."
+                    + " " + stateView.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(tag + "PASS — owned halves gold from their own"
+                + " sides, empty half-spaces genuinely empty from the other two vantage points.");
+        } finally {
+            // Break the object (clears the mirror half too), then wipe everything this leg built.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                try {
+                    writeAsPlayer(ow, srcCell, net.minecraft.world.level.block.Blocks.AIR
+                        .defaultBlockState());
+                } catch (Throwable ignored) {
+                }
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, srcCell);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, srcCell, null);
+                for (var portal : ow.getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(new Vec3(ex - 8, py - 8, ez - 8),
+                        new Vec3(ex + 8, py + 8, ez + 8)), p -> true)) {
+                    portal.discard();
+                }
+                if (destCellRef.get() != null && destDimId.get() != null) {
+                    ServerLevel nether = server.getLevel(
+                        net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION,
+                            net.minecraft.resources.Identifier.parse(destDimId.get())));
+                    if (nether != null) {
+                        BlockPos dc = destCellRef.get();
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(nether, dc);
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy
+                            .setSecondary(nether, dc, null);
+                        for (var portal : nether.getEntitiesOfClass(
+                            qouteall.imm_ptl.core.portal.Portal.class,
+                            new net.minecraft.world.phys.AABB(Vec3.atCenterOf(dc), Vec3.atCenterOf(dc))
+                                .inflate(8), p -> true)) {
+                            portal.discard();
+                        }
+                    }
+                }
+            });
+            List<String> cleanup = new java.util.ArrayList<>();
+            cleanup.add("execute in minecraft:overworld run fill " + (ex - 4) + " " + py + " "
+                + (ez - 9) + " " + (ex + 5) + " " + (py + 8) + " " + (ez + 9) + " minecraft:air");
+            if (destCellRef.get() != null && destDimId.get() != null) {
+                BlockPos dc = destCellRef.get();
+                cleanup.add(inDim(destDimId.get(), "fill " + (dc.getX() - 9) + " "
+                    + (dc.getY() - 2) + " " + (dc.getZ() - 9) + " " + (dc.getX() + 9) + " "
+                    + (dc.getY() + 5) + " " + (dc.getZ() + 9) + " minecraft:air"));
+                cleanup.add(inDim(destDimId.get(), "forceload remove "
+                    + ((int) Math.floor(destSeen.get().x) - 16) + " "
+                    + ((int) Math.floor(destSeen.get().z) - 16) + " "
+                    + ((int) Math.floor(destSeen.get().x) + 16) + " "
+                    + ((int) Math.floor(destSeen.get().z) + 16)));
+            }
+            cleanup.add("forceload remove " + (ex - 16) + " " + (ez - 16) + " "
+                + (ex + 16) + " " + (ez + 16));
+            cleanup.add("effect clear @p minecraft:night_vision");
+            if (prevDim != null) {
+                cleanup.add(inDim(prevDim, "tp @p " + prevPos.x + " " + prevPos.y + " "
+                    + prevPos.z));
+            }
+            runCommands(context, cleanup);
+            context.waitTicks(10);
+        }
+    }
+
+    /** Cross-dim variant of {@link #seamClipStand}: stand at exact coordinates in ANY dimension. */
+    private static void seamStandIn(
+        ClientGameTestContext context, String dim, double x, double y, double z
+    ) {
+        runOnServer(context, server -> {
+            CommandSourceStack src = server.createCommandSourceStack().withSuppressedOutput();
+            server.getCommands().performPrefixedCommand(src,
+                "execute in " + dim + " run tp @p " + x + " " + y + " " + z + " 90 0");
+        });
+        context.waitTicks(30);   // cross-dim arrival is packet-driven; give it real time
+        context.runOnClient(mc -> {
+            if (mc.player != null) {
+                mc.player.setPos(x, y, z);
+                mc.player.xo = x;
+                mc.player.yo = y;
+                mc.player.zo = z;
+                mc.player.setDeltaMovement(Vec3.ZERO);
+            }
+        });
+        context.waitTicks(5);
     }
 
     private static void rsSeamClipGate(ClientGameTestContext context, int px, int py, int pz) {

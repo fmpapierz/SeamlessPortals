@@ -244,6 +244,14 @@ public final class SeamlessServerTeleport {
             com.warwa.seamlessportals.mixin.EntityFlagsAccessor.seamlessportals$getSharedFlagsId();
         player.getEntityData().set(flagsId, player.getEntityData().get(flagsId), true);
 
+        // ★ RE-SEND SEAM OCCUPANCY (RS-SEAM-EMPTINESS discriminator, 2026-08-03): the crossing's
+        // client-side world swap runs ClientWorldLoader.cleanUp(), discarding every per-dim
+        // ClientLevel and the occupancy duck maps with them — after which every seam cell draws
+        // as a whole cube. The Fabric AFTER_PLAYER_CHANGE_WORLD hook covers vanilla dimension
+        // changes; this direct call covers the mod's own crossing path regardless of which
+        // vanilla internals the loader wraps. Masks REPLACE on apply — duplicates are harmless.
+        com.warwa.seamlessportals.passthrough.SeamOccupancySavedData.resendAllToPlayer(player);
+
         // Block EntityMixin.tick fallback from re-detecting this crossing
         // on the next server tick while the player is still inside the dest
         // portal's bounding box.

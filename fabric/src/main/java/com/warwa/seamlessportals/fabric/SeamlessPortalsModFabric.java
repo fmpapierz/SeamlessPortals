@@ -145,6 +145,10 @@ public class SeamlessPortalsModFabric implements ModInitializer {
                             .sendAllTo(level, handler.getPlayer());
                     }
                 });
+            // ★ RE-SEND ON EVERY WORLD CHANGE lives in ServerPlayerSeamResendMixin (common), NOT
+            // here: the 26.2-era fabric-api REMOVED ServerEntityWorldChangeEvents (verified in
+            // fabric-entity-events-v1-5.0.5 — the class is gone), so the hook is a mixin on the
+            // one funnel every cross-dim move passes through, ServerPlayer.teleport(TeleportTransition).
             // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
             // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
             // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally

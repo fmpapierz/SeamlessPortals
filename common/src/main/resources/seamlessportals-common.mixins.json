@@ -76,6 +76,7 @@
     "passthrough.SeamIndexHolderMixin",
     "passthrough.BlockStateBaseFractionalMixin",
     "passthrough.ServerPlayerGameModeSecondaryBreakMixin",
+    "passthrough.ServerPlayerSeamResendMixin",
     "passthrough.MixinBlockItemCanPlace",
     "passthrough.MixinBaseRailBlockMirrorAuthority",
     "passthrough.MixinRailStateSeam",

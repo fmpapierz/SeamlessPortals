@@ -372,15 +372,30 @@ public final class AperturePassthroughLever {
      * geometry, collision and state ending at the plane — which retires both the invisible-solid
      * far half AND the crossing pop). The clip machinery is kept intact as that model's RENDERER.
      *
-     * <p><b>ONE-LINE REVERT:</b> launch with {@code -PenableSeamClip=true}
-     * ({@code -Dseamlessportals.enableSeamClip=true}) for a session, or flip this initializer
-     * back to {@code Boolean.getBoolean("seamlessportals.disableSeamClip")} to restore
-     * default-ON permanently. Every consumer reads THIS field; nothing else changes.
-     * Self-gates OFF under sodium regardless (no meshing hook). Design + panel record:
-     * {@code migration/SEAM_CLIP_DESIGN.md}.
+     * <p>★ THE RENDER FLIP — 2026-08-03, the LAST step of the user's fractional sequencing
+     * ("gate → storage → collision → render flip LAST"). The 2026-07-27 default-OFF decision was
+     * about the CAMERA-derived clip above; under the OWNER-HALF model the clip machinery became
+     * the fractional model's renderer, occupancy-driven and view-independent, and every live
+     * verification round since ran it via {@code -PenableSeamClip}. Round 15 proved what default
+     * OFF means once the model is on: state, collision, outline and breaking all correct while
+     * EVERY seam cell paints vanilla's whole cube (the user's "full continuous block" on both
+     * empty sides — the renderer was simply idle, {@code cellsDrawn=0}). So the default now
+     * follows the model itself:
+     * <ul>
+     *   <li>{@code -PdisableSeamClip} → force OFF (the A/B row);</li>
+     *   <li>{@code -PenableSeamClip} → force ON (the legacy camera-clip row, works with the
+     *       fractional model off);</li>
+     *   <li>otherwise → ON exactly when the fractional model is on (the
+     *       {@code disableSeamFractional} sysprop is read directly here rather than via
+     *       {@code SeamFractional.active()} — same truth, no cross-class static-init edge).</li>
+     * </ul>
+     * Every consumer reads THIS field; self-gates OFF under sodium regardless (no meshing hook).
+     * Design + panel record: {@code migration/SEAM_CLIP_DESIGN.md}.
      */
     public static final boolean DISABLE_SEAM_CLIP =
-        !Boolean.getBoolean("seamlessportals.enableSeamClip");
+        Boolean.getBoolean("seamlessportals.disableSeamClip")
+            || (!Boolean.getBoolean("seamlessportals.enableSeamClip")
+                && Boolean.getBoolean("seamlessportals.disableSeamFractional"));
 
     /**
      * Per-frame seam-clip probe ({@code -Dseamlessportals.seamClipProbe=true}, DEFAULT-OFF):
