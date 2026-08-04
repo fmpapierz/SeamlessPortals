@@ -486,6 +486,61 @@ is the compat renderer's entire design (§7d). The shaders-OFF path decides cove
 which is exact per-pixel and immune to colour filtering; if that path is clean, that is both the proof
 of the mechanism and the strongest hint at the fix.
 
+### §7k ★★★ THE OCCLUDER RING IS **UNDER-COVERAGE BY THE STAMP** — CONFIRMED, AND THE SIGN IS THE OPPOSITE OF WHAT I HAD
+
+**User, 2026-08-03, after four in-game legs:**
+> *"the source terrain is showing, source terrain behind the portal is the sliver"*
+
+and then, with `-PdebugStampSolid=true -PdebugTintStamp=true` aimed at a **block floating inside the
+window** (not at the frame):
+> *"ring of ordinary terrain around the block, magenta elsewhere"*
+
+**The stamp paints TOO LITTLE, not too much.** A ~1 px ring around every occluder is never covered, and
+the SOURCE world's geometry — the main-world terrain sitting behind the portal plane, which the portal
+view is supposed to replace — shows through the gap. Against flat magenta the ring is unmissable, which
+is the point of that lever: it converts a sub-visible artifact into a binary observation.
+
+**★ THE SIGN WAS WRONG IN §7j AND IN EVERYTHING I TOLD THE USER BEFORE THIS.** I had it as *destination*
+content appearing where the occluder should be, which made it "the occluder's COLOUR outgrew its depth
+silhouette" and pointed at the pack's filtering passes. It is the reverse: **the occluder's DEPTH
+footprint is larger than its colour footprint**, so the stamp is depth-rejected at pixels the occluder
+does not actually cover. Everything downstream of that sign error was wasted, including two mechanisms
+and a whole recon commission.
+
+**What killed the filtering story, in order — every one a verified negative:**
+
+| leg | change | verified | result |
+|---|---|---|---|
+| sharpen | `IMAGE_SHARPENING=0` | written to sidecar on disk | ring **unchanged** |
+| jitter | `TAA_JITTER=0` | written to sidecar on disk | ring **unchanged** ⇒ sub-pixel registration REFUTED |
+| endpoint | MB **+** TAA **+** FXAA all OFF | — | ring **STILL THERE** ⇒ colour-spread mechanism REFUTED |
+
+With every filtering pass off, the occluder's colour footprint equals its depth footprint and there is
+nothing left to smear. The ring survives ⇒ it is pure geometry and depth. MB still makes it worse, which
+is now just amplification of an existing gap rather than its cause.
+
+**★ AND IT FOLDS IN THE THIRD REPORT.** The portal's own aperture boundary is a depth discontinuity too,
+so "source terrain visible at the window edge where it meets the frame" is the SAME defect seen at the
+window's own outline. **One bug now accounts for all three original reports (A, B and C).**
+
+**Why the earlier magenta leg (§7e) said the opposite.** That leg was run hours earlier, aimed at the
+frame edge, before anyone knew the artifact was about occluders — it never looked at a block inside the
+window. Its "magenta clean to the edge, no sliver" was a true observation of the wrong place. **A leg's
+conclusion is only as good as where it was AIMED**, and re-running it with the right target inverted the
+answer. (Compare `no-guessing-deep-debug-logs`: "validate a probe's AIM against a frame where the target
+is KNOWN PRESENT" — the same failure, applied to a lever instead of a probe.)
+
+**The open question, now precise and small:** why is the occluder's depth footprint bigger than its
+colour footprint? Established so far: the stamp draws into `deferred` with the depth state declared
+**GEQUAL + depth WRITE**, testing against `deferred.getDepthTextureView()`
+(`IrisCompatPaste.java:~566-576`), and `SecondaryFrameBuffer.prepare()` sizes itself from
+`mainFrameBuffer.width/height`, so a naive resolution mismatch is unlikely. Candidates not yet
+separated: what the deferred buffer's depth actually CONTAINS when the stamp runs and how it got there
+(the snapshot path, and whether depth is copied at all — `drawStraightCopy` is ledgered as colour-only);
+the depth compare's real behaviour at the draw versus its declaration (this tree holds a measured
+counter-example where the declared and executed state disagree); and the interaction with
+`CHelper.enableDepthClamp()` around the stamp (`IrisCompatOn262Renderer:657-659`).
+
 ### §7g THE REMAINING OPEN ITEMS (do not lose these — the bloom ring is only one of them)
 
 1. ~~The MB-OFF residual sliver~~ and ~~artifact A, the player halo~~ — **MERGED into one bug, see §7j.**
