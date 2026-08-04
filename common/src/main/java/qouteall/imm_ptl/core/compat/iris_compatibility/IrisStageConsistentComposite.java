@@ -206,8 +206,38 @@ public final class IrisStageConsistentComposite {
         if (decision != null) return false;
         beginFrame();
         frameArmed = true;
+        // IS5-PRE 1Hz stage census (always-on while armed, log-only): the S6 leg-3 lesson — the
+        // content-keyed announcements are silent on INTERMITTENT stage drops (a frame with zero
+        // captures prints nothing and no WARN), so a flicker's failing stage was unreadable.
+        // One line per second with per-stage counts makes any drop attributable.
+        censusArmedFrames++;
+        long now = System.currentTimeMillis();
+        if (censusLastEmitMs == 0) censusLastEmitMs = now;
+        if (now - censusLastEmitMs >= 1000) {
+            censusLastEmitMs = now;
+            LOGGER.info("[Seamless Portals] [IS5-PRE] 1Hz: frames={} consumeT/F={}/{} specR/S={}/{}"
+                    + " armG/D={}/{} capt={} stampPass={} views={}",
+                censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
+                censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
+                censusCaptures, censusStampPasses, censusStampedViews);
+            censusArmedFrames = 0;
+            censusConsumeTrue = 0;
+            censusConsumeFalse = 0;
+            censusSpecRendered = 0;
+            censusSpecSkipped = 0;
+            censusArmGranted = 0;
+            censusArmDenied = 0;
+            censusCaptures = 0;
+            censusStampPasses = 0;
+            censusStampedViews = 0;
+        }
         return true;
     }
+
+    private static int censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
+        censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
+        censusCaptures, censusStampPasses, censusStampedViews;
+    private static long censusLastEmitMs = 0;
 
     /** True while this frame's portal loop runs on the new path — the doRenderPortal forks'
      *  discriminator. NOT consumed by the stamp (which keys on pending captures). */
@@ -236,12 +266,17 @@ public final class IrisStageConsistentComposite {
     public static boolean consumeVisibilityForArmedFrame(Portal portal) {
         Boolean known = qouteall.imm_ptl.core.portal.PortalRenderInfo
             .consumeLastFrameVisibility(portal);
-        if (known != null) return known;
+        if (known != null) {
+            if (known) censusConsumeTrue++; else censusConsumeFalse++;
+            return known;
+        }
         if (speculativeRendersThisFrame < SPECULATIVE_CAP) {
             speculativeRendersThisFrame++;
+            censusSpecRendered++;
             return true;
         }
         speculativeSkipsThisFrame++;
+        censusSpecSkipped++;
         return false;
     }
 
@@ -426,7 +461,10 @@ public final class IrisStageConsistentComposite {
             if (!s.pending) { slot = s; break; }
         }
         if (slot == null) {
-            if (captureSlots.size() >= MAX_CAPTURE_SLOTS) return false;
+            if (captureSlots.size() >= MAX_CAPTURE_SLOTS) {
+                censusArmDenied++;
+                return false;
+            }
             slot = new CaptureSlot();
             captureSlots.add(slot);
         }
@@ -437,6 +475,7 @@ public final class IrisStageConsistentComposite {
         slot.partialTick = RenderStates.getPartialTick();
         slot.layer = layer;
         armedCapture = slot;
+        censusArmGranted++;
         return true;
     }
 
@@ -532,6 +571,7 @@ public final class IrisStageConsistentComposite {
             }
             slot.pending = true;
             capturesPendingThisFrame++;
+            censusCaptures++;
             ci.cancel();
         } catch (Throwable t) {
             breakMechanism("capture threw", t);
@@ -891,14 +931,17 @@ public final class IrisStageConsistentComposite {
         if (err != GL11.GL_NO_ERROR) {
             breakMechanism("stamp pass left GL error 0x" + Integer.toHexString(err), null);
         } else {
-            noteStampPass();
+            censusStampPasses++;
+            censusStampedViews += capturesPendingThisFrame;
+            noteStampPass(writeAlt);
         }
     }
 
     private static String lastStampAnnouncement = null;
 
-    private static void noteStampPass() {
+    private static void noteStampPass(boolean writeAlt) {
         String a = "stamped=" + capturesPendingThisFrame
+            + " writeAlt=" + writeAlt
             + " solid=" + IPGlobal.debugStampSolid + " tint=" + IPGlobal.debugTintStamp;
         if (a.equals(lastStampAnnouncement)) return;
         lastStampAnnouncement = a;
