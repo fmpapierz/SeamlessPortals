@@ -88,6 +88,7 @@ public final class StampCoverageProbe {
     private static boolean refusedWarned = false;
     private static boolean armReported = false;
     private static long lastNanos = 0L;
+    private static long lastAlignNanos = 0L;
 
     /** Content-keyed, so a stable geometry announces once and a CHANGE always announces. */
     private static String announcedSnapshotGeometry = null;
@@ -338,6 +339,129 @@ public final class StampCoverageProbe {
             LOGGER.info(P + "edge@{} (|| marks the first pixel of the new run; M=stamped):{}",
                 x, sb);
         }
+    }
+
+    /**
+     * IS5-COV SNAPSHOT ALIGNMENT — the measurement that says WHICH buffer is off by one.
+     *
+     * <p>MEASURED 2026-08-03: at an occluder's silhouette the depth edge and the colour edge in the
+     * {@code deferred} buffer are ONE PIXEL apart, and the straddling pixel's depth is
+     * <i>bit-identical</i> to its occluder-side neighbour ({@code 346:-908ca4/0.975004} beside
+     * {@code 347:-574643/0.975004}). Bit-identical rules out a scaled resample, which would
+     * interpolate — this is a one-texel SHIFT.
+     *
+     * <p>The snapshot has two independent halves: depth via {@code copyDepthFrom} (a blit, and the
+     * geometry witness reports it 1:1) and colour via {@code drawStraightCopy} (a separate
+     * full-screen pass). A half-texel sampling offset in the colour pass would put colour one pixel
+     * off while depth stayed exact — and that is indistinguishable, from {@code deferred} alone,
+     * from the depth being off instead.
+     *
+     * <p>So read the SAME row out of BOTH targets at the same instant, right after both halves of
+     * the snapshot have run, and print the same window from each. If the edges align in
+     * {@code mainRT} and disagree in {@code deferred}, the copy introduced it and the two lines say
+     * which half. If they already disagree in {@code mainRT}, the snapshot is innocent and the
+     * defect predates it — which would move the hunt upstream of this class entirely.
+     *
+     * <p>Aim is automatic: the window is centred on the row's STRONGEST depth discontinuity, so it
+     * cannot be pointed at flat scenery by accident. Gated on the probe lever; log-only; 1 Hz —
+     * it shares {@link #lastNanos} with the post-stamp scan deliberately, so one second yields one
+     * matched pair rather than two unpaired halves.
+     */
+    public static void compareAfterSnapshot(RenderTarget mainRT, RenderTarget deferred) {
+        if (!IPGlobal.STAMP_COVERAGE_PROBE || disarmed) {
+            return;
+        }
+        try {
+            long now = System.nanoTime();
+            if (now - lastAlignNanos < 1_000_000_000L) {
+                return;
+            }
+            lastAlignNanos = now;
+            if (mainRT == null || deferred == null
+                || mainRT.width != deferred.width || mainRT.height != deferred.height) {
+                return; // the geometry witness already WARNed; a size mismatch is its own story
+            }
+            int w = mainRT.width;
+            int y = mainRT.height / 2;
+            ByteBuffer mc = BufferUtils.createByteBuffer(w * 4);
+            FloatBuffer md = BufferUtils.createFloatBuffer(w);
+            ByteBuffer dc = BufferUtils.createByteBuffer(w * 4);
+            FloatBuffer dd = BufferUtils.createFloatBuffer(w);
+            if (!readRow(mainRT, y, w, mc, md) || !readRow(deferred, y, w, dc, dd)) {
+                return;
+            }
+            // Strongest depth discontinuity on the row = the silhouette worth looking at.
+            int at = -1;
+            float best = 0.0f;
+            for (int x = 1; x < w; x++) {
+                float d = Math.abs(md.get(x) - md.get(x - 1));
+                if (d > best && md.get(x) < 0.9999f && md.get(x - 1) < 0.9999f) {
+                    best = d;
+                    at = x;
+                }
+            }
+            if (at < 0 || best < 1.0e-5f) {
+                return; // nothing but flat scenery on this row — say nothing rather than noise
+            }
+            LOGGER.info(P + "align@{} (strongest depth step on row {}, |dz|={}):\n    MAIN  {}"
+                    + "\n    DEFER {}",
+                at, y, fmt(best), window(mc, md, at, w), window(dc, dd, at, w));
+        }
+        catch (Throwable t) {
+            disarmed = true;
+            try {
+                LOGGER.warn(P + "alignment compare threw — DISARMED (render unaffected)", t);
+            }
+            catch (Throwable ignored) {
+                // never escape into the render path
+            }
+        }
+    }
+
+    private static String window(ByteBuffer c, FloatBuffer d, int at, int w) {
+        StringBuilder sb = new StringBuilder(256);
+        for (int i = Math.max(0, at - EDGE_SPAN); i <= Math.min(w - 1, at + EDGE_SPAN - 1); i++) {
+            if (i == at) {
+                sb.append(" ||");
+            }
+            sb.append(' ').append(i).append(':').append(hex(c, i)).append('/').append(fmt(d.get(i)));
+        }
+        return sb.toString();
+    }
+
+    /** Shared readback: binds, saves/restores every pixel-store and FBO binding it touches. */
+    private static boolean readRow(RenderTarget rt, int y, int w, ByteBuffer colors,
+                                   FloatBuffer depths) {
+        if (!(RenderSystem.getDevice().backend instanceof GlDevice glDevice)
+            || !(rt.getColorTextureView() instanceof GlTextureView colorView)
+            || !(rt.getDepthTextureView() instanceof GlTextureView depthView)) {
+            return false;
+        }
+        int fbo = glDevice.frameBufferCache().getFbo(
+            glDevice.directStateAccess(), List.of(colorView), depthView
+        );
+        int prevRead = GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
+        int prevRowLength = GL11.glGetInteger(GL11.GL_PACK_ROW_LENGTH);
+        int prevSkipRows = GL11.glGetInteger(GL11.GL_PACK_SKIP_ROWS);
+        int prevSkipPixels = GL11.glGetInteger(GL11.GL_PACK_SKIP_PIXELS);
+        int prevAlignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT);
+        try {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, fbo);
+            GlStateManager._pixelStore(GL11.GL_PACK_ROW_LENGTH, 0);
+            GlStateManager._pixelStore(GL11.GL_PACK_SKIP_ROWS, 0);
+            GlStateManager._pixelStore(GL11.GL_PACK_SKIP_PIXELS, 0);
+            GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, 1);
+            GL11.glReadPixels(0, y, w, 1, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, colors);
+            GL11.glReadPixels(0, y, w, 1, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depths);
+        }
+        finally {
+            GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, prevAlignment);
+            GlStateManager._pixelStore(GL11.GL_PACK_SKIP_PIXELS, prevSkipPixels);
+            GlStateManager._pixelStore(GL11.GL_PACK_SKIP_ROWS, prevSkipRows);
+            GlStateManager._pixelStore(GL11.GL_PACK_ROW_LENGTH, prevRowLength);
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+        }
+        return true;
     }
 
     private static String hex(ByteBuffer c, int x) {

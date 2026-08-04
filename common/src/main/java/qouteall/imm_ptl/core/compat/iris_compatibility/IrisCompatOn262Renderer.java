@@ -343,6 +343,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             .noteSnapshotGeometry(mainRT, deferred.fb);
         deferred.fb.copyDepthFrom(mainRT);
         IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
+        // IS5-COV alignment compare (lever-gated, log-only): read the SAME row out of BOTH targets
+        // now that both halves of the snapshot have run, and print the same window from each. The
+        // measured defect is a ONE-PIXEL disagreement between the depth edge and the colour edge in
+        // `deferred`; this says whether the copy introduced it (aligned in main, skewed in
+        // deferred) or whether it predates the snapshot entirely.
+        com.warwa.seamlessportals.render.StampCoverageProbe
+            .compareAfterSnapshot(mainRT, deferred.fb);
         // IS5-HAND-STAGE B: the snapshot as the compat pass preserved it.
         com.warwa.seamlessportals.render.SeamHandStageDiff.stageB(deferred.fb);
 
@@ -511,6 +518,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             .noteSnapshotGeometry(mainRT, deferred.fb);
         deferred.fb.copyDepthFrom(mainRT);
         IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
+        // IS5-COV alignment compare (lever-gated, log-only): read the SAME row out of BOTH targets
+        // now that both halves of the snapshot have run, and print the same window from each. The
+        // measured defect is a ONE-PIXEL disagreement between the depth edge and the colour edge in
+        // `deferred`; this says whether the copy introduced it (aligned in main, skewed in
+        // deferred) or whether it predates the snapshot entirely.
+        com.warwa.seamlessportals.render.StampCoverageProbe
+            .compareAfterSnapshot(mainRT, deferred.fb);
         // The snapshot is COMMITTED — only now does this layer count as having taken its own buffer.
         noteDeferredCommitted(layer);
 
