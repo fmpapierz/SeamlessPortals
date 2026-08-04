@@ -468,6 +468,11 @@ loom {
             // built; the once-only IS5-RC line says so) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdebugStampSolid=true
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            // IS5-COV (2026-08-03) the stamp COVERAGE probe — log-only, 1 Hz, and it REFUSES to
+            // measure unless debugStampSolid AND debugTintStamp are both on (its classifier is the
+            // stamp's flat magenta). The whole invocation is —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampCoverageProbe=true -PdebugStampSolid=true -PdebugTintStamp=true
+            if (project.findProperty('stampCoverageProbe') == 'true') { vmArg('-Dseamlessportals.stampCoverageProbe=true') }
             // IS5-SEAM CROSSING-WINDOW CLIP RELAX — **DEFAULT ON** (2026-07-27). The measured black
             // seam band = the inner clip voiding grazing aperture rays in the crossing window
             // (IS5-SEAM-ARM census: fullyVoid=6 nearStraddle=38 across three crossings, feed
@@ -882,6 +887,7 @@ loom {
             // parity; the suite runs iris-ABSENT so the lever is inert there) —
             //   .\gradlew.bat :fabric:runCrossingGametest -PdebugStampSolid=true
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            if (project.findProperty('stampCoverageProbe') == 'true') { vmArg('-Dseamlessportals.stampCoverageProbe=true') }
             // IS5-SEAM crossing-window clip relax A/B (mirror; DEFAULT-ON; the suite runs
             // iris-ABSENT so the compat full-pipeline arm never executes there — inert;
             // lever-row parity) —
