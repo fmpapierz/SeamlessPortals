@@ -248,9 +248,28 @@ used the shipped stamp's DECLARED compare (GEQUAL) — the exact §6 trap ("neve
 declaration"). `stamped=N` with zero GL errors while nothing shows = draws issued, every window
 fragment depth-rejected: under the MEASURED small-is-near buffer (39/39), plane (~0.5) >= far
 scene (~0.98) is false. The vanilla RenderPass abstraction translates the declared compare; raw
-GL does not. FIXED (hash below): `GL_LEQUAL` — plane ≤ far-scene passes (window paints), plane ≤
+GL does not. FIXED `84f3a31`: `GL_LEQUAL` — plane ≤ far-scene passes (window paints), plane ≤
 nearer-occluder fails (occlusion correct). Depth-write semantics unchanged. `stamped=` joins
 `masks=` in the never-a-gate ledger: counters record draws issued, never effect achieved.
+
+### S6 LEGS 3-4 (2026-08-04) — WINDOW VISIBLE-BUT-FLASHING, THEN INVISIBLE; ONE STATE HOLE
+
+Leg 3 (LEQUAL in force, user): window APPEARS but "flashing a little bit intermittently, and
+disappeared when i enabled temporal filtering" (sidecar: TAA_MODE→absent=default, TAA_JITTER=2).
+Leg 4 (1Hz census live, user): invisible with TAA on AND off; visible shaders-OFF.
+
+**CENSUS ADJUDICATION — the pre-registered primary prediction CONFIRMED:** every stage perfect
+across three TAA rebuilds (`frames=65 consumeT=65 armG=65 capt=65 stampPass=65 views=65`,
+`writeAlt=true` stable, zero breaks) while nothing showed ⇒ the loss is DOWNSTREAM of the draw
+call ⇒ write state. **THE HOLE: the stamp never asserted the COLOUR MASK.** A HEAD-position draw
+is the FIRST draw of the composite stage (renderAll's `_colorMask(15)` runs after HEAD; the
+mid-chain bloom mask leans on each pass's setupState — a HEAD draw cannot). The previous armed
+frame's tail is the S5 query-only loop whose pipeline is colour/depth-write-free: leftover mask
+OFF ⇒ silent no-op stamps. One mechanism covers BOTH reports: leg 4's persistent invisibility
+(query loop always last) and leg 3's intermittent flashing (HUD/chat racing the mask back on).
+FIXED (hash below): `_colorMask(15)` asserted in the stamp's state block. LESSON for the piece
+list: a HEAD-seam draw must assert EVERY write-enable it needs — there is no upstream
+re-establisher at a chain head.
 
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 

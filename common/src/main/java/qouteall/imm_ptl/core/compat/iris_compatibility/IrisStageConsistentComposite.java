@@ -846,6 +846,14 @@ public final class IrisStageConsistentComposite {
             GlStateManager._disableScissorTest();
             GlStateManager._disableBlend(0);
             GlStateManager._disableCull();
+            // COLOR MASK, asserted explicitly — the S6 leg-4 defect. A HEAD-position draw is the
+            // FIRST draw of the composite stage: nothing has re-established write state for it
+            // (renderAll's own _colorMask(15) runs AFTER HEAD; the bloom mask mid-chain could
+            // lean on each pass's setupState — we cannot). The previous frame's tail is the
+            // query-only loop whose pipeline is deliberately colour/depth-write-free, so the
+            // leftover mask was OFF: stamps drew nothing, zero GL errors, census all-green —
+            // leg 4's persistent invisibility and leg 3's HUD-raced flashing in one mechanism.
+            GlStateManager._colorMask(15);
             // Depth compare: LEQUAL — derived from the MEASURED buffer convention, not the
             // shipped stamp's declaration. S6 leg 2 (2026-08-04 02:47) proved the declared-GEQUAL
             // trap live: stamped=1/2 with zero GL errors while the window was COMPLETELY
