@@ -617,6 +617,15 @@ public final class SeamClipRenderer {
      * cut back 0.01 INSIDE the owned half removes the sliver, and no slit opens in the window view:
      * the dest pass's inner clip arms at {@code −ADJUSTMENT} (content kept from plane−0.01 onward),
      * so the window's crossing half meets this cut at exactly plane−0.01.
+     *
+     * <p>★ AND THEN FLIPPED AGAIN — TO EXACTLY ZERO (user round 20: "the sides of the seam block
+     * has a tiny split in it right where the portal seam is"). The −ADJUSTMENT retraction left the
+     * strip {@code [plane, plane+0.01]} of the OWNED half undrawn; inside the aperture the window
+     * content covers it, but on the SIDE faces — outside the aperture — nothing does, and the gap
+     * reads as a hairline split at the seam. Cutting at exactly the plane has NEITHER defect: the
+     * sliver needs an overhang past the plane, the split needs a retraction inside it. The window's
+     * crossing half (from plane−0.01) and this cut (to plane exactly) abut with a 0.01 overlap in
+     * the window region belonging to the far content alone — no shared geometry, no z-fight.
      */
     private static FrontClipping.Snapshot outerPlaneSnapshot(
         PlaneKey key, Vec3 camPos, Matrix4f modelView
@@ -630,7 +639,7 @@ public final class SeamClipRenderer {
         double px = key.keptDir().getAxis() == Direction.Axis.X ? planeCoord : camPos.x;
         double py = key.keptDir().getAxis() == Direction.Axis.Y ? planeCoord : camPos.y;
         double pz = key.keptDir().getAxis() == Direction.Axis.Z ? planeCoord : camPos.z;
-        double c = nx * (camPos.x - px) + ny * (camPos.y - py) + nz * (camPos.z - pz) - ADJUSTMENT;
+        double c = nx * (camPos.x - px) + ny * (camPos.y - py) + nz * (camPos.z - pz);
 
         Matrix3f linear = new Matrix3f(modelView);
         float det = linear.determinant();
