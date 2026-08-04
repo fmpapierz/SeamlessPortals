@@ -641,17 +641,26 @@ public final class IrisStageConsistentComposite {
             if (!(mainPipeline instanceof IrisRenderingPipeline)) return;
             Object mainCompositeRenderer = fPipelineCompositeRenderer.get(mainPipeline);
             if (mainCompositeRenderer != compositeRenderer) {
-                return; // begin/prepare/deferred instance, or a foreign pipeline's composite
+                // Begin/prepare/deferred instance, or a foreign pipeline's composite. MUST NOT
+                // consume the slots: the main render's own beginRenderer.renderAll (and every
+                // nested begin/deferred invocation) reaches this point AFTER captures exist and
+                // BEFORE the main composite chain runs — the S6 smoke leg's adjudicated defect
+                // (2026-08-04 02:37 log: capture geometry printed, then NEITHER the stamp line
+                // NOR the never-stamped WARN — a mis-scoped finally here ate the slots silently).
+                return;
             }
             stampConsumedThisFrame = true;
-            runStampPass((IrisRenderingPipeline) mainPipeline, (CompositeRenderer) compositeRenderer);
+            try {
+                runStampPass(
+                    (IrisRenderingPipeline) mainPipeline, (CompositeRenderer) compositeRenderer);
+            } finally {
+                // Consumption is scoped to the MATCHED main-chain invocation only — success or
+                // break, never on a discriminator mismatch (see the comment above).
+                for (CaptureSlot s : captureSlots) s.pending = false;
+                capturesPendingThisFrame = 0;
+            }
         } catch (Throwable t) {
             breakMechanism("stamp discriminator/pass threw", t);
-        } finally {
-            // Slots are consumed whether the pass succeeded or broke — a broken pass must not
-            // leave pending slots to trip the beginFrame WARN with a misleading count.
-            for (CaptureSlot s : captureSlots) s.pending = false;
-            capturesPendingThisFrame = 0;
         }
     }
 

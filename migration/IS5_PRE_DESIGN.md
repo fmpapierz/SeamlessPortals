@@ -220,6 +220,24 @@ default flip. KILL RULE: any witness contradicting §4 stops the stage, not the 
   `-Pc2Inlining` unit-size leg in the dense scene; then part4 recursion re-aim; then default
   flip.
 
+### S6 LEG 1 (2026-08-04 02:34-02:38, MB=1 str=2.00 on disk) — ONE DEFECT, LOG-ADJUDICATED
+
+GREEN on the live JVM: `armDecision=ARMED`; `FrameCounter.count reflective write PROVEN (20046
+preserved)`; both seams `path=NEW`; `bob witness: MUL_APPLIED(recompute proven)`; `IS5-RC [1/3]
+seamlessportals.stageConsistentComposite = true`; `capture geometry 1718x1360 color=0x8c3a
+depth=0x88f0`; nested-layer deferral announced; zero mechanism breaks, zero mixin errors.
+
+**DEFECT (found from the log's two MISSING lines — capture printed, then neither "stamp pass ran"
+nor the never-stamped WARN):** the stamp handler's slot-consuming `finally` was scoped to the
+OUTER try, so the identity-mismatch return — the discriminator correctly rejecting
+begin/prepare/deferred instances of the same `renderAll` method — consumed every pending slot on
+its way out. First begin-chain invocation after any capture zeroed the pool; the main chain saw
+zero pending; the WARN couldn't fire off an already-zero counter. On-screen symptom: windows
+empty on armed frames (views cancelled, nothing stamped). FIXED: consumption scoped to the
+MATCHED main-chain invocation only (hash below). The instrument lesson stands: the CONTRADICTION
+of two absent lines was the entire diagnosis — witnesses that fire on both outcomes are what made
+the defect findable without a screenshot.
+
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 
 The judged "save/restore CameraPositionTracker + gbufferPrevious* around the loop" has NO stable
