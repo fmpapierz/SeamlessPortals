@@ -1,6 +1,9 @@
 # OCCLUDER RING HANDOFF — the last of the three edge artifacts
 
-**Status: MECHANISM MEASURED, FIX NOT DESIGNED.** Branch `iris-on/is5-shadow`, tip `626d856`, pushed.
+**Status: MECHANISM MEASURED **AND CONFIRMED BY THE SHADERS-OFF DISCRIMINATOR (§8)**; POLICY SET
+(mechanism must go, not just the amplifier); **FIX DESIGNED AND FROZEN — `IS5_PRE_DESIGN.md` v3**
+(six verifiers + three adversarial judges, all APPROVE_WITH_CHANGES folded in); IMPLEMENTATION IN
+STAGES per its §7.** Branch `iris-on/is5-shadow`.
 Worktree `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`.
 
 This supersedes `MB_BLOOM_SEAM_HANDOFF.md` as the working document. That file remains the full
@@ -149,6 +152,39 @@ What it emits:
   gate, not a proof.
 
 ---
+
+## §8 LEG — THE SHADERS-OFF DISCRIMINATOR: **CLEAN. MECHANISM CONFIRMED** (2026-08-03 23:5x)
+
+**Configuration, pinned on disk BEFORE launch** (per §6 discipline): `MOTION_BLUR_EFFECT=1` added to
+the sidecar; the rest at the §7k endpoint — `IMAGE_SHARPENING=0`, `TAA_JITTER=0`, `TAA_MODE=0`,
+`FXAA_DEFINE=-1`, `BLOOM_ENABLED` absent ⇒ default ON. The sidecar's post-leg rewrite (23:59:17)
+**retained `MOTION_BLUR_EFFECT=1`**, so the shaders-ON baseline verifiably ran with MB ON.
+
+**Landing proof, from `latest.log` (fresh log, launch 23:54:03 — rotation checked):**
+- `203` 23:54:16 `Using shaderpack: ComplementaryReimagined_r5.8.1.zip` — shaders ON;
+- `831` 23:57:56 `switched to renderer class …IrisCompatOn262Renderer` — compat renderer live at a portal;
+- `906–1142` the `IS5-RC` block: no debug levers (correct — this leg is bare eyes), stamp pipeline
+  `bound=SAMPLE(default)`; `1138` `[C3-BLOOM] LIVE: sel=gatherer pass=composite4 idx=3 reads=ALT` —
+  the shipped bloom fix in force, MB-ON plan shape;
+- `1187` 23:58:34 `Shaders are disabled` + `1193` `switched to renderer class …RendererUsingStencil`
+  — **the K press; the stencil renderer was genuinely live for the observation**;
+- `1210/1275` 23:59:17 pack re-enabled, back to the compat renderer.
+
+**User observation, same scene, same motion, one variable (the K toggle):**
+> **"Completely clean — no ring"** with shaders OFF.
+
+**What this settles.** The ring is a property of the shaders-ON compositing strategy (composite after
+the pack's post chain), NOT inherent to portals — §2's mechanism is now confirmed from a second,
+independent direction: remove the colour filtering and the depth-derived coverage is exact. §4's
+opening question is answered; candidate 2's premise ("establish first whether it is really clean") is
+established.
+
+**POLICY DECISION (user, explicit, same session): the MECHANISM must go entirely — exact coverage
+everywhere, sub-pixel included.** The amplifier-only target (fix MB case, accept the ≤1 px residual)
+was offered and REJECTED. Design consequence: the fix must make occluder and destination content get
+filtered TOGETHER — portal content present in the frame before the pack's non-local colour passes run
+— not a sharper post-hoc composite; any post-filter binary paste re-creates the disagreement between
+a geometric coverage boundary and a filtered colour edge.
 
 ## §7 STILL OPEN, UNRELATED
 
