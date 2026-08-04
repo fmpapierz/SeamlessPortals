@@ -83,6 +83,8 @@ public final class StampCoverageProbe {
     private static final int MAX_EDGES = 4;
     /** Pixels dumped either side of each boundary. */
     private static final int EDGE_SPAN = 6;
+    /** Wider span for the aperture rim, the geometry currently under investigation. */
+    private static final int APERTURE_SPAN = 9;
 
     private static boolean disarmed = false;
     private static boolean refusedWarned = false;
@@ -308,6 +310,16 @@ public final class StampCoverageProbe {
             lastStampedMax = stampedMax;
         }
         LOGGER.info(P + "row={} w={} runs={}:{}", y, w, emitted + suppressed, runs);
+        // The APERTURE's own two boundaries, dumped UNCONDITIONALLY and labelled, before the
+        // generic edge walk. dumpEdges takes the first MAX_EDGES boundaries in x order, so with an
+        // occluder inside the window it can spend all of them on occluder silhouettes and never
+        // reach the window's own rim — which is precisely the geometry now under investigation
+        // (the faint residual that survives every colour-modifying pass being off, and which is
+        // NOT a colour/depth disagreement at an occluder edge). Aim is never left to chance twice.
+        if (stampedMax >= 0) {
+            dumpAt(colors, depths, w, stampedMin, "APERTURE-L (first stamped pixel)");
+            dumpAt(colors, depths, w, stampedMax + 1, "APERTURE-R (first pixel past the stamp)");
+        }
         dumpEdges(colors, depths, w);
     }
 
@@ -495,6 +507,24 @@ public final class StampCoverageProbe {
             GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
         }
         return true;
+    }
+
+    /** Raw dump centred on one named x, wider than the generic edge walk because the aperture rim
+     *  is where a 1-2 px effect is expected and a narrow window could straddle it unhelpfully. */
+    private static void dumpAt(ByteBuffer colors, FloatBuffer depths, int w, int at, String label) {
+        if (at < 0 || at >= w) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder(400);
+        for (int i = Math.max(0, at - APERTURE_SPAN); i <= Math.min(w - 1, at + APERTURE_SPAN); i++) {
+            if (i == at) {
+                sb.append(" ||");
+            }
+            sb.append(' ').append(i).append(':')
+                .append(isStampMagenta(colors, i) ? "M" : "-")
+                .append(hex(colors, i)).append('/').append(fmt(depths.get(i)));
+        }
+        LOGGER.info(P + "{} @{}:{}", label, at, sb);
     }
 
     private static String hex(ByteBuffer c, int x) {
