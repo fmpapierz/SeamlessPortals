@@ -79,6 +79,10 @@ public final class StampCoverageProbe {
 
     /** Bound so one line can never become a wall. Runs beyond this are summarised as a count. */
     private static final int MAX_RUNS = 24;
+    /** Coverage boundaries whose raw neighbourhood is dumped (see {@code dumpEdges}). */
+    private static final int MAX_EDGES = 4;
+    /** Pixels dumped either side of each boundary. */
+    private static final int EDGE_SPAN = 6;
 
     private static boolean disarmed = false;
     private static boolean refusedWarned = false;
@@ -236,6 +240,59 @@ public final class StampCoverageProbe {
         }
 
         LOGGER.info(P + "row={} w={} runs={}:{}", y, w, emitted + suppressed, runs);
+        dumpEdges(colors, depths, w);
+    }
+
+    /**
+     * THE AMENDMENT THAT MAKES THIS PROBE ABLE TO PRINT THE GUILTY ANSWER (2026-08-03, same day,
+     * after its first run came back inconclusive BY CONSTRUCTION).
+     *
+     * <p>The run encoding above splits on stamped-ness alone. The ring and the occluder are BOTH
+     * unstamped, so they merge into one run and a 1-2 px ring against a 147 px block is invisible —
+     * and if the ring carries the occluder's own depth, which is exactly what "dilated depth
+     * footprint" means, the run's depth range does not separate them either. The first version of
+     * this probe could therefore only ever print "no ring" in the very case it was built to detect:
+     * the banned shape its own javadoc legislates against.
+     *
+     * <p>So: no classifier. Dump the RAW pixels either side of each coverage boundary — colour AND
+     * depth, per pixel, unaggregated — and let the reader see where the occluder's COLOUR actually
+     * stops versus where the stamp's coverage stops. If the last 1-2 pixels before a stamped run
+     * are already source-terrain colour while still carrying occluder depth, that IS the dilation,
+     * stated in raw data rather than inferred from a summary.
+     *
+     * <p>Aim aid: use a vividly-coloured occluder (redstone / gold / lapis block). Against ordinary
+     * grey terrain the colour transition is then unmistakable without any thresholding.
+     *
+     * <p>Bounded: at most {@link #MAX_EDGES} boundaries, {@link #EDGE_SPAN} pixels either side.
+     */
+    private static void dumpEdges(ByteBuffer colors, FloatBuffer depths, int w) {
+        int edges = 0;
+        for (int x = 1; x < w && edges < MAX_EDGES; x++) {
+            if (isStampMagenta(colors, x) == isStampMagenta(colors, x - 1)) {
+                continue;
+            }
+            edges++;
+            int from = Math.max(0, x - EDGE_SPAN);
+            int to = Math.min(w - 1, x + EDGE_SPAN - 1);
+            StringBuilder sb = new StringBuilder(320);
+            for (int i = from; i <= to; i++) {
+                if (i == x) {
+                    sb.append(" ||");
+                }
+                sb.append(' ').append(i).append(':')
+                    .append(isStampMagenta(colors, i) ? "M" : "-")
+                    .append(hex(colors, i)).append('/').append(fmt(depths.get(i)));
+            }
+            LOGGER.info(P + "edge@{} (|| marks the first pixel of the new run; M=stamped):{}",
+                x, sb);
+        }
+    }
+
+    private static String hex(ByteBuffer c, int x) {
+        int r = c.get(x * 4) & 0xFF;
+        int g = c.get(x * 4 + 1) & 0xFF;
+        int b = c.get(x * 4 + 2) & 0xFF;
+        return String.format("%02x%02x%02x", r, g, b);
     }
 
     /**
