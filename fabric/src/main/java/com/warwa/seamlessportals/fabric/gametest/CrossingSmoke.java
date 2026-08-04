@@ -5683,11 +5683,39 @@ public class CrossingSmoke implements FabricClientGameTest {
             com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, destPos,
                 new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold,
                     com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(destOwned)));
-            // PRECONDITION — the store must actually be dirty-persisted, or the reopen assert
-            // would measure hydration of nothing and blame the wrong subsystem.
+            // ★ CHURN — live round 14 found the pristine-staged gate green while the user's world
+            // lost ONE SIDE of each pair at quit: their session BROKE and RE-PLACED before quitting,
+            // and somewhere in that cycle a side's write-through goes missing. Reproduce the churn:
+            // break the second object (both dimensions), re-place it, so the store has absorbed a
+            // remove-then-re-add on every record class before the close.
+            net.minecraft.server.level.ServerPlayer churnPlayer =
+                server.getPlayerList().getPlayers().isEmpty()
+                    ? null : server.getPlayerList().getPlayers().get(0);
+            if (churnPlayer != null) {
+                com.warwa.seamlessportals.passthrough.SeamFractional
+                    .breakSecondary(ow, cellS, churnPlayer);
+                var gold2 = Blocks.GOLD_BLOCK.defaultBlockState();
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellS,
+                    new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold2,
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE));
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, destPos,
+                    new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold2,
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(destOwned)));
+            }
+            // PRECONDITION — the store must hold BOTH SIDES' full records after the churn, or the
+            // reopen assert measures the wrong thing. This is exactly the quantity the live round
+            // lost, so assert it BEFORE the close too: a red here means the write-through drops
+            // records at mutation time; a red only after reopen means the save/load loses them.
             var store = com.warwa.seamlessportals.passthrough.SeamOccupancySavedData.get(ow);
             if (store == null) {
                 failure.set("staging precondition — no SavedData store on the overworld");
+                return;
+            }
+            String storeDump = store.debugDump();
+            if (!storeDump.contains(cellS.asLong() + ":") || !storeDump.contains(destPos.asLong() + ":")) {
+                failure.set("PRE-CLOSE STORE ALREADY MISSING A SIDE (the live round 14 defect, at"
+                    + " mutation time not save time) — store=" + storeDump
+                    + " cellS=" + cellS.asLong() + " destPos=" + destPos.asLong());
             }
         });
         if (failure.get() != null) {
@@ -5738,11 +5766,52 @@ public class CrossingSmoke implements FabricClientGameTest {
                 context.waitTicks(10);
             }
         }
+        // ★ THE CLIENT-SIDE HALF (live round 14, after the churned server gate stayed GREEN): the
+        // user's post-relog symptoms — far half unoutlined, second side unbreakable, replaces
+        // going everywhere — are what a client MISSING the records looks like while the server is
+        // right. Assert what the CLIENT knows, after giving the join burst + tick flush time to
+        // land.
+        //
+        // ⚠ READ THE CELL'S DIMENSION, NOT mc.level. This assert's first form read mc.level and
+        // went red TWICE on a WORKING pipe (churn4/churn5, 2026-08-03): the player had logged out
+        // in the NETHER (leg 4's pearl leaves them there), so post-relog mc.level was the nether
+        // and these overworld cells were asked of the wrong level's duck maps. The records were
+        // sitting exactly where the renderer/collision consumers read them — the loader's
+        // secondary overworld ("Client World Created minecraft:overworld" one line before the
+        // APPLIED probes). clientRecordOf resolves in the consumers' order and reports which
+        // store answered, so a red here now means the CLIENT genuinely cannot see the record.
+        context.waitTicks(40);
+        AtomicReference<String> clientView = new AtomicReference<>("");
+        AtomicReference<Boolean> clientOk = new AtomicReference<>(false);
+        context.runOnClient(mc -> {
+            var src = com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                .clientRecordOf(Level.OVERWORLD, cellS.asLong());
+            var dst = com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                .clientRecordOf(Level.OVERWORLD, destPos.asLong());
+            clientView.set("client(played dim=" + (mc.level == null ? "null"
+                    : mc.level.dimension().identifier()) + "): srcMask=" + src.mask()
+                + " srcSec=" + (src.secondary() == null ? "null"
+                    : src.secondary().state().getBlock() + "@" + src.secondary().half())
+                + " [" + src.source() + "] destMask=" + dst.mask()
+                + " destSec=" + (dst.secondary() == null ? "null"
+                    : dst.secondary().state().getBlock() + "@" + dst.secondary().half())
+                + " [" + dst.source() + "]");
+            clientOk.set(src.mask() != 0 && src.secondary() != null
+                && dst.mask() != 0 && dst.secondary() != null);
+        });
         AtomicReference<String> failure = new AtomicReference<>(null);
         AtomicReference<String> detail = new AtomicReference<>("");
+        if (!clientOk.get()) {
+            failure.set("THE CLIENT CANNOT SEE POST-RELOG RECORDS in any store (played level,"
+                + " loader secondary level, pending stash) — " + clientView.get());
+        }
         runOnServer(context, server -> {
             ServerLevel ow = server.getLevel(Level.OVERWORLD);
             try {
+                if (failure.get() != null) {
+                    // Client assert already failed — still read server detail for the report,
+                    // then fall through to cleanup in the finally.
+                }
                 byte srcOwned = com.warwa.seamlessportals.passthrough.SeamOccupancy
                     .occupancyOf(ow, cellS);
                 var srcSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
@@ -5811,10 +5880,12 @@ public class CrossingSmoke implements FabricClientGameTest {
         if (failure.get() != null) {
             throw new AssertionError(LOG + "RS RELOG PERSISTENCE GATE FAILED: "
                 + (ready.get() ? "" : "(fixture never became ready after reopen — binding or"
-                    + " hydration absent) ") + failure.get() + " | " + detail.get());
+                    + " hydration absent) ") + failure.get() + " | server: " + detail.get()
+                + " | " + clientView.get());
         }
         SeamlessPortalsConstants.LOGGER.info(LOG + "RS RELOG PERSISTENCE GATE PASS — two-object"
-            + " state and break-both behaviour survived the world reopen. {}", detail.get());
+            + " state and break-both behaviour survived the world reopen, and the CLIENT holds the"
+            + " records. server: {} | {}", detail.get(), clientView.get());
     }
 
     /**
