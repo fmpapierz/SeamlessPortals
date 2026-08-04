@@ -335,6 +335,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // SNAPSHOT the finished main frame: depth via copyDepthFrom (replace; D19 — no stencil
         // bits, the stencil-free shape consumes none), color via the STRAIGHT-COPY pass
         // (blitAndBlendToTexture is ALPHA-BLEND — settled OQ5, never on this path).
+        // IS5-COV geometry witness (always on, content-keyed; BOTH snapshot sites carry it):
+        // copyDepthFrom is a 1:1 texel move only if both targets are the same size. If they are
+        // not it must SCALE, and scaling a depth buffer dilates every silhouette by about a pixel
+        // — exactly the measured occluder ring. A mismatch is a defect, so it may never be silent.
+        com.warwa.seamlessportals.render.StampCoverageProbe
+            .noteSnapshotGeometry(mainRT, deferred.fb);
         deferred.fb.copyDepthFrom(mainRT);
         IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
         // IS5-HAND-STAGE B: the snapshot as the compat pass preserved it.
@@ -497,6 +503,12 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             deferred.fb.getColorTexture(), new Vector4f(1, 0, 0, 0),
             deferred.fb.getDepthTexture(), 0.0
         );
+        // IS5-COV geometry witness (always on, content-keyed; BOTH snapshot sites carry it):
+        // copyDepthFrom is a 1:1 texel move only if both targets are the same size. If they are
+        // not it must SCALE, and scaling a depth buffer dilates every silhouette by about a pixel
+        // — exactly the measured occluder ring. A mismatch is a defect, so it may never be silent.
+        com.warwa.seamlessportals.render.StampCoverageProbe
+            .noteSnapshotGeometry(mainRT, deferred.fb);
         deferred.fb.copyDepthFrom(mainRT);
         IrisCompatPaste.drawStraightCopy(mainRT, deferred.fb);
         // The snapshot is COMMITTED — only now does this layer count as having taken its own buffer.
