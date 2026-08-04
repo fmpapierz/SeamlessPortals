@@ -76,6 +76,49 @@ public abstract class MixinGameRenderer_IPPostLevelAnchor {
     @Shadow
     public abstract GameRenderState gameRenderState();
 
+    /**
+     * IS5-PRE — the FRAME-START anchor ({@code migration/IS5_PRE_DESIGN.md} §1.1): the SAME
+     * unique INVOKE as the post-main anchor below, shift=BEFORE. Runs after iris$startFrame
+     * (GameRenderer.render HEAD) and after the frame pump's updatePreRenderInfo; iris's bob
+     * {@code @WrapOperation} on this INVOKE executes AFTER all standard BEFORE-injects
+     * (judge-settled, javap'd — MixinExtras wraps apply after injectors), so the view-rotation
+     * field read here is UNBOBBED and {@code capturedMainPassBobbedProjection} is already fresh
+     * (written at the getBuffer wrap earlier in renderLevel). Static-final path-flag gate first:
+     * at default OFF the JIT folds this to nothing — the shipped frame shape is untouched.
+     * Renderer selection: {@code switchToCorrectRenderer()} runs HERE (judge-mandated — the F1
+     * driver's selection fires mid-renderLevel, AFTER this point, so without the call the loop
+     * would consult last frame's renderer at every shader toggle).
+     */
+    @Inject(
+        method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;render("
+                + "Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;"
+                + "Lnet/minecraft/client/DeltaTracker;Z"
+                + "Lnet/minecraft/client/renderer/state/level/CameraRenderState;"
+                + "Lorg/joml/Matrix4fc;"
+                + "Lcom/mojang/blaze3d/buffers/GpuBufferSlice;"
+                + "Lorg/joml/Vector4f;Z)V",
+            shift = At.Shift.BEFORE
+        )
+    )
+    private void seamlessportals$onFrameStartBeforeMainRender(
+        DeltaTracker deltaTracker, CallbackInfo ci
+    ) {
+        if (!IPGlobal.STAGE_CONSISTENT_COMPOSITE) {
+            return;
+        }
+        PortalRenderer.switchToCorrectRenderer();
+        PortalRenderer renderer = IPCGlobal.renderer;
+        if (renderer != null) {
+            Matrix4f unbobbedView = new Matrix4f(
+                gameRenderState().levelRenderState.cameraRenderState.viewRotationMatrix
+            );
+            renderer.ip_onFrameStartBeforeMainRender(unbobbedView);
+        }
+    }
+
     @Inject(
         method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
         at = @At(

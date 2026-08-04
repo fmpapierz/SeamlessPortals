@@ -111,6 +111,22 @@ public abstract class PortalRenderer {
     public void onBeforeHandRendering(Matrix4f modelView) {}
 
     /**
+     * IS5-PRE — the FRAME-START hook ({@code migration/IS5_PRE_DESIGN.md} §1.1), dispatched from
+     * the IS0 anchor's shift=BEFORE sibling: immediately before the main 8-arg
+     * {@code LevelRenderer.render} INVOKE, after every camera/fog/delta input is prepared and
+     * after iris's {@code iris$startFrame} counter advance, but BEFORE iris's bob
+     * {@code @WrapOperation} runs (judge-settled: wraps apply after standard injectors), so
+     * {@code unbobbedView} is the UNBOBBED view-rotation matrix — receivers needing the bobbed
+     * product must recompute it from extract-time state, never read the shared field later.
+     *
+     * <p>Empty base: only the shaders-ON compat renderer overrides, so the stencil family
+     * (shaders-OFF — the path the user verified clean) never sees the new frame shape. Never
+     * fires on cross-view frames ({@code renderLevel} is not called there) — design §2 keeps
+     * those on the old path by construction.
+     */
+    public void ip_onFrameStartBeforeMainRender(Matrix4f unbobbedView) {}
+
+    /**
      * IS5-REC — the NESTED portal pass, dispatched at the tail of a full-pipeline dest render
      * ({@code SecondaryWorldRenderCore.maybeRunNestedPortalLayer}) so that a portal seen INSIDE a
      * portal window renders its own destination instead of flat pass-through.
