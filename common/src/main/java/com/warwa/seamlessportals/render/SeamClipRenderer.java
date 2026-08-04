@@ -597,8 +597,17 @@ public final class SeamClipRenderer {
     ) {
         EnumMap<ChunkSectionLayer, BufferBuilder> builders = new EnumMap<>(ChunkSectionLayer.class);
         List<ByteBufferBuilder> byteBuffers = new ArrayList<>(3);
+        // ★ CULL=FALSE (user live round 14: "whatever face of the seam block that is touching the
+        // face of the adjacent seam block on other side, it gets clipped/transparent"). Face
+        // culling here runs against the REAL level, where a neighbouring seam block reads as a
+        // FULL solid cube — so the shared face between two adjacent seam blocks was culled on both
+        // sides. But each neighbour is only HALF there, and when their owned halves are opposite
+        // (two rows passing side by side), the culled face's exposed part is a hole straight
+        // through the block. Tessellating cull-less draws every face of the cut block; the extra
+        // faces against genuinely solid neighbours are hidden by the depth buffer, and seam cells
+        // are few (moving-piston cost class, per the design doc).
         ModelBlockRenderer renderer = new ModelBlockRenderer(
-            mc.options.ambientOcclusion().get(), true, mc.getBlockColors());
+            mc.options.ambientOcclusion().get(), false, mc.getBlockColors());
         boolean cutoutLeaves = mc.options.cutoutLeaves().get();
         var modelSet = mc.getModelManager().getBlockStateModelSet();
         try {

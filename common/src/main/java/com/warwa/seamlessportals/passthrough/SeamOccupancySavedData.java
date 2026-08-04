@@ -237,6 +237,23 @@ public class SeamOccupancySavedData extends SavedData {
             n + data.secondaries.size(), level.dimension().identifier());
     }
 
+    /** Diagnostic: every persisted record as {@code pos:mask[/secondary@half]}, for gates. */
+    public String debugDump() {
+        StringBuilder sb = new StringBuilder("[");
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet keys =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet(masks.keySet());
+        secondaries.keySet().forEach(keys::add);
+        for (long pos : keys) {
+            SeamOccupancy.Secondary sec = secondaries.get(pos);
+            sb.append(pos).append(':').append(masks.get(pos));
+            if (sec != null) {
+                sb.append('/').append(sec.state().getBlock()).append('@').append(sec.half());
+            }
+            sb.append(' ');
+        }
+        return sb.append(']').toString();
+    }
+
     /** Send every persisted entry of this level to ONE player — the late-join sync. */
     public static void sendAllTo(ServerLevel level, net.minecraft.server.level.ServerPlayer player) {
         SeamOccupancySavedData data = level.getDataStorage().get(TYPE);

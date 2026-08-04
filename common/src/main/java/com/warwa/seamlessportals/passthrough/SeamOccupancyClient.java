@@ -73,15 +73,22 @@ public final class SeamOccupancyClient {
         // later: this method resolved the destination through mc.level (the player was in the
         // overworld — skip) and PortalWorldManager (the BLOCK-ERA cache, empty flag-ON), so the byte
         // went nowhere. Flag-ON, per-dimension client levels live in IP's ClientWorldLoader; the
-        // portal view the player is looking through IS one of its worlds, so getOptionalWorld is
-        // the level the seam clip and the collision hook actually read.
+        // portal view the player is looking through IS one of its worlds.
+        //
+        // ★★ peekWorld, NEVER getOptionalWorld (relog round, client-assert gate red 2026-08-03):
+        // getOptionalWorld CREATES the ClientLevel for any dim the server declared. The JOIN burst
+        // arrives before mc.level exists, so resolving through it force-created a parallel
+        // overworld, applied every record to THAT instance, and reported success — while the level
+        // the game actually plays in arrived later with zero records. peekWorld only ever returns
+        // a world something else already made real; anything earlier parks in PENDING and the
+        // END_CLIENT_TICK flush lands it on mc.level once it exists.
         boolean applied = false;
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         if (mc.level != null && mc.level.dimension().equals(dim)) {
             put(mc.level, pos, mask, secondary);
             applied = true;
         }
-        ClientLevel ipWorld = qouteall.imm_ptl.core.ClientWorldLoader.getOptionalWorld(dim);
+        ClientLevel ipWorld = qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(dim);
         if (ipWorld != null && ipWorld != mc.level) {
             put(ipWorld, pos, mask, secondary);
             applied = true;
@@ -109,18 +116,47 @@ public final class SeamOccupancyClient {
      * exact one-step-short failure that cost four live rounds on 2026-08-02.
      */
     public static boolean isRecordedClientSide(ResourceKey<Level> dim, long packedPos) {
-        ClientLevel lvl = qouteall.imm_ptl.core.ClientWorldLoader.getOptionalWorld(dim);
-        if (lvl != null && SeamOccupancy.occupancyOf(lvl, BlockPos.of(packedPos)) != 0) {
-            return true;
-        }
+        return clientRecordOf(dim, packedPos).mask() != 0;
+    }
+
+    /**
+     * ★ THE DIMENSION-CORRECT CLIENT VIEW of one cell — what the client knows and WHERE it knows it.
+     *
+     * <p>Exists because the relog gate's first client assert read {@code mc.level} for overworld
+     * cells and went red twice on a working pipe (2026-08-03, churn4/churn5): the player had logged
+     * out in the NETHER (leg 4's pearl), so post-relog {@code mc.level} was the nether and the
+     * overworld records — correctly applied to the loader's secondary overworld, the instance every
+     * portal-view consumer reads — were invisible to the instrument. The resolution order here IS
+     * the consumers' order: the played level when the dimension matches, else the loader's world
+     * for that dimension, else the PENDING stash (records that land the moment the level exists).
+     */
+    public static ClientRecord clientRecordOf(ResourceKey<Level> dim, long packedPos) {
+        BlockPos pos = BlockPos.of(packedPos);
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-        if (mc.level != null && mc.level.dimension().equals(dim)
-            && SeamOccupancy.occupancyOf(mc.level, BlockPos.of(packedPos)) != 0) {
-            return true;
+        if (mc.level != null && mc.level.dimension().equals(dim)) {
+            byte mask = SeamOccupancy.occupancyOf(mc.level, pos);
+            if (mask != 0 || SeamOccupancy.secondaryOf(mc.level, pos) != null) {
+                return new ClientRecord(mask, SeamOccupancy.secondaryOf(mc.level, pos), "mc.level");
+            }
+        }
+        ClientLevel lvl = qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(dim);
+        if (lvl != null) {
+            byte mask = SeamOccupancy.occupancyOf(lvl, pos);
+            if (mask != 0 || SeamOccupancy.secondaryOf(lvl, pos) != null) {
+                return new ClientRecord(mask, SeamOccupancy.secondaryOf(lvl, pos), "secondary-level");
+            }
         }
         var pending = PENDING.get(dim);
-        return pending != null && pending.containsKey(packedPos);
+        Pending p = pending == null ? null : pending.get(packedPos);
+        if (p != null) {
+            return new ClientRecord(p.mask(), p.secondary(), "pending");
+        }
+        return new ClientRecord((byte) 0, null, "absent");
     }
+
+    /** One cell as the client sees it: the mask, the second object, and which store answered. */
+    public record ClientRecord(byte mask,
+        @org.jetbrains.annotations.Nullable SeamOccupancy.Secondary secondary, String source) {}
 
     /**
      * ★ TICK-DRIVEN FLUSH (the user's live relog round, root-caused via the green server-side
@@ -141,7 +177,7 @@ public final class SeamOccupancyClient {
         }
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         for (var e : PENDING.entrySet()) {
-            ClientLevel lvl = qouteall.imm_ptl.core.ClientWorldLoader.getOptionalWorld(e.getKey());
+            ClientLevel lvl = qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(e.getKey());
             if (lvl == null && mc.level != null && mc.level.dimension().equals(e.getKey())) {
                 lvl = mc.level;   // early-join window: mc.level exists before the loader registers it
             }

@@ -80,8 +80,12 @@ public final class SeamCounterpartOutline {
         if (BlockManipulationClient.remotePointedDim != null
             && BlockManipulationClient.remoteHitResult instanceof BlockHitResult remote
             && remote.getType() != HitResult.Type.MISS) {
+            // peekWorld, not getOptionalWorld: the remote world is being RENDERED right now
+            // (remotePointedDim is only set while looking through a window), so it must already
+            // exist — and getOptionalWorld force-CREATES for known dims, which is how the relog
+            // join burst once landed records on a parallel overworld that never became mc.level.
             var remoteLevel = qouteall.imm_ptl.core.ClientWorldLoader
-                .getOptionalWorld(BlockManipulationClient.remotePointedDim);
+                .peekWorld(BlockManipulationClient.remotePointedDim);
             if (remoteLevel != null) {
                 var pair = counterpartOf(remoteLevel, remote.getBlockPos());
                 if (pair != null && pair.dim().equals(client.level.dimension())) {
