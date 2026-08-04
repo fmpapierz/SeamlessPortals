@@ -32,7 +32,9 @@
     "iris.MixinIrisShadowCompositeRenderer_ActRenderAll",
     "iris.MixinIrisCompositeRenderer_Census",
     "iris.MixinIrisCompositeRenderer_CensusPostWrite",
-    "iris.MixinIrisProgram_Census"
+    "iris.MixinIrisProgram_Census",
+    "iris.MixinIrisRenderingPipeline_PreCompositeCapture",
+    "iris.MixinIrisCompositeRenderer_PreCompositeStamp"
   ],
   "injectors": {
     "defaultRequire": 1
