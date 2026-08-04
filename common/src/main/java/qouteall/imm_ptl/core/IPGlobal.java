@@ -787,6 +787,16 @@ public class IPGlobal {
     public static final boolean debugStampSolid =
         Boolean.getBoolean("seamlessportals.debugStampSolid");
 
+    // IS5-COV (2026-08-03) — the STAMP COVERAGE PROBE. Log-only, DEFAULT OFF, <=1 Hz. Reads one
+    // full-width scanline of the deferred buffer AFTER the stamp pass and run-length encodes it by
+    // stamped-ness, carrying each run's depth range. Answers the one open question on the occluder
+    // ring: does the un-stamped ring hold the OCCLUDER's depth (⇒ the depth footprint is dilated)
+    // or the BACKGROUND's (⇒ the depth test is not the gate). It REFUSES to measure unless
+    // debugStampSolid AND debugTintStamp are both set, because its classifier is "is this pixel the
+    // stamp's flat magenta" and that is exact only then. See StampCoverageProbe's javadoc.
+    public static final boolean STAMP_COVERAGE_PROBE =
+        Boolean.getBoolean("seamlessportals.stampCoverageProbe");
+
     // IS5-SEAM THE CROSSING-WINDOW CLIP RELAX — **DEFAULT ON** (2026-07-27). The black seam band
     // was measured end-to-end: solid-stamp leg => the sampled dest frame is black at the band;
     // front_clipping live A/B both directions => the IS3 inner clip carries it; IS5-SEAM-ARM

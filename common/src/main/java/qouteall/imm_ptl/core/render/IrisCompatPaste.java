@@ -638,6 +638,15 @@ public class IrisCompatPaste {
                         .afterStampDraw(sel.name());
                 } finally {
                     GlStateManager._enableBlend(0);
+                    // IS5-COV (lever-gated -Dseamlessportals.stampCoverageProbe, DEFAULT OFF):
+                    // the occluder-ring coverage measurement. Deliberately HERE, in the
+                    // try-with-resources' finally: the RenderPass is already CLOSED at this point
+                    // (a resource is released before its finally runs), so the readback sees the
+                    // committed result rather than racing an open pass. Where the stamp PASSED it
+                    // also wrote depth; where it FAILED — the ring, the only thing this probe is
+                    // asking about — the depth is untouched and is exactly the value the test
+                    // rejected on. Refuses to measure unless the solid+tint levers are set.
+                    com.warwa.seamlessportals.render.StampCoverageProbe.afterStamp(deferred);
                 }
             }
         }
