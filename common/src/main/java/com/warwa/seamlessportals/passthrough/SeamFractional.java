@@ -477,17 +477,33 @@ public final class SeamFractional {
                     || owned0 == SeamOccupancy.HALF_NEGATIVE)) {
                 Direction.Axis axis0 = b0.srcFacing().getAxis();
                 double off0 = b0.cut().srcPlaneOffset();
-                net.minecraft.world.phys.shapes.VoxelShape shape =
-                    net.minecraft.world.phys.shapes.Shapes.join(
+                // ★ ONE OBJECT, ONE OUTLINE (user round 21: with both halves occupied, targeting
+                // side A's block "also outlines the seam block on side b — this should never
+                // happen"). Round 19's union outlined every occupant of the cell; vanilla
+                // semantics outline the TARGETED block only, and which occupant is targeted is
+                // the same crosshair-side rule everything else uses (halfFromHit on the actual
+                // hit). Falls back to the primary when the current hit is not a genuine location
+                // for this cell (the through-window counterpart swap synthesizes a cell-centre
+                // hit; a centre point cannot pick a side honestly).
+                SeamOccupancy.Secondary s0 = SeamOccupancy.secondaryOf(lvl, pos);
+                byte targetHalf = owned0;
+                if (net.minecraft.client.Minecraft.getInstance().hitResult
+                        instanceof net.minecraft.world.phys.BlockHitResult bhr
+                    && bhr.getType() != net.minecraft.world.phys.HitResult.Type.MISS
+                    && bhr.getBlockPos().equals(pos)) {
+                    targetHalf = SeamOccupancy.halfFromHit(
+                        bhr.getLocation(), pos, axis0, off0);
+                }
+                net.minecraft.world.phys.shapes.VoxelShape shape;
+                if (targetHalf != owned0 && s0 != null && s0.half() == targetHalf) {
+                    shape = net.minecraft.world.phys.shapes.Shapes.join(
+                        secondaryShapeOf(s0, level, pos),
+                        halfBox(axis0, s0.half(), off0),
+                        net.minecraft.world.phys.shapes.BooleanOp.AND);
+                } else {
+                    shape = net.minecraft.world.phys.shapes.Shapes.join(
                         original, halfBox(axis0, owned0, off0),
                         net.minecraft.world.phys.shapes.BooleanOp.AND);
-                SeamOccupancy.Secondary s0 = SeamOccupancy.secondaryOf(lvl, pos);
-                if (s0 != null) {
-                    shape = net.minecraft.world.phys.shapes.Shapes.or(shape,
-                        net.minecraft.world.phys.shapes.Shapes.join(
-                            secondaryShapeOf(s0, level, pos),
-                            halfBox(axis0, s0.half(), off0),
-                            net.minecraft.world.phys.shapes.BooleanOp.AND));
                 }
                 OUTLINE_CUT_PLANES.put(shape, new OutlineCutPlane(axis0, off0));
                 return shape;
