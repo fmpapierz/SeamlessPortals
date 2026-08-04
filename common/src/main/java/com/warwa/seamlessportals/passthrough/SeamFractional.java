@@ -468,6 +468,33 @@ public final class SeamFractional {
             //   sight-line switch popped between whole geometries. An open half box needs
             //   neither: the same shape is correct from every angle.
             if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+                // ★ ONLY IN THE WINDOW THAT SHOWS THE MATERIAL (user round 23: targeting side A's
+                // block from the side painted its outline through the B-face window into "dest
+                // side a"). Both faces' windows render the SAME destination dimension; the full
+                // cube trimmed by each window's plane leaves the material half in one and the
+                // EMPTY half's silhouette in the other. Same per-occupant beyond-plane test the
+                // seam-clip renderer uses: this cell outlines in this window only if its owned
+                // half lies beyond the rendering portal's plane.
+                byte ownedW = SeamOccupancy.occupancyOf(lvl, pos);
+                if (ownedW == SeamOccupancy.HALF_POSITIVE
+                    || ownedW == SeamOccupancy.HALF_NEGATIVE) {
+                    qouteall.imm_ptl.core.portal.Portal rp = qouteall.imm_ptl.core.render
+                        .context_management.PortalRendering.getRenderingPortal();
+                    if (rp != null) {
+                        // The half-space this window SHOWS is the one you travel INTO after
+                        // crossing: the portal's inverse normal carried through its transform
+                        // (coordinate-space safe for cross-dim and 7M same-dim alike). Outline
+                        // only if this cell's material lies in that half.
+                        net.minecraft.world.phys.Vec3 inward = rp.transformLocalVecNonScale(
+                            rp.getNormal().scale(-1.0));
+                        Direction visDir = Direction.getApproximateNearest(
+                            inward.x, inward.y, inward.z);
+                        byte visibleHalf = SeamOccupancy.halfOf(visDir);
+                        if (ownedW != visibleHalf) {
+                            return net.minecraft.world.phys.shapes.Shapes.empty();
+                        }
+                    }
+                }
                 return null;
             }
             SeamRegistry.SeamBinding b0 = cuttingBinding(level, pos);
@@ -850,14 +877,15 @@ public final class SeamFractional {
                 if (t >= 0 && t <= 1) {
                     net.minecraft.world.phys.Vec3 hit =
                         eye.add(farCenter.subtract(eye).scale(t));
-                    boolean throughAperture = switch (axis) {
-                        case X -> hit.y >= cell.getY() && hit.y <= cell.getY() + 1
-                            && hit.z >= cell.getZ() && hit.z <= cell.getZ() + 1;
-                        case Y -> hit.x >= cell.getX() && hit.x <= cell.getX() + 1
-                            && hit.z >= cell.getZ() && hit.z <= cell.getZ() + 1;
-                        case Z -> hit.x >= cell.getX() && hit.x <= cell.getX() + 1
-                            && hit.y >= cell.getY() && hit.y <= cell.getY() + 1;
-                    };
+                    // ★ THE WHOLE APERTURE, not just this cell (user round 23: from a diagonal
+                    // side position the sight line crosses the plane inside a NEIGHBOURING
+                    // aperture cell — the this-cell-only cross-section test called that "outside
+                    // the window" and wrongly granted the far half). The crossing point lies
+                    // inside exactly one cell; if THAT cell is seam-indexed, the line passes
+                    // through the window and the far half belongs to the window's view.
+                    BlockPos crossingCell = BlockPos.containing(hit.x, hit.y, hit.z);
+                    boolean throughAperture =
+                        SeamRegistry.lookup(level, crossingCell) != null;
                     if (!throughAperture) {
                         return SeamOccupancy.BOTH;   // side view: both halves directly visible
                     }
