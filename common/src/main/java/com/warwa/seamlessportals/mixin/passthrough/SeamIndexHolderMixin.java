@@ -76,4 +76,18 @@ public abstract class SeamIndexHolderMixin
     public LongOpenHashSet seamlessportals$mirrorCreatedCells() {
         return seamlessportals$mirrorCreatedCells;
     }
+
+    /**
+     * ★ BIND FINGERPRINTS — PER LEVEL by design (the far-pair relog fix, 2026-08-04): these guard
+     * this level's index, so they must die with it. See {@link SeamIndexHolder}'s doc for the
+     * static-map corpse this replaces.
+     */
+    @Unique
+    private final java.util.Map<java.util.UUID, Long> seamlessportals$bindFingerprints =
+        new java.util.HashMap<>();
+
+    @Override
+    public java.util.Map<java.util.UUID, Long> seamlessportals$bindFingerprints() {
+        return seamlessportals$bindFingerprints;
+    }
 }

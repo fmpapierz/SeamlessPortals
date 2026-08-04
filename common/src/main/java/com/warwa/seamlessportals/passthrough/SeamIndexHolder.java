@@ -46,4 +46,19 @@ public interface SeamIndexHolder {
      * alongside the pending-clear journal.
      */
     LongOpenHashSet seamlessportals$mirrorCreatedCells();
+
+    /**
+     * ★ Last-seen bind-geometry fingerprint per portal UUID — PER LEVEL, and that placement is the
+     * fix for the far-pair relog corpse (2026-08-04). These fingerprints guard {@code
+     * SeamRegistry.bind}'s work on THIS level's index, so their validity dies with the level. The
+     * first build kept them in two static UUID-keyed maps; portal UUIDs persist in the save and the
+     * geometry never changes across a relog, so after a reopen the tick handler saw "unchanged"
+     * and never rebound — into a brand-new EMPTY index. The server escaped by luck (world close
+     * fires {@code PORTAL_DISPOSE_SIGNAL} per portal, which removed its entries) while the client's
+     * relog teardown fires no per-portal dispose, leaving {@code totalIndexedCells=0} with both
+     * portals present and healthy: one-sided outlines, unbreakable far halves, replaces going
+     * everywhere. A cache that outlives the thing it guards is the defect; keying it on the level
+     * removes the entire class.
+     */
+    java.util.Map<java.util.UUID, Long> seamlessportals$bindFingerprints();
 }
