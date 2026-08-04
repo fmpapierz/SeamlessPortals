@@ -205,8 +205,20 @@ default flip. KILL RULE: any witness contradicting §4 stops the stage, not the 
   `-PdebugStampSolid`/`-PdebugTintStamp` identically. Layer≥1 slots deliberately not stamped here
   (part3's recursion re-aim consumes them). **Everything still dormant** — nothing calls
   `armCaptureForView` until part3's loop fork.
-- **S4b-part3 NEXT** — the five-call-site fork + frame-start brackets + recursion re-aim per the
-  FORK STRATEGY above; then S5 (query consumption + speculative cap); then S6 live legs.
+- **S4b-part3 + S5 LANDED (hash below)** — the loop fork per the FORK STRATEGY: frame-start loop
+  with the §3.7/§3.9/§3.10 brackets (§3.8 deliberately bracket-free per the refinement; IS5-PH
+  heal suppressed in query-only mode), the three doRenderPortal forks (consume-only visibility
+  with SPECULATIVE_CAP=4 = S5; capture arm; old-stamp bypass), the post anchor's query-only mode,
+  bob recompute + witness, STAMP-TIME matrices (post-mulLocal passingModelView via the F1
+  last-writer invariant — stamp geometry never depends on the bob recompute), and the
+  nested-layer deferral (part4 = capture-to-capture re-aim; single-layer new path until then,
+  announced once). **The new path is END-TO-END COMPLETE, single-layer, dev-lever-gated.**
+- **S6 NEXT** — live legs: `-PstageConsistentComposite=true -PirisRuntime=true`, sidecar read at
+  leg start; log gates (ARMED announcement, capture geometry, stamp pass line, counter proof, bob
+  witness, zero breakMechanism); user gates (ring GONE under MB yaw; §3.8 pre-registered MB
+  check; hand/seam/bloom arcs intact); then the lever-off direction (ring BACK); the C2
+  `-Pc2Inlining` unit-size leg in the dense scene; then part4 recursion re-aim; then default
+  flip.
 
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 
