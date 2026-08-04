@@ -541,6 +541,63 @@ the depth compare's real behaviour at the draw versus its declaration (this tree
 counter-example where the declared and executed state disagree); and the interaction with
 `CHelper.enableDepthClamp()` around the stamp (`IrisCompatOn262Renderer:657-659`).
 
+### §7l ★★★ THE OCCLUDER RING — MECHANISM MEASURED (2026-08-03, IS5-COV)
+
+**ONE artifact, amplified by motion blur — the user's model, and it fits the data better than my
+split did.** I proposed that the loud ring and the faint residual were separate bugs because the probe
+could not see the faint one; the user corrected it: *"no, the loud ring and faint residual is the same
+thing, it just gets amplified by motion blur."* Treating an instrument's RESOLUTION LIMIT as evidence
+about the world is the same error as reading a null probe as innocence — a new costume for a familiar
+mistake, and the user's eye caught it.
+
+**THE MECHANISM.** The stamp composites with a **hard depth test** onto an image whose **colour** has
+already been smeared across silhouettes by a pass that never touched **depth**. The ring is exactly
+the set of pixels the smear moved: colour says "not occluder", depth says "occluder", the stamp is
+depth-rejected, and the main frame's source terrain survives in the gap.
+
+**MEASURED, per pixel, motion blur ON** (`edge@346`, and independently `edge@632` at another
+resolution):
+```
+345:M ff00ff /0.988821  ||  346:- 908ca4 /0.975004   347:- 574643 /0.975004   348:- 7e5f4b /0.975118
+```
+Pixel 346 carries the log's depth **bit-identically** to 347 (plainly bark) while its colour is the
+terrain's. Bit-identical rules out a scaled resample — this is a decoupling, not a dilation.
+
+**MEASURED, motion blur verifiably OFF** (`MOTION_BLUR_EFFECT` absent from the sidecar ⇒ pack default
+`-1`, `lib/common.glsl:146`): colour and depth edges **coincide** at the strongest in-window silhouette
+(`align@465`, `|dz|=0.022373`), and the aperture rim is a clean single-pixel transition at both sides
+with no narrow unstamped run anywhere on the row. **So with MB off the effect is at or below one
+pixel** — a BOUND, not a null: sub-pixel, consistent with the user's "much more subtle", and below what
+a per-pixel probe can separate from ordinary un-antialiased rasterisation of the boundary.
+
+**EVERY ALTERNATIVE ELIMINATED ON A VERIFIED NEGATIVE:**
+
+| candidate | how it died |
+|---|---|
+| pack bloom | ring reproduces with `BLOOM_ENABLED=-1`, which compiles the gather out |
+| the pack's unsharp filter | `IMAGE_SHARPENING=0` **confirmed written to the sidecar on disk**, unchanged |
+| sub-pixel TAA registration | `TAA_JITTER=0` confirmed on disk, unchanged |
+| the stamp's own footprint | magenta leg: "magenta clean to the edge" |
+| buffer-size mismatch | geometry witness: `main=854x480 deferred=854x480 match=true` |
+| the snapshot copy | `MAIN` vs `DEFER` **byte-identical**, 17 samples, colour and depth |
+| the C3-BLOOM mask | disabling it changes nothing (and it was inert by construction — §7f-bis) |
+
+**THE INSTRUMENT.** `StampCoverageProbe` (`-PstampCoverageProbe`, log-only, 1 Hz, refuses to measure
+without `debugStampSolid`+`debugTintStamp` because its classifier is the stamp's flat magenta). It
+took **four** corrections to become trustworthy, three of them about AIM:
+1. the run encoder merged the ring into the occluder run (both unstamped) ⇒ raw per-pixel edge dumps;
+2. the alignment compare searched the whole row and landed on ordinary scenery while the window sat
+   elsewhere ⇒ aimed at the stamped extent, and the aim is PRINTED on every line;
+3. the generic edge walk could spend all its slots on occluder silhouettes and never reach the
+   aperture rim ⇒ `APERTURE-L`/`APERTURE-R` dumped unconditionally;
+4. and the first version could only ever print "no ring" in the case it was built to detect.
+
+**WHAT IS NOT YET ANSWERED:** whether this is fixable in a compositor that runs *after* the pack's
+post chain. The stamp's coverage is binary and depth-derived; the smear is colour-only and non-local.
+The candidate shapes (composite before the post chain, stencil coverage written during the main
+gbuffer pass as `RendererUsingStencil` already does shaders-OFF, depth-aware feathering) were scoped in
+the workflow record but none is designed. That is the next engagement's first question.
+
 ### §7g THE REMAINING OPEN ITEMS (do not lose these — the bloom ring is only one of them)
 
 1. ~~The MB-OFF residual sliver~~ and ~~artifact A, the player halo~~ — **MERGED into one bug, see §7j.**
