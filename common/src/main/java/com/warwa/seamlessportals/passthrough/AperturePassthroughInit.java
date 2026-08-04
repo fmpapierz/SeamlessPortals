@@ -34,17 +34,20 @@ public final class AperturePassthroughInit {
     /**
      * Last-seen geometry fingerprint per portal, so an unchanged portal costs one map lookup.
      *
-     * <p><b>Kept per SIDE, and that is load-bearing.</b> A portal exists on both the client and the
-     * server with the SAME UUID, so a single UUID-keyed map lets whichever side ticks first record a
-     * fingerprint that suppresses the other side's bind entirely — the client index would silently
-     * stay empty while looking perfectly healthy. Two maps, one per side.
+     * <p><b>★ Kept PER LEVEL (on the {@code SeamIndexHolder} duck), and that is the far-pair
+     * relog fix (2026-08-04).</b> The first build kept two static per-SIDE maps — which also
+     * solved a real problem (a shared UUID-keyed map let whichever side ticked first suppress the
+     * other side's bind), but statics outlive the level whose index they guard: portal UUIDs
+     * persist in the save and geometry doesn't change across a relog, so after a reopen the
+     * handler saw "unchanged" and never rebound into the brand-new EMPTY index. The server
+     * escaped by accident (world close fires {@code PORTAL_DISPOSE_SIGNAL} per portal, clearing
+     * its entries); the client's relog teardown fires no per-portal dispose, and the reproduction
+     * gate measured {@code portalsNearCell=2 totalIndexedCells=0} — both portals synced and
+     * ticking, index empty forever. Per-level maps solve both problems at once: each side's
+     * levels are distinct instances, and a new level starts with an empty cache by construction.
      */
-    private static final Map<UUID, Long> SERVER_FINGERPRINTS = new ConcurrentHashMap<>();
-    private static final Map<UUID, Long> CLIENT_FINGERPRINTS = new ConcurrentHashMap<>();
-
     private static Map<UUID, Long> fingerprintsFor(Portal portal) {
-        return portal.level() != null && portal.level().isClientSide()
-            ? CLIENT_FINGERPRINTS : SERVER_FINGERPRINTS;
+        return ((SeamIndexHolder) portal.level()).seamlessportals$bindFingerprints();
     }
 
     private static boolean initialised = false;
@@ -142,7 +145,7 @@ public final class AperturePassthroughInit {
     }
 
     private static void onPortalTick(Portal portal) {
-        if (AperturePassthroughLever.DISABLED) {
+        if (AperturePassthroughLever.DISABLED || portal.level() == null) {
             return;
         }
         try {
@@ -196,7 +199,9 @@ public final class AperturePassthroughInit {
             LOGGER.warn("[RS-SEAM-REGISTRY] unbind failed for portal {}", portal.getUUID(), t);
         }
         finally {
-            fingerprintsFor(portal).remove(portal.getUUID());
+            if (portal.level() != null) {
+                fingerprintsFor(portal).remove(portal.getUUID());
+            }
         }
     }
 
@@ -220,8 +225,8 @@ public final class AperturePassthroughInit {
         );
     }
 
-    /** Test/probe accounting: how many portals currently hold a binding fingerprint, per side. */
-    public static int trackedPortalCount(boolean clientSide) {
-        return (clientSide ? CLIENT_FINGERPRINTS : SERVER_FINGERPRINTS).size();
+    /** Test/probe accounting: how many portals currently hold a binding fingerprint in a level. */
+    public static int trackedPortalCount(net.minecraft.world.level.Level level) {
+        return ((SeamIndexHolder) level).seamlessportals$bindFingerprints().size();
     }
 }

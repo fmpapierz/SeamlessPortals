@@ -226,12 +226,16 @@ public class SeamOccupancySavedData extends SavedData {
             indexHolder.seamlessportals$mirrorCreatedCells().add(pos);
         }
         // One broadcast per cell AFTER both maps are live, so a cell with mask+secondary goes out
-        // as one coherent payload rather than two partials.
+        // as one coherent payload rather than two partials. The relight rides along: hydration
+        // writes the duck maps DIRECTLY (bypassing the mutators and their relight triggers), so
+        // without this the light engine keeps the full-cube darkness it computed at chunk load
+        // until something unrelated touches the cell.
         it.unimi.dsi.fastutil.longs.LongOpenHashSet keys =
             new it.unimi.dsi.fastutil.longs.LongOpenHashSet(data.masks.keySet());
         data.secondaries.keySet().forEach(keys::add);
         for (long pos : keys) {
             SeamOccupancy.broadcast(level, BlockPos.of(pos));
+            SeamOccupancy.relight(level, BlockPos.of(pos));
         }
         LOGGER.info("[SEAM FRAC] hydrated {} persisted occupancy entries for {}",
             n + data.secondaries.size(), level.dimension().identifier());

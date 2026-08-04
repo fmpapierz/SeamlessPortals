@@ -654,6 +654,14 @@ public class CrossingSmoke implements FabricClientGameTest {
                 SeamlessPortalsConstants.LOGGER.info(LOG + "leg 5: dev datapack written; will"
                     + " assert after world reopen (dynamic registries load at open only)");
             });
+            // THE FAR-PAIR RELOG STAGE — the user's DECODED live topology (store dump from
+            // "New World (8)": cells at (-264,88,-457) and (40,118,7000000) — a same-dim pair
+            // whose partner sits SEVEN MILLION blocks out, with NO forceload). The 9200 relog
+            // fixture deliberately keeps a forceload alive across the close; the user's world
+            // has none — after reopen the far side exists only if IP's own chunk tickets revive
+            // it. Staged LAST so the player stays parked at the near portal through the close,
+            // exactly where the live user logs out.
+            rsRelogFarStage(context);
             }   // end !RS_ONLY (leg 5 setup)
         }
 
@@ -687,6 +695,9 @@ public class CrossingSmoke implements FabricClientGameTest {
             // RELOG PERSISTENCE — the fractional model's SavedData + rebind + behaviour, asserted
             // against the fixture rsRelogStage left in this very save before the close.
             rsRelogAssert(context);
+            // AND THE FAR PAIR — no forceload, partner 7M out, player parked at the near portal:
+            // the user's live relog, reproduced variable-for-variable.
+            rsRelogFarAssert(context);
 
             SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
         }
@@ -5598,6 +5609,340 @@ public class CrossingSmoke implements FabricClientGameTest {
                 + " cleared the origin and both sides promoted their secondaries. {}", detail.get());
     }
 
+    /** Far-pair relog fixture, set by {@link #rsRelogFarStage}, read after the world reopen. */
+    private static BlockPos relogFarCell = null;
+    private static BlockPos relogFarDest = null;
+
+    /**
+     * ★ FAR-PAIR RELOG STAGE — the user's decoded live topology: a same-dim bi-way bi-faced pair
+     * whose destination sits at z = 7,000,000, staged with a TEMPORARY forceload that is removed
+     * before the close (the live world has none), the player left standing at the near portal
+     * (where the live user logs out). After reopen the far side comes back only if IP's own
+     * chunk-ticket revival does its job — which is exactly the variable every other relog fixture
+     * held constant by forceloading.
+     */
+    private static void rsRelogFarStage(ClientGameTestContext context) {
+        if (!com.warwa.seamlessportals.passthrough.SeamFractional.active()
+            || AperturePassthroughLever.DISABLED
+            || AperturePassthroughLever.DISABLE_SEAM_MIRROR) {
+            return;
+        }
+        final int cx = 9600, cy = 100, cz = 9600;
+        final int fz = 7000000;
+        final Vec3 destCenter = new Vec3(cx + 0.5, cy + 1.0, fz + 0.5);
+        final BlockPos cellS = new BlockPos(cx, cy, cz);
+        // Staging recipe = the same-dim break gate's, coordinates swapped; far pad included.
+        runCommands(context, List.of(
+            "forceload add " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 16),
+            "forceload add " + (cx - 16) + " " + (fz - 16) + " " + (cx + 16) + " " + (fz + 16),
+            "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+            "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz + 2) + " "
+                + (cx + 6) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
+            "setblock " + cx + " " + (cy - 1) + " " + cz + " minecraft:stone",
+            "fill " + (cx - 6) + " " + (cy - 1) + " " + (fz - 6) + " "
+                + (cx + 6) + " " + (cy - 1) + " " + (fz + 6) + " minecraft:stone",
+            "fill " + (cx - 6) + " " + cy + " " + (fz - 6) + " "
+                + (cx + 6) + " " + (cy + 5) + " " + (fz + 6) + " minecraft:air",
+            "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 27"
+        ));
+        context.waitTicks(10);
+        runCommands(context, List.of(
+            "execute as @p at @p run portal make_portal 1 2 minecraft:overworld "
+                + destCenter.x + " " + destCenter.y + " " + destCenter.z));
+        context.waitTicks(10);
+        runCommands(context, List.of(
+            "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 5",
+            "execute as @p at @p run portal complete_bi_way_bi_faced_portal"));
+        context.waitTicks(20);
+        AtomicReference<BlockPos> destRef = new AtomicReference<>(null);
+        for (int attempt = 0; attempt < 30 && destRef.get() == null; attempt++) {
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                if (cell == null) {
+                    return;
+                }
+                for (var b : cell.bindings()) {
+                    if (b.isMirrorable() && b.cut() != null && b.destPos() != null) {
+                        destRef.set(b.destPos());
+                        return;
+                    }
+                }
+            });
+            if (destRef.get() == null) {
+                context.waitTicks(10);
+            }
+        }
+        if (destRef.get() == null) {
+            throw new AssertionError(LOG + "RS FAR-PAIR RELOG STAGE FAILED — the 7M pair never"
+                + " bound while staged under forceload; the reopen assert would be meaningless.");
+        }
+        final BlockPos destPos = destRef.get();
+        // Claim then write, the real-place order (the mirror derives the crossing half from the
+        // source claim).
+        claimOwnerHalfBothSides(context, cellS,
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            writeAsPlayer(ow, cellS,
+                net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        });
+        context.waitTicks(20);
+        AtomicReference<String> stageState = new AtomicReference<>("");
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            byte sm = com.warwa.seamlessportals.passthrough.SeamOccupancy.occupancyOf(ow, cellS);
+            byte dm = com.warwa.seamlessportals.passthrough.SeamOccupancy.occupancyOf(ow, destPos);
+            String far = ow.getBlockState(destPos).getBlock().toString();
+            String store = com.warwa.seamlessportals.passthrough.SeamOccupancySavedData
+                .get(ow).debugDump();
+            stageState.set("srcMask=" + sm + " destMask=" + dm + " farState=" + far
+                + " store=" + store);
+        });
+        if (!stageState.get().contains("farState=Block{minecraft:stone}")
+            || stageState.get().contains("destMask=0")
+            || !stageState.get().contains(String.valueOf(destPos.asLong()))) {
+            throw new AssertionError(LOG + "RS FAR-PAIR RELOG STAGE FAILED — the crossing never"
+                + " reached the 7M side or its store record is missing: " + stageState.get());
+        }
+        // Object 2 on both cells — the user's live pair was TWO-OBJECT (their store dump held
+        // 2 masks + 2 secondaries; "hydrated 4"). The single-object variant of this fixture went
+        // green on the first run, so the secondaries are a held-apart variable, not decoration.
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            var gold = Blocks.GOLD_BLOCK.defaultBlockState();
+            byte dm = com.warwa.seamlessportals.passthrough.SeamOccupancy.occupancyOf(ow, destPos);
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellS,
+                new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold,
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE));
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, destPos,
+                new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(gold,
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.otherHalf(dm)));
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(ow, cellS);
+            com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(ow, destPos);
+        });
+        context.waitTicks(10);
+        // THE LIVE CONDITION: no forceload survives the close; the player parks at the portal.
+        runCommands(context, List.of(
+            "forceload remove " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 16),
+            "forceload remove " + (cx - 16) + " " + (fz - 16) + " " + (cx + 16) + " " + (fz + 16),
+            "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 0"
+        ));
+        context.waitTicks(10);
+        relogFarCell = cellS;
+        relogFarDest = destPos;
+        SeamlessPortalsConstants.LOGGER.info(LOG + "RS FAR-PAIR RELOG STAGE — {} / {} staged,"
+            + " forceloads removed, player parked at the near portal for the close. {}",
+            cellS, destPos, stageState.get());
+    }
+
+    /**
+     * ★ FAR-PAIR RELOG ASSERT — after the reopen, WITHOUT any forceload: the near portal's own
+     * IP chunk tickets must revive the 7M partner, the binding must re-form, the records must be
+     * visible on both sides, and break-both must still hold across the pair. Reproduces the
+     * user's live relog corpse variable-for-variable; a red here names the first broken link in
+     * that chain instead of the downstream symptom soup.
+     */
+    private static void rsRelogFarAssert(ClientGameTestContext context) {
+        if (relogFarCell == null || relogFarDest == null) {
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS FAR-PAIR RELOG ASSERT SKIPPED —"
+                + " nothing staged.");
+            return;
+        }
+        final BlockPos cellS = relogFarCell;
+        final BlockPos destPos = relogFarDest;
+        final int cx = cellS.getX(), cy = cellS.getY(), cz = cellS.getZ();
+        final int fz = destPos.getZ();
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        try {
+            // The player reopened parked at the near portal (position persists in the save).
+            // a) THE REBIND — with no forceload, only IP's ticket revival can load the far side.
+            AtomicReference<String> bindView = new AtomicReference<>("no lookup yet");
+            AtomicReference<Boolean> bound = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 120 && !bound.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (ow == null) {
+                        return;
+                    }
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    boolean nearBound = cell != null && cell.bindings().stream()
+                        .anyMatch(b -> b.isMirrorable() && b.cut() != null);
+                    boolean farLoaded = ow.isLoaded(destPos);
+                    var farCell = com.warwa.seamlessportals.passthrough.SeamRegistry
+                        .lookup(ow, destPos);
+                    boolean farBound = farCell != null && farCell.bindings().stream()
+                        .anyMatch(b -> b.isMirrorable() && b.cut() != null);
+                    bindView.set("nearBound=" + nearBound + " farChunkLoaded=" + farLoaded
+                        + " farBound=" + farBound);
+                    bound.set(nearBound && farLoaded && farBound);
+                });
+                if (!bound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!bound.get()) {
+                failure.set("THE FAR PAIR NEVER CAME BACK after the reopen (60s): " + bindView.get()
+                    + " — with no forceload, this is IP ticket revival / far-portal re-tick"
+                    + " failing, and every live post-relog symptom (one-sided outline, unbreakable"
+                    + " far half, replaces going everywhere) is downstream of it.");
+                return;
+            }
+            // b) records, both sides, dimension-correct.
+            context.waitTicks(40);
+            AtomicReference<String> stateView = new AtomicReference<>("");
+            AtomicReference<Boolean> stateOk = new AtomicReference<>(false);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                byte sm = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, cellS);
+                byte dm = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, destPos);
+                var ss = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(ow, cellS);
+                var ds = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(ow, destPos);
+                stateView.set("server: srcMask=" + sm + " destMask=" + dm + " srcSec="
+                    + (ss == null ? "null" : ss.state().getBlock() + "@" + ss.half())
+                    + " destSec=" + (ds == null ? "null" : ds.state().getBlock() + "@" + ds.half())
+                    + " farState=" + ow.getBlockState(destPos).getBlock());
+                stateOk.set(sm != 0 && dm != 0 && ss != null && ds != null
+                    && ow.getBlockState(destPos).is(net.minecraft.world.level.block.Blocks.STONE));
+            });
+            Boolean clientOk = context.computeOnClient(mc -> {
+                var src = com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                    .clientRecordOf(Level.OVERWORLD, cellS.asLong());
+                var dst = com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                    .clientRecordOf(Level.OVERWORLD, destPos.asLong());
+                return src.mask() != 0 && src.secondary() != null
+                    && dst.mask() != 0 && dst.secondary() != null;
+            });
+            if (!stateOk.get() || !Boolean.TRUE.equals(clientOk)) {
+                failure.set("PAIR REBOUND BUT THE STATE DID NOT — " + stateView.get()
+                    + " clientOk=" + clientOk);
+                return;
+            }
+            // b2) THE CLIENT-SIDE BIND — every symptom in the user's live list (one-sided
+            // outline, unbreakable far half, replaces going everywhere) runs off the CLIENT's
+            // seam registry, and its binding's cut needs the REVERSE portal entity, which lives
+            // 7M away and reaches the client only through portal-view entity sync. The server
+            // rebinding proves nothing about this half.
+            AtomicReference<Boolean> clientBound = new AtomicReference<>(false);
+            AtomicReference<String> clientBindView = new AtomicReference<>("never checked");
+            for (int attempt = 0; attempt < 60 && !clientBound.get(); attempt++) {
+                context.runOnClient(mc -> {
+                    if (mc.level == null) {
+                        clientBindView.set("mc.level null");
+                        return;
+                    }
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry
+                        .lookup(mc.level, cellS);
+                    if (cell == null) {
+                        // Discriminating diagnostics: portals=0 → entity sync never delivered the
+                        // near portals post-reopen; portals>0 & indexed=0 → the client tick
+                        // signal/bind path is dead; indexed>0 elsewhere → positional mismatch.
+                        int portalsNear = mc.level.getEntitiesOfClass(
+                            qouteall.imm_ptl.core.portal.Portal.class,
+                            new net.minecraft.world.phys.AABB(cellS).inflate(8), p -> true).size();
+                        int indexed = ((com.warwa.seamlessportals.passthrough.SeamIndexHolder)
+                            mc.level).seamlessportals$seamCells().size();
+                        clientBindView.set("client: no seam cell at " + cellS
+                            + " | portalsNearCell=" + portalsNear
+                            + " totalIndexedCells=" + indexed);
+                        return;
+                    }
+                    boolean cut = cell.bindings().stream()
+                        .anyMatch(b -> b.isMirrorable() && b.cut() != null && b.destPos() != null);
+                    clientBindView.set("client: bindings=" + cell.bindings().size()
+                        + " anyWithCut=" + cut);
+                    clientBound.set(cut);
+                });
+                if (!clientBound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!clientBound.get()) {
+                failure.set("THE CLIENT NEVER REBOUND (30s) — server bindings are back but the"
+                    + " client's seam registry has no cut at the near cell (the reverse portal"
+                    + " entity did not re-sync through the view), which is exactly the one-sided"
+                    + " outline + unbreakable far half. " + clientBindView.get());
+                return;
+            }
+            // c) behaviour: break the FAR (mirror-side) half — the near half must clear too.
+            //    This is the user's "cannot break from 2nd side", exercised server-side.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                writeAsPlayer(ow, destPos,
+                    net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            });
+            context.waitTicks(20);
+            AtomicReference<String> breakView = new AtomicReference<>("");
+            AtomicReference<Boolean> breakOk = new AtomicReference<>(false);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                // Two-object semantics: breaking the far primary kills the OBJECT (near primary
+                // clears too) and BOTH sides promote their surviving gold secondaries.
+                boolean nearGold = ow.getBlockState(cellS)
+                    .is(net.minecraft.world.level.block.Blocks.GOLD_BLOCK);
+                boolean farGold = ow.getBlockState(destPos)
+                    .is(net.minecraft.world.level.block.Blocks.GOLD_BLOCK);
+                byte sm = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .occupancyOf(ow, cellS);
+                breakView.set("after far break: nearState=" + ow.getBlockState(cellS).getBlock()
+                    + " nearMask=" + sm + " farState=" + ow.getBlockState(destPos).getBlock());
+                breakOk.set(nearGold && farGold
+                    && sm == com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_NEGATIVE);
+            });
+            if (!breakOk.get()) {
+                failure.set("BREAK-BOTH BROKE ACROSS THE RELOG — breaking the far half did not"
+                    + " clear the near half and promote both secondaries: " + breakView.get());
+                return;
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS FAR-PAIR RELOG GATE PASS — 7M pair"
+                + " rebound without forceloads, records on both sides, break-both intact."
+                + " " + stateView.get() + " | " + breakView.get());
+        } finally {
+            // Cleanup needs the far chunks; borrow a forceload for the wipe, then drop it.
+            runCommands(context, List.of(
+                "forceload add " + (cx - 16) + " " + (fz - 16) + " " + (cx + 16) + " "
+                    + (fz + 16)));
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cellS);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellS, null);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, destPos);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, destPos, null);
+                try {
+                    ow.setBlockAndUpdate(cellS, net.minecraft.world.level.block.Blocks.AIR
+                        .defaultBlockState());
+                    ow.setBlockAndUpdate(destPos, net.minecraft.world.level.block.Blocks.AIR
+                        .defaultBlockState());
+                } catch (Throwable ignored) {
+                }
+                for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(cx - 8, cy - 8, cz - 8,
+                        cx + 8, cy + 8, cz + 8), p -> true)) {
+                    portal.discard();
+                }
+                for (var portal : ow.getEntitiesOfClass(qouteall.imm_ptl.core.portal.Portal.class,
+                    new net.minecraft.world.phys.AABB(cx - 8, cy - 8, fz - 8,
+                        cx + 8, cy + 8, fz + 8), p -> true)) {
+                    portal.discard();
+                }
+            });
+            runCommands(context, List.of(
+                "forceload remove " + (cx - 16) + " " + (fz - 16) + " " + (cx + 16) + " "
+                    + (fz + 16),
+                "forceload remove " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " "
+                    + (cz + 16)));
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS FAR-PAIR RELOG GATE FAILED: " + failure.get());
+            }
+        }
+    }
+
     /** Relog fixture coordinates, set by {@link #rsRelogStage}, read after the world reopen. */
     private static BlockPos relogCell = null;
     private static BlockPos relogDest = null;
@@ -8184,6 +8529,38 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (stageErr.get() != null) {
                 throw new AssertionError(tag + "FIXTURE INVALID — " + stageErr.get());
             }
+            // ★ THE STORE ASSERT (live round 16, "the relog still sucks — read logs"): the user's
+            // world save held TWO overworld cells and a nether store with ZERO cells (gzip-dumped
+            // from New World (8) — "cells" list empty at 43 bytes) while the live duck maps had
+            // answered every in-session query. The same-dim relog gate could never see this: its
+            // whole fixture persists into ONE dimension's store. This cross-dim fixture has a
+            // crossing claim in a SECOND dimension's store — assert the write-through reached it
+            // NOW, without waiting for a reopen to launder the loss into downstream symptoms.
+            AtomicReference<String> storeView = new AtomicReference<>("");
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(
+                    net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(destDim)));
+                String owDump = com.warwa.seamlessportals.passthrough.SeamOccupancySavedData
+                    .get(ow).debugDump();
+                String nDump = com.warwa.seamlessportals.passthrough.SeamOccupancySavedData
+                    .get(nether).debugDump();
+                storeView.set("stores: ow=" + owDump + " dest=" + nDump);
+                if (!owDump.contains(String.valueOf(srcCell.asLong()))
+                    || !nDump.contains(String.valueOf(destCell.asLong()))) {
+                    stageErr.set("SAVEDDATA IS MISSING A LIVE RECORD — the duck maps answer but"
+                        + " the per-dimension store never got the write-through, which is exactly"
+                        + " the user's empty live nether store at relog. srcCell="
+                        + srcCell.asLong() + " destCell=" + destCell.asLong() + " | "
+                        + storeView.get());
+                }
+            });
+            if (stageErr.get() != null) {
+                throw new AssertionError(tag + "STORE WRITE-THROUGH HOLE — " + stageErr.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(tag + "STORE ASSERT PASS — {}", storeView.get());
             final net.minecraft.resources.ResourceKey<Level> destKey = net.minecraft.resources.ResourceKey.create(
                 net.minecraft.core.registries.Registries.DIMENSION, net.minecraft.resources.Identifier.parse(destDim));
             Boolean clientReady = context.computeOnClient(mc ->

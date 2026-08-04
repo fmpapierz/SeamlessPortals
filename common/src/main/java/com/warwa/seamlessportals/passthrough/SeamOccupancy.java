@@ -91,6 +91,7 @@ public final class SeamOccupancy {
         long key = cell.asLong();
         m.put(key, (byte) (m.get(key) | half));
         persistMask(level, key);
+        relight(level, cell);
     }
 
     /** Release one half. Removes the entry entirely once neither half is owned. */
@@ -104,12 +105,14 @@ public final class SeamOccupancy {
             m.put(key, now);
         }
         persistMask(level, key);
+        relight(level, cell);
     }
 
     /** Forget this cell entirely — the block was broken or replaced wholesale. */
     public static void clear(Level level, BlockPos cell) {
         map(level).remove(cell.asLong());
         persistMask(level, cell.asLong());
+        relight(level, cell);
     }
 
     /**
@@ -123,6 +126,23 @@ public final class SeamOccupancy {
             map(level).put(cell.asLong(), mask);
         }
         persistMask(level, cell.asLong());
+        relight(level, cell);
+    }
+
+    /**
+     * ★ RE-LIGHT ON EVERY MASK MUTATION — the lighting arm ({@code
+     * LightEngineSeamTransparencyMixin}) changes what the light engine sees for this cell as a
+     * FUNCTION OF THE MASK, but the engine only re-reads a cell when something schedules a check.
+     * Vanilla schedules on blockstate changes; a mask change with the blockstate untouched (the
+     * claim of a crossing half, a client packet apply, a release) would otherwise leave stale
+     * darkness until an unrelated neighbour update. Fail-soft: light is cosmetic and a missing
+     * relight must never break a write that already succeeded.
+     */
+    public static void relight(Level level, BlockPos cell) {
+        try {
+            level.getChunkSource().getLightEngine().checkBlock(cell.immutable());
+        } catch (Throwable ignored) {
+        }
     }
 
     /** The occupancy mask for a cell: 0 when nothing here, else some combination of the two halves. */
