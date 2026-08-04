@@ -1,23 +1,46 @@
 package qouteall.imm_ptl.core.compat.iris_compatibility;
 
+import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.logging.LogUtils;
+import net.irisshaders.iris.Iris;
+import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
+import net.irisshaders.iris.mixin.GpuDeviceAccessor;
+import net.irisshaders.iris.pathways.FullScreenQuadRenderer;
 import net.irisshaders.iris.pipeline.CompositeRenderer;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.targets.RenderTarget;
 import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.uniforms.SystemTimeUniforms;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GL45C;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
+import qouteall.imm_ptl.core.render.SecondaryWorldRenderCore;
+import qouteall.imm_ptl.core.render.ViewAreaRenderer;
+import qouteall.imm_ptl.core.render.context_management.PortalRendering;
+import qouteall.imm_ptl.core.render.context_management.RenderStates;
 
 import java.lang.reflect.Field;
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -192,6 +215,8 @@ public final class IrisStageConsistentComposite {
         Portal portal;
         Matrix4f modelView;
         Matrix4f projection;
+        Vec3 cameraPos;
+        float partialTick;
         int layer;
     }
 
@@ -244,6 +269,8 @@ public final class IrisStageConsistentComposite {
         slot.portal = portal;
         slot.modelView = new Matrix4f(modelView);
         slot.projection = new Matrix4f(projection);
+        slot.cameraPos = CHelper.getCurrentCameraPos();
+        slot.partialTick = RenderStates.getPartialTick();
         slot.layer = layer;
         armedCapture = slot;
         return true;
@@ -417,6 +444,7 @@ public final class IrisStageConsistentComposite {
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
+        stampConsumedThisFrame = false;
     }
 
     /**
@@ -434,11 +462,252 @@ public final class IrisStageConsistentComposite {
         }
         if (!PATH_ACTIVE) return;
         if (capturesPendingThisFrame == 0) return;
-        // S4b-part2 lands the body: triple discriminator (identity vs the MAIN pipeline's
-        // compositeRenderer + !PortalRendering.isRendering() + consume-once), then the raw-GL
-        // stamp draw per the runMask pattern (target = colortex0 pass-0-READ side +
-        // addDepthAttachment(depthtex0); depth test shipped-compare-family + WRITE; sampler = the
-        // capture; C4-SEAM depth clamp; no clear, no dilation), consuming every pending slot in
-        // capture order.
+        if (mechanismBroken) return;
+        if (stampConsumedThisFrame) return; // consume-once-per-frame (judge-mandated)
+        // ---- THE TRIPLE DISCRIMINATOR (design §1.3, judge-mandated — do NOT simplify) --------
+        // beginRenderer.renderAll (inside beginLevelRendering) and deferredRenderer.renderAll
+        // (inside beginTranslucents) invoke this SAME method; a stamp there is wiped by the
+        // gbuffer pass and the mechanism dies silently.
+        if (PortalRendering.isRendering()) return; // never inside a nested view
+        try {
+            Object mainPipeline = Iris.getPipelineManager().getPipelineNullable();
+            if (!(mainPipeline instanceof IrisRenderingPipeline)) return;
+            Object mainCompositeRenderer = fPipelineCompositeRenderer.get(mainPipeline);
+            if (mainCompositeRenderer != compositeRenderer) {
+                return; // begin/prepare/deferred instance, or a foreign pipeline's composite
+            }
+            stampConsumedThisFrame = true;
+            runStampPass((IrisRenderingPipeline) mainPipeline, (CompositeRenderer) compositeRenderer);
+        } catch (Throwable t) {
+            breakMechanism("stamp discriminator/pass threw", t);
+        } finally {
+            // Slots are consumed whether the pass succeeded or broke — a broken pass must not
+            // leave pending slots to trip the beginFrame WARN with a misleading count.
+            for (CaptureSlot s : captureSlots) s.pending = false;
+            capturesPendingThisFrame = 0;
+        }
+    }
+
+    private static boolean stampConsumedThisFrame = false;
+
+    // =============================================================================================
+    // S4b-part2 — THE STAMP PASS (design §1.3 / §3.6): paste every captured view into the main
+    // chain's colortex0 (pass-0-READ side) + depthtex0 at renderAll HEAD, before any composite.
+    // The draw is the mask's runMask pattern; the depth semantics are the SHIPPED stamp's
+    // (nocap vsh + per-fragment floor fsh — IS5-XCUT: a per-vertex floor TILTS the interpolated
+    // plane; gl_FragDepth = max(gl_FragCoord.z, 0.001) is a true clamp), declared compare
+    // GEQUAL + depth WRITE, under the C4-SEAM depth clamp bracket.
+    // =============================================================================================
+
+    private static final String STAMP_VERTEX_SRC = """
+        #version 330 core
+        layout(location = 0) in vec3 Position;
+        layout(location = 1) in vec4 Color;
+        uniform mat4 u_combined;
+        out vec4 vertexColor;
+        void main() {
+            gl_Position = u_combined * vec4(Position, 1.0);
+            vertexColor = Color;
+        }
+        """;
+    /** Fragment = the shipped portal_area_sample_floor.fsh semantics, verbatim constants:
+     *  texelFetch at gl_FragCoord * vertexColor (the mesh tint carries -PdebugTintStamp magenta);
+     *  u_solid=1 replaces the sample with the vertex colour (-PdebugStampSolid — keeps the
+     *  StampCoverageProbe classifier levers working identically on the new path);
+     *  gl_FragDepth = max(gl_FragCoord.z, 0.001) — the IS5-HAND floor, per fragment. */
+    private static final String STAMP_FRAGMENT_SRC = """
+        #version 330 core
+        uniform sampler2D u_capture;
+        uniform float u_solid;
+        in vec4 vertexColor;
+        out vec4 fragColor;
+        void main() {
+            vec4 sampled = vec4(texelFetch(u_capture, ivec2(gl_FragCoord.xy), 0).rgb, 1.0);
+            fragColor = mix(sampled * vertexColor, vertexColor, u_solid);
+            gl_FragDepth = max(gl_FragCoord.z, 0.001);
+        }
+        """;
+
+    private static int stampProgram = 0;
+    private static int locCombined = -1;
+    private static int locCapture = -1;
+    private static int locSolid = -1;
+    private static final FloatBuffer matBuf = BufferUtils.createFloatBuffer(16);
+
+    private static boolean ensureStampProgram() {
+        if (stampProgram != 0) return true;
+        int vs = GL20C.glCreateShader(GL20C.GL_VERTEX_SHADER);
+        GL20C.glShaderSource(vs, STAMP_VERTEX_SRC);
+        GL20C.glCompileShader(vs);
+        int fs = GL20C.glCreateShader(GL20C.GL_FRAGMENT_SHADER);
+        GL20C.glShaderSource(fs, STAMP_FRAGMENT_SRC);
+        GL20C.glCompileShader(fs);
+        if (GL20C.glGetShaderi(vs, GL20C.GL_COMPILE_STATUS) == GL11.GL_FALSE
+            || GL20C.glGetShaderi(fs, GL20C.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
+            breakMechanism("stamp shader compile failed: vs='"
+                + GL20C.glGetShaderInfoLog(vs) + "' fs='" + GL20C.glGetShaderInfoLog(fs) + "'", null);
+            GL20C.glDeleteShader(vs);
+            GL20C.glDeleteShader(fs);
+            return false;
+        }
+        int prog = GL20C.glCreateProgram();
+        GL20C.glAttachShader(prog, vs);
+        GL20C.glAttachShader(prog, fs);
+        GL20C.glLinkProgram(prog);
+        GL20C.glDeleteShader(vs);
+        GL20C.glDeleteShader(fs);
+        if (GL20C.glGetProgrami(prog, GL20C.GL_LINK_STATUS) == GL11.GL_FALSE) {
+            breakMechanism("stamp program link failed: " + GL20C.glGetProgramInfoLog(prog), null);
+            GL20C.glDeleteProgram(prog);
+            return false;
+        }
+        stampProgram = prog;
+        locCombined = GL20C.glGetUniformLocation(prog, "u_combined");
+        locCapture = GL20C.glGetUniformLocation(prog, "u_capture");
+        locSolid = GL20C.glGetUniformLocation(prog, "u_solid");
+        return true;
+    }
+
+    /** Stamp-target FBO cache: keyed on (colorTex, depthTex); nuked when either id changes
+     *  (resize/reload allocate new textures, so ids are the natural key). */
+    private static GlFramebuffer stampFbo = null;
+    private static int stampFboColorTex = 0;
+    private static int stampFboDepthTex = 0;
+
+    private static GlFramebuffer ensureStampFbo(int colorTex, int depthTex) {
+        if (stampFbo != null && stampFboColorTex == colorTex && stampFboDepthTex == depthTex) {
+            return stampFbo;
+        }
+        if (stampFbo != null) {
+            try { stampFbo.destroy(); } catch (Throwable ignored) {}
+            stampFbo = null;
+        }
+        GlFramebuffer fbo = new GlFramebuffer();
+        fbo.addColorAttachment(0, colorTex);
+        // javap-pinned: addDepthAttachment takes a GpuTexture; the raw-id variant is the Bypass.
+        fbo.addDepthAttachmentBypass(depthTex);
+        fbo.drawBuffers(new int[]{0});
+        stampFbo = fbo;
+        stampFboColorTex = colorTex;
+        stampFboDepthTex = depthTex;
+        return fbo;
+    }
+
+    private static void runStampPass(
+        IrisRenderingPipeline mainPipeline, CompositeRenderer mainCompositeRenderer
+    ) throws IllegalAccessException {
+        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+        Boolean writeAlt = resolvePassZeroReadsAlt((List<?>) fPasses.get(mainCompositeRenderer));
+        if (writeAlt == null) {
+            breakMechanism("no real composite pass 0 on the MAIN pipeline", null);
+            return;
+        }
+        RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(mainPipeline);
+        RenderTarget c0 = rts.get(0);
+        if (c0 == null) {
+            breakMechanism("MAIN colortex0 null at stamp", null);
+            return;
+        }
+        int targetColor = writeAlt ? c0.getAltTexture() : c0.getMainTexture();
+        int w = c0.getWidth();
+        int h = c0.getHeight();
+        GpuTexture depthGpu = rts.getDepthTexture();
+        if (!(depthGpu instanceof GlTexture depthGl)) {
+            breakMechanism("MAIN depthtex0 not a GlTexture at stamp", null);
+            return;
+        }
+        if (!ensureStampProgram()) return;
+        GlFramebuffer fbo = ensureStampFbo(targetColor, depthGl.glId());
+
+        boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        boolean solid = IPGlobal.debugStampSolid;
+        boolean tint = IPGlobal.debugTintStamp;
+        Vec3 meshTint = tint ? new Vec3(1.0, 0.0, 1.0) : new Vec3(1.0, 1.0, 1.0);
+
+        try {
+            fbo.bind();
+            GlStateManager._viewport(0, 0, w, h);
+            GlStateManager._disableScissorTest();
+            GlStateManager._disableBlend(0);
+            GlStateManager._disableCull();
+            // Depth: the SHIPPED stamp's declared state — GEQUAL + WRITE ON. Never redesigned
+            // from the declared-vs-executed puzzle (§4 of the design); the live A/B with the
+            // solid/tint levers is the verification, exactly as it was for the shipped stamp.
+            GlStateManager._enableDepthTest();
+            GlStateManager._depthFunc(GL11.GL_GEQUAL);
+            GlStateManager._depthMask(true);
+            if (!IPGlobal.debugNoStampDepthClamp) {
+                CHelper.enableDepthClamp();
+            }
+            GlStateManager._glUseProgram(stampProgram);
+            GL20C.glUniform1i(locCapture, 0);
+            GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+
+            for (CaptureSlot slot : captureSlots) {
+                if (!slot.pending || slot.layer != 0) continue;
+                try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
+                    256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
+                )) {
+                    MeshData mesh = ViewAreaRenderer.buildPortalViewAreaMesh(
+                        meshTint, slot.portal, slot.cameraPos, slot.partialTick,
+                        slot.modelView, byteBuffer
+                    );
+                    if (mesh == null) continue; // fully near-plane-clipped — skip, like the stamp
+                    int vertexCount;
+                    GpuBufferSlice vertexSlice;
+                    try (mesh) {
+                        vertexCount = mesh.drawState().vertexCount();
+                        vertexSlice = SecondaryWorldRenderCore.registerFrameTransientUbo(
+                            RenderSystem.getDevice().createBuffer(
+                                () -> "seamlessportals_is5pre_stamp_mesh",
+                                GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer()
+                            )
+                        );
+                    }
+                    GlStateManager._bindTexture(slot.colorTex);
+                    ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                        .vertexArrayCache().bindVertexArray(
+                            new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                            new GpuBufferSlice[]{vertexSlice},
+                            null
+                        );
+                    matBuf.clear();
+                    new Matrix4f(slot.projection).mul(slot.modelView).get(matBuf);
+                    GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
+                    GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                }
+            }
+        } finally {
+            if (!IPGlobal.debugNoStampDepthClamp) {
+                CHelper.disableDepthClamp();
+            }
+            // Depth state back to the composite-time default (composite FBOs carry no depth
+            // attachment — V3 — but the tracked cache must not think depth is still on).
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._disableDepthTest();
+            // VAO back through the same cache iris rides (the mask's restore idiom); renderAll
+            // re-binds the quad after HEAD anyway — belt for exception paths.
+            FullScreenQuadRenderer.INSTANCE.bind();
+            if (cullWasEnabled) {
+                GlStateManager._enableCull();
+            }
+        }
+        int err = GL11.glGetError();
+        if (err != GL11.GL_NO_ERROR) {
+            breakMechanism("stamp pass left GL error 0x" + Integer.toHexString(err), null);
+        } else {
+            noteStampPass();
+        }
+    }
+
+    private static String lastStampAnnouncement = null;
+
+    private static void noteStampPass() {
+        String a = "stamped=" + capturesPendingThisFrame
+            + " solid=" + IPGlobal.debugStampSolid + " tint=" + IPGlobal.debugTintStamp;
+        if (a.equals(lastStampAnnouncement)) return;
+        lastStampAnnouncement = a;
+        LOGGER.info("[Seamless Portals] [IS5-PRE] stamp pass ran at main renderAll HEAD — {}", a);
     }
 }
