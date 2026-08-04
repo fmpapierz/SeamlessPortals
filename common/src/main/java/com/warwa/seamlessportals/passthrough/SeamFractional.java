@@ -412,6 +412,79 @@ public final class SeamFractional {
         // normal block box, with no cut-face rectangle at the plane. Rays never run inside the
         // extract, so the viewer-half targeting rule below is untouched.
         if (com.warwa.seamlessportals.render.SeamCounterpartOutline.extractingOutline) {
+            // ★ FULL CUBE ONLY WHEN THE WINDOW COMPLETES IT (user live round 18: from the SIDE of
+            // the portal, where both half-spaces are visible directly, the merged full-cube box
+            // "paints into side b even though no block is there"). The merge trick is only honest
+            // when the empty half sits BEHIND the window, masked by the portal view and completed
+            // by the counterpart's own outline. Test: does the camera→empty-half-centre segment
+            // pierce the cut plane INSIDE this cell's cross-section? Through the window it does
+            // (the aperture covers the cell); from the side it crosses the plane laterally outside
+            // the cell, the window cannot complete anything, and the outline must stop at the
+            // plane — the owned-half box below.
+            // Inside a PORTAL (window) pass the full cube is unconditional: the region beyond the
+            // plane is only reachable through the window there, which definitionally completes
+            // the box — and the sight-line test below would misfire in that pass anyway, because
+            // the vanilla Camera object keeps the player's REAL position while the pass renders
+            // from the transformed one (same-dim far pairs put those millions of blocks apart).
+            if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+                return null;
+            }
+            SeamRegistry.SeamBinding b0 = cuttingBinding(level, pos);
+            byte owned0 = SeamOccupancy.occupancyOf(lvl, pos);
+            if (b0 != null && b0.cut() != null
+                && (owned0 == SeamOccupancy.HALF_POSITIVE
+                    || owned0 == SeamOccupancy.HALF_NEGATIVE)) {
+                Direction.Axis axis0 = b0.srcFacing().getAxis();
+                double off0 = b0.cut().srcPlaneOffset();
+                net.minecraft.world.phys.Vec3 cam = net.minecraft.client.Minecraft.getInstance()
+                    .gameRenderer.mainCamera().position();
+                double sign = owned0 == SeamOccupancy.HALF_POSITIVE ? -1.0 : 1.0;
+                net.minecraft.world.phys.Vec3 c = net.minecraft.world.phys.Vec3.atCenterOf(pos);
+                double planeCoord = off0 + (axis0 == Direction.Axis.X ? pos.getX()
+                    : axis0 == Direction.Axis.Y ? pos.getY() : pos.getZ());
+                net.minecraft.world.phys.Vec3 emptyCenter = new net.minecraft.world.phys.Vec3(
+                    axis0 == Direction.Axis.X ? planeCoord + sign * 0.25 : c.x,
+                    axis0 == Direction.Axis.Y ? planeCoord + sign * 0.25 : c.y,
+                    axis0 == Direction.Axis.Z ? planeCoord + sign * 0.25 : c.z);
+                double camA = axis0 == Direction.Axis.X ? cam.x
+                    : axis0 == Direction.Axis.Y ? cam.y : cam.z;
+                double tgtA = axis0 == Direction.Axis.X ? emptyCenter.x
+                    : axis0 == Direction.Axis.Y ? emptyCenter.y : emptyCenter.z;
+                boolean completes = false;
+                if (Math.abs(tgtA - camA) > 1.0e-6) {
+                    double t = (planeCoord - camA) / (tgtA - camA);
+                    if (t >= 0 && t <= 1) {
+                        net.minecraft.world.phys.Vec3 hit =
+                            cam.add(emptyCenter.subtract(cam).scale(t));
+                        completes = switch (axis0) {
+                            case X -> hit.y >= pos.getY() && hit.y <= pos.getY() + 1
+                                && hit.z >= pos.getZ() && hit.z <= pos.getZ() + 1;
+                            case Y -> hit.x >= pos.getX() && hit.x <= pos.getX() + 1
+                                && hit.z >= pos.getZ() && hit.z <= pos.getZ() + 1;
+                            case Z -> hit.x >= pos.getX() && hit.x <= pos.getX() + 1
+                                && hit.y >= pos.getY() && hit.y <= pos.getY() + 1;
+                        };
+                    }
+                }
+                if (!completes) {
+                    // The honest side-view box: each occupant clipped to its own half. The plane
+                    // face shows as the cut boundary — correct here, because no window is
+                    // completing the object from this viewpoint.
+                    net.minecraft.world.phys.shapes.VoxelShape shape =
+                        net.minecraft.world.phys.shapes.Shapes.join(
+                            original, halfBox(axis0, owned0, off0),
+                            net.minecraft.world.phys.shapes.BooleanOp.AND);
+                    SeamOccupancy.Secondary s0 = SeamOccupancy.secondaryOf(lvl, pos);
+                    if (s0 != null) {
+                        shape = net.minecraft.world.phys.shapes.Shapes.or(shape,
+                            net.minecraft.world.phys.shapes.Shapes.join(
+                                s0.state().getShape(level, pos),
+                                halfBox(axis0, s0.half(), off0),
+                                net.minecraft.world.phys.shapes.BooleanOp.AND));
+                    }
+                    return shape;
+                }
+            }
             return null;
         }
         byte owned = SeamOccupancy.occupancyOf(lvl, pos);
