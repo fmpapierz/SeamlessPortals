@@ -1197,8 +1197,24 @@ public class IPGlobal {
      *  live protocol's counter-climbing leg is unjudgeable from the log). */
     public static final boolean BLOOM_MASK_PROBE = Boolean.getBoolean("seamlessportals.bloomMaskProbe");
 
+    // IS5-PRE — stage-consistent portal compositing (migration/IS5_PRE_DESIGN.md v3). The occluder
+    // ring's MECHANISM fix: portal views render at FRAME START, are captured pre-composite at their
+    // finalizeLevelRendering seam (composites+final cancelled), and are stamped into the MAIN chain
+    // at composite renderAll HEAD — so the pack's non-local passes filter occluders and portal
+    // content TOGETHER, once. The old post-final path remains whole behind this flag: it is the
+    // on-command ring reproduction and the escape hatch for every closed arc.
+    // ONE static-final resolved at class load (mixins cannot unload; every hook gates on this same
+    // immutable value — the path can never mix mid-session). Dev default FALSE; enable via
+    // -PstageConsistentComposite=true. The DEFAULT constant flips true (and
+    // -PdisableStageConsistentComposite becomes the lever) only after both live A/B directions pass.
+    public static final boolean STAGE_CONSISTENT_COMPOSITE_DEFAULT = false;
+    public static final boolean STAGE_CONSISTENT_COMPOSITE =
+        Boolean.getBoolean("seamlessportals.stageConsistentComposite")
+            || (STAGE_CONSISTENT_COMPOSITE_DEFAULT
+                && !Boolean.getBoolean("seamlessportals.disableStageConsistentComposite"));
+
     public static boolean doCheckGlError = true;
-    
+
     public static boolean renderYourselfInPortal = true;
     
     public static boolean activeLoading = true;
