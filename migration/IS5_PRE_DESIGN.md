@@ -184,13 +184,41 @@ default flip. KILL RULE: any witness contradicting §4 stops the stage, not the 
   WITNESSES PROVEN ON THE LIVE JVM** (2026-08-04 01:11:20, `latest.log:732` stamp seam,
   `:793` capture seam, `path=OLD armed=false`, zero mixin errors) — the V2 must-settle item
   (new-class weave on IrisRenderingPipeline) is CLOSED.
-- **S3 LANDED (skeleton)** — `PortalRenderer.ip_onFrameStartBeforeMainRender` (empty base; only
-  the compat renderer overrides ⇒ stencil family untouched), the shift=BEFORE sibling inject in
-  `MixinGameRenderer_IPPostLevelAnchor` (path-flag-gated, calls `switchToCorrectRenderer()` first
-  per the judge), and the compat override whose ARM DECISION currently falls back to OLD
-  unconditionally with a once-only witness. **S4 must land:** the §3.1 real arm decision
-  (reflection surfaces: pass-0 `stageReadsFromAlt` side + `FrameCounter.count` write probe at mod
-  init), the relocated portal loop with the brackets (§3.7 distant-offset counter, §3.8 tracker
-  save/restore, §3.9 temporal guard + resize edge, §3.10 weather), per-view capture list (§3.5),
-  the capture+cancel body, the stamp body with the triple discriminator (§1.3), recursion re-aim
-  (§1 three mainRT dereferences), then S5 query consumption (§1.4/§3.3).
+- **S3 LANDED (skeleton)** `506dba8` — `PortalRenderer.ip_onFrameStartBeforeMainRender` (empty
+  base; only the compat renderer overrides ⇒ stencil family untouched), the shift=BEFORE sibling
+  inject in `MixinGameRenderer_IPPostLevelAnchor` (path-flag-gated, calls
+  `switchToCorrectRenderer()` first per the judge), and the compat override whose ARM DECISION
+  currently falls back to OLD unconditionally with a once-only witness.
+- **S4a (gating now)** — reflection surfaces in the coordinator (`compositeRenderer` identity,
+  `renderTargets`, `passes`, `stageReadsFromAlt`, `FrameCounter.count` — all javap-pinned) +
+  `proveFrameCounterWrite()` live probe + `decideArmForFrame()` real chain (falls back
+  `loop-not-landed(S4b)`); frame-start witness now CONTENT-KEYED on the decision string.
+
+### S4b FORK STRATEGY (derived from doRenderPortal :590-769, read 2026-08-04)
+
+The new path FORKS doRenderPortal at five call sites, never rewrites it:
+1. bloom-mask `arm()` at :640 — gate the CALL SITE on `!frameArmed` (judge: mask internals
+   byte-identical);
+2. `testShouldRenderPortal` at :626 — on the new path becomes consume-lastFrameQuery-only
+   (render-if-unknown, capped); the query DRAW must never run at frame start (main depth is
+   CLEARED there, V5) — the ISSUE stays in the post-main anchor's workhorse, which on the new
+   path reduces to a QUERY-ONLY loop (no snapshot/blit/brackets);
+3. before `renderPortalContent(portal)` at :690 — `armCaptureForView(portal, layer)`; the capture
+   mixin consumes it at the nested finalize (capture colortex0 read-side + depthtex0 into the
+   per-view buffer, turnOffMips hygiene, cancel);
+4. the post-pop STAMP block at :735-758 — replaced by registering the capture + its stamp params
+   (portal, modelView, projection) into the frame's ordered pending list; the real draw happens at
+   main renderAll HEAD (coordinator, mask-runMask pattern: same ViewAreaRenderer mesh +
+   `registerFrameTransientUbo` + vertexArrayCache bind + custom program; differences: target FBO =
+   colortex0 pass-0-READ side + `addDepthAttachment(depthtex0)`, depth test GEQUAL-family +
+   WRITE on, sampler = the capture texture, no clear, no dilation, C4-SEAM depth clamp);
+5. old-path probes in the loop (SeamDestContentProbe/SeamHandStageDiff C) — skipped when armed
+   (§3.16 stale-instrument rule).
+
+The workhorse (`onBeforeHandRendering`) forks at its head: when the frame already ran the armed
+loop, skip snapshot/brackets/blit and run ONLY the per-portal query-issue draws (the visibility
+input for NEXT frame). Frame-start loop brackets (counter offset → temporal save → tracker save →
+weather save → suppressor install → LOOP → restores in reverse, throw-safe finally) wrap the
+relocated `renderPortals` call in `ip_onFrameStartBeforeMainRender`. Recursion re-aim: the three
+mainRT dereferences in `renderNestedPortalLayer` (:491/:519-520 snapshot source, :708 stamp
+source, :542 blit-back) re-aim at the parent view's capture buffer when armed.
