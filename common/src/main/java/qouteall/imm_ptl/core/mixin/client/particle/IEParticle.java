@@ -57,6 +57,20 @@ public interface IEParticle {
     @Accessor("zo")
     void portal_setZo(double zo);
 
+    // ★ SEAM ROUND 40 — previous-position reads for the crossing gate: the open-aperture
+    // teleport fires only on a genuine plane TRANSITION this tick (prev half vs current half),
+    // and the came-from half picks the binding. xo/yo/zo hold the tick-start position
+    // (Particle.tick copies x/y/z into them before moving).
+
+    @Accessor("xo")
+    double portal_getXo();
+
+    @Accessor("yo")
+    double portal_getYo();
+
+    @Accessor("zo")
+    double portal_getZo();
+
     @Accessor("xd")
     double portal_getXd();
 

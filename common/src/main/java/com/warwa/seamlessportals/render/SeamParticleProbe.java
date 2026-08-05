@@ -106,6 +106,13 @@ public final class SeamParticleProbe {
         tpStayOwned.incrementAndGet();
     }
 
+    private static final AtomicLong tpOpenNoCrossing = new AtomicLong();
+
+    /** r40 crossing gate: an open-cell occupant with no plane transition this tick — rests. */
+    public static void onOpenNoCrossing() {
+        tpOpenNoCrossing.incrementAndGet();
+    }
+
     /**
      * One executed teleport. {@code openCell} distinguishes the round-37 open-aperture branch
      * from the owned-half material continuation; the two suspects have different signatures.
@@ -330,16 +337,18 @@ public final class SeamParticleProbe {
         long noDest = tpConsumedNoDest.getAndSet(0);
         long rolled = tpConsumedRolled.getAndSet(0);
         long stay = tpStayOwned.getAndSet(0);
+        long openRest = tpOpenNoCrossing.getAndSet(0);
         long suppressed = crossingLinesSuppressed.getAndSet(0);
         crossingLinesThisSec.set(0);
         int distinct = distinctThisSec.size();
         distinctThisSec.clear();
-        if (open + ownedC + noDest + rolled + stay > 0) {
+        if (open + ownedC + noDest + rolled + stay + openRest > 0) {
             LOGGER.info("[SEAM FRAC][PTCL] TP last 1s: teleports={} (openCell={} ownedCont={})"
-                    + " consumed(noDest={} rolled={}) stayOwned={} distinctParticles={}"
+                    + " consumed(noDest={} rolled={}) stayOwned={} openRestingNoCrossing={}"
+                    + " distinctParticles={}"
                     + " maxLifetimeCrossingsOneParticle={} pingPongers(>= {} crossings)={}"
                     + " crossingLinesSuppressed={} byClass={} byDirection={}",
-                open + ownedC, open, ownedC, noDest, rolled, stay, distinct,
+                open + ownedC, open, ownedC, noDest, rolled, stay, openRest, distinct,
                 maxTeleportsOneParticle.get(), PINGPONG_THRESHOLD, pingPongers.size(),
                 suppressed, drain(tpByClass), drain(tpByDirection));
         }

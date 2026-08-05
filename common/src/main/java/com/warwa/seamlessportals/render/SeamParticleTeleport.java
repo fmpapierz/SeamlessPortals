@@ -30,6 +30,13 @@ import qouteall.imm_ptl.core.mixin.client.particle.IEParticle;
  *
  * <p>Fallbacks are CONSUMPTION, never bleed: an unresolvable destination level or a
  * non-horizontal mapping removes the particle (it crossed the seam; it must not remain).
+ *
+ * <p>★ ROUND 40 (instrument round r39's two measured findings, both fixed here): (1) the
+ * teleport moves the BOUNDING BOX with the particle — vanilla re-derives x/y/z from the box
+ * every moving tick, so the r35 field-only writes never actually moved anyone (the flap); (2)
+ * OPEN aperture cells teleport only on a genuine plane crossing this tick — the r37 positional
+ * "beyond" test is satisfiable by every open-cell position, which with (1) fixed would oscillate
+ * every arrival at tick rate.
  */
 public final class SeamParticleTeleport {
 
@@ -64,6 +71,10 @@ public final class SeamParticleTeleport {
         boolean singleOwned = owned == SeamOccupancy.HALF_POSITIVE
             || owned == SeamOccupancy.HALF_NEGATIVE;
         boolean probe = SeamParticleProbe.armed();
+        // Tick-start position (Particle.tick copies x/y/z into xo/yo/zo before moving) — the
+        // crossing gate's "where the particle CAME FROM" for this tick.
+        double px = ie.portal_getXo(), py = ie.portal_getYo(), pz = ie.portal_getZo();
+        boolean openNoCrossing = false;
         SeamRegistry.SeamBinding binding = null;
         for (SeamRegistry.SeamBinding b : seam.bindings()) {
             if (b == null || !b.isMirrorable() || b.cut() == null || b.destPos() == null) {
@@ -80,16 +91,46 @@ public final class SeamParticleTeleport {
                     }
                     return;   // in the material: it belongs here
                 }
+                // No transition requirement here: an empty-half occupant must not EXIST locally
+                // (r35 — "no particle ever exists past the seam locally"), so residents and
+                // crossers alike travel via the material's own continuation. This cannot loop:
+                // claimCrossingHalf derives the dest OWNED half through the same mapDir the
+                // position transform uses, so arrivals land in dest material and stay.
                 if (SeamOccupancy.halfOf(b.srcFacing()) == owned) {
                     binding = b;   // cross via the material's own continuation
                     break;
                 }
-            } else if (particleHalf != SeamOccupancy.halfOf(b.srcFacing())) {
-                binding = b;   // open aperture: beyond this binding's plane → through it
-                break;
+            } else {
+                // ★ ROUND 40 — OPEN cells teleport only on a genuine CROSSING this tick. The
+                // round-37 "beyond this binding's plane" test is satisfiable by EVERY position in
+                // a bi-faced open cell (two opposite fronts), so once the teleport actually moves
+                // particles (the r39 bounding-box fix below) it would oscillate every arrival at
+                // 20 Hz: an arrival is always "beyond" the counterpart's other binding. The
+                // transition gate is the handoff's prescribed shape: previous-position half vs
+                // current half must DIFFER (the particle passed through the plane this tick), and
+                // the came-from half picks the binding (a crosser enters the face it was in front
+                // of). Arrivals set xo/yo/zo = landing point, so they carry no transition and
+                // rest; a later genuine re-crossing legitimately travels back (rule 3 applies to
+                // every crossing, in both directions). Parallel risers never transition — they
+                // stay, and the window rule owns their visibility (rule 2).
+                byte prevHalf = SeamOccupancy.halfFromHit(
+                    new net.minecraft.world.phys.Vec3(px, py, pz), cell,
+                    b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
+                if (prevHalf == particleHalf) {
+                    openNoCrossing = true;
+                    continue;   // no crossing against this plane this tick
+                }
+                if (SeamOccupancy.halfOf(b.srcFacing()) == prevHalf) {
+                    binding = b;   // crossed this binding's plane from its front → through it
+                    break;
+                }
             }
         }
         if (binding == null) {
+            if (probe && openNoCrossing) {
+                SeamParticleProbe.onOpenNoCrossing();
+                SeamParticleProbe.tickSummary();
+            }
             return;
         }
         boolean openCell = !singleOwned;
@@ -129,9 +170,13 @@ public final class SeamParticleTeleport {
         double nvz = mx.getStepZ() * vx + mz.getStepZ() * vz;
 
         ie.portal_setWorld(destLevel);
-        ie.portal_setX(nx);
-        ie.portal_setY(ny);
-        ie.portal_setZ(nz);
+        // ★ ROUND 40 — THE BOUNDING BOX MOVES TOO (the r39 root cause, bytecode-proven):
+        // Particle.move() ends with setBoundingBox(bb.move(...)) + setLocationFromBoundingbox(),
+        // re-deriving x/y/z FROM THE BOX every moving tick. The r35 raw field writes left the box
+        // at the source, so vanilla snapped every crosser back one tick later — the flap behind
+        // all three regression reports. setPos writes the fields and rebuilds the box around the
+        // landing point in one call (verified 26.2 bytecode: no other side effects).
+        particle.setPos(nx, ny, nz);
         ie.portal_setXo(nx);
         ie.portal_setYo(ny);
         ie.portal_setZo(nz);

@@ -151,10 +151,36 @@ suite runs, both ALL LEGS PASS with the probes armed.
    funnel or base inject; irrelevant to torches). Flag-ON the funnel runs ~2×/game tick
    when a remote world has a nearby portal (the remote `CLIENT.particleEngine.tick()`).
 
-FIX SHAPE (next round, from evidence): move the BOUNDING BOX with the particle — the
-teleport must reposition bb (setPos-equivalent), not just the coordinate fields; then
-re-verify the four-layer contract. The window dead-zone (0.5 valve) independently blocks
-ALL near-plane far-side rendering and needs its own decision for seam portals.
+## ROUND 40 — THE FIX (landed, measured, user live-verify pending)
+
+Two changes in `SeamParticleTeleport`, both dictated by the r39 measurements:
+1. **The bounding box moves too**: position write is now `particle.setPos(nx, ny, nz)`
+   (26.2 bytecode verified: sets x/y/z AND rebuilds the AABB from bbWidth/bbHeight, no
+   other side effects). The r35 field-only writes are gone.
+2. **OPEN cells teleport only on a genuine crossing this tick** (the handoff's prescribed
+   hysteresis): previous-position half (xo/yo/zo, new IEParticle getters) vs current half
+   must differ against the binding's plane, and the came-from half picks the binding
+   (front == prevHalf). Without this, (1) alone oscillates every open-cell arrival at tick
+   rate — an arrival is always "beyond" the counterpart's other binding, any rotation.
+   Arrivals set xo/yo/zo = landing point → no transition → rest; later genuine
+   re-crossings legitimately travel back. OWNED-cell logic unchanged (empty-half residents
+   still consumed via the material's continuation — cannot loop: claimCrossingHalf derives
+   dest-owned through the same mapDir as the position transform, so arrivals land in
+   material and hit stayOwned). Probe gained `openRestingNoCrossing` (gate-rested
+   residents, 10-35/s live).
+
+MEASURED RESULT (run 3, same fixtures as the r39 runs, suite ALL LEGS PASS): lifetime
+teleports 2,968 → 429; maxLifetimeCrossingsOneParticle 39 → 1; pingPongers 63 → 0;
+same-dim teleports/sec ~70 → 3-5, every crossing line lifetimeCrossings=1; cross-dim
+arrivals now genuinely persist at the counterpart (they were zombies at source coords
+before). Every teleport in the run is a one-shot delete+continue — rule 3 as designed.
+
+STILL OPEN (out of scope of r40, needs the user's decision): the window dead-zone —
+`RenderStates.shouldRenderParticle`'s `isOnDestinationSide(pos, 0.5)` still culls ALL
+near-plane far particles from portal passes, so crossers resting near the dest plane
+remain invisible THROUGH THE WINDOW (fine when viewed directly / same-dim). Also noted:
+client-side dest occupancy sometimes reads 0 where the server says HALF_* (seen in the
+r39 branch attribution); the transition gate makes this harmless for particles.
 
 ## RESEARCH PLAN FOR THE NEXT SESSION
 1. INSTRUMENT FIRST: per-tick counters (teleports total + per particle-class, current level
