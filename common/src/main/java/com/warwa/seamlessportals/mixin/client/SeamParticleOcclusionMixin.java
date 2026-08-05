@@ -33,7 +33,7 @@ public abstract class SeamParticleOcclusionMixin {
         Camera camera, float partialTick
     ) {
         ParticleAccessor a = (ParticleAccessor) particle;
-        if (SeamParticleOcclusion.occluded(camera.position(),
+        if (SeamParticleOcclusion.occluded(particle, camera.position(),
             a.seamlessportals$x(), a.seamlessportals$y(), a.seamlessportals$z())) {
             return;
         }
