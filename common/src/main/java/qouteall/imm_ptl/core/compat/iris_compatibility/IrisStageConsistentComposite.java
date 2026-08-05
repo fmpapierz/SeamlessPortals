@@ -714,6 +714,7 @@ public final class IrisStageConsistentComposite {
 
     private static String lastCaptureGeometry = null;
     private static long lastCaptureReadbackMs = 0;
+    private static long lastDepthReadbackMs = 0;
     private static final Set<String> auxDropNotes = new java.util.HashSet<>();
 
     private static void noteAuxDropOnce(String what) {
@@ -851,11 +852,15 @@ public final class IrisStageConsistentComposite {
      *  u_solid=1 replaces the sample with the vertex colour (-PdebugStampSolid — keeps the
      *  StampCoverageProbe classifier levers working identically on the new path);
      *  gl_FragDepth = max(gl_FragCoord.z, 0.001) — the IS5-HAND floor, per fragment. */
-    /** PART5: out location 1 → drawBuffers[1] = the aux attachment. On the PLAIN fbo
-     *  (drawBuffers {0}) the aux output has no buffer and is dropped by GL — one program serves
-     *  both configs. The aux is a DATA target (materialMask): never tinted, never solid-replaced.
-     *  Depth-only draws (depthtex1/2 FBOs, noDrawBuffers) drop both colour outs and keep the
-     *  gl_FragDepth floor. */
+    /** PART5: out location 1 → drawBuffers[1] = the aux attachment; out location 2 →
+     *  drawBuffers[2] = the TAA HISTORY attachment (colortex2's READ side — the ghost fix: TAA's
+     *  translation-parallax reprojection at window pixels finds only CURRENT dest content in
+     *  history, nothing stale to drag; TAA-attributed by the user's one-variable A/B, both
+     *  directions). On the PLAIN fbo (drawBuffers {0}) the extra outputs have no buffer and are
+     *  dropped by GL — one program serves all configs. The aux is a DATA target (materialMask):
+     *  never tinted, never solid-replaced; the history gets the SAME value as fragColor (under
+     *  the debug levers a magenta history is consistent and diagnosable). Depth-only draws
+     *  (depthtex1/2 FBOs, noDrawBuffers) drop all colour outs and keep the gl_FragDepth floor. */
     private static final String STAMP_FRAGMENT_SRC = """
         #version 330 core
         uniform sampler2D u_capture;
@@ -864,13 +869,20 @@ public final class IrisStageConsistentComposite {
         in vec4 vertexColor;
         layout(location = 0) out vec4 fragColor;
         layout(location = 1) out vec4 auxColor;
+        layout(location = 2) out vec4 histColor;
         void main() {
             vec4 sampled = vec4(texelFetch(u_capture, ivec2(gl_FragCoord.xy), 0).rgb, 1.0);
             fragColor = mix(sampled * vertexColor, vertexColor, u_solid);
             auxColor = texelFetch(u_captureAux, ivec2(gl_FragCoord.xy), 0);
+            histColor = fragColor;
             gl_FragDepth = max(gl_FragCoord.z, 0.001);
         }
         """;
+
+    /** The pack's TAA history colour target — MEASURED for Complementary r5.8.1: composite6
+     *  `DRAWBUFFERS:32` writes history to colortex2 and NO earlier composite writes it (pass-0
+     *  parity therefore holds at the TAA pass). */
+    private static final int HISTORY_TARGET = 2;
 
     private static int stampProgram = 0;
     private static int locCombined = -1;
@@ -950,7 +962,8 @@ public final class IrisStageConsistentComposite {
      *  key is NO key: four small FBO builds per frame, no storage allocation — negligible.
      *  auxTex entries of 0 or a missing depth1/2 id simply omit that FBO — never fatal. */
     private static void ensureStampFbos(
-        Object pipeline, int colorTex, int depthTex, int[] mainAuxTex, int depth1Id, int depth2Id
+        Object pipeline, int colorTex, int depthTex, int[] mainAuxTex, int histTex,
+        int depth1Id, int depth2Id
     ) {
         destroyStampFbos();
         GlFramebuffer plain = new GlFramebuffer();
@@ -959,19 +972,26 @@ public final class IrisStageConsistentComposite {
         plain.addDepthAttachmentBypass(depthTex);
         plain.drawBuffers(new int[]{0});
         stampFbo = plain;
-        boolean allAuxPresent = true;
+        boolean allAuxPresent = histTex != 0;
         for (int t : mainAuxTex) {
             if (t == 0) allAuxPresent = false;
         }
         if (allAuxPresent && mainAuxTex.length > 0) {
+            // out0→att0 (colortex0), out1→att[AUX] (materialMask), out2→att[HISTORY] (the TAA
+            // ghost fix). All-or-nothing by design: a partial MRT would need GL_NONE drawBuffers
+            // entries whose support in GlFramebuffer.drawBuffers is unverified — Complementary
+            // always resolves all three; other packs fall back to the plain stamp (window intact,
+            // enhancements absent).
             GlFramebuffer aux = new GlFramebuffer();
             aux.addColorAttachment(0, colorTex);
-            int[] db = new int[1 + AUX_TARGETS.length];
+            int[] db = new int[2 + AUX_TARGETS.length];
             db[0] = 0;
             for (int i = 0; i < AUX_TARGETS.length; i++) {
                 aux.addColorAttachment(AUX_TARGETS[i], mainAuxTex[i]);
                 db[1 + i] = AUX_TARGETS[i];
             }
+            aux.addColorAttachment(HISTORY_TARGET, histTex);
+            db[1 + AUX_TARGETS.length] = HISTORY_TARGET;
             aux.addDepthAttachmentBypass(depthTex);
             aux.drawBuffers(db);
             stampFboAux = aux;
@@ -1026,8 +1046,17 @@ public final class IrisStageConsistentComposite {
         }
         int depth1Id = rts.getDepthTextureNoTranslucents() instanceof GlTexture d1 ? d1.glId() : 0;
         int depth2Id = rts.getDepthTextureNoHand() instanceof GlTexture d2 ? d2.glId() : 0;
+        // TAA history (colortex2) READ side — pass-0 parity holds at the TAA pass (no earlier
+        // composite writes it, measured).
+        int histTex = 0;
+        RenderTarget histRt = rts.get(HISTORY_TARGET);
+        if (histRt != null) {
+            histTex = flipSet.contains(HISTORY_TARGET)
+                ? histRt.getAltTexture() : histRt.getMainTexture();
+        }
         if (!ensureStampProgram()) return;
-        ensureStampFbos(mainPipeline, targetColor, depthGl.glId(), mainAuxTex, depth1Id, depth2Id);
+        ensureStampFbos(
+            mainPipeline, targetColor, depthGl.glId(), mainAuxTex, histTex, depth1Id, depth2Id);
         GlFramebuffer fbo = stampFbo;
 
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
@@ -1145,6 +1174,38 @@ public final class IrisStageConsistentComposite {
                     if (stampFboDepth2 != null) {
                         stampFboDepth2.bind();
                         GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    }
+                    // 1Hz depth-stamp verification (log-only): centre texel of depthtex1 AFTER
+                    // the depth-only draw. Plane depth (~0.5) = the stamp lands and a persisting
+                    // MB ghost rides another path; scene depth (~0.98) = the depth-only draw is a
+                    // silent no-op (completeness/test) — the retest leg's discriminator.
+                    long nowMs = System.currentTimeMillis();
+                    if (depth1Id != 0 && nowMs - lastDepthReadbackMs >= 1000) {
+                        lastDepthReadbackMs = nowMs;
+                        try {
+                            // AIM-INDEPENDENT comparator (the first version printed depthtex1
+                            // alone and was unreadable: at these projections plane-vs-scene
+                            // differs in the THIRD decimal and the aim wasn't printed). depthtex0
+                            // is KNOWN-stamped; both received identical scene content and
+                            // identical stamp treatment, so ANY sustained d1!=d0 = the depthtex1
+                            // depth-only draw failing; equality = it lands.
+                            java.nio.FloatBuffer d0px = BufferUtils.createFloatBuffer(1);
+                            java.nio.FloatBuffer d1px = BufferUtils.createFloatBuffer(1);
+                            GL45C.glGetTextureSubImage(
+                                depthGl.glId(), 0, w / 2, h / 2, 0, 1, 1, 1,
+                                GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, d0px);
+                            GL45C.glGetTextureSubImage(
+                                depth1Id, 0, w / 2, h / 2, 0, 1, 1, 1,
+                                GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, d1px);
+                            float d0 = d0px.get(0);
+                            float d1 = d1px.get(0);
+                            LOGGER.info("[Seamless Portals] [IS5-PRE] depth center after stamp:"
+                                    + " d0={} d1={} {}",
+                                String.format("%.6f", d0), String.format("%.6f", d1),
+                                Math.abs(d0 - d1) < 1e-6 ? "EQUAL" : "DIFF");
+                        } catch (Throwable ignored) {
+                        }
+                        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
                     }
                 }
             }

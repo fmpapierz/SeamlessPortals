@@ -315,6 +315,15 @@ lever-off B-leg (ring returns), the §3.8 MB-correctness pre-registered check (i
 exercised by the MB whips — no wrong-scenery smear reported), the C2 unit-size leg, part4
 recursion re-aim, part5 aux coherence, THEN the default flip.
 
+### ★ USER DECISIONS 2026-08-04 (record like policy — do NOT "fix" these)
+
+1. **The stronger motion blur on the portal render is a FEATURE** — user: "Keep both of these as
+   features, it is really cool!" The window participating fully in the pack's MB (stronger
+   apparent blur due to plane-depth velocity) is INTENDED behavior on the new path.
+2. **The blur burst when passing through the seam is a FEATURE** — same quote. The crossing's
+   large apparent motion producing an MB burst is INTENDED. Any future MB-related change must
+   preserve both (judge them on the live leg like closed arcs).
+
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 
 The judged "save/restore CameraPositionTracker + gbufferPrevious* around the loop" has NO stable
