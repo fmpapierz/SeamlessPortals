@@ -53,8 +53,16 @@ public class MixinQuadParticleGroup {
         SingleQuadParticle particle, QuadParticleRenderState state, Camera camera, float partialTick,
         Operation<Void> original
     ) {
+        boolean probe = com.warwa.seamlessportals.render.SeamParticleProbe.armed();
+        if (probe) {
+            com.warwa.seamlessportals.render.SeamParticleProbe.onMainSeen();
+            com.warwa.seamlessportals.render.SeamParticleProbe.tickSummary();
+        }
         IEParticle ie = (IEParticle) particle;
         if (ie.portal_getWorld() != Minecraft.getInstance().level) {
+            if (probe) {
+                com.warwa.seamlessportals.render.SeamParticleProbe.onMainWorldDrop();
+            }
             return; // IP's world filter: wrong-world particles never extract into this pass
         }
         // ★ THE WINDOW RULE (seam round 34, the user's rule with the user's anchor): "if the
@@ -64,6 +72,9 @@ public class MixinQuadParticleGroup {
         // dest extract has its own seam filter.
         if (com.warwa.seamlessportals.render.SeamParticleOcclusion.occluded(
             camera.position(), ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
+            if (probe) {
+                com.warwa.seamlessportals.render.SeamParticleProbe.onMainWindowDrop(particle);
+            }
             return;
         }
         // ★ THE BAND RULE (seam round 36): a near-plane particle's billboard pokes past the cut
@@ -72,7 +83,14 @@ public class MixinQuadParticleGroup {
         if (com.warwa.seamlessportals.passthrough.SeamFractional.particleHiddenFromEmptySide(
             Minecraft.getInstance().level, camera.position(),
             ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
+            if (probe) {
+                com.warwa.seamlessportals.render.SeamParticleProbe.onMainBandDrop(
+                    particle, Minecraft.getInstance().level);
+            }
             return;
+        }
+        if (probe) {
+            com.warwa.seamlessportals.render.SeamParticleProbe.onMainExtracted();
         }
         original.call(particle, state, camera, partialTick);
     }

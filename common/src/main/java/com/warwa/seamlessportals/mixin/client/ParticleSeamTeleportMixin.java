@@ -27,6 +27,12 @@ public abstract class ParticleSeamTeleportMixin {
     )
     private void seamlessportals$tickThenCrossTheSeam(Particle particle) {
         particle.tick();
+        if (com.warwa.seamlessportals.render.SeamParticleProbe.armed()) {
+            com.warwa.seamlessportals.render.SeamParticleProbe.onEngineTick(particle);
+            com.warwa.seamlessportals.render.SeamParticleProbe.maybeCensus(
+                com.warwa.seamlessportals.client.SeamParticleCensus::walkGlobalEngine);
+            com.warwa.seamlessportals.render.SeamParticleProbe.tickSummary();
+        }
         SeamParticleTeleport.maybeTeleport(particle);
     }
 }

@@ -130,6 +130,11 @@ public class MixinParticleEngine implements IEParticleManager {
         if (PortalRendering.isRendering() && RenderStates.getRenderedPortalNum() > 4) {
             return;
         }
+        boolean probe = com.warwa.seamlessportals.render.SeamParticleProbe.armed();
+        if (probe) {
+            com.warwa.seamlessportals.render.SeamParticleProbe.onDestCall();
+            com.warwa.seamlessportals.render.SeamParticleProbe.tickSummary();
+        }
         for (net.minecraft.client.particle.ParticleRenderType type : RENDER_ORDER) {
             net.minecraft.client.particle.ParticleGroup<?> group = particles.get(type);
             if (group == null) {
@@ -147,7 +152,16 @@ public class MixinParticleEngine implements IEParticleManager {
                 new net.minecraft.client.renderer.state.level.QuadParticleRenderState();
             for (net.minecraft.client.particle.Particle particle : groupParticles) {
                 IEParticle ieParticle = (IEParticle) particle;
+                if (probe) {
+                    com.warwa.seamlessportals.render.SeamParticleProbe.onDest(worldFilter,
+                        com.warwa.seamlessportals.render.SeamParticleProbe.DEST_SEEN, particle);
+                }
                 if (ieParticle.portal_getWorld() != worldFilter) {
+                    if (probe) {
+                        com.warwa.seamlessportals.render.SeamParticleProbe.onDest(worldFilter,
+                            com.warwa.seamlessportals.render.SeamParticleProbe.DEST_WORLD_DROP,
+                            particle);
+                    }
                     continue; // defensive world check (the filter dim, explicit per contract)
                 }
                 // IP's FULL predicate (RenderStates.shouldRenderParticle, ported verbatim, now
@@ -157,11 +171,21 @@ public class MixinParticleEngine implements IEParticleManager {
                 // CPU-side cull that saves extract work; wrong-side fragments would hardware-clip
                 // anyway via the armed inner clip, but IP culled whole particles here).
                 if (!RenderStates.shouldRenderParticle(particle)) {
+                    if (probe) {
+                        com.warwa.seamlessportals.render.SeamParticleProbe.onDest(worldFilter,
+                            com.warwa.seamlessportals.render.SeamParticleProbe
+                                .DEST_SHOULD_RENDER_DROP, particle);
+                    }
                     continue;
                 }
                 if (!frustum.pointInFrustum(
                     ieParticle.portal_getX(), ieParticle.portal_getY(), ieParticle.portal_getZ())
                 ) {
+                    if (probe) {
+                        com.warwa.seamlessportals.render.SeamParticleProbe.onDest(worldFilter,
+                            com.warwa.seamlessportals.render.SeamParticleProbe.DEST_FRUSTUM_DROP,
+                            particle);
+                    }
                     continue;
                 }
                 // ★ SYMMETRIC EMPTINESS FOR WINDOW CONTENT (seam round 34): the window shows the
@@ -173,7 +197,17 @@ public class MixinParticleEngine implements IEParticleManager {
                 if (com.warwa.seamlessportals.passthrough.SeamFractional.positionInEmptyHalf(
                     worldFilter, ieParticle.portal_getX(), ieParticle.portal_getY(),
                     ieParticle.portal_getZ())) {
+                    if (probe) {
+                        com.warwa.seamlessportals.render.SeamParticleProbe.onDest(worldFilter,
+                            com.warwa.seamlessportals.render.SeamParticleProbe.DEST_EMPTINESS_DROP,
+                            particle);
+                    }
                     continue;
+                }
+                if (probe) {
+                    com.warwa.seamlessportals.render.SeamParticleProbe.onDest(worldFilter,
+                        com.warwa.seamlessportals.render.SeamParticleProbe.DEST_EXTRACTED,
+                        particle);
                 }
                 ((net.minecraft.client.particle.SingleQuadParticle) particle)
                     .extract(freshState, camera, partialTick);

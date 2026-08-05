@@ -63,6 +63,7 @@ public final class SeamParticleTeleport {
         }
         boolean singleOwned = owned == SeamOccupancy.HALF_POSITIVE
             || owned == SeamOccupancy.HALF_NEGATIVE;
+        boolean probe = SeamParticleProbe.armed();
         SeamRegistry.SeamBinding binding = null;
         for (SeamRegistry.SeamBinding b : seam.bindings()) {
             if (b == null || !b.isMirrorable() || b.cut() == null || b.destPos() == null) {
@@ -73,6 +74,10 @@ public final class SeamParticleTeleport {
                 b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
             if (singleOwned) {
                 if (particleHalf == owned) {
+                    if (probe) {
+                        SeamParticleProbe.onStayOwned();
+                        SeamParticleProbe.tickSummary();
+                    }
                     return;   // in the material: it belongs here
                 }
                 if (SeamOccupancy.halfOf(b.srcFacing()) == owned) {
@@ -87,10 +92,15 @@ public final class SeamParticleTeleport {
         if (binding == null) {
             return;
         }
+        boolean openCell = !singleOwned;
         ClientLevel destLevel = level.dimension().equals(binding.destDim())
             ? level
             : ClientWorldLoader.peekWorld(binding.destDim());
         if (destLevel == null) {
+            if (probe) {
+                SeamParticleProbe.onConsumed(false);
+                SeamParticleProbe.tickSummary();
+            }
             particle.remove();   // consumed — the seam owns what crossed it
             return;
         }
@@ -100,6 +110,10 @@ public final class SeamParticleTeleport {
         Direction mx = SeamRegistry.mapDir(binding, Direction.EAST);
         Direction mz = SeamRegistry.mapDir(binding, Direction.SOUTH);
         if (mx.getAxis() == Direction.Axis.Y || mz.getAxis() == Direction.Axis.Y) {
+            if (probe) {
+                SeamParticleProbe.onConsumed(true);
+                SeamParticleProbe.tickSummary();
+            }
             particle.remove();
             return;
         }
@@ -124,10 +138,11 @@ public final class SeamParticleTeleport {
         ie.portal_setXd(nvx);
         ie.portal_setYd(vy);
         ie.portal_setZd(nvz);
-        if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
-            com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
-                "[SEAM FRAC] particle crossed the seam {} -> {} ({} -> {})",
-                cell, dest, level.dimension().identifier(), destLevel.dimension().identifier());
+        if (probe) {
+            // The per-crossing line lives in the probe now, BUDGETED (10/s) — under the suspected
+            // ping-pong it would fire hundreds of times per second and starve the summaries.
+            SeamParticleProbe.onTeleport(particle, level, destLevel, cell, dest, openCell);
+            SeamParticleProbe.tickSummary();
         }
     }
 

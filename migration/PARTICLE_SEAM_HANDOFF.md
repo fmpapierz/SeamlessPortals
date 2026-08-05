@@ -103,6 +103,59 @@ unambiguously (the one whose front half was where the particle CAME FROM).
    elsewhere — ItemPickup/ElderGuardian bespoke groups are skipped in ip_extractIsolated but
    do they tick through the same funnel)?
 
+## MEASURED ANSWERS (2026-08-05 instrumentation round — probes landed, NO fixes)
+
+Instruments: `SeamParticleProbe` (TP/DRV/MAIN/DEST/CENSUS 1 Hz sections, all behind
+`-PseamFractionalProbe=true`), `ParticleBaseTickProbeMixin` (r35-anchor counter),
+measurement leg `rsSeamParticleMeasureLeg` in CrossingSmoke (cross-dim teardown fixture +
+same-dim /portal pair, torch + deterministic open-cell smoke, asserts nothing). Two full
+suite runs, both ALL LEGS PASS with the probes armed.
+
+1. PING-PONG (Q1): REFUTED as a world flip-flop, CONFIRMED as a POSITION flap with a
+   different mechanism. Cross-dim: 533-541 teleports/run, EVERY one a distinct particle's
+   single crossing (maxLifetimeCrossings=1, pingPongers=0). Same-dim (/portal pair, the
+   user's live construction): 2,435 teleports in ~35 s, ~9 particles crossing 7-9×/sec,
+   max 39 crossings for one flame, 63 particles ≥10 crossings — and every logged crossing
+   goes the SAME direction from the SAME source cell; there is never a return crossing.
+2. ROOT CAUSE (bytecode-proven, 26.2 `Particle.move` offsets 136-152): `move()` ends with
+   `setBoundingBox(bb.move(dx,dy,dz)); setLocationFromBoundingbox();` — x/y/z are
+   RE-DERIVED FROM THE BOUNDING BOX every moving tick. The r35 teleport writes the
+   x/y/z/xo/yo/zo FIELDS via IEParticle accessors and never touches `bb`, so a teleported
+   particle renders at the far site for the remainder of that frame-window, then vanilla
+   snaps it back to the source next tick. Same-dim: level unchanged → it immediately
+   re-qualifies → teleports again (the observed flap). Cross-dim: level=dest but position
+   snaps back to SOURCE coords → a zombie (dest-tagged at source coords), invisible to
+   both passes (world filter kills it in main, frustum in dest) → "crossers never reach
+   the far side". The r35 note "locals flicker" and the r36 band rule were treating the
+   visible half of this flap all along; rounds changed WHICH particles enter the broken
+   teleport (r37 open cells, r38 PortalParticle), never the flaw.
+3. DRIVERS (Q2): the r35 base inject DID fire for smoke — live counters show
+   baseTickReturns == engineRedirectTicks EXACTLY for Smoke/Flame/Ash/LargeSmoke every
+   second (javap agrees: `BaseAshSmokeParticle.tick` super-chains into the transformed
+   base). The ONLY class the r38 engine driver newly covers is PortalParticle (tick
+   override, no super) — 208 open-cell crossings in run 1. The r37 "driver never fired
+   for smoke" claim is dead; r35→r38 driver swap was coverage-neutral for flame+smoke.
+4. WINDOW CONTENT (Q3): the "painting in the portal render" is billed to the dest pass
+   (`ip_extractIsolated`), and cross-dim it is ~500/s of AshParticle/LargeSmokeParticle —
+   NETHER BIOME AMBIENT spawned dest-tagged by `tickRemoteWorldRandomTicksClient` (which
+   also ticks the whole engine a SECOND time per game tick, and animateTicks the remote
+   world around the portal-transformed camera). Seam-adjacent far particles can NEVER
+   render through the window: `RenderStates.shouldRenderParticle` applies
+   `isOnDestinationSide(pos, 0.5)` — a 0.5-block dead zone past the plane (72k drops/run;
+   FlameParticle was dest-extracted ZERO times across both runs). A mirrored torch's
+   flame lives at the plane, inside the dead zone, forever.
+5. BAND RULE (Q4): zero interaction — bandDrop-of-recently-teleported = 0 all runs.
+6. FUNNEL (Q5): `ParticleGroup.tickParticle` is the jar's ONLY `Particle.tick()` call
+   site (private, non-overridable; all four groups inherit). Side door: TrackingEmitter,
+   ticked directly by `ParticleEngine.tick`, overrides tick without super (never hits the
+   funnel or base inject; irrelevant to torches). Flag-ON the funnel runs ~2×/game tick
+   when a remote world has a nearby portal (the remote `CLIENT.particleEngine.tick()`).
+
+FIX SHAPE (next round, from evidence): move the BOUNDING BOX with the particle — the
+teleport must reposition bb (setPos-equivalent), not just the coordinate fields; then
+re-verify the four-layer contract. The window dead-zone (0.5 valve) independently blocks
+ALL near-plane far-side rendering and needs its own decision for seam portals.
+
 ## RESEARCH PLAN FOR THE NEXT SESSION
 1. INSTRUMENT FIRST: per-tick counters (teleports total + per particle-class, current level
    distribution of engine particles, dest-extract submissions) behind the probe lever; one

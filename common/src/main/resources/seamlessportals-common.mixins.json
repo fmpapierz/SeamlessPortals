@@ -9,6 +9,7 @@
     "client.LevelExtractorSeamOutlineMixin",
     "client.ShapeOutlineSeamEdgeMixin",
     "client.ParticleSeamTeleportMixin",
+    "client.ParticleBaseTickProbeMixin",
     "client.GameRendererMixin",
     "client.MinecraftAccessorMixin",
     "client.ClientLevelChunkSourceAccessor",

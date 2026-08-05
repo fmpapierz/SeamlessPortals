@@ -3884,6 +3884,15 @@ public class CrossingSmoke implements FabricClientGameTest {
                 // Every existing gate reads records; none of them stands where the user stood and
                 // looks. This one does — four measured screenshots on the user's own construction.
                 rsSeamEmptinessGate(context, py);
+                // ★ PARTICLE MEASUREMENT LEG (handoff evidence questions, 2026-08-05) — probe
+                // lever only, MEASURES AND ASSERTS NOTHING: a torch at the seam + one
+                // deterministic smoke spawn in the open aperture cell, player standing on the
+                // empty side, ~45s of [SEAM FRAC][PTCL] counter summaries. Placed after the
+                // emptiness gate (which restores the player) and before the frame-break gate
+                // (this leg removes its torch and restores the player in its finally).
+                if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+                    rsSeamParticleMeasureLeg(context, fx, py, fz);
+                }
                 // RELOG PERSISTENCE — stage a two-object cell that SURVIVES the world close, on
                 // its own bi-way pair with a PERSISTENT forceload; the assert runs after leg 5's
                 // worldSave.open(). Full-suite only: RS-only runs never reopen the save.
@@ -3939,6 +3948,127 @@ public class CrossingSmoke implements FabricClientGameTest {
                 SeamlessPortalsConstants.LOGGER.warn(
                     LOG + "[RS-TEARDOWN-TEST] CLEANUP FAILED — a leftover obsidian frame may"
                         + " false-fail a later ignition leg", t);
+            }
+        }
+    }
+
+    /**
+     * ★ THE PARTICLE MEASUREMENT LEG (2026-08-05) — {@code SEAM_FRACTIONAL_PROBE} only,
+     * MEASURES AND ASSERTS NOTHING. Exists to answer the handoff's five evidence questions with
+     * numbers instead of another blind fix (12 failed rounds; the standing order is INSTRUMENT
+     * FIRST). Every deliverable number appears as a {@code [SEAM FRAC][PTCL]} line from
+     * {@code SeamParticleProbe}; this leg only stages the user's live scenario headlessly:
+     * <ol>
+     *   <li>a wall-supported TORCH in the teardown portal's bottom opening row, owned half
+     *       forced BEFORE the write (the r29 at-write-time lesson), player standing on the
+     *       EMPTY side looking at it — 600 ticks of organic flame+smoke emission;</li>
+     *   <li>five DETERMINISTIC smoke particles spawned into the OPEN aperture cell clearly on
+     *       the empty-side half — the round-37 bidirectional rule's alleged ping-pong case,
+     *       isolated from animateTick randomness.</li>
+     * </ol>
+     * The torch is removed (PLAYER_BREAK-classified) and the player restored in the finally, so
+     * the frame-break gate behind this leg stages on a clean bottom row.
+     */
+    private static void rsSeamParticleMeasureLeg(
+        ClientGameTestContext context, int fx, int py, int fz
+    ) {
+        final String tag = LOG + "[RS-PTCL-MEASURE] ";
+        final BlockPos torchCell = new BlockPos(fx, py + 1, fz);
+        final BlockPos openCell = new BlockPos(fx + 1, py + 2, fz);
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+        try {
+            SeamlessPortalsConstants.LOGGER.info(tag + "START — torch at {} (owned half forced"
+                    + " POSITIVE before the write), deterministic smoke in open cell {}, player"
+                    + " on the empty (north) side. All numbers are [SEAM FRAC][PTCL] lines.",
+                torchCell, openCell);
+            claimOwnerHalfBothSides(context, torchCell,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow != null) {
+                    writeAsPlayer(ow, torchCell,
+                        net.minecraft.world.level.block.Blocks.TORCH.defaultBlockState());
+                }
+            });
+            context.waitTicks(10);
+            // Evidence, never assertion: what did the machinery actually stage? A surprising
+            // occupancy here (e.g. BOTH from a double claim) reframes every number after it.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(Level.NETHER);
+                String destInfo = "no mirrorable binding";
+                String destOcc = "?", destBlock = "?";
+                var cellRec = ow == null ? null
+                    : com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, torchCell);
+                if (cellRec != null) {
+                    for (var b : cellRec.bindings()) {
+                        if (b.isMirrorable() && b.cut() != null && b.destPos() != null
+                            && nether != null) {
+                            destInfo = b.destDim().identifier() + " " + b.destPos();
+                            destOcc = String.valueOf(com.warwa.seamlessportals.passthrough
+                                .SeamOccupancy.occupancyOf(nether, b.destPos()));
+                            destBlock = nether.getBlockState(b.destPos()).toString();
+                            break;
+                        }
+                    }
+                }
+                SeamlessPortalsConstants.LOGGER.info(
+                    tag + "STAGED: srcBlock={} srcOcc={} | dest={} destOcc={} destBlock={}",
+                    ow == null ? "?" : ow.getBlockState(torchCell),
+                    ow == null ? "?" : String.valueOf(com.warwa.seamlessportals.passthrough
+                        .SeamOccupancy.occupancyOf(ow, torchCell)),
+                    destInfo, destOcc, destBlock);
+            });
+            // The empty-side viewpoint: north of the plane, looking at the torch through the
+            // seam — where the user stands when they report the bleed.
+            seamStandIn(context, "minecraft:overworld", fx + 0.5, py + 1.0, fz - 3.5);
+            aimAt(context, fx + 0.5, py + 1.7, fz + 0.5);
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "PHASE A: 600 ticks of organic torch emission");
+            context.waitTicks(600);
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "PHASE B: 5 deterministic smoke spawns into {}", openCell);
+            for (int i = 0; i < 5; i++) {
+                context.runOnClient(mc -> {
+                    if (mc.level != null) {
+                        mc.level.addParticle(net.minecraft.core.particles.ParticleTypes.SMOKE,
+                            fx + 1.5, py + 2.3, fz + 0.25, 0.0, 0.02, 0.0);
+                    }
+                });
+                context.waitTicks(60);
+            }
+            context.waitTicks(100);
+            context.runOnClient(mc -> com.warwa.seamlessportals.render.SeamParticleProbe
+                .legReport("[RS-PTCL-MEASURE cross-dim]"));
+            // ★ SAME-DIM PHASE — the user's live pairs are /portal-made SAME-DIM pairs, and this
+            // suite has already once watched a cross-dim run go green while the same-dim pair
+            // showed the defect (the break-both discriminator's reason to exist). Cross-dim
+            // arrivals land in the REMOTE level's separately-populated index; same-dim arrivals
+            // land in the SAME fully-bound index — the topology where a return trip is possible.
+            rsSeamParticleSameDimPhase(context);
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "DONE — measurement complete, nothing asserted.");
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(tag + "FAILED (measurement only, never fatal)", t);
+        } finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (ow != null) {
+                        writeAsPlayer(ow, torchCell,
+                            net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                    }
+                });
+                context.waitTicks(5);
+                if (prevDim != null) {
+                    seamStandIn(context, prevDim, prevPos.x, prevPos.y, prevPos.z);
+                }
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(tag + "CLEANUP FAILED — the frame-break"
+                    + " gate behind this leg may stage on a dirty bottom row", t);
             }
         }
     }
@@ -6338,6 +6468,169 @@ public class CrossingSmoke implements FabricClientGameTest {
             } catch (Throwable t) {
                 SeamlessPortalsConstants.LOGGER.warn(
                     LOG + "RS OBJECT BREAK-BOTH GATE [SAME-DIM] cleanup failed", t);
+            }
+        }
+    }
+
+    /**
+     * ★ SAME-DIM half of the particle measurement leg ({@code SEAM_FRACTIONAL_PROBE} only,
+     * measures and asserts nothing). Stages the user's EXACT live construction — the break-both
+     * discriminator's verbatim recipe ({@code portal make_portal 1 2} +
+     * {@code complete_bi_way_bi_faced_portal}, both cells in the overworld) at fresh coordinates —
+     * then repeats the torch phase and the deterministic open-cell smoke spawns. Both seam cells
+     * live in ONE client-level index here, fully bi-faced-bound, so if open-cell arrivals can
+     * re-cross (the ping-pong shape), THIS is the topology that shows it; the cross-dim phase
+     * cannot (its arrivals land in the remote index).
+     */
+    private static void rsSeamParticleSameDimPhase(ClientGameTestContext context) {
+        final String tag = LOG + "[RS-PTCL-MEASURE][SAME-DIM] ";
+        final int cx = 8600, cy = 100, cz = 8600;
+        final Vec3 destCenter = new Vec3(cx + 0.5, cy + 1.0 - 50, cz + 60 + 0.5);
+        final BlockPos cellS = new BlockPos(cx, cy, cz);
+        final BlockPos openCell = new BlockPos(cx, cy + 1, cz);
+        AtomicReference<Vec3> playerBefore = new AtomicReference<>(null);
+        try {
+            runOnServer(context, server -> {
+                var players = server.getPlayerList().getPlayers();
+                if (!players.isEmpty()) {
+                    playerBefore.set(players.get(0).position());
+                }
+            });
+            // The discriminator's staging verbatim, plus a north-side floor strip so the
+            // empty-side viewpoint has ground to stand on.
+            runCommands(context, List.of(
+                "forceload add " + (cx - 16) + " " + (cz - 16) + " " + (cx + 16) + " " + (cz + 76),
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                    + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz + 2) + " "
+                    + (cx + 6) + " " + (cy - 1) + " " + (cz + 6) + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                    + (cx + 6) + " " + (cy - 1) + " " + (cz - 1) + " minecraft:stone",
+                "setblock " + cx + " " + (cy - 1) + " " + cz + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                    + (cx + 6) + " " + (cy - 51) + " " + (cz + 64) + " minecraft:stone",
+                "fill " + (cx - 6) + " " + (cy - 50) + " " + (cz + 54) + " "
+                    + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
+                "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 27"
+            ));
+            context.waitTicks(10);
+            runCommands(context, List.of(
+                "execute as @p at @p run portal make_portal 1 2 minecraft:overworld "
+                    + destCenter.x + " " + destCenter.y + " " + destCenter.z));
+            context.waitTicks(10);
+            runCommands(context, List.of(
+                "tp @p " + (cx + 0.5) + " " + cy + " " + (cz + 3.5) + " 180 5",
+                "execute as @p at @p run portal complete_bi_way_bi_faced_portal"));
+            context.waitTicks(20);
+            AtomicReference<Boolean> bound = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 30 && !bound.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                    if (cell != null && cell.bindings().stream().anyMatch(b ->
+                        b.isMirrorable() && b.cut() != null)) {
+                        bound.set(true);
+                    }
+                });
+                if (!bound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!bound.get()) {
+                SeamlessPortalsConstants.LOGGER.warn(tag + "FIXTURE NEVER BOUND — same-dim"
+                    + " measurement skipped (this itself is evidence: the command-built pair"
+                    + " did not produce a mirrorable cut binding).");
+                return;
+            }
+            claimOwnerHalfBothSides(context, cellS,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow != null) {
+                    writeAsPlayer(ow, cellS,
+                        net.minecraft.world.level.block.Blocks.TORCH.defaultBlockState());
+                }
+            });
+            context.waitTicks(10);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                String destInfo = "no mirrorable binding";
+                String destOcc = "?", destBlock = "?";
+                var cellRec = ow == null ? null
+                    : com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+                if (cellRec != null) {
+                    for (var b : cellRec.bindings()) {
+                        if (b.isMirrorable() && b.cut() != null && b.destPos() != null) {
+                            destInfo = b.destDim().identifier() + " " + b.destPos();
+                            destOcc = String.valueOf(com.warwa.seamlessportals.passthrough
+                                .SeamOccupancy.occupancyOf(ow, b.destPos()));
+                            destBlock = ow.getBlockState(b.destPos()).toString();
+                            break;
+                        }
+                    }
+                }
+                SeamlessPortalsConstants.LOGGER.info(
+                    tag + "STAGED: srcBlock={} srcOcc={} | dest={} destOcc={} destBlock={}",
+                    ow == null ? "?" : ow.getBlockState(cellS),
+                    ow == null ? "?" : String.valueOf(com.warwa.seamlessportals.passthrough
+                        .SeamOccupancy.occupancyOf(ow, cellS)),
+                    destInfo, destOcc, destBlock);
+            });
+            // Empty-side viewpoint: owned half is POSITIVE (south), so the empty side is north.
+            seamStandIn(context, "minecraft:overworld", cx + 0.5, cy, cz - 2.5);
+            aimAt(context, cx + 0.5, cy + 0.7, cz + 0.5);
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "PHASE A2: 400 ticks of organic torch emission");
+            context.waitTicks(400);
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "PHASE B2: 5 deterministic smoke spawns into {}", openCell);
+            for (int i = 0; i < 5; i++) {
+                context.runOnClient(mc -> {
+                    if (mc.level != null) {
+                        mc.level.addParticle(net.minecraft.core.particles.ParticleTypes.SMOKE,
+                            cx + 0.5, cy + 1.3, cz + 0.25, 0.0, 0.02, 0.0);
+                    }
+                });
+                context.waitTicks(40);
+            }
+            context.waitTicks(80);
+            context.runOnClient(mc -> com.warwa.seamlessportals.render.SeamParticleProbe
+                .legReport("[RS-PTCL-MEASURE same-dim]"));
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.warn(tag + "FAILED (measurement only, never fatal)", t);
+        } finally {
+            try {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (ow == null) {
+                        return;
+                    }
+                    writeAsPlayer(ow, cellS,
+                        net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cellS);
+                    for (var portal : ow.getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.Portal.class,
+                        new net.minecraft.world.phys.AABB(cx - 6, cy - 56, cz - 6,
+                            cx + 6, cy + 6, cz + 66), x -> true)) {
+                        portal.discard();
+                    }
+                });
+                runCommands(context, List.of(
+                    "fill " + (cx - 6) + " " + (cy - 1) + " " + (cz - 4) + " "
+                        + (cx + 6) + " " + (cy + 5) + " " + (cz + 6) + " minecraft:air",
+                    "fill " + (cx - 6) + " " + (cy - 51) + " " + (cz + 54) + " "
+                        + (cx + 6) + " " + (cy - 45) + " " + (cz + 64) + " minecraft:air",
+                    "forceload remove " + (cx - 16) + " " + (cz - 16) + " "
+                        + (cx + 16) + " " + (cz + 76)
+                ));
+                Vec3 back = playerBefore.get();
+                if (back != null) {
+                    runCommands(context, List.of(
+                        "tp @p " + back.x + " " + back.y + " " + back.z));
+                    context.waitTicks(10);
+                }
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(tag + "cleanup failed", t);
             }
         }
     }

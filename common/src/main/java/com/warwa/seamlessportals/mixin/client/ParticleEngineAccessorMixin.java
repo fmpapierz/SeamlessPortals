@@ -44,4 +44,14 @@ public interface ParticleEngineAccessorMixin {
      */
     @Accessor("resourceManager")
     ParticleResources seamlessportals$getResourceManager();
+
+    /**
+     * The per-render-type group map (field name verified by the live {@code @Shadow} in
+     * {@code MixinParticleEngine}). Probe-only consumer: the 1 Hz population census
+     * ({@code SeamParticleCensus}) — the multi-world engine's level distribution is evidence
+     * question 1's denominator.
+     */
+    @Accessor("particles")
+    java.util.Map<net.minecraft.client.particle.ParticleRenderType,
+        net.minecraft.client.particle.ParticleGroup<?>> seamlessportals$getParticleGroups();
 }
