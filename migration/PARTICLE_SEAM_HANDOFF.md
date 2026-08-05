@@ -175,12 +175,31 @@ same-dim teleports/sec ~70 → 3-5, every crossing line lifetimeCrossings=1; cro
 arrivals now genuinely persist at the counterpart (they were zombies at source coords
 before). Every teleport in the run is a one-shot delete+continue — rule 3 as designed.
 
-STILL OPEN (out of scope of r40, needs the user's decision): the window dead-zone —
-`RenderStates.shouldRenderParticle`'s `isOnDestinationSide(pos, 0.5)` still culls ALL
-near-plane far particles from portal passes, so crossers resting near the dest plane
-remain invisible THROUGH THE WINDOW (fine when viewed directly / same-dim). Also noted:
-client-side dest occupancy sometimes reads 0 where the server says HALF_* (seen in the
-r39 branch attribution); the transition gate makes this harmless for particles.
+## ROUND 41 — far-side window visibility + the spawn-scatter bleed (user's live report)
+
+User live-verified r40 on an exact pair: crossings clean, but (1) crossers invisible
+through the window, (2) fire smoke resting on the wrong side. Their own armed session
+measured both: DEST extract 19.6k shouldRenderDrops/s with extracted=0 (the 0.5 valve),
+and windowDropByClass empty for LargeSmoke with openRestingNoCrossing 30-260/s (fire's
+animateTick spawn-scatters some smoke past the plane at birth; xo==x so the r40 gate
+rested it there). Two fixes:
+1. `RenderStates.shouldRenderParticle` — the spatial valve relaxes to -0.12 (one
+   billboard reach past the plane) for lattice-mirrorable portals ONLY
+   (`SeamMap.isMirrorable`, single-entry per-portal cache); the armed hardware inner clip
+   trims wrong-side fragments per-pixel. Non-seam portals keep IP's 0.5.
+2. `SeamParticleTeleport` OPEN branch — spawn-scatter correction: a particle at age<=1
+   found past a binding's plane with no transition crossed AT BIRTH (rule 3) and is
+   consumed via that binding; age<=1 is true exactly once per particle (each funnel pass
+   runs tick() first), so arrivals can never re-trigger it.
+MEASURED (run 4, ALL LEGS PASS): window now extracts FlameParticle 20-78/s +
+SmokeParticle 6-56/s during the torch phases (was 0 in every prior run);
+openRestingNoCrossing fell to 0-10/s same-dim (was 15-32); crossings still strictly
+one-shot (cross-dim 310, same-dim +91, max=1, pingPongers=0 lifetime).
+
+Still noted: client-side dest occupancy sometimes reads 0 where the server says HALF_*
+(r39 branch attribution); the transition gate makes this harmless for particles. The
+2026-07-26 exact-only alignment policy silently declines non-lattice pairs (cost the user
+two live rounds on 2026-08-05 — chat-notice chip pending their decision).
 
 ## RESEARCH PLAN FOR THE NEXT SESSION
 1. INSTRUMENT FIRST: per-tick counters (teleports total + per particle-class, current level

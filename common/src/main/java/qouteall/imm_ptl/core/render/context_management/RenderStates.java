@@ -325,14 +325,32 @@ public class RenderStates {
         return renderedDimensions.contains(dimensionType);
     }
 
+    // ★ SEAM ROUND 41 — the far-side visibility fix, measured before built: IP's 0.5-block
+    // spatial valve is a CPU pre-cull for big portals, but at a seam EVERY far particle lives
+    // inside it (a mirrored torch's flame sits AT the plane; smoke rises parallel to it), so the
+    // window extracted literally zero particles across three instrumented runs (19.6k
+    // shouldRenderDrops/s, extracted=0, live-confirmed by the user). For lattice-mirrorable
+    // (seam-bearing) portals the valve relaxes to -0.12 — one billboard reach PAST the plane —
+    // and correctness stays with the armed hardware inner clip, which trims wrong-side fragments
+    // per-pixel (the same division of labor the isolated extract's own notes record). Non-seam
+    // portals keep IP's 0.5 untouched. Single-entry cache: this runs per particle per pass, and
+    // the geometry answer is a property of the portal, not the particle.
+    private static Portal seamValvePortal;
+    private static double seamValve = 0.5;
+
     public static boolean shouldRenderParticle(Particle particle) {
         if (((IEParticle) particle).portal_getWorld() != Minecraft.getInstance().level) {
             return false;
         }
         if (PortalRendering.isRendering()) {
             Portal renderingPortal = PortalRendering.getRenderingPortal();
+            if (renderingPortal != seamValvePortal) {
+                seamValvePortal = renderingPortal;
+                seamValve = com.warwa.seamlessportals.passthrough.SeamMap
+                    .isMirrorable(renderingPortal) ? -0.12 : 0.5;
+            }
             Vec3 particlePos = particle.getBoundingBox().getCenter();
-            return renderingPortal.isOnDestinationSide(particlePos, 0.5);
+            return renderingPortal.isOnDestinationSide(particlePos, seamValve);
         }
         return true;
     }

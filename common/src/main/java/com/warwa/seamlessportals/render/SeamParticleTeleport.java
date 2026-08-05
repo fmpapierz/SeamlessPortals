@@ -117,6 +117,18 @@ public final class SeamParticleTeleport {
                     new net.minecraft.world.phys.Vec3(px, py, pz), cell,
                     b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
                 if (prevHalf == particleHalf) {
+                    // ★ ROUND 41 — SPAWN-SCATTER CORRECTION (the live rest-bleed: fire smoke
+                    // that MATERIALIZED past the plane — animateTick scatters spawn points
+                    // across the whole block — has xo==x, so the crossing gate rests it on the
+                    // wrong side with no local source). A first-tick particle found beyond a
+                    // binding's plane crossed at birth: consume via that binding, once. age<=1
+                    // is true exactly once per particle (every funnel pass runs tick() first),
+                    // so arrivals — age 2+ by their next pass — can never re-trigger it.
+                    if (ie.portal_getAge() <= 1
+                        && particleHalf != SeamOccupancy.halfOf(b.srcFacing())) {
+                        binding = b;
+                        break;
+                    }
                     openNoCrossing = true;
                     continue;   // no crossing against this plane this tick
                 }

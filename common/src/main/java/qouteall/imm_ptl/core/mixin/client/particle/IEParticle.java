@@ -71,6 +71,13 @@ public interface IEParticle {
     @Accessor("zo")
     double portal_getZo();
 
+    // ★ SEAM ROUND 41 — spawn-scatter correction: a particle whose FIRST tick finds it past a
+    // binding's plane materialized there (fire's animateTick scatters spawn points across the
+    // whole block, some beyond the cut) — a crossing at birth, teleported once. age is the
+    // one-shot guard: each funnel pass runs tick() first, so age<=1 is true exactly once.
+    @Accessor("age")
+    int portal_getAge();
+
     @Accessor("xd")
     double portal_getXd();
 
