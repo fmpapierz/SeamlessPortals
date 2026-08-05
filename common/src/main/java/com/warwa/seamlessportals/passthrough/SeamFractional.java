@@ -135,24 +135,137 @@ public final class SeamFractional {
         if (binding == null || binding.cut() == null) {
             return false;
         }
-        // Plane-adjacent points belong to the OWNED half (round 29: "no particles emit when
-        // placing torch on seam now" — torch flames spawn at exactly the cell centre, i.e. ON a
-        // coincident plane, and the strict side test assigned the boundary to one fixed side,
-        // silencing every particle of an opposite-owned torch). The material's cut face IS at the
-        // plane; what emits there is the owned half's.
+        // STRICT side test — round 30 moved the plane-adjacent leniency out of here and into
+        // particleSpawnPos as a SHIFT: a billboard living ON the plane is visible from both
+        // sides no matter who calls it owned (round 29's epsilon let the torch's neck flame
+        // bleed constantly), and the tick culling below needs the strict answer so drifting
+        // smoke dies the tick it crosses.
+        byte pointHalf = SeamOccupancy.halfFromHit(new net.minecraft.world.phys.Vec3(x, y, z),
+            cell, binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+        return pointHalf != owned;
+    }
+
+    /**
+     * ★ ROUND 30 — where a particle may spawn, as a POSITION ANSWER rather than a yes/no:
+     * <ul>
+     *   <li>ordinary cell or owned half → spawn where asked;</li>
+     *   <li>deep in the empty half → {@code null}, do not spawn (nothing there emits);</li>
+     *   <li>within 0.05 of the plane → spawn SHIFTED 0.06 into the owned half. Round 29 let
+     *       plane-sitters pass and the torch's neck flame — a billboard exactly ON a coincident
+     *       plane — bled to the empty side constantly. Nudged inside, it lives behind the
+     *       window from the empty side and looks identical from the owned side.</li>
+     * </ul>
+     */
+    public static net.minecraft.world.phys.Vec3 particleSpawnPos(
+        net.minecraft.world.level.Level level, double x, double y, double z
+    ) {
+        net.minecraft.world.phys.Vec3 asIs = new net.minecraft.world.phys.Vec3(x, y, z);
+        if (!active()) {
+            return asIs;
+        }
+        BlockPos cell = BlockPos.containing(x, y, z);
+        byte owned = SeamOccupancy.occupancyOf(level, cell);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return asIs;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
+        if (binding == null || binding.cut() == null) {
+            return asIs;
+        }
         Direction.Axis axis = binding.srcFacing().getAxis();
         double off = binding.cut().srcPlaneOffset();
-        double local = switch (axis) {
-            case X -> x - cell.getX();
-            case Y -> y - cell.getY();
-            case Z -> z - cell.getZ();
-        };
-        if (Math.abs(local - off) < 0.02) {
-            return false;
+        double cellMin = axis == Direction.Axis.X ? cell.getX()
+            : axis == Direction.Axis.Y ? cell.getY() : cell.getZ();
+        double local = (axis == Direction.Axis.X ? x : axis == Direction.Axis.Y ? y : z) - cellMin;
+        if (Math.abs(local - off) < 0.05) {
+            double shifted = cellMin + off
+                + (owned == SeamOccupancy.HALF_POSITIVE ? 0.06 : -0.06);
+            return new net.minecraft.world.phys.Vec3(
+                axis == Direction.Axis.X ? shifted : x,
+                axis == Direction.Axis.Y ? shifted : y,
+                axis == Direction.Axis.Z ? shifted : z);
         }
-        byte pointHalf = SeamOccupancy.halfFromHit(new net.minecraft.world.phys.Vec3(x, y, z),
-            cell, axis, off);
-        return pointHalf != owned;
+        byte pointHalf = local >= off ? SeamOccupancy.HALF_POSITIVE : SeamOccupancy.HALF_NEGATIVE;
+        return pointHalf == owned ? asIs : null;
+    }
+
+    /**
+     * ★ ROUND 30 — does this entity's body touch the OWNED half of a cut seam cell? Gates fire's
+     * contact damage ({@code BaseFireBlock.entityInside} is position-blind over the whole cell,
+     * so fire owned on source side A burned a player walking through dest side A's empty space —
+     * "flame from source side a collides with me if i cross"). True when not a cut cell (vanilla
+     * behaviour untouched).
+     */
+    public static boolean entityTouchesOwnedHalf(
+        net.minecraft.world.level.Level level, BlockPos cell,
+        net.minecraft.world.entity.Entity entity
+    ) {
+        if (!active()) {
+            return true;
+        }
+        byte owned = SeamOccupancy.occupancyOf(level, cell);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return true;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
+        if (binding == null || binding.cut() == null) {
+            return true;
+        }
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        double off = binding.cut().srcPlaneOffset();
+        double cellMin = axis == Direction.Axis.X ? cell.getX()
+            : axis == Direction.Axis.Y ? cell.getY() : cell.getZ();
+        double lo = owned == SeamOccupancy.HALF_POSITIVE ? cellMin + off : cellMin;
+        double hi = owned == SeamOccupancy.HALF_POSITIVE ? cellMin + 1.0 : cellMin + off;
+        net.minecraft.world.phys.AABB box = entity.getBoundingBox();
+        double bMin = axis == Direction.Axis.X ? box.minX
+            : axis == Direction.Axis.Y ? box.minY : box.minZ;
+        double bMax = axis == Direction.Axis.X ? box.maxX
+            : axis == Direction.Axis.Y ? box.maxY : box.maxZ;
+        return bMax > lo && bMin < hi;
+    }
+
+    /**
+     * ★ ROUND 30 — is a seam-claimed fire actually supported by the occupant of ITS half below?
+     * Round 27's "either occupant sturdy" answered for the CELL, which kept fire floating after
+     * the block under the fire's own half was broken ("fire just floats there"): the other
+     * occupant vouched for it. Fire knows its half (claimed at ignition since round 29), so its
+     * survival can ask the precise question. Returns {@code null} when not applicable (fire
+     * unclaimed, below not a seam cell) — caller keeps vanilla's answer.
+     */
+    public static Boolean fireSupportedOnOwnHalf(
+        net.minecraft.world.level.LevelReader levelReader, BlockPos firePos
+    ) {
+        if (!active() || !(levelReader instanceof net.minecraft.world.level.Level level)) {
+            return null;
+        }
+        byte fireHalf = SeamOccupancy.occupancyOf(level, firePos);
+        if (fireHalf != SeamOccupancy.HALF_POSITIVE && fireHalf != SeamOccupancy.HALF_NEGATIVE) {
+            return null;
+        }
+        BlockPos below = firePos.below();
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, below);
+        if (binding == null || binding.cut() == null) {
+            return null;
+        }
+        byte belowOwned = SeamOccupancy.occupancyOf(level, below);
+        SeamOccupancy.Secondary belowSec = SeamOccupancy.secondaryOf(level, below);
+        net.minecraft.world.level.block.state.BlockState support = null;
+        if (belowOwned == fireHalf) {
+            support = level.getBlockState(below);
+        } else if (belowSec != null && belowSec.half() == fireHalf) {
+            support = belowSec.state();
+        }
+        if (support == null) {
+            return false;   // nothing under the fire's own half
+        }
+        STURDY_REENTRY.set(Boolean.TRUE);
+        try {
+            return support.isFaceSturdy(level, below, Direction.UP,
+                net.minecraft.world.level.block.SupportType.FULL);
+        } finally {
+            STURDY_REENTRY.set(Boolean.FALSE);
+        }
     }
 
     /** Reentrancy guard for {@link #secondarySturdy} — the nested isFaceSturdy re-enters the hook. */
