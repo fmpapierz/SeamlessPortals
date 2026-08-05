@@ -9,6 +9,7 @@
     "client.LevelExtractorSeamOutlineMixin",
     "client.ShapeOutlineSeamEdgeMixin",
     "client.ClientLevelSeamParticleMixin",
+    "client.ClientLevelAnimateTickTagMixin",
     "client.ParticleAccessor",
     "client.SeamParticleOcclusionMixin",
     "client.GameRendererMixin",

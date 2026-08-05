@@ -2,23 +2,27 @@ package com.warwa.seamlessportals.render;
 
 import com.warwa.seamlessportals.passthrough.SeamFractional;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.particle.Particle;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.portal.Portal;
 
 import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * ★ THE WINDOW RULE FOR PARTICLES (user round 32, verbatim): "particles on one side should never
- * bleed to other side if portal window is between particle source block and player." Rounds
- * 27–31 tried side tests, spawn shifts and dying bands — every one wrong somewhere, because a
- * particle's visibility is not a property of which half it sits in; it is a property of what
- * stands between it and the camera. This class answers exactly that: does the camera→particle
- * segment cross a portal's quad? If yes, that region of space belongs to the window's view and
- * the particle does not render. From the side (no window between) it renders wherever it truly
- * is — positions are never moved.
+ * bleed to other side if portal window is between particle SOURCE BLOCK and player." Round 33
+ * made the anchor exact: visibility is decided by the segment from the camera to the particle's
+ * EMITTING BLOCK, not to the particle's drifting position — a smoke puff that wandered past the
+ * plane keeps its torch's fate (hidden head-on with everything else the torch emits, visible
+ * from the side as one continuous plume over both halves). Particles with no block source
+ * (entity effects, explosions) fall back to their own position as the anchor.
  *
- * <p>Render-thread confined. The nearby-portal list refreshes once per game tick.
+ * <p>Render-thread confined. The nearby-portal list refreshes once per game tick; source tags
+ * live in a weak map and die with their particles.
  */
 public final class SeamParticleOcclusion {
 
@@ -28,7 +32,30 @@ public final class SeamParticleOcclusion {
     private static long cachedGameTime = Long.MIN_VALUE;
     private static Object cachedLevel = null;
 
-    public static boolean occluded(Vec3 cameraPos, double px, double py, double pz) {
+    /** The block whose animateTick is currently running — the emitting-source bracket. */
+    private static BlockPos emitting = null;
+
+    /** Particle → centre of the block that emitted it. Weak keys: tags die with the particle. */
+    private static final Map<Particle, Vec3> SOURCES = new WeakHashMap<>();
+
+    public static void beginEmitting(BlockPos pos) {
+        emitting = pos.immutable();
+    }
+
+    public static void endEmitting() {
+        emitting = null;
+    }
+
+    /** Called at the creation funnel: tag the newborn with the bracket's block, if any. */
+    public static void tagIfEmitting(Particle particle) {
+        if (emitting != null && particle != null) {
+            SOURCES.put(particle, Vec3.atCenterOf(emitting));
+        }
+    }
+
+    public static boolean occluded(
+        Particle particle, Vec3 cameraPos, double px, double py, double pz
+    ) {
         if (!SeamFractional.active()) {
             return false;
         }
@@ -49,8 +76,12 @@ public final class SeamParticleOcclusion {
         if (portals.isEmpty()) {
             return false;
         }
+        Vec3 anchor = SOURCES.get(particle);
+        double ax = anchor != null ? anchor.x : px;
+        double ay = anchor != null ? anchor.y : py;
+        double az = anchor != null ? anchor.z : pz;
         for (Portal portal : portals) {
-            if (segmentCrossesPortal(portal, cameraPos, px, py, pz)) {
+            if (segmentCrossesPortal(portal, cameraPos, ax, ay, az)) {
                 return true;
             }
         }
