@@ -19,7 +19,8 @@
     ],
     "fabric-client-gametest": [
       "com.warwa.seamlessportals.fabric.gametest.TitleCardCapture",
-      "com.warwa.seamlessportals.fabric.gametest.CrossingSmoke"
+      "com.warwa.seamlessportals.fabric.gametest.CrossingSmoke",
+      "com.warwa.seamlessportals.fabric.gametest.Is5RegressionDriver"
     ],
     "modmenu": [
       "com.warwa.seamlessportals.fabric.ModMenuIntegration"

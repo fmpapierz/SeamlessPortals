@@ -216,10 +216,10 @@ public final class IrisStageConsistentComposite {
         if (now - censusLastEmitMs >= 1000) {
             censusLastEmitMs = now;
             LOGGER.info("[Seamless Portals] [IS5-PRE] 1Hz: frames={} consumeT/F={}/{} specR/S={}/{}"
-                    + " armG/D={}/{} capt={} stampPass={} views={}",
+                    + " armG/D={}/{} capt={} stampPass={} views={} nest={}",
                 censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
                 censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
-                censusCaptures, censusStampPasses, censusStampedViews);
+                censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps);
             censusArmedFrames = 0;
             censusConsumeTrue = 0;
             censusConsumeFalse = 0;
@@ -230,13 +230,14 @@ public final class IrisStageConsistentComposite {
             censusCaptures = 0;
             censusStampPasses = 0;
             censusStampedViews = 0;
+            censusNestedStamps = 0;
         }
         return true;
     }
 
     private static int censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
         censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
-        censusCaptures, censusStampPasses, censusStampedViews;
+        censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps;
     private static long censusLastEmitMs = 0;
 
     /** True while this frame's portal loop runs on the new path — the doRenderPortal forks'
@@ -269,6 +270,14 @@ public final class IrisStageConsistentComposite {
         if (known != null) {
             if (known) censusConsumeTrue++; else censusConsumeFalse++;
             return known;
+        }
+        // §3.3 (PART4): the speculative cap counts LAYER 0 ONLY. Nested lookups are ALWAYS
+        // unknown — the layer-0 loop consumes each portal's query once per frame, and the query
+        // ISSUE cannot run at the nested slot on the new path (post-cancel FBO state) — so
+        // counting them would starve the cap every recursion frame. Nested render-if-unknown is
+        // budget-bounded downstream instead (irisMaxDestRenders + effectiveIrisMaxPortalLayer).
+        if (PortalRendering.getPortalLayer() > 0) {
+            return true;
         }
         if (speculativeRendersThisFrame < SPECULATIVE_CAP) {
             speculativeRendersThisFrame++;
@@ -472,16 +481,166 @@ public final class IrisStageConsistentComposite {
         }
     }
 
-    private static boolean nestedLayerDeferredNoted = false;
+    // =============================================================================================
+    // PART4 — nested capture-to-capture re-aim (design §1 Recursion; landed 2026-08-05).
+    // On an armed frame the parent view's content lives in its OWN capture slot (filled by the
+    // cancelled finalize BEFORE the tail dispatch runs), which nested renders never touch — so
+    // the old nested trio collapses: the snapshot has nothing to protect, the blit-back has
+    // nothing to deliver, and the stamp re-aims to child-capture → PARENT-capture: unfiltered
+    // on both sides, exact at every depth. Ordering is inherent: fork (c) is post-pop, so
+    // innermost stamps complete before their parent's own stamp consumes them.
+    // =============================================================================================
 
-    /** Part3 scope cut, disclosed: nested portal layers (portal-in-portal) are DEFERRED on the
-     *  new path until the part4 capture-to-capture re-aim — the dispatch returns early when the
-     *  frame is armed. Announced once so a live leg can never mistake it for a regression. */
-    public static void noteNestedLayerDeferred() {
-        if (nestedLayerDeferredNoted) return;
-        nestedLayerDeferredNoted = true;
-        LOGGER.info("[Seamless Portals] [IS5-PRE] nested portal layer requested on an armed frame"
-            + " — DEFERRED until the part4 capture-to-capture re-aim (single-layer new path)");
+    /** The armed-view stack: pushed at {@link #armCaptureForView}, popped at
+     *  {@link #completeArmedView} (doRenderPortal fork (c)). Mirrors the portal-layer stack;
+     *  cleared every frame at {@link #beginFrame} so a throw can never poison the next frame. */
+    private static final java.util.ArrayDeque<CaptureSlot> viewSlotStack =
+        new java.util.ArrayDeque<>();
+
+    private static int nestedStampDeepestNoted = 0;
+    private static int nestedStampAuxNoted = -1;
+
+    /**
+     * Fork (c) for EVERY armed view, at doRenderPortal's post-pop point. Pops this view's slot;
+     * a layer-0 slot stays pending for the main renderAll HEAD stamp, a nested slot is stamped
+     * into the PARENT view's capture buffer here and consumed.
+     */
+    public static void completeArmedView() {
+        CaptureSlot child = viewSlotStack.pollLast();
+        if (child == null || mechanismBroken) return;
+        if (child.layer == 0) return; // the stamp pass consumes it at main renderAll HEAD
+        CaptureSlot parent = viewSlotStack.peekLast();
+        if (parent == null || !parent.pending || !child.pending) {
+            // A failed capture on either side: the nested view is lost for this frame. The
+            // capture path already broke loudly if it was a mechanism failure — here we only
+            // make sure a half-taken child slot cannot leak into the main stamp's accounting.
+            if (child.pending) {
+                child.pending = false;
+                capturesPendingThisFrame--;
+            }
+            return;
+        }
+        runNestedStamp(child, parent);
+        child.pending = false;
+        capturesPendingThisFrame--;
+    }
+
+    /**
+     * The capture-to-capture stamp: draw the child portal's view-area mesh into the PARENT's
+     * capture buffer, sampling the child's capture. Same program + depth semantics as the main
+     * stamp (LEQUAL + write + the per-fragment floor, C4-SEAM clamp bracket, every write-enable
+     * asserted — a mid-loop draw has no upstream re-establisher any more than a HEAD one does).
+     * The mesh matrices are the slot's ARM-TIME values, which for a nested view are exactly the
+     * old-path stamp's inputs (modelView is the doRenderPortal argument; the projection is
+     * unscaled pre-push == post-pop; the camera context at arm time IS the parent dest view).
+     * NO FBO caching (two latches paid for the rule) — build and destroy per call.
+     */
+    private static void runNestedStamp(CaptureSlot child, CaptureSlot parent) {
+        if (child.w != parent.w || child.h != parent.h) {
+            noteAuxDropOnce("nested stamp size mismatch (child " + child.w + "x" + child.h
+                + " vs parent " + parent.w + "x" + parent.h + ") — view skipped");
+            return;
+        }
+        if (!ensureStampProgram()) return;
+        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+        boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        boolean solid = IPGlobal.debugStampSolid;
+        Vec3 meshTint = IPGlobal.debugTintStamp ? new Vec3(1.0, 0.0, 1.0) : new Vec3(1.0, 1.0, 1.0);
+        // Aux (materialMask) rides along only when BOTH sides have a valid aux this frame —
+        // out1 maps to drawBuffers[1]; out2 (history) has no attachment here and is dropped
+        // (history is a main-chain concern; a capture buffer IS current content).
+        boolean aux = child.auxValid.length > 0 && child.auxValid[0]
+            && parent.auxValid.length > 0 && parent.auxValid[0] && parent.auxTex[0] != 0;
+        GlFramebuffer fbo = new GlFramebuffer();
+        fbo.addColorAttachment(0, parent.colorTex);
+        if (aux) {
+            fbo.addColorAttachment(1, parent.auxTex[0]);
+        }
+        fbo.addDepthAttachmentBypass(parent.depthTex);
+        fbo.drawBuffers(aux ? new int[]{0, 1} : new int[]{0});
+        try {
+            fbo.bind();
+            GlStateManager._viewport(0, 0, parent.w, parent.h);
+            GlStateManager._disableScissorTest();
+            GlStateManager._disableBlend(0);
+            GlStateManager._disableCull();
+            GlStateManager._colorMask(15);
+            GlStateManager._enableDepthTest();
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._depthMask(true);
+            if (!IPGlobal.debugNoStampDepthClamp) {
+                CHelper.enableDepthClamp();
+            }
+            GlStateManager._glUseProgram(stampProgram);
+            GL20C.glUniform1i(locCapture, 0);
+            GL20C.glUniform1i(locCaptureAux, 1);
+            GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
+            if (aux) {
+                GlStateManager._activeTexture(GL13.GL_TEXTURE1);
+                GlStateManager._bindTexture(child.auxTex[0]);
+            }
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+            GlStateManager._bindTexture(child.colorTex);
+            try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
+                256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
+            )) {
+                MeshData mesh = ViewAreaRenderer.buildPortalViewAreaMesh(
+                    meshTint, child.portal, child.cameraPos, child.partialTick,
+                    child.modelView, byteBuffer
+                );
+                if (mesh == null) return; // fully near-plane-clipped
+                int vertexCount;
+                GpuBufferSlice vertexSlice;
+                try (mesh) {
+                    vertexCount = mesh.drawState().vertexCount();
+                    vertexSlice = SecondaryWorldRenderCore.registerFrameTransientUbo(
+                        RenderSystem.getDevice().createBuffer(
+                            () -> "seamlessportals_is5pre_nested_stamp_mesh",
+                            GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer()
+                        )
+                    );
+                }
+                ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                    .vertexArrayCache().bindVertexArray(
+                        new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                        new GpuBufferSlice[]{vertexSlice},
+                        null
+                    );
+                matBuf.clear();
+                new Matrix4f(child.projection).mul(child.modelView).get(matBuf);
+                GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+            }
+        } finally {
+            if (!IPGlobal.debugNoStampDepthClamp) {
+                CHelper.disableDepthClamp();
+            }
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._disableDepthTest();
+            if (cullWasEnabled) {
+                GlStateManager._enableCull();
+            }
+            try { fbo.destroy(); } catch (Throwable ignored) {}
+        }
+        int err = GL11.glGetError();
+        if (err != GL11.GL_NO_ERROR) {
+            breakMechanism("nested stamp left GL error 0x" + Integer.toHexString(err), null);
+        } else {
+            censusNestedStamps++;
+            // Content-key on STATE, not the per-stamp layer: a recursion corridor stamps
+            // layers 3→2→1 EVERY FRAME, so keying on the current layer re-emits three times a
+            // frame (the stamped=1↔2 trap re-walked live, 2026-08-05 — ~180 render-thread log
+            // lines/sec). The DEEPEST-layer latch is monotonic: a handful of emissions per
+            // session, each one a real state change; per-frame volume lives in the census nest=.
+            if (child.layer > nestedStampDeepestNoted
+                || (aux ? 1 : 0) != nestedStampAuxNoted) {
+                nestedStampDeepestNoted = Math.max(nestedStampDeepestNoted, child.layer);
+                nestedStampAuxNoted = aux ? 1 : 0;
+                LOGGER.info("[Seamless Portals] [IS5-PRE] part4 nested capture-to-capture stamp"
+                    + " LIVE — deepest child layer so far={} aux={}",
+                    nestedStampDeepestNoted, aux);
+            }
+        }
     }
 
     // =============================================================================================
@@ -584,6 +743,7 @@ public final class IrisStageConsistentComposite {
         slot.partialTick = RenderStates.getPartialTick();
         slot.layer = layer;
         armedCapture = slot;
+        viewSlotStack.addLast(slot); // popped by completeArmedView at fork (c)
         censusArmGranted++;
         return true;
     }
@@ -859,6 +1019,7 @@ public final class IrisStageConsistentComposite {
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
+        viewSlotStack.clear(); // PART4: a mid-loop throw must not poison the next frame's stack
         stampConsumedThisFrame = false;
         frameArmed = false;
         speculativeRendersThisFrame = 0;

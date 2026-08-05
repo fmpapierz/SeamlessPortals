@@ -335,6 +335,32 @@ check → the named fallback built (listener-capture-scan tracker save/restore a
 **user: "ghost gone, motion blur still looks cool"** — defect dead, kept-feature intact. The
 depthtex1/2 + history stamps stay (semantically correct depth/history hygiene at window pixels).
 
+### ★ PART4 LANDED (2026-08-05, the regression session) — nested capture-to-capture re-aim
+
+The three mainRT dereferences collapse rather than re-aim one-for-one: on an armed frame the
+parent view's content lives in its OWN capture slot (filled by the cancelled finalize BEFORE the
+tail dispatch), which nested renders never touch — the snapshot has nothing to protect, the
+blit-back nothing to deliver. `renderNestedPortalLayer` runs the loop bare when armed; fork (c)
+(`completeArmedView`) pops a per-frame armed-view stack and stamps a nested slot's capture into
+the PARENT slot's buffer (same program, LEQUAL + write + frag floor + clamp bracket, every
+write-enable asserted, NO FBO caching, aux rides when both sides hold one, history out dropped —
+capture buffers ARE current content). Mesh matrices = the slot's ARM-TIME values (for nested
+views these equal the old-path stamp's inputs exactly). Innermost-first ordering is inherent
+(fork (c) is post-pop). §3.3 sharpened as judged: the speculative cap counts LAYER 0 only —
+nested lookups are structurally always-unknown (layer-0 consume-once + no query issue at the
+nested slot) and are budget-bounded instead. Census gains `nest=`; the part3 DEFERRED
+announcement is deleted, replaced by a content-keyed "part4 nested capture-to-capture stamp
+LIVE" note. Driver corridor re-geometried (dest 3 W of origin — a zero-offset corridor is
+visually seamless and cannot discriminate layers).
+
+**LEG-PROVEN (same night):** census `nest=180`/s at 60 fps = the full depth-3 chain (3→2→1,
+innermost-first) stamping every frame with 2 layer-0 captures alongside; zero breaks; NEW-path
+corridor screenshot pixel-class identical to the OLD path's — recursion PARITY. One live defect:
+the once-note was keyed on the CURRENT child layer, which recursion cycles every frame — the
+stamped=1↔2 bouncing-key trap re-walked (~180 log lines/s); re-keyed to a monotonic
+deepest-layer latch. Rule sharpened: on the new path, any per-VIEW value is a per-frame-CYCLING
+value once recursion exists — content-key only on monotonic or genuinely-latched state.
+
 ### ★ USER DECISIONS 2026-08-04 (record like policy — do NOT "fix" these)
 
 1. **The stronger motion blur on the portal render is a FEATURE** — user: "Keep both of these as
