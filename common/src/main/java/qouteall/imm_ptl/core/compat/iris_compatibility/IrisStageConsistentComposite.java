@@ -996,11 +996,13 @@ public final class IrisStageConsistentComposite {
     private static String lastStampAnnouncement = null;
 
     private static void noteStampPass(boolean writeAlt) {
-        String a = "stamped=" + capturesPendingThisFrame
-            + " writeAlt=" + writeAlt
+        // The per-frame VIEW COUNT lives in the 1Hz census (views=), NOT in this content key —
+        // S6 leg 8 showed a two-portal scene bouncing stamped=1↔2 several times a second,
+        // re-emitting this line constantly. Content-key only what indicates a STATE change.
+        String a = "writeAlt=" + writeAlt
             + " solid=" + IPGlobal.debugStampSolid + " tint=" + IPGlobal.debugTintStamp;
         if (a.equals(lastStampAnnouncement)) return;
         lastStampAnnouncement = a;
-        LOGGER.info("[Seamless Portals] [IS5-PRE] stamp pass ran at main renderAll HEAD — {}", a);
+        LOGGER.info("[Seamless Portals] [IS5-PRE] stamp pass live at main renderAll HEAD — {}", a);
     }
 }

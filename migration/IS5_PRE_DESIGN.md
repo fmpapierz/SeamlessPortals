@@ -289,6 +289,32 @@ rebuild. FIXED (hash below): cache key gains the MAIN PIPELINE OBJECT IDENTITY. 
 alongside: capture-copy GL error check (breaks loudly, never silently swallowed) + the 1Hz
 capture-content readback instrument.
 
+### S6 LEG 8 (2026-08-04 20:31+) — "ALL GOOD" MODULO ONE RESIDUAL CLASS ⇒ PART5 WORK LIST
+
+Window visible and STABLE through lens-flare and TAA rebuilds (the FBO identity fix holding);
+screenshots show the window motion-blurring coherently with the scene. User: **"all good,
+except"** three residuals — ALL ONE STRUCTURAL CLASS (the §5-disclosed "composites consult
+per-pixel data the stamp doesn't rewrite"; the "Complementary unaffected" line in §5 is hereby
+REFUTED by measurement):
+
+1. **MB ghost**: a clear outline of the SOURCE terrain paints onto the window content under MB
+   whips, gone with MB off ⇒ MB's velocity/reprojection consults the depthtex1/2 SNAPSHOTS,
+   copied mid-render BEFORE the stamp exists — at window pixels they hold source geometry
+   (V3's residual, now measured). FIX: stamp plane depth into depthtex1+depthtex2 with the same
+   mesh+floor (two small depth-only draws).
+2. **Water wobble**: source-side water behind the portal wobbles the dest view ⇒ the water
+   effect keys on the material mask in an aux colortex written by the SOURCE gbuffers. FIX:
+   capture+stamp the aux targets the composites read (pack-tuned list).
+3. **Nether-light bleed** into an overworld window ⇒ same aux class + the §5 exposure trade
+   (partially inherent, disclosed). Aux stamping should reduce it; full parity is not promised.
+
+Also: `stamped=` count REMOVED from the stamp announcement's content key (bounced 1↔2 per-frame
+on a two-portal scene, re-emitting constantly; the census `views=` carries the count).
+STILL PENDING FOR THE ARC: the user's EXPLICIT ring verdict (leg 8 "all good" implies it), the
+lever-off B-leg (ring returns), the §3.8 MB-correctness pre-registered check (implicitly
+exercised by the MB whips — no wrong-scenery smear reported), the C2 unit-size leg, part4
+recursion re-aim, part5 aux coherence, THEN the default flip.
+
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 
 The judged "save/restore CameraPositionTracker + gbufferPrevious* around the loop" has NO stable
