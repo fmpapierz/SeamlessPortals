@@ -146,6 +146,44 @@ public final class SeamFractional {
     }
 
     /**
+     * ★ ROUND 36 — THE BAND RULE (the flicker after the teleport landed): a particle whose
+     * CENTRE sits within quad-reach (0.12) of the cut plane pokes its billboard past it for the
+     * few frames before it crosses or drifts clear — the resident neck flame permanently. The
+     * crossing itself never flashes (the teleport runs inside the same tick that moves the
+     * particle); only the poke does. Hidden ONLY from viewers on the EMPTY side of that cell's
+     * plane: the owned side and true side-on views keep the full plume, and the empty side sees
+     * nothing at the seam — which is the whole contract. Two-object cells are exempt (material
+     * on both sides; nothing is "the empty side").
+     */
+    public static boolean particleHiddenFromEmptySide(
+        net.minecraft.world.level.Level level, net.minecraft.world.phys.Vec3 cameraPos,
+        double x, double y, double z
+    ) {
+        if (!active()) {
+            return false;
+        }
+        BlockPos cell = BlockPos.containing(x, y, z);
+        byte owned = SeamOccupancy.occupancyOf(level, cell);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return false;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
+        if (binding == null || binding.cut() == null) {
+            return false;
+        }
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        double off = binding.cut().srcPlaneOffset();
+        double cellMin = axis == Direction.Axis.X ? cell.getX()
+            : axis == Direction.Axis.Y ? cell.getY() : cell.getZ();
+        double local = (axis == Direction.Axis.X ? x : axis == Direction.Axis.Y ? y : z) - cellMin;
+        if (Math.abs(local - off) >= 0.12) {
+            return false;   // clear of the plane: the quad cannot poke through
+        }
+        byte camHalf = SeamOccupancy.halfFromHit(cameraPos, cell, axis, off);
+        return camHalf != owned;
+    }
+
+    /**
      * ★ ROUND 30 — where a particle may spawn, as a POSITION ANSWER rather than a yes/no:
      * <ul>
      *   <li>ordinary cell or owned half → spawn where asked;</li>
