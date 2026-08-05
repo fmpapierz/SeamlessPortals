@@ -821,14 +821,24 @@ public final class IrisStageConsistentComposite {
         return true;
     }
 
-    /** Stamp-target FBO cache: keyed on (colorTex, depthTex); nuked when either id changes
-     *  (resize/reload allocate new textures, so ids are the natural key). */
+    /** Stamp-target FBO cache — keyed on PIPELINE IDENTITY + texture names, never names alone.
+     *  THE S6 LENS-FLARE LATCH (leg 5, user: window "disappeared and turning lens flare off did
+     *  not bring portal back"): a pack-option rebuild deletes and recreates iris's textures, the
+     *  driver RECYCLES the freed GL names, a name-only key then keeps the OLD GlFramebuffer —
+     *  whose attachment still references the ORPHANED old texture object (kept alive by the
+     *  attachment reference; the FBO stays COMPLETE). The stamp then writes into the orphan:
+     *  valid GL, zero errors, census all green, window invisible, latched until restart. The
+     *  bloom mask dodges this exact trap by nuking its fboCache on every plan rebuild; the
+     *  pipeline-identity key is the same discipline (textures cannot be recycled WITHIN one
+     *  pipeline's lifetime). */
     private static GlFramebuffer stampFbo = null;
+    private static Object stampFboPipeline = null;
     private static int stampFboColorTex = 0;
     private static int stampFboDepthTex = 0;
 
-    private static GlFramebuffer ensureStampFbo(int colorTex, int depthTex) {
-        if (stampFbo != null && stampFboColorTex == colorTex && stampFboDepthTex == depthTex) {
+    private static GlFramebuffer ensureStampFbo(Object pipeline, int colorTex, int depthTex) {
+        if (stampFbo != null && stampFboPipeline == pipeline
+            && stampFboColorTex == colorTex && stampFboDepthTex == depthTex) {
             return stampFbo;
         }
         if (stampFbo != null) {
@@ -841,6 +851,7 @@ public final class IrisStageConsistentComposite {
         fbo.addDepthAttachmentBypass(depthTex);
         fbo.drawBuffers(new int[]{0});
         stampFbo = fbo;
+        stampFboPipeline = pipeline;
         stampFboColorTex = colorTex;
         stampFboDepthTex = depthTex;
         return fbo;
@@ -870,7 +881,7 @@ public final class IrisStageConsistentComposite {
             return;
         }
         if (!ensureStampProgram()) return;
-        GlFramebuffer fbo = ensureStampFbo(targetColor, depthGl.glId());
+        GlFramebuffer fbo = ensureStampFbo(mainPipeline, targetColor, depthGl.glId());
 
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
         boolean solid = IPGlobal.debugStampSolid;

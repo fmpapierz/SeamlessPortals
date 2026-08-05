@@ -271,6 +271,24 @@ FIXED (hash below): `_colorMask(15)` asserted in the stamp's state block. LESSON
 list: a HEAD-seam draw must assert EVERY write-enable it needs — there is no upstream
 re-establisher at a chain head.
 
+### S6 LEGS 5-7 (2026-08-04 19:30-20:22) — THE LENS-FLARE LATCH, CORNERED BY TWO LEVERS
+
+Leg 5 (mask fix live): window VISIBLE until the user toggled LENS FLARE (a pack-option pipeline
+rebuild) — then invisible, and toggling back did NOT restore it, across a fresh world, census
+all-green throughout. Leg 6 (`-PdebugStampSolid -PdebugTintStamp`): **"window is magenta"** — the
+write path (parity, LEQUAL, mask, downstream chain) PROVEN. Leg 7 (`-PdebugTintStamp` alone):
+**"Magenta-tinted destination"** + 1Hz capture readbacks showing live scene values — the capture
+content and its sampling PROVEN.
+
+**THE LATCH:** the stamp FBO cache was keyed on GL texture NAMES. A rebuild deletes/recreates
+iris textures; drivers recycle freed names; a name-match kept the OLD GlFramebuffer whose
+attachment references the ORPHANED old texture (alive via the attachment reference — the FBO
+stays COMPLETE). Stamps wrote into the orphan: valid GL, zero errors, census green, window
+invisible, latched until restart. The bloom mask dodges this by nuking its fboCache per plan
+rebuild. FIXED (hash below): cache key gains the MAIN PIPELINE OBJECT IDENTITY. Hardening landed
+alongside: capture-copy GL error check (breaks loudly, never silently swallowed) + the 1Hz
+capture-content readback instrument.
+
 ### §3.8 REFINEMENT (2026-08-04, measured against the jar — supersedes the tracker bracket)
 
 The judged "save/restore CameraPositionTracker + gbufferPrevious* around the loop" has NO stable
