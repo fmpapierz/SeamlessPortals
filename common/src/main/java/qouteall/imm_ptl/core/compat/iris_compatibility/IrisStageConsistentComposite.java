@@ -545,12 +545,48 @@ public final class IrisStageConsistentComposite {
                     + Integer.toHexString(depthFmt) + ")", null);
                 return;
             }
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the copy check */ }
             GL43C.glCopyImageSubData(
                 srcColor, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
                 slot.colorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
             GL43C.glCopyImageSubData(
                 srcDepth, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
                 slot.depthTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+            // S6 leg-6 hardening: an unchecked copy failure leaves the capture texture UNWRITTEN
+            // and the stamp's own clear-slate drain would swallow the queued error silently — the
+            // stamp would then faithfully paint garbage. A copy failure is a mechanism break, not
+            // a per-frame maybe.
+            int copyErr = GL11.glGetError();
+            if (copyErr != GL11.GL_NO_ERROR) {
+                breakMechanism("capture glCopyImageSubData failed (0x"
+                    + Integer.toHexString(copyErr) + ", srcColor=" + srcColor
+                    + " srcDepth=" + srcDepth + " " + w + "x" + h + ")", null);
+                return;
+            }
+            // 1Hz capture-content readback (log-only): one center pixel of the freshly-copied
+            // capture. Makes "what does the capture HOLD" log-readable — black ⇒ unwritten or
+            // cleared source side; scene-like ⇒ real content. The leg-6 magenta result proved the
+            // WRITE path, so content is the open question and it must not need eyes to answer.
+            long nowMs = System.currentTimeMillis();
+            if (nowMs - lastCaptureReadbackMs >= 1000) {
+                lastCaptureReadbackMs = nowMs;
+                try {
+                    java.nio.FloatBuffer px = BufferUtils.createFloatBuffer(3);
+                    GL45C.glGetTextureSubImage(
+                        slot.colorTex, 0, w / 2, h / 2, 0, 1, 1, 1,
+                        GL11.GL_RGB, GL11.GL_FLOAT, px);
+                    LOGGER.info(
+                        "[Seamless Portals] [IS5-PRE] capture center px rgb=({}, {}, {})"
+                            + " layer={} readAlt={}",
+                        String.format("%.4f", px.get(0)), String.format("%.4f", px.get(1)),
+                        String.format("%.4f", px.get(2)), slot.layer, readAlt
+                    );
+                } catch (Throwable readbackErr) {
+                    LOGGER.info("[Seamless Portals] [IS5-PRE] capture readback unavailable: {}",
+                        readbackErr.toString());
+                }
+                while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison the pass */ }
+            }
             // Capture-geometry witness (design §3.15 — the snapshot-witness discipline retargeted;
             // always on, content-keyed, WARN on any dimension oddity is impossible here by
             // construction since both copies use the SAME queried w/h — the announcement is the
@@ -625,6 +661,7 @@ public final class IrisStageConsistentComposite {
     }
 
     private static String lastCaptureGeometry = null;
+    private static long lastCaptureReadbackMs = 0;
 
     private static void noteCaptureGeometry(int w, int h, int colorFmt, int depthFmt) {
         String g = w + "x" + h + " color=0x" + Integer.toHexString(colorFmt)
