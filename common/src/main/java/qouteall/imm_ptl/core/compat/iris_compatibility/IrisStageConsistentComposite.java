@@ -928,8 +928,6 @@ public final class IrisStageConsistentComposite {
     private static GlFramebuffer stampFboAux = null;     // + aux target(s); null when main aux absent
     private static GlFramebuffer stampFboDepth1 = null;  // depthtex1 only (PART5 MB-ghost fix)
     private static GlFramebuffer stampFboDepth2 = null;  // depthtex2 only
-    private static Object stampFboPipeline = null;
-    private static String stampFboKey = null;
 
     private static void destroyStampFbos() {
         for (GlFramebuffer f : new GlFramebuffer[]{stampFbo, stampFboAux, stampFboDepth1, stampFboDepth2}) {
@@ -943,17 +941,17 @@ public final class IrisStageConsistentComposite {
         stampFboDepth2 = null;
     }
 
-    /** Rebuilds the FBO family when the PIPELINE IDENTITY or any involved texture id changes
-     *  (the lens-flare-latch discipline: identity first, names second). auxTex entries of 0 or a
-     *  missing depth1/2 id simply omit that FBO — enhancement-grade, never fatal. */
+    /** Rebuilds the FBO family EVERY STAMP PASS — no cross-frame caching AT ALL. Two latches
+     *  taught this: the lens-flare rebuild (pipeline changes, names recycled — fixed by identity
+     *  keying) and then the part5 leg's RESIZE/fullscreen latch (pipeline UNCHANGED, textures
+     *  recreated, names recycled ⇒ identity+name key HITS on an FBO attached to the ORPHANED
+     *  old-size textures; stamps valid, GL-clean, census green, window invisible, fresh world
+     *  irrelevant). Attachment references cannot be validated cheaply, so the only bulletproof
+     *  key is NO key: four small FBO builds per frame, no storage allocation — negligible.
+     *  auxTex entries of 0 or a missing depth1/2 id simply omit that FBO — never fatal. */
     private static void ensureStampFbos(
         Object pipeline, int colorTex, int depthTex, int[] mainAuxTex, int depth1Id, int depth2Id
     ) {
-        String key = colorTex + "/" + depthTex + "/" + java.util.Arrays.toString(mainAuxTex)
-            + "/" + depth1Id + "/" + depth2Id;
-        if (stampFbo != null && stampFboPipeline == pipeline && key.equals(stampFboKey)) {
-            return;
-        }
         destroyStampFbos();
         GlFramebuffer plain = new GlFramebuffer();
         plain.addColorAttachment(0, colorTex);
@@ -990,8 +988,6 @@ public final class IrisStageConsistentComposite {
             d2.noDrawBuffers();
             stampFboDepth2 = d2;
         }
-        stampFboPipeline = pipeline;
-        stampFboKey = key;
     }
 
     private static void runStampPass(
@@ -1088,6 +1084,14 @@ public final class IrisStageConsistentComposite {
             }
             for (CaptureSlot slot : captureSlots) {
                 if (!slot.pending || slot.layer != 0) continue;
+                if (slot.w != w || slot.h != h) {
+                    // Mid-frame resize: the capture predates the new geometry; a 1:1 texelFetch
+                    // against a stale-size capture reads out of bounds. One skipped view for one
+                    // frame, noted content-keyed.
+                    noteAuxDropOnce("stale-size capture skipped (" + slot.w + "x" + slot.h
+                        + " vs main " + w + "x" + h + ")");
+                    continue;
+                }
                 try (ByteBufferBuilder byteBuffer = new ByteBufferBuilder(
                     256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
                 )) {
