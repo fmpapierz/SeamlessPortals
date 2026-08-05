@@ -111,28 +111,33 @@ public final class SeamFractional {
     }
 
     /**
-     * ★ ROUND 27 — is the CLIENT camera on the empty half of this cut cell? Drives particle
-     * suppression ({@code ClientLevelSeamParticleMixin}): the empty side must see nothing of the
-     * block, including its ambient particles. {@code halfFromHit} is a pure side-of-plane test, so
-     * it is valid for any point, not just near hits. Client-only call sites.
+     * ★ ROUND 28 — is this world POSITION inside the EMPTY half of a cut seam cell? The particle
+     * rule, restated as an invariant about the WORLD instead of the camera (round 27's
+     * camera-side test let a slow torch particle spawned earlier keep rendering after the viewer
+     * crossed sides, and would also have wrongly suppressed owned-half particles from side-on
+     * viewpoints — the round-22 defect shape). A particle in the empty half must not EXIST:
+     * nothing there emits, so nothing there smokes. Suppressed at creation; camera-independent,
+     * so no view change can surface one. {@code halfFromHit} is a pure side-of-plane test, valid
+     * for any point.
      */
-    public static boolean cameraOnEmptyHalf(net.minecraft.world.level.Level level, BlockPos pos) {
-        if (!active() || !level.isClientSide()) {
+    public static boolean positionInEmptyHalf(
+        net.minecraft.world.level.Level level, double x, double y, double z
+    ) {
+        if (!active()) {
             return false;
         }
-        byte owned = SeamOccupancy.occupancyOf(level, pos);
+        BlockPos cell = BlockPos.containing(x, y, z);
+        byte owned = SeamOccupancy.occupancyOf(level, cell);
         if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
             return false;
         }
-        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
         if (binding == null || binding.cut() == null) {
             return false;
         }
-        net.minecraft.world.phys.Vec3 cam = net.minecraft.client.Minecraft.getInstance()
-            .gameRenderer.mainCamera().position();
-        byte camHalf = SeamOccupancy.halfFromHit(cam, pos,
-            binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
-        return camHalf != owned;
+        byte pointHalf = SeamOccupancy.halfFromHit(new net.minecraft.world.phys.Vec3(x, y, z),
+            cell, binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+        return pointHalf != owned;
     }
 
     /** Reentrancy guard for {@link #secondarySturdy} — the nested isFaceSturdy re-enters the hook. */

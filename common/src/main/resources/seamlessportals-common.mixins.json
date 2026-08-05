@@ -81,6 +81,8 @@
     "passthrough.ServerPlayerSeamResendMixin",
     "passthrough.LightEngineSeamTransparencyMixin",
     "passthrough.ServerPickSecondaryMixin",
+    "passthrough.FlintAndSteelSeamClaimMixin",
+    "passthrough.FireBlockSeamBreakMixin",
     "passthrough.MixinBlockItemCanPlace",
     "passthrough.MixinBaseRailBlockMirrorAuthority",
     "passthrough.MixinRailStateSeam",
