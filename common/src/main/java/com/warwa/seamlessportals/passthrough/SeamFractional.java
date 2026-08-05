@@ -135,8 +135,23 @@ public final class SeamFractional {
         if (binding == null || binding.cut() == null) {
             return false;
         }
+        // Plane-adjacent points belong to the OWNED half (round 29: "no particles emit when
+        // placing torch on seam now" — torch flames spawn at exactly the cell centre, i.e. ON a
+        // coincident plane, and the strict side test assigned the boundary to one fixed side,
+        // silencing every particle of an opposite-owned torch). The material's cut face IS at the
+        // plane; what emits there is the owned half's.
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        double off = binding.cut().srcPlaneOffset();
+        double local = switch (axis) {
+            case X -> x - cell.getX();
+            case Y -> y - cell.getY();
+            case Z -> z - cell.getZ();
+        };
+        if (Math.abs(local - off) < 0.02) {
+            return false;
+        }
         byte pointHalf = SeamOccupancy.halfFromHit(new net.minecraft.world.phys.Vec3(x, y, z),
-            cell, binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
+            cell, axis, off);
         return pointHalf != owned;
     }
 
