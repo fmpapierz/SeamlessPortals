@@ -1,14 +1,18 @@
 package com.warwa.seamlessportals.mixin.passthrough;
 
+import com.warwa.seamlessportals.passthrough.SeamFractional;
 import com.warwa.seamlessportals.passthrough.SeamWriteContext;
 import com.warwa.seamlessportals.passthrough.SeamWriteSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.FireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * ★ FIRE BREAKS LIKE A PLAYER (user round 28: "when fire breaks seam blocks, the breaking
@@ -59,6 +63,26 @@ public abstract class FireBlockSeamBreakMixin {
             return level.setBlock(pos, state, flags);
         } finally {
             SeamWriteContext.pop(saved);
+        }
+    }
+
+    /**
+     * ★ ROUND 30 — a seam-claimed fire survives only if the occupant of ITS half below is
+     * sturdy ("sometimes seam flame not breaking if underlying block is broken — fire just
+     * floats there": round 27's either-occupant support let the other object vouch for a fire
+     * whose own footing was gone). null = not a seam case, keep vanilla's verdict.
+     */
+    @Inject(method = "canSurvive", at = @At("RETURN"), cancellable = true, require = 1)
+    private void seamlessportals$surviveOnOwnHalfOnly(
+        BlockState state, LevelReader level, BlockPos pos,
+        CallbackInfoReturnable<Boolean> cir
+    ) {
+        if (!cir.getReturnValueZ()) {
+            return;
+        }
+        Boolean seamVerdict = SeamFractional.fireSupportedOnOwnHalf(level, pos);
+        if (seamVerdict != null && !seamVerdict) {
+            cir.setReturnValue(false);
         }
     }
 }
