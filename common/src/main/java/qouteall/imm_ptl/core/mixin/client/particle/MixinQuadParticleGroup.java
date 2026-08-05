@@ -66,6 +66,14 @@ public class MixinQuadParticleGroup {
             camera.position(), ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
             return;
         }
+        // ★ THE BAND RULE (seam round 36): a near-plane particle's billboard pokes past the cut
+        // for the frames before it crosses or drifts clear — hidden only from viewers on the
+        // EMPTY side of that cell (the flicker the teleport left behind).
+        if (com.warwa.seamlessportals.passthrough.SeamFractional.particleHiddenFromEmptySide(
+            Minecraft.getInstance().level, camera.position(),
+            ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
+            return;
+        }
         original.call(particle, state, camera, partialTick);
     }
 }
