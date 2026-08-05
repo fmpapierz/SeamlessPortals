@@ -164,6 +164,17 @@ public class MixinParticleEngine implements IEParticleManager {
                 ) {
                     continue;
                 }
+                // ★ SYMMETRIC EMPTINESS FOR WINDOW CONTENT (seam round 34): the window shows the
+                // far world's truth, and a cut cell's empty half contains nothing — including the
+                // far fragment's own drifting smoke. This is the dest-pass mirror of the seam's
+                // "there should be nothing" rule; the main pass deliberately does NOT filter by
+                // half (a side-on viewer sees the whole plume), it applies the window rule
+                // instead (MixinQuadParticleGroup).
+                if (com.warwa.seamlessportals.passthrough.SeamFractional.positionInEmptyHalf(
+                    worldFilter, ieParticle.portal_getX(), ieParticle.portal_getY(),
+                    ieParticle.portal_getZ())) {
+                    continue;
+                }
                 ((net.minecraft.client.particle.SingleQuadParticle) particle)
                     .extract(freshState, camera, partialTick);
             }
