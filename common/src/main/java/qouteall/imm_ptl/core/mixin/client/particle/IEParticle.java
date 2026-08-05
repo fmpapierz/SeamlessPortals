@@ -27,4 +27,51 @@ public interface IEParticle {
 
     @Accessor("z")
     double portal_getZ();
+
+    // ★ SEAM ROUND 35 — the PARTICLE SEAM TELEPORT (user-proposed mechanism: "can we do the same
+    // delete + mirror thing for particles like we do with blocks?"). A particle crossing into a
+    // cut cell's empty half is not culled — it is MOVED to the counterpart world/position, the
+    // client-side analogue of the entity teleport: re-tag the level (the global engine is
+    // multi-world by IP design; S18 renders dest-tagged particles through windows), reposition,
+    // and remap velocity. The level field is protected FINAL on 26.2 — hence @Mutable.
+
+    @org.spongepowered.asm.mixin.Mutable
+    @Accessor("level")
+    void portal_setWorld(ClientLevel level);
+
+    @Accessor("x")
+    void portal_setX(double x);
+
+    @Accessor("y")
+    void portal_setY(double y);
+
+    @Accessor("z")
+    void portal_setZ(double z);
+
+    @Accessor("xo")
+    void portal_setXo(double xo);
+
+    @Accessor("yo")
+    void portal_setYo(double yo);
+
+    @Accessor("zo")
+    void portal_setZo(double zo);
+
+    @Accessor("xd")
+    double portal_getXd();
+
+    @Accessor("yd")
+    double portal_getYd();
+
+    @Accessor("zd")
+    double portal_getZd();
+
+    @Accessor("xd")
+    void portal_setXd(double xd);
+
+    @Accessor("yd")
+    void portal_setYd(double yd);
+
+    @Accessor("zd")
+    void portal_setZd(double zd);
 }
