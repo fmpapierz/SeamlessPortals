@@ -409,6 +409,14 @@ public final class IrisStageConsistentComposite {
     static final class CaptureSlot {
         int colorTex = 0;
         int depthTex = 0;
+        /** PART5 aux capture (one per {@link #AUX_TARGETS} entry). Textures are POOLED
+         *  (auxTex != 0 persists across frames); auxValid marks whether THIS frame's copy
+         *  succeeded — the stamp writes aux only when valid. */
+        int[] auxTex = new int[AUX_TARGETS.length];
+        int[] auxFmt = new int[AUX_TARGETS.length];
+        int[] auxW = new int[AUX_TARGETS.length];
+        int[] auxH = new int[AUX_TARGETS.length];
+        boolean[] auxValid = new boolean[AUX_TARGETS.length];
         int w = -1, h = -1, colorFmt = 0, depthFmt = 0;
         boolean pending = false;
         Portal portal;
@@ -418,6 +426,17 @@ public final class IrisStageConsistentComposite {
         float partialTick;
         int layer;
     }
+
+    /**
+     * PART5 (S6 leg-8 residuals): aux colour targets captured from the dest chain and stamped
+     * alongside colortex0, so the MAIN chain's composites read DEST per-pixel data inside the
+     * window instead of source-gbuffer leftovers. PACK-TUNED, MEASURED for Complementary r5.8.1:
+     * `composite.glsl:96` reads the materialMask from colortex6.g — the carrier of the
+     * water-wobble residual (source water behind the portal wobbling the dest view) and part of
+     * the lighting keying. Per-target read/write parity comes from the SAME
+     * `stageReadsFromAlt` set as colortex0 (contains(t)).
+     */
+    private static final int[] AUX_TARGETS = {6};
 
     private static final ArrayList<CaptureSlot> captureSlots = new ArrayList<>();
     private static int capturesPendingThisFrame = 0;
@@ -514,12 +533,13 @@ public final class IrisStageConsistentComposite {
                 breakMechanism("pipeline.compositeRenderer is not a CompositeRenderer", null);
                 return;
             }
-            Boolean readAlt = resolvePassZeroReadsAlt((List<?>) fPasses.get(cr));
-            if (readAlt == null) {
+            Set<?> flipSet = resolvePassZeroFlipSet((List<?>) fPasses.get(cr));
+            if (flipSet == null) {
                 breakMechanism("no real composite pass 0 on the dest pipeline (compute-only or"
                     + " zero-composite pack)", null);
                 return;
             }
+            boolean readAlt = flipSet.contains(0);
             RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(irisRenderingPipeline);
             RenderTarget c0 = rts.get(0);
             if (c0 == null) {
@@ -562,6 +582,31 @@ public final class IrisStageConsistentComposite {
                     + Integer.toHexString(copyErr) + ", srcColor=" + srcColor
                     + " srcDepth=" + srcDepth + " " + w + "x" + h + ")", null);
                 return;
+            }
+            // PART5 aux capture (enhancement-grade: a failure DROPS the aux for this view, noted
+            // once, never breaks the mechanism — the window must not die for a data mask).
+            for (int i = 0; i < AUX_TARGETS.length; i++) {
+                slot.auxValid[i] = false;
+                int t = AUX_TARGETS[i];
+                RenderTarget auxRt = rts.get(t);
+                if (auxRt == null) continue;
+                int srcAux = flipSet.contains(t)
+                    ? auxRt.getAltTexture() : auxRt.getMainTexture();
+                int auxFmt = GL45C.glGetTextureLevelParameteri(
+                    srcAux, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                if (!ensureAuxStorage(slot, i, w, h, auxFmt)) {
+                    noteAuxDropOnce("aux" + t + " storage alloc rejected");
+                    continue;
+                }
+                GL43C.glCopyImageSubData(
+                    srcAux, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    slot.auxTex[i], GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                int auxErr = GL11.glGetError();
+                if (auxErr != GL11.GL_NO_ERROR) {
+                    noteAuxDropOnce("aux" + t + " copy failed 0x" + Integer.toHexString(auxErr));
+                } else {
+                    slot.auxValid[i] = true;
+                }
             }
             // 1Hz capture-content readback (log-only): one center pixel of the freshly-copied
             // capture. Makes "what does the capture HOLD" log-readable — black ⇒ unwritten or
@@ -614,16 +659,23 @@ public final class IrisStageConsistentComposite {
         }
     }
 
-    /** Pass-0 read side: first pass whose {@code stageReadsFromAlt} is non-null (a
-     *  ComputeOnlyPass never assigns it — V3); null when no real pass exists. */
-    private static Boolean resolvePassZeroReadsAlt(List<?> passes) throws IllegalAccessException {
+    /** Pass-0 flip set: first pass whose {@code stageReadsFromAlt} is non-null (a
+     *  ComputeOnlyPass never assigns it — V3); null when no real pass exists. `contains(t)` =
+     *  target t's content sits on ALT at composite entry — the per-target read/write parity for
+     *  colortex0 AND the PART5 aux targets alike. */
+    private static Set<?> resolvePassZeroFlipSet(List<?> passes) throws IllegalAccessException {
         for (Object pass : passes) {
             Object set = fPassReadsFromAlt.get(pass);
             if (set != null) {
-                return ((Set<?>) set).contains(0);
+                return (Set<?>) set;
             }
         }
         return null;
+    }
+
+    private static Boolean resolvePassZeroReadsAlt(List<?> passes) throws IllegalAccessException {
+        Set<?> set = resolvePassZeroFlipSet(passes);
+        return set == null ? null : set.contains(0);
     }
 
     private static boolean ensureSlotStorage(
@@ -662,6 +714,37 @@ public final class IrisStageConsistentComposite {
 
     private static String lastCaptureGeometry = null;
     private static long lastCaptureReadbackMs = 0;
+    private static final Set<String> auxDropNotes = new java.util.HashSet<>();
+
+    private static void noteAuxDropOnce(String what) {
+        if (auxDropNotes.add(what)) {
+            LOGGER.info("[Seamless Portals] [IS5-PRE] aux capture dropped: {} (window unaffected;"
+                + " the aux-coherence enhancement is absent for such frames)", what);
+        }
+    }
+
+    private static boolean ensureAuxStorage(CaptureSlot slot, int i, int w, int h, int fmt) {
+        if (slot.auxTex[i] != 0 && slot.auxW[i] == w && slot.auxH[i] == h
+            && slot.auxFmt[i] == fmt) {
+            return true;
+        }
+        if (slot.auxTex[i] != 0) {
+            GL11.glDeleteTextures(slot.auxTex[i]);
+            slot.auxTex[i] = 0;
+        }
+        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the alloc check */ }
+        int tex = GL45C.glCreateTextures(GL11.GL_TEXTURE_2D);
+        GL45C.glTextureStorage2D(tex, 1, fmt, w, h);
+        if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+            GL11.glDeleteTextures(tex);
+            return false;
+        }
+        slot.auxTex[i] = tex;
+        slot.auxW[i] = w;
+        slot.auxH[i] = h;
+        slot.auxFmt[i] = fmt;
+        return true;
+    }
 
     private static void noteCaptureGeometry(int w, int h, int colorFmt, int depthFmt) {
         String g = w + "x" + h + " color=0x" + Integer.toHexString(colorFmt)
@@ -768,15 +851,23 @@ public final class IrisStageConsistentComposite {
      *  u_solid=1 replaces the sample with the vertex colour (-PdebugStampSolid — keeps the
      *  StampCoverageProbe classifier levers working identically on the new path);
      *  gl_FragDepth = max(gl_FragCoord.z, 0.001) — the IS5-HAND floor, per fragment. */
+    /** PART5: out location 1 → drawBuffers[1] = the aux attachment. On the PLAIN fbo
+     *  (drawBuffers {0}) the aux output has no buffer and is dropped by GL — one program serves
+     *  both configs. The aux is a DATA target (materialMask): never tinted, never solid-replaced.
+     *  Depth-only draws (depthtex1/2 FBOs, noDrawBuffers) drop both colour outs and keep the
+     *  gl_FragDepth floor. */
     private static final String STAMP_FRAGMENT_SRC = """
         #version 330 core
         uniform sampler2D u_capture;
+        uniform sampler2D u_captureAux;
         uniform float u_solid;
         in vec4 vertexColor;
-        out vec4 fragColor;
+        layout(location = 0) out vec4 fragColor;
+        layout(location = 1) out vec4 auxColor;
         void main() {
             vec4 sampled = vec4(texelFetch(u_capture, ivec2(gl_FragCoord.xy), 0).rgb, 1.0);
             fragColor = mix(sampled * vertexColor, vertexColor, u_solid);
+            auxColor = texelFetch(u_captureAux, ivec2(gl_FragCoord.xy), 0);
             gl_FragDepth = max(gl_FragCoord.z, 0.001);
         }
         """;
@@ -784,6 +875,7 @@ public final class IrisStageConsistentComposite {
     private static int stampProgram = 0;
     private static int locCombined = -1;
     private static int locCapture = -1;
+    private static int locCaptureAux = -1;
     private static int locSolid = -1;
     private static final FloatBuffer matBuf = BufferUtils.createFloatBuffer(16);
 
@@ -817,6 +909,7 @@ public final class IrisStageConsistentComposite {
         stampProgram = prog;
         locCombined = GL20C.glGetUniformLocation(prog, "u_combined");
         locCapture = GL20C.glGetUniformLocation(prog, "u_capture");
+        locCaptureAux = GL20C.glGetUniformLocation(prog, "u_captureAux");
         locSolid = GL20C.glGetUniformLocation(prog, "u_solid");
         return true;
     }
@@ -831,41 +924,86 @@ public final class IrisStageConsistentComposite {
      *  bloom mask dodges this exact trap by nuking its fboCache on every plan rebuild; the
      *  pipeline-identity key is the same discipline (textures cannot be recycled WITHIN one
      *  pipeline's lifetime). */
-    private static GlFramebuffer stampFbo = null;
+    private static GlFramebuffer stampFbo = null;        // colortex0 + depthtex0, drawBuffers {0}
+    private static GlFramebuffer stampFboAux = null;     // + aux target(s); null when main aux absent
+    private static GlFramebuffer stampFboDepth1 = null;  // depthtex1 only (PART5 MB-ghost fix)
+    private static GlFramebuffer stampFboDepth2 = null;  // depthtex2 only
     private static Object stampFboPipeline = null;
-    private static int stampFboColorTex = 0;
-    private static int stampFboDepthTex = 0;
+    private static String stampFboKey = null;
 
-    private static GlFramebuffer ensureStampFbo(Object pipeline, int colorTex, int depthTex) {
-        if (stampFbo != null && stampFboPipeline == pipeline
-            && stampFboColorTex == colorTex && stampFboDepthTex == depthTex) {
-            return stampFbo;
+    private static void destroyStampFbos() {
+        for (GlFramebuffer f : new GlFramebuffer[]{stampFbo, stampFboAux, stampFboDepth1, stampFboDepth2}) {
+            if (f != null) {
+                try { f.destroy(); } catch (Throwable ignored) {}
+            }
         }
-        if (stampFbo != null) {
-            try { stampFbo.destroy(); } catch (Throwable ignored) {}
-            stampFbo = null;
+        stampFbo = null;
+        stampFboAux = null;
+        stampFboDepth1 = null;
+        stampFboDepth2 = null;
+    }
+
+    /** Rebuilds the FBO family when the PIPELINE IDENTITY or any involved texture id changes
+     *  (the lens-flare-latch discipline: identity first, names second). auxTex entries of 0 or a
+     *  missing depth1/2 id simply omit that FBO — enhancement-grade, never fatal. */
+    private static void ensureStampFbos(
+        Object pipeline, int colorTex, int depthTex, int[] mainAuxTex, int depth1Id, int depth2Id
+    ) {
+        String key = colorTex + "/" + depthTex + "/" + java.util.Arrays.toString(mainAuxTex)
+            + "/" + depth1Id + "/" + depth2Id;
+        if (stampFbo != null && stampFboPipeline == pipeline && key.equals(stampFboKey)) {
+            return;
         }
-        GlFramebuffer fbo = new GlFramebuffer();
-        fbo.addColorAttachment(0, colorTex);
+        destroyStampFbos();
+        GlFramebuffer plain = new GlFramebuffer();
+        plain.addColorAttachment(0, colorTex);
         // javap-pinned: addDepthAttachment takes a GpuTexture; the raw-id variant is the Bypass.
-        fbo.addDepthAttachmentBypass(depthTex);
-        fbo.drawBuffers(new int[]{0});
-        stampFbo = fbo;
+        plain.addDepthAttachmentBypass(depthTex);
+        plain.drawBuffers(new int[]{0});
+        stampFbo = plain;
+        boolean allAuxPresent = true;
+        for (int t : mainAuxTex) {
+            if (t == 0) allAuxPresent = false;
+        }
+        if (allAuxPresent && mainAuxTex.length > 0) {
+            GlFramebuffer aux = new GlFramebuffer();
+            aux.addColorAttachment(0, colorTex);
+            int[] db = new int[1 + AUX_TARGETS.length];
+            db[0] = 0;
+            for (int i = 0; i < AUX_TARGETS.length; i++) {
+                aux.addColorAttachment(AUX_TARGETS[i], mainAuxTex[i]);
+                db[1 + i] = AUX_TARGETS[i];
+            }
+            aux.addDepthAttachmentBypass(depthTex);
+            aux.drawBuffers(db);
+            stampFboAux = aux;
+        }
+        if (depth1Id != 0) {
+            GlFramebuffer d1 = new GlFramebuffer();
+            d1.addDepthAttachmentBypass(depth1Id);
+            d1.noDrawBuffers();
+            stampFboDepth1 = d1;
+        }
+        if (depth2Id != 0) {
+            GlFramebuffer d2 = new GlFramebuffer();
+            d2.addDepthAttachmentBypass(depth2Id);
+            d2.noDrawBuffers();
+            stampFboDepth2 = d2;
+        }
         stampFboPipeline = pipeline;
-        stampFboColorTex = colorTex;
-        stampFboDepthTex = depthTex;
-        return fbo;
+        stampFboKey = key;
     }
 
     private static void runStampPass(
         IrisRenderingPipeline mainPipeline, CompositeRenderer mainCompositeRenderer
     ) throws IllegalAccessException {
         while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
-        Boolean writeAlt = resolvePassZeroReadsAlt((List<?>) fPasses.get(mainCompositeRenderer));
-        if (writeAlt == null) {
+        Set<?> flipSet = resolvePassZeroFlipSet((List<?>) fPasses.get(mainCompositeRenderer));
+        if (flipSet == null) {
             breakMechanism("no real composite pass 0 on the MAIN pipeline", null);
             return;
         }
+        boolean writeAlt = flipSet.contains(0);
         RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(mainPipeline);
         RenderTarget c0 = rts.get(0);
         if (c0 == null) {
@@ -880,8 +1018,21 @@ public final class IrisStageConsistentComposite {
             breakMechanism("MAIN depthtex0 not a GlTexture at stamp", null);
             return;
         }
+        // PART5: main-side aux write textures (same flip-set parity as c0; 0 = absent) and the
+        // depthtex1/2 snapshot ids (the MB-ghost fix targets; 0 = absent, draws skipped).
+        int[] mainAuxTex = new int[AUX_TARGETS.length];
+        for (int i = 0; i < AUX_TARGETS.length; i++) {
+            RenderTarget auxRt = rts.get(AUX_TARGETS[i]);
+            if (auxRt != null) {
+                mainAuxTex[i] = flipSet.contains(AUX_TARGETS[i])
+                    ? auxRt.getAltTexture() : auxRt.getMainTexture();
+            }
+        }
+        int depth1Id = rts.getDepthTextureNoTranslucents() instanceof GlTexture d1 ? d1.glId() : 0;
+        int depth2Id = rts.getDepthTextureNoHand() instanceof GlTexture d2 ? d2.glId() : 0;
         if (!ensureStampProgram()) return;
-        GlFramebuffer fbo = ensureStampFbo(mainPipeline, targetColor, depthGl.glId());
+        ensureStampFbos(mainPipeline, targetColor, depthGl.glId(), mainAuxTex, depth1Id, depth2Id);
+        GlFramebuffer fbo = stampFbo;
 
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
         boolean solid = IPGlobal.debugStampSolid;
@@ -920,6 +1071,7 @@ public final class IrisStageConsistentComposite {
             }
             GlStateManager._glUseProgram(stampProgram);
             GL20C.glUniform1i(locCapture, 0);
+            GL20C.glUniform1i(locCaptureAux, 1);
             GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
 
@@ -955,6 +1107,17 @@ public final class IrisStageConsistentComposite {
                             )
                         );
                     }
+                    // PART5: slots with a valid aux capture use the MRT fbo (writes the aux data
+                    // target inside the window); others use the plain one — never write an aux
+                    // attachment from an undefined sampler.
+                    boolean useAux = stampFboAux != null && slot.auxValid.length > 0
+                        && slot.auxValid[0];
+                    (useAux ? stampFboAux : fbo).bind();
+                    if (useAux) {
+                        GlStateManager._activeTexture(GL13.GL_TEXTURE1);
+                        GlStateManager._bindTexture(slot.auxTex[0]);
+                        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                    }
                     GlStateManager._bindTexture(slot.colorTex);
                     ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
                         .vertexArrayCache().bindVertexArray(
@@ -966,6 +1129,19 @@ public final class IrisStageConsistentComposite {
                     new Matrix4f(mainProj).mul(mainMv).get(matBuf);
                     GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
                     GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    // PART5 MB-ghost fix: replay the same mesh depth-only into the depthtex1/2
+                    // SNAPSHOTS (copied mid-render BEFORE the stamp existed — at window pixels
+                    // they held SOURCE geometry, and the pack's MB reprojects along it = the
+                    // measured ghost outline). Same LEQUAL + gl_FragDepth floor; colour outs are
+                    // dropped (noDrawBuffers); depthtex1's solid-hand content survives the test.
+                    if (stampFboDepth1 != null) {
+                        stampFboDepth1.bind();
+                        GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    }
+                    if (stampFboDepth2 != null) {
+                        stampFboDepth2.bind();
+                        GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    }
                 }
             }
         } finally {
