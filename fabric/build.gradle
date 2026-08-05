@@ -591,9 +591,10 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableBloomMaskGathererRetarget=true
             if (project.findProperty('disableBloomMaskGathererRetarget') == 'true') { vmArg('-Dseamlessportals.disableBloomMaskGathererRetarget=true') }
             // IS5-PRE stage-consistent compositing (migration/IS5_PRE_DESIGN.md) — the occluder-ring
-            // MECHANISM fix. Dev default OFF; enable to run the new path, disable-row reserved for
-            // the post-A/B default flip —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstageConsistentComposite=true
+            // MECHANISM fix. DEFAULT ON since 2026-08-05 (the regression session gated the flip:
+            // IS5_PRE_REGRESSION_RESULTS.md). The disable row is the SHIPPED lever — the old
+            // post-final path, i.e. the on-command ring reproduction —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStageConsistentComposite=true
             if (project.findProperty('stageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.stageConsistentComposite=true') }
             if (project.findProperty('disableStageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.disableStageConsistentComposite=true') }
             // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
@@ -1057,6 +1058,47 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXcutFragFloor=true
             if (project.findProperty('disableXcutFragFloor') == 'true') { vmArg('-Dseamlessportals.disableXcutFragFloor=true') }
         }
+        // IS5-PRE REGRESSION DRIVER (2026-08-05; migration/IS5_PRE_REGRESSION_HANDOFF.md §2) —
+        // scripted shaders-ON regression legs with screenshots as classifiable evidence: the
+        // A/B ring pair (MB strafe burst against a staged occluder), XWIN, crossing both
+        // directions, nested recursion, resize, shader toggle. Same scene + same motion on
+        // both paths; the lever is the ONLY variable across a pair of runs:
+        //   .\gradlew.bat :fabric:runIs5RegressionGametest -PirisRuntime=true -PstageConsistentComposite=true
+        //   .\gradlew.bat :fabric:runIs5RegressionGametest -PirisRuntime=true      (OLD path — ring on command)
+        // C2 unit-size acceptance mode (C2_JIT_PROTECTION.md §6 recipe: dense stack immediately
+        // on load, continuous motion, cross-dim round trips, NO shader toggling; gate on UNIT
+        // SIZE in runs/gametest-is5/c2_inlining.xml, never on a clean run):
+        //   .\gradlew.bat :fabric:runIs5RegressionGametest -PirisRuntime=true -PstageConsistentComposite=true -Pc2Inlining=true -Pis5C2HoldSeconds=720 -PirisMaxPortalLayer=6
+        is5RegressionGametest {
+            client()
+            setConfigName('IS5 Regression Driver')
+            runDir('runs/gametest-is5')
+            property('fabric.client.gametest', 'true')
+            property('fabric.client.gametest.modid', project.mod_id)
+            property('seamlessportals.gametest.only', 'is5regression')
+            // C2 JIT protection — see migration/C2_JIT_PROTECTION.md and ext.c2JitArgs.
+            c2JitArgs().each { vmArg(it) }
+            vmArg('-XX:-OmitStackTraceInFastThrow')
+            // The driver IS the visual instrument — screenshots always on.
+            vmArg('-Dseamlessportals.gametest.screenshots=true')
+            // Landing-proof contract: with -PirisRuntime the driver hard-fails unless the
+            // shaderpack actually loaded (a leg without its landing proof is VOID).
+            if (project.hasProperty('irisRuntime')) { vmArg('-Dseamlessportals.is5.expectIris=true') }
+            if (project.hasProperty('is5C2HoldSeconds')) { vmArg("-Dseamlessportals.is5.c2holdSeconds=" + project.is5C2HoldSeconds) }
+            if (project.findProperty('stageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.stageConsistentComposite=true') }
+            if (project.findProperty('disableStageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.disableStageConsistentComposite=true') }
+            // The StampCoverageProbe classifier levers, identical on both paths.
+            if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
+            if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
+            if (project.hasProperty("irisMaxPortalLayer")) { vmArg("-Dseamlessportals.irisMaxPortalLayer=" + project.irisMaxPortalLayer) }
+            if (project.hasProperty("irisMaxDestRenders")) { vmArg("-Dseamlessportals.irisMaxDestRenders=" + project.irisMaxDestRenders) }
+            // IS5-CEN composite census (mirror of the clientSodium lever): per-bind |cam-prev| —
+            // the MB-liveness instrument for driver legs (2026-08-05: harness strafe frames
+            // measured blur-free on BOTH paths; the census says whether the camera delta ever
+            // reaches the MB pass in-harness).
+            if (project.findProperty('compositeCensus') == 'true') { vmArg('-Dseamlessportals.compositeCensus=true') }
+            if (project.hasProperty('compositeCensusPasses')) { vmArg("-Dseamlessportals.compositeCensusPasses=${project.property('compositeCensusPasses')}") }
+        }
     }
 }
 
@@ -1089,6 +1131,41 @@ tasks.matching { it.name == 'runCrossingGametest' }.configureEach {
         // framework asserts a bare title screen between tests, and the splash
         // sits over it. Gson AutoConfig leaves absent fields at their defaults.
         new File(cfgDir, 'immersive_portals.json').text = '{\n  "initialScreenShown": true\n}\n'
+    }
+}
+
+// IS5 regression driver run dir: crossing-parity seeds (entity portals ON, splash suppressed)
+// PLUS the iris stage — the shaderpack AND its option sidecar are copied from the live
+// client-sodium run dir, so a driver leg runs under the user's exact pack-option state
+// (MB=1 str=2.00, TAA_JITTER=2, LENSFLARE_MODE=2 as of 2026-08-05). The sidecar content is
+// echoed to the build log at every launch: the pack-options-drift discipline wants each leg's
+// option state ON THE RECORD, and an absent key means pack default, not "off".
+tasks.matching { it.name == 'runIs5RegressionGametest' }.configureEach {
+    doFirst {
+        def cfgDir = file('runs/gametest-is5/config')
+        cfgDir.mkdirs()
+        new File(cfgDir, 'seamlessportals.properties').text = 'entityPortals=true\n'
+        new File(cfgDir, 'immersive_portals.json').text = '{\n  "initialScreenShown": true\n}\n'
+        def packDir = file('runs/gametest-is5/shaderpacks')
+        packDir.mkdirs()
+        def srcPack = file('runs/client-sodium/shaderpacks/ComplementaryReimagined_r5.8.1.zip')
+        def srcSidecar = file('runs/client-sodium/shaderpacks/ComplementaryReimagined_r5.8.1.zip.txt')
+        if (srcPack.exists()) {
+            def dstPack = new File(packDir, srcPack.name)
+            if (!dstPack.exists() || dstPack.length() != srcPack.length()) {
+                dstPack.bytes = srcPack.bytes
+            }
+            if (srcSidecar.exists()) {
+                new File(packDir, srcSidecar.name).text = srcSidecar.text
+                logger.lifecycle('[IS5-GT] sidecar staged: '
+                    + srcSidecar.text.readLines().findAll { it.contains('=') }.join(' | '))
+            }
+            new File(cfgDir, 'iris.properties').text =
+                "enableShaders=true\nshaderPack=${srcPack.name}\nmaxShadowRenderDistance=32\n"
+        } else {
+            logger.lifecycle('[IS5-GT] NO shaderpack found in runs/client-sodium/shaderpacks —'
+                + ' this run is iris-inert (fine for a plain smoke, VOID for a shaders-ON leg)')
+        }
     }
 }
 

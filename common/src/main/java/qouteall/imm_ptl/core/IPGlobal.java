@@ -1204,10 +1204,13 @@ public class IPGlobal {
     // content TOGETHER, once. The old post-final path remains whole behind this flag: it is the
     // on-command ring reproduction and the escape hatch for every closed arc.
     // ONE static-final resolved at class load (mixins cannot unload; every hook gates on this same
-    // immutable value — the path can never mix mid-session). Dev default FALSE; enable via
-    // -PstageConsistentComposite=true. The DEFAULT constant flips true (and
-    // -PdisableStageConsistentComposite becomes the lever) only after both live A/B directions pass.
-    public static final boolean STAGE_CONSISTENT_COMPOSITE_DEFAULT = false;
+    // immutable value — the path can never mix mid-session). DEFAULT FLIPPED TRUE 2026-08-05
+    // after the regression session (IS5_PRE_REGRESSION_RESULTS.md): the §2 matrix on both paths,
+    // the C2 unit-size acceptance leg, and part4 (nested capture-to-capture) all passed.
+    // -PdisableStageConsistentComposite is the SHIPPED lever — the on-command old-path/ring
+    // reproduction and the escape hatch for every closed arc; -PstageConsistentComposite=true
+    // remains accepted (redundant now) so existing leg commands keep working.
+    public static final boolean STAGE_CONSISTENT_COMPOSITE_DEFAULT = true;
     public static final boolean STAGE_CONSISTENT_COMPOSITE =
         Boolean.getBoolean("seamlessportals.stageConsistentComposite")
             || (STAGE_CONSISTENT_COMPOSITE_DEFAULT
