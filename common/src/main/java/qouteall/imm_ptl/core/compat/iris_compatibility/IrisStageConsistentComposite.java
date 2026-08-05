@@ -382,6 +382,96 @@ public final class IrisStageConsistentComposite {
         LOGGER.info("[Seamless Portals] [IS5-PRE] bob witness: {}", status);
     }
 
+    // =============================================================================================
+    // §3.8 FALLBACK — the pre-registered check FAILED (ghost-double leg, 2026-08-05): the shared
+    // notifier's CameraPositionTracker is saved/restored around the frame-start loop, so the MAIN
+    // frame's TAA/MB reproject with the true main camera delta instead of cameraOffset ≈ the
+    // portal offset (the "terrain ghost double containing a faint magenta window" — the previous
+    // frame reprojected at the portal offset, position-driven, portal-visible-gated). The
+    // draw-time DestPrevCamera correction did NOT cover the main chain here: its nearest-match
+    // "writes back what iris already holds" — the judged caveat, now measured. Tracker located by
+    // LISTENER-CAPTURE SCAN (the tracker is a lambda-captured local; its five Vector3d fields are
+    // javap-pinned). Rotated-portal caveat: prev MATRICES are not bracketed — for non-rotated
+    // portals the rotation part is unpoisoned; revisit if a rotated-portal ghost appears.
+    // =============================================================================================
+
+    private static Object trackedNotifier = null;
+    private static Object cameraTracker = null;
+    private static Field[] trackerVecFields = null;
+    private static final org.joml.Vector3d[] trackerSaved =
+        {new org.joml.Vector3d(), new org.joml.Vector3d(), new org.joml.Vector3d(),
+         new org.joml.Vector3d(), new org.joml.Vector3d()};
+    private static boolean trackerBracketNoted = false;
+
+    private static boolean locateCameraTracker() {
+        try {
+            Object pipeline = Iris.getPipelineManager().getPipelineNullable();
+            if (!(pipeline instanceof IrisRenderingPipeline irp)) return false;
+            Object notifier = irp.getFrameUpdateNotifier();
+            if (notifier == trackedNotifier && cameraTracker != null) return true;
+            trackedNotifier = notifier;
+            cameraTracker = null;
+            trackerVecFields = null;
+            Field fListeners = notifier.getClass().getDeclaredField("listeners");
+            fListeners.setAccessible(true);
+            for (Object listener : (List<?>) fListeners.get(notifier)) {
+                for (Field f : listener.getClass().getDeclaredFields()) {
+                    if (f.getType().getName().endsWith("CameraPositionTracker")) {
+                        f.setAccessible(true);
+                        Object tracker = f.get(listener);
+                        if (tracker == null) continue;
+                        Field[] vecs = new Field[5];
+                        String[] names = {"previousCameraPosition", "currentCameraPosition",
+                            "previousCameraPositionUnshifted", "currentCameraPositionUnshifted",
+                            "shift"};
+                        for (int i = 0; i < 5; i++) {
+                            vecs[i] = tracker.getClass().getDeclaredField(names[i]);
+                            vecs[i].setAccessible(true);
+                        }
+                        cameraTracker = tracker;
+                        trackerVecFields = vecs;
+                        if (!trackerBracketNoted) {
+                            trackerBracketNoted = true;
+                            LOGGER.info("[Seamless Portals] [IS5-PRE] camera tracker located via"
+                                + " listener-capture scan — the §3.8 fallback bracket is LIVE");
+                        }
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            noteAuxDropOnce("camera tracker scan failed: " + t);
+        }
+        return cameraTracker != null;
+    }
+
+    /** Save the tracker's five vectors before the frame-start loop. Returns false (no restore
+     *  needed) when the tracker cannot be located — the ghost-double returns in that case, which
+     *  the once-only scan-failed note makes attributable. */
+    public static boolean cameraTrackerSave() {
+        if (!PATH_ACTIVE || mechanismBroken) return false;
+        if (!locateCameraTracker()) return false;
+        try {
+            for (int i = 0; i < 5; i++) {
+                trackerSaved[i].set((org.joml.Vector3d) trackerVecFields[i].get(cameraTracker));
+            }
+            return true;
+        } catch (Throwable t) {
+            noteAuxDropOnce("camera tracker save failed: " + t);
+            return false;
+        }
+    }
+
+    public static void cameraTrackerRestore() {
+        try {
+            for (int i = 0; i < 5; i++) {
+                ((org.joml.Vector3d) trackerVecFields[i].get(cameraTracker)).set(trackerSaved[i]);
+            }
+        } catch (Throwable t) {
+            noteAuxDropOnce("camera tracker restore failed: " + t);
+        }
+    }
+
     private static boolean nestedLayerDeferredNoted = false;
 
     /** Part3 scope cut, disclosed: nested portal layers (portal-in-portal) are DEFERRED on the
