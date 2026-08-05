@@ -1,44 +1,37 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import com.warwa.seamlessportals.passthrough.SeamFractional;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
-import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.particle.Particle;
+import net.minecraft.client.particle.ParticleEngine;
+import net.minecraft.core.particles.ParticleOptions;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * ★ NO PARTICLE BLEED (user round 27: "if i put a torch on seam side a and go to side b, the
- * particles bleed through on side b"). Ambient block particles ({@code Block.animateTick} — torch
- * flames, campfire smoke, etc.) spawn at model-space offsets that sit on or near the cut plane,
- * so the empty side saw them floating in what must read as nothing. The dispatch is redirected:
- * a cut seam cell simply does not animate-tick while the camera is on its EMPTY half. On the
- * owned side everything spawns as vanilla; the far side's own mirrored fragment carries its own
- * particles for viewers over there.
+ * ★ NO PARTICLE IN THE EMPTY HALF — round 28's restatement of round 27's particle rule. The
+ * first form suppressed {@code animateTick} by CAMERA side, which left two holes the user found
+ * within a session: a slow particle spawned while the viewer stood on the owned side kept
+ * rendering after they crossed ("just that one slow particle will bleed through"), and a side-on
+ * viewer would have lost owned-half particles they can legitimately see. The honest invariant is
+ * about the WORLD: the empty half of a cut seam cell contains nothing, so nothing may emit
+ * there. Enforced at the particle-creation funnel ({@code ParticleEngine.createParticle}) by
+ * spawn POSITION — camera-independent, so no view change can surface a stale one. Particles
+ * spawned in the OWNED half render for everyone, exactly like the material they rise from.
  */
-@Mixin(ClientLevel.class)
+@Mixin(ParticleEngine.class)
 public abstract class ClientLevelSeamParticleMixin {
 
-    @Redirect(
-        method = "doAnimateTick",
-        at = @At(
-            value = "INVOKE",
-            target = "Lnet/minecraft/world/level/block/Block;animateTick("
-                + "Lnet/minecraft/world/level/block/state/BlockState;"
-                + "Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;"
-                + "Lnet/minecraft/util/RandomSource;)V"
-        )
-    )
-    private void seamlessportals$noParticleBleed(
-        Block block, BlockState state, Level level, BlockPos pos, RandomSource random
+    @Inject(method = "createParticle", at = @At("HEAD"), cancellable = true, require = 1)
+    private void seamlessportals$noParticleInTheEmptyHalf(
+        ParticleOptions options, double x, double y, double z,
+        double vx, double vy, double vz, CallbackInfoReturnable<Particle> cir
     ) {
-        if (SeamFractional.cameraOnEmptyHalf(level, pos)) {
-            return;
+        var level = Minecraft.getInstance().level;
+        if (level != null && SeamFractional.positionInEmptyHalf(level, x, y, z)) {
+            cir.setReturnValue(null);
         }
-        block.animateTick(state, level, pos, random);
     }
 }
