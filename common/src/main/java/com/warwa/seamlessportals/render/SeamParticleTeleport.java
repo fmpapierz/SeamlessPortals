@@ -45,18 +45,42 @@ public final class SeamParticleTeleport {
             return;
         }
         double x = ie.portal_getX(), y = ie.portal_getY(), z = ie.portal_getZ();
-        if (!SeamFractional.positionInEmptyHalf(level, x, y, z)) {
-            return;
-        }
         BlockPos cell = BlockPos.containing(x, y, z);
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
         if (seam == null) {
             return;
         }
+        // ★ ROUND 37 — OCCUPANCY IS NOT THE GATE (the smoke miss: flames hug the torch's own
+        // occupied cell and teleported; smoke rises into the OPEN aperture cell above, crossed
+        // the plane there with no occupancy anywhere, and sailed into the local far side). An
+        // aperture cell is portal surface whether or not a block occupies it: a particle beyond
+        // a binding's plane goes through via THAT binding. Occupied cells keep their material
+        // protection — a particle in the owned half stays, and an empty-half crosser travels via
+        // the binding whose front IS the owned half (the material's own continuation).
+        byte owned = com.warwa.seamlessportals.passthrough.SeamOccupancy.occupancyOf(level, cell);
+        if (owned == SeamOccupancy.BOTH) {
+            return;   // materially whole: no crossing surface inside this cell
+        }
+        boolean singleOwned = owned == SeamOccupancy.HALF_POSITIVE
+            || owned == SeamOccupancy.HALF_NEGATIVE;
         SeamRegistry.SeamBinding binding = null;
         for (SeamRegistry.SeamBinding b : seam.bindings()) {
-            if (b != null && b.isMirrorable() && b.cut() != null && b.destPos() != null) {
-                binding = b;
+            if (b == null || !b.isMirrorable() || b.cut() == null || b.destPos() == null) {
+                continue;
+            }
+            byte particleHalf = SeamOccupancy.halfFromHit(
+                new net.minecraft.world.phys.Vec3(x, y, z), cell,
+                b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
+            if (singleOwned) {
+                if (particleHalf == owned) {
+                    return;   // in the material: it belongs here
+                }
+                if (SeamOccupancy.halfOf(b.srcFacing()) == owned) {
+                    binding = b;   // cross via the material's own continuation
+                    break;
+                }
+            } else if (particleHalf != SeamOccupancy.halfOf(b.srcFacing())) {
+                binding = b;   // open aperture: beyond this binding's plane → through it
                 break;
             }
         }
