@@ -67,6 +67,55 @@ public abstract class FireBlockSeamBreakMixin {
     }
 
     /**
+     * ★ ROUND 38 — fire's OWN LIFECYCLE writes carry the classification too ("far side seam
+     * half flame not disappearing when source side seam half runs out"): self-extinguish and
+     * age-out go through raw removeBlock/setBlock in FireBlock.tick — unclassified, so the
+     * player-only mirror policy declined them and the dest half orphaned. Removals classify as
+     * PLAYER_BREAK (mirror-clears the far half); state updates as PLAYER_PLACE (which also
+     * carries the fire's age across the seam). No ordinal: every matching site in tick() is a
+     * fire lifecycle write and gets the same treatment.
+     */
+    @Redirect(
+        method = "tick",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerLevel;removeBlock("
+                + "Lnet/minecraft/core/BlockPos;Z)Z"
+        )
+    )
+    private boolean seamlessportals$extinguishLikeAPlayer(
+        net.minecraft.server.level.ServerLevel level, BlockPos pos, boolean movedByPiston
+    ) {
+        Object[] saved = SeamWriteContext.push(SeamWriteSource.PLAYER_BREAK, pos);
+        try {
+            return level.removeBlock(pos, movedByPiston);
+        } finally {
+            SeamWriteContext.pop(saved);
+        }
+    }
+
+    @Redirect(
+        method = "tick",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerLevel;setBlock("
+                + "Lnet/minecraft/core/BlockPos;"
+                + "Lnet/minecraft/world/level/block/state/BlockState;I)Z"
+        )
+    )
+    private boolean seamlessportals$ageLikeAPlayer(
+        net.minecraft.server.level.ServerLevel level, BlockPos pos, BlockState state, int flags
+    ) {
+        Object[] saved = SeamWriteContext.push(
+            state.isAir() ? SeamWriteSource.PLAYER_BREAK : SeamWriteSource.PLAYER_PLACE, pos);
+        try {
+            return level.setBlock(pos, state, flags);
+        } finally {
+            SeamWriteContext.pop(saved);
+        }
+    }
+
+    /**
      * ★ ROUND 30 — a seam-claimed fire survives only if the occupant of ITS half below is
      * sturdy ("sometimes seam flame not breaking if underlying block is broken — fire just
      * floats there": round 27's either-occupant support let the other object vouch for a fire
