@@ -1,10 +1,20 @@
 # IS5-PRE REGRESSION HANDOFF — gate the default flip
 
-**Status: the occluder-ring MECHANISM fix (IS5-PRE, stage-consistent compositing) is CLOSED and
+**★ EXECUTED 2026-08-05 — see `IS5_PRE_REGRESSION_RESULTS.md` for the session record: the §2
+matrix ran on BOTH paths via a new scripted A/B driver (`runIs5RegressionGametest`), the §3.1 C2
+unit-size leg PASSED (weld collapsed, dontinline biting at the exact call site), §3.2 part4
+LANDED (nested capture-to-capture, depth-3 parity), and §3.3 the DEFAULT IS FLIPPED —
+`-PdisableStageConsistentComposite` is now the shipped lever. One disclosed bound: the
+MB-amplified loud ring is not reproducible on captured harness frames (either path); its live
+pair rests on the user's 2026-08-05 closure + the mechanism gates, and remains a two-minute
+live check on demand.**
+
+Original brief (historical):
+Status: the occluder-ring MECHANISM fix (IS5-PRE, stage-consistent compositing) is CLOSED and
 user-affirmed 2026-08-05 ("all closers look good" — the ring is GONE, water/lighting rechecks
 good, kept features intact). The dev default is STILL OFF. This session's job: a disciplined
 regression sweep over every closed arc on BOTH paths, the two remaining engineering items, and
-only then the default flip.** Branch `iris-on/is5-shadow`; worktree
+only then the default flip. Branch `iris-on/is5-shadow`; worktree
 `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`. Read
 `IS5_PRE_DESIGN.md` for the full arc record (design §1-§6, stage ledger + S6 leg records in §7);
 `OCCLUDER_RING_HANDOFF.md` for the original bug provenance.
