@@ -294,6 +294,11 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // §3.7 counter bracket: nested binds record an unreachable lastFrame so the MAIN render
         // re-uploads every perFrame uniform after the loop (the same-dim starvation inversion).
         boolean counterBracketed = IrisStageConsistentComposite.counterBracketBegin();
+        // §3.8 FALLBACK (the pre-registered check FAILED — the ghost-double leg): the nested
+        // renders tick the shared notifier with the DEST camera; without this bracket the main
+        // frame's TAA/MB reproject with cameraOffset ≈ the portal offset (the terrain ghost
+        // double carrying a faint copy of the window, position-driven, portal-visible-gated).
+        boolean trackerSaved = IrisStageConsistentComposite.cameraTrackerSave();
         // §3.9 temporal guard: same save/restore machinery, new position — the loop now precedes
         // the main render, so the pollution it undoes would otherwise hit THIS frame's composites.
         boolean guardSaved = IrisTemporalTargetGuard.save();
@@ -320,6 +325,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             GL11.glDisable(GL_STENCIL_TEST); // belt parity with the workhorse's neutralize
             if (guardSaved) {
                 IrisTemporalTargetGuard.restore();
+            }
+            if (trackerSaved) {
+                IrisStageConsistentComposite.cameraTrackerRestore();
             }
             if (counterBracketed) {
                 IrisStageConsistentComposite.counterBracketEnd();
