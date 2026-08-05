@@ -53,8 +53,18 @@ public class MixinQuadParticleGroup {
         SingleQuadParticle particle, QuadParticleRenderState state, Camera camera, float partialTick,
         Operation<Void> original
     ) {
-        if (((IEParticle) particle).portal_getWorld() != Minecraft.getInstance().level) {
+        IEParticle ie = (IEParticle) particle;
+        if (ie.portal_getWorld() != Minecraft.getInstance().level) {
             return; // IP's world filter: wrong-world particles never extract into this pass
+        }
+        // ★ THE WINDOW RULE (seam round 34, the user's rule with the user's anchor): "if the
+        // window is between player and PARTICLE, it does not show". Lives INSIDE this wrap
+        // because rounds 32-33 put it in a separate @Redirect on this same instruction, where it
+        // never demonstrably fired — one instruction, one owner. Main pass only; the isolated
+        // dest extract has its own seam filter.
+        if (com.warwa.seamlessportals.render.SeamParticleOcclusion.occluded(
+            camera.position(), ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
+            return;
         }
         original.call(particle, state, camera, partialTick);
     }
