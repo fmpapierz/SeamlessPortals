@@ -3073,8 +3073,13 @@ public class SecondaryWorldRenderCore {
         if (!SUPPLY_PROBE_LEVER || supplyProbeDisarmed) {
             return;
         }
+        // getRenderingPortal()'s contract is "must use after checking isRendering()" — it PEEKS
+        // and throws on an empty stack. A cross-view (XWIN) layer-0 pass reaches this method with
+        // NO pushed portal layer, which is exactly the null case the passKey below always
+        // anticipated; the guard was missing because no gametest combined the screenshots lever
+        // with third person until the IS5 regression driver (crash 2026-08-05_01.55.21).
         qouteall.imm_ptl.core.portal.Portal renderingPortal =
-            PortalRendering.getRenderingPortal();
+            PortalRendering.isRendering() ? PortalRendering.getRenderingPortal() : null;
         String passKey = destDim.identifier() + ":" + PortalRendering.getPortalLayer()
             + ":" + (renderingPortal != null ? renderingPortal.getUUID() : "null");
         long now = System.nanoTime();

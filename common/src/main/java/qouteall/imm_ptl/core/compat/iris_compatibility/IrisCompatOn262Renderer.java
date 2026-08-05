@@ -602,12 +602,21 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
      */
     @Override
     public void renderNestedPortalLayer(Matrix4f destDrawViewMatrix) {
-        // IS5-PRE part3 scope cut, disclosed (design ledger): on an armed frame the nested-layer
-        // machinery's three mainRT dereferences (snapshot source, stamp source, blit-back) point
-        // at a target the outer view's content never reaches — the capture-to-capture re-aim is
-        // part4. Until then the new path is single-layer; announced once, never silent.
+        // IS5-PRE PART4 (design §1 Recursion; landed 2026-08-05): on an armed frame the parent
+        // view's content lives in its OWN capture slot (filled by the cancelled finalize BEFORE
+        // this tail dispatch), which nested renders never touch — so the old trio below
+        // (snapshot mainRT→deferred, stamp mainRT→deferred, blit-back deferred→mainRT) has
+        // nothing to protect and nothing to deliver. The nested loop runs bare; the per-view
+        // halves live in the doRenderPortal forks (arm = fork (b); the capture-to-capture stamp
+        // into the PARENT's capture buffer = fork (c) via completeArmedView).
         if (IrisStageConsistentComposite.isFrameArmed()) {
-            IrisStageConsistentComposite.noteNestedLayerDeferred();
+            ownRenderPortalsDepth++;
+            try {
+                renderPortals(destDrawViewMatrix);
+            } finally {
+                ownRenderPortalsDepth--;
+                GL11.glDisable(GL_STENCIL_TEST);
+            }
             return;
         }
         if (client.level == null || client.player == null) {
@@ -829,11 +838,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         }
 
         // IS5-PRE fork (c): on an armed view the capture (taken at the nested finalize) IS this
-        // view's output — the stamp happens at the MAIN chain's renderAll HEAD, against
-        // unfiltered content. The entire old post-pop stamp block (clamp bracket, snapshot-side
-        // probes, stampPortalArea into the deferred buffer) is the OLD path's; running it here
+        // view's output. A layer-0 view's slot stays pending for the MAIN chain's renderAll
+        // HEAD stamp; a nested view's slot is stamped into the PARENT view's capture buffer
+        // right here (PART4, capture-to-capture — unfiltered on both sides, exact at every
+        // depth). The entire old post-pop stamp block below is the OLD path's; running it here
         // would dereference a snapshot that was never taken this frame.
         if (is5PreArmedView) {
+            IrisStageConsistentComposite.completeArmedView();
             return;
         }
 
