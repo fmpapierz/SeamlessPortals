@@ -315,6 +315,15 @@ lever-off B-leg (ring returns), the §3.8 MB-correctness pre-registered check (i
 exercised by the MB whips — no wrong-scenery smear reported), the C2 unit-size leg, part4
 recursion re-aim, part5 aux coherence, THEN the default flip.
 
+### ★★★ THE ARC'S CLOSERS — ALL GOOD, USER-AFFIRMED (2026-08-05 ~01:0x)
+
+> **User: "all closers look good"** — covering the closer list as posed: (1) THE RING —
+> occluder + MB whip on the new path: **GONE** (the engagement's headline, delivered); (2) the
+> water-wobble and lighting-bleed rechecks with the c6 mask stamp + clean temporal chain: good;
+> (3) the lever-off B-direction. Item (3) was affirmed under the blanket — the regression session
+> re-runs the A/B pair as its FIRST gate (cheap, and the discipline wants the pair on record).
+> DEFAULT REMAINS dev-OFF until the regression pass + C2 unit-size leg + part4 land.
+
 ### ★ S6 GHOST-DOUBLE ARC CLOSED (2026-08-05 01:01, user-confirmed)
 
 The "MB ghost" → reframed by the user's translation signature → TAA-attributed by pack A/B →
