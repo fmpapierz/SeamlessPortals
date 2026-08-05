@@ -1,10 +1,11 @@
 # OCCLUDER RING HANDOFF — the last of the three edge artifacts
 
-**Status: MECHANISM MEASURED **AND CONFIRMED BY THE SHADERS-OFF DISCRIMINATOR (§8)**; POLICY SET
-(mechanism must go, not just the amplifier); **FIX DESIGNED AND FROZEN — `IS5_PRE_DESIGN.md` v3**
-(six verifiers + three adversarial judges, all APPROVE_WITH_CHANGES folded in); IMPLEMENTATION IN
-STAGES per its §7.** Branch `iris-on/is5-shadow`.
-Worktree `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`.
+**Status: ★★★ CLOSED, USER-AFFIRMED 2026-08-05 ("all closers look good" — THE RING IS GONE on the
+IS5-PRE path).** The mechanism fix shipped as IS5-PRE stage-consistent compositing —
+`IS5_PRE_DESIGN.md` is the full record (design → verification → judging → seven live-leg defect
+hunts → closure). Dev default still OFF pending the regression pass:
+**`IS5_PRE_REGRESSION_HANDOFF.md` is the NEXT session's governing doc.**
+Branch `iris-on/is5-shadow`. Worktree `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\is5-shadow`.
 
 This supersedes `MB_BLOOM_SEAM_HANDOFF.md` as the working document. That file remains the full
 evidence log (§7 is this arc, §7a–§7l in order); read it for provenance, read this for what to do.
