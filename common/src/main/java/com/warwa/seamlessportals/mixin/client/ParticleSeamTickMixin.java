@@ -43,7 +43,7 @@ public abstract class ParticleSeamTickMixin {
 
     @Inject(method = "tick", at = @At("RETURN"))
     private void seamlessportals$dieInTheEmptyHalf(CallbackInfo ci) {
-        if (isAlive() && SeamFractional.positionInEmptyHalf(level, x, y, z)) {
+        if (isAlive() && SeamFractional.particleShouldDie(level, x, y, z)) {
             remove();
         }
     }

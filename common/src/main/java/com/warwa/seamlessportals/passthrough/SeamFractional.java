@@ -177,9 +177,15 @@ public final class SeamFractional {
         double cellMin = axis == Direction.Axis.X ? cell.getX()
             : axis == Direction.Axis.Y ? cell.getY() : cell.getZ();
         double local = (axis == Direction.Axis.X ? x : axis == Direction.Axis.Y ? y : z) - cellMin;
-        if (Math.abs(local - off) < 0.05) {
+        // ★ CLEARANCE, not just side (round 31: "only the particles that stick past the seam ...
+        // bleed" — the user's words were the diagnosis). A particle is a BILLBOARD whose quad
+        // extends ~0.1 around its centre, and particle quads are not plane-clipped: a centre
+        // 0.06 inside the owned half still pokes its quad through. Plane-adjacent spawns land at
+        // 0.2 clearance; the tick cull's dying band (particleShouldDie) keeps drifters from ever
+        // getting closer than 0.12.
+        if (Math.abs(local - off) < 0.18) {
             double shifted = cellMin + off
-                + (owned == SeamOccupancy.HALF_POSITIVE ? 0.06 : -0.06);
+                + (owned == SeamOccupancy.HALF_POSITIVE ? 0.2 : -0.2);
             return new net.minecraft.world.phys.Vec3(
                 axis == Direction.Axis.X ? shifted : x,
                 axis == Direction.Axis.Y ? shifted : y,
@@ -187,6 +193,39 @@ public final class SeamFractional {
         }
         byte pointHalf = local >= off ? SeamOccupancy.HALF_POSITIVE : SeamOccupancy.HALF_NEGATIVE;
         return pointHalf == owned ? asIs : null;
+    }
+
+    /**
+     * ★ ROUND 31 — the tick cull with a DYING BAND: a particle dies not only in the empty half
+     * but whenever its centre comes within 0.12 of the plane, because its quad would straddle
+     * regardless of which side the centre sits on. Spawn clearance is 0.2, so freshly shifted
+     * plane-adjacent particles live; only drifters entering the band die.
+     */
+    public static boolean particleShouldDie(
+        net.minecraft.world.level.Level level, double x, double y, double z
+    ) {
+        if (!active()) {
+            return false;
+        }
+        BlockPos cell = BlockPos.containing(x, y, z);
+        byte owned = SeamOccupancy.occupancyOf(level, cell);
+        if (owned != SeamOccupancy.HALF_POSITIVE && owned != SeamOccupancy.HALF_NEGATIVE) {
+            return false;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(level, cell);
+        if (binding == null || binding.cut() == null) {
+            return false;
+        }
+        Direction.Axis axis = binding.srcFacing().getAxis();
+        double off = binding.cut().srcPlaneOffset();
+        double cellMin = axis == Direction.Axis.X ? cell.getX()
+            : axis == Direction.Axis.Y ? cell.getY() : cell.getZ();
+        double local = (axis == Direction.Axis.X ? x : axis == Direction.Axis.Y ? y : z) - cellMin;
+        if (Math.abs(local - off) < 0.12) {
+            return true;   // the quad would straddle the plane
+        }
+        byte pointHalf = local >= off ? SeamOccupancy.HALF_POSITIVE : SeamOccupancy.HALF_NEGATIVE;
+        return pointHalf != owned;
     }
 
     /**
