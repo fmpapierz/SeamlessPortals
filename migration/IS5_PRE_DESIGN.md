@@ -315,6 +315,17 @@ lever-off B-leg (ring returns), the §3.8 MB-correctness pre-registered check (i
 exercised by the MB whips — no wrong-scenery smear reported), the C2 unit-size leg, part4
 recursion re-aim, part5 aux coherence, THEN the default flip.
 
+### ★ S6 GHOST-DOUBLE ARC CLOSED (2026-08-05 01:01, user-confirmed)
+
+The "MB ghost" → reframed by the user's translation signature → TAA-attributed by pack A/B →
+depthtex1 stamp proven landing (comparator EQUAL 8/8) → history stamp built (refuted as the fix)
+→ the tint leg's "ghost double containing a faint magenta window" identified the true mechanism:
+whole-frame reprojection at cameraOffset ≈ the portal offset (nested renders ticking the shared
+tracker with the dest camera) → §3.8's "no bracket needed" REFUTED exactly at its pre-registered
+check → the named fallback built (listener-capture-scan tracker save/restore around the loop) →
+**user: "ghost gone, motion blur still looks cool"** — defect dead, kept-feature intact. The
+depthtex1/2 + history stamps stay (semantically correct depth/history hygiene at window pixels).
+
 ### ★ USER DECISIONS 2026-08-04 (record like policy — do NOT "fix" these)
 
 1. **The stronger motion blur on the portal render is a FEATURE** — user: "Keep both of these as
