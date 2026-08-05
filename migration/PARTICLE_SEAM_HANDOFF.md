@@ -1,0 +1,119 @@
+# PARTICLE SEAM HANDOFF — rounds 27–38, current state BROKEN, research before any fix
+
+Worktree `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\redstone`, branch
+`redstone/passthrough`, tip `51b3eab` (round 38). Suite: `gradlew :fabric:runCrossingGametest
+-PapertureCensusProbe=true -PapertureTeardownTest=true` (the fractional gates NEST inside the
+teardown leg — without those levers the suite passes vacuously). Client: `gradlew :fabric:runClient`.
+Probe lever for particle/seam logging: `-PseamFractionalProbe=true`.
+
+## THE USER'S BINDING RULES (verbatim, non-negotiable)
+1. "You cannot offset the particles from the torch position" — positions are sacred, ever.
+2. "if the window is between player and PARTICLE, it does not show" — the window rule,
+   PARTICLE-anchored (round 34 correction of my round-33 source-block misreading).
+3. "the particles should be consumed by the seam teleport the same way half of blocks/torches
+   are consumed ... the same delete + mirror thing for particles like we do with blocks" — the
+   particle seam teleport is the user's own design (round 35).
+
+## CURRENT LIVE STATE (user's last report, tip 51b3eab — WORSE than round 37)
+- SMOKE bleeding locally AND "painting in the portal render from side b".
+- TORCH FLAME particle bleeding (regressed — flames were clean in rounds 36–37).
+- Particles NOT rendering on the correct far side (regressed — far side worked in rounds 35–37).
+
+## PRIME SUSPECT (hypothesis — VERIFY WITH INSTRUMENTS, do not patch blind)
+Round 37 made the teleport fire in OPEN aperture cells via: "particle beyond a binding's plane →
+teleport via that binding". In a BI-FACED open cell there are two bindings with opposite fronts,
+so EVERY particle is always beyond exactly one of them → the rule teleports every particle in any
+open aperture cell EVERY TICK. Round 37 masked this because the round-35 driver
+(`Particle.tick` RETURN inject) demonstrably did not fire for smoke (flame teleported, smoke did
+not — live-observed). Round 38 moved the driver engine-side (`ParticleGroup.tickParticle`
+redirect, virtual dispatch, catches everything) — which would have UNMASKED the ping-pong:
+particles oscillating between levels every tick explains simultaneously (a) both types bleeding,
+(b) smoke painted inside the portal render, (c) far side "missing" (it oscillates), (d) flames
+regressing (they now also hit the open-cell rule in the cell above the torch).
+FIX SHAPE IF CONFIRMED: teleport only on an actual CROSSING this tick — compare the previous
+position's half (xo/yo/zo, available via IEParticle-style accessors) with the current half;
+transition required. That gives hysteresis, kills ping-pong, and also answers "which binding"
+unambiguously (the one whose front half was where the particle CAME FROM).
+
+## FULL ATTEMPT LEDGER (what was tried, mechanism, user verdict)
+- r27 `animateTick` camera-side suppression — "bleeds when a slow particle outlives the view
+  change"; also would hide owned-half particles from side views. WRONG INVARIANT (camera).
+- r28 position rule at `ParticleEngine.createParticle` (deep-empty spawn refusal) — killed ALL
+  torch particles (spawns at cell centre = ON the plane, strict side test misassigned them).
+- r29 plane-epsilon pass at spawn — neck flame (billboard ON the plane) bled constantly.
+- r30 spawn SHIFT 0.06 + strict tick-cull (`Particle.tick` inject) — user: offset visible +
+  quads still poke (billboard extent ~0.1 > 0.06).
+- r31 shift 0.2 + dying band 0.12 — user REJECTED offsets outright (rule 1 above).
+- r32 window rule, particle-anchored, via NEW @Redirect on the per-particle extract inside
+  `QuadParticleGroup.extractRenderState` — "not working, same as before" (see r34 finding).
+- r33 window rule re-anchored to SOURCE BLOCK (animateTick bracket + weak tag map) — "still
+  bleeding / still half plume"; user corrected the anchor back to PARTICLE with emphasis.
+- r34 finding: the r32/r33 redirect targeted the SAME INVOKE already owned by IP's S18
+  world-filter `@WrapOperation` (`MixinQuadParticleGroup`) — moved the window rule INSIDE that
+  wrap (one instruction, one owner); added symmetric-emptiness filter to the dest-pass
+  `ip_extractIsolated` (S18 DOES render remote particles through windows — the earlier
+  "mod-wide limitation" claim was WRONG). User: window rule works (item 2 of r33 verdicts).
+- r35 THE PARTICLE SEAM TELEPORT (user design): `SeamParticleTeleport.maybeTeleport` re-tags
+  particle level via new IEParticle mutating accessors (@Mutable on protected-final `level`),
+  maps position via binding `mapDir` frame, remaps velocity; driver = `Particle.tick` RETURN.
+  User: "particles paint to correct far side" ✓ but locals flicker.
+- r36 THE BAND RULE: near-plane (|local−off|<0.12) particles hidden ONLY from empty-side
+  viewers (billboard poke; crossers never flash — teleport runs in the moving tick). User:
+  flames clean; smoke still bleeding + smoke going to local wrong side (not crossing).
+- r37 open-aperture generalization (occupancy no longer the gate; per-binding beyond test;
+  occupied cells keep material protection). User: smoke STILL not crossing (r35 driver never
+  fired for smoke — the flame/smoke asymmetry was the tell), far flame orphan found.
+- r38 engine-side driver (`ParticleGroup.tickParticle` redirect) + fire lifecycle
+  classification (`FireBlock.tick` removeBlock→PLAYER_BREAK, setBlock→PLAYER_PLACE). User:
+  EVERYTHING bleeding, far side broken — see PRIME SUSPECT.
+
+## LIVE MACHINERY (files, all currently active at 51b3eab)
+- `render/SeamParticleTeleport.java` — the teleport (r35 mechanics + r37 open-cell gate).
+- `mixin/client/ParticleSeamTeleportMixin.java` — engine-side driver (r38): redirect of
+  `Particle.tick()` inside `ParticleGroup.tickParticle`.
+- `qouteall/.../particle/IEParticle.java` — accessor duck + r35 mutating half (level/x/y/z/
+  xo/yo/zo/xd/yd/zd setters; `@Mutable` on level).
+- `qouteall/.../particle/MixinQuadParticleGroup.java` — S18 world filter + r34 WINDOW RULE +
+  r36 BAND RULE (all in the one wrap).
+- `qouteall/.../particle/MixinParticleEngine.java` — S14.40 dest-extract corruption cancel +
+  S18 `ip_extractIsolated` (world-filtered dest extract) + r34 symmetric-emptiness filter.
+- `render/SeamParticleOcclusion.java` — window-rule segment test (camera→particle vs portal
+  quads; per-tick portal cache).
+- `passthrough/SeamFractional.java` — `positionInEmptyHalf` (strict), `particleSpawnPos`
+  (deep-empty refusal only; plane-band passes as-is), `particleHiddenFromEmptySide` (band rule).
+- Fire family: `FireBlockSeamBreakMixin` (checkBurnOut r28 + tick lifecycle r38),
+  `BaseFireBlockSeamMixin` (entityInside by owned half), `FlintAndSteelSeamClaimMixin` (full
+  placement bracket r29), fire canSurvive-on-own-half (r30).
+
+## OPEN EVIDENCE QUESTIONS (answer these BEFORE any code change)
+1. PING-PONG: arm `-PseamFractionalProbe=true`; `SeamParticleTeleport` logs each crossing.
+   Live repro with a torch: if the log shows the same crossing repeatedly per second, the
+   bidirectional open-cell rule is confirmed. (Add a per-particle teleport counter if needed.)
+2. Did the r38 driver actually change smoke behaviour, or was r37's smoke miss something else?
+   javap said `BaseAshSmokeParticle.tick` reaches the base via `invokespecial
+   SingleQuadParticle.tick` (no declaration there → resolves to Particle.tick, which the r35
+   mixin transformed) — the live evidence (flame yes, smoke no) CONTRADICTS that analysis.
+   Resolve the contradiction with an instrument, not another reading: counter in the r35-style
+   base inject vs counter in the engine-side redirect, per particle class.
+3. Where exactly does the "painting in the portal render from side b" come from — the dest
+   pass (`ip_extractIsolated` + inner clip) or main pass? DrawCallTrace/probe the dest extract
+   counts per frame.
+4. Does the r36 band rule interact with teleported particles (hidden the frame after arrival)?
+5. Is `ParticleGroup.tickParticle` the ONLY per-particle tick path (26.2 may tick some groups
+   elsewhere — ItemPickup/ElderGuardian bespoke groups are skipped in ip_extractIsolated but
+   do they tick through the same funnel)?
+
+## RESEARCH PLAN FOR THE NEXT SESSION
+1. INSTRUMENT FIRST: per-tick counters (teleports total + per particle-class, current level
+   distribution of engine particles, dest-extract submissions) behind the probe lever; one
+   live minute with a seam torch; read the numbers.
+2. Decide the crossing-detection fix from evidence (expected: transition-based hysteresis via
+   previous-position half; only teleport on genuine crossings; direction picks the binding).
+3. Re-verify the four-layer contract afterwards: teleport (crossers), window rule
+   (between-ness), band rule (billboard extent), dest-pass emptiness — each layer one job.
+4. Consider a headless pixel gate for particles (goldFraction-style over emissive particle
+   colors is unreliable; a counter-based gate on the teleport/occlusion probes is the
+   realistic assertion).
+5. House rules: javap before touching any vanilla signature (26.2 drift list in memory);
+   check for an existing wrap on a target instruction BEFORE adding a redirect; suite +
+   levers before commit; user live-verifies every round.
