@@ -1025,10 +1025,38 @@ public final class IrisStageConsistentComposite {
         LOGGER.info("[Seamless Portals] [IS5-PRE] capture geometry {}", g);
     }
 
+    // ---- IS5-XTRACE (lever-gated, log-only): the crossing-flicker discriminator ----------------
+    // One line per frame for ±8 frames around every teleport, emitted at the NEXT beginFrame so
+    // no-view and no-stamp frames still get their row (the flicker frame may be exactly one of
+    // those). Slot details are appended by the stamp loop; dim/tp are recorded at frame entry.
+    private static int traceWindowFrames = 0;
+    private static final StringBuilder traceSlots = new StringBuilder();
+    private static String traceDim = "?";
+    private static boolean traceTp = false;
+
     /** Frame-start safety recycle: a pending slot surviving into a new frame means the stamp
      *  never consumed it (main renderAll never ran, or the discriminator failed) — recycle and
      *  say so once per occurrence pattern. Called by the loop entry (S4b-part3). */
     public static void beginFrame() {
+        if (IPGlobal.is5CrossingTrace) {
+            if (traceWindowFrames > 0) {
+                // Emit the PREVIOUS frame's row (its counters have not been reset yet).
+                LOGGER.info("[Seamless Portals] [IS5-XTRACE] dim={} tp={} stampRan={}"
+                        + " specR/S={}/{} pendingAtEntry={} slots=[{}]",
+                    traceDim, traceTp, stampConsumedThisFrame,
+                    speculativeRendersThisFrame, speculativeSkipsThisFrame,
+                    capturesPendingThisFrame, traceSlots);
+                traceWindowFrames--;
+                traceSlots.setLength(0);
+            }
+            if (qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame) {
+                traceWindowFrames = Math.max(traceWindowFrames, 8);
+            }
+            var lvl = net.minecraft.client.Minecraft.getInstance().level;
+            traceDim = lvl == null ? "null" : lvl.dimension().identifier().getPath();
+            traceTp =
+                qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame;
+        }
         if (capturesPendingThisFrame > 0) {
             LOGGER.warn("[Seamless Portals] [IS5-PRE] {} capture(s) from the previous frame were"
                 + " never stamped — recycled (main composite renderAll missing or discriminator"
@@ -1391,6 +1419,23 @@ public final class IrisStageConsistentComposite {
             }
             for (CaptureSlot slot : captureSlots) {
                 if (!slot.pending || slot.layer != 0) continue;
+                if (IPGlobal.is5CrossingTrace && traceWindowFrames > 0) {
+                    // IS5-XTRACE per-slot row: the ARM-camera vs STAMP-camera delta is the H4
+                    // discriminator (a nonzero here on the flicker frame = the mesh registration
+                    // and the captured viewpoint disagree by exactly this many blocks); the plane
+                    // distance is the clip-suspension correlate.
+                    try {
+                        Vec3 stampCam = CHelper.getCurrentCameraPos();
+                        double dCam = slot.cameraPos == null ? -1 : stampCam.distanceTo(slot.cameraPos);
+                        double dPl = slot.portal == null ? -1
+                            : slot.portal.getDistanceToNearestPointInPortal(stampCam);
+                        traceSlots.append(String.format("P%03d L%d dCam=%.3f dPl=%.2f; ",
+                            slot.portal == null ? 0 : (System.identityHashCode(slot.portal) % 1000),
+                            slot.layer, dCam, dPl));
+                    } catch (Throwable ignored) {
+                        traceSlots.append("slot-read-failed; ");
+                    }
+                }
                 if (slot.w != w || slot.h != h) {
                     // Mid-frame resize: the capture predates the new geometry; a 1:1 texelFetch
                     // against a stale-size capture reads out of bounds. One skipped view for one

@@ -1239,6 +1239,15 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-XTRACE (2026-08-10) — the crossing-flicker discriminator trace, log-only, DEFAULT OFF.
+    // ±8 frames around every teleport, one line per frame: dim, teleport flag, stamp-ran,
+    // speculative counters, and per-stamped-slot [portal, layer, ARM-camera-vs-STAMP-camera
+    // delta, camera-to-plane distance]. Built to discriminate three candidate mechanisms for the
+    // user's "flicker of wrong dest when crossing" (new-path-only, B-leg-attributed): arm/stamp
+    // camera mismatch, crossing-window clip suspension overpaint, speculative-render pop-in.
+    public static final boolean is5CrossingTrace =
+        Boolean.getBoolean("seamlessportals.is5CrossingTrace");
+
     // PERF-P2 (2026-08-10, user-picked) — iris pipeline PRE-WARM, DEFAULT ON. Compiles every
     // server dimension's shaderpack pipeline when a main-pipeline generation appears (world join /
     // pack reload / K toggle) instead of on the first portal LOOK into that dimension — the
