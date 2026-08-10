@@ -217,11 +217,11 @@ public final class IrisStageConsistentComposite {
         if (now - censusLastEmitMs >= 1000) {
             censusLastEmitMs = now;
             LOGGER.info("[Seamless Portals] [IS5-PRE] 1Hz: frames={} consumeT/F={}/{} specR/S={}/{}"
-                    + " armG/D={}/{} capt={} stampPass={} views={} nest={} hys={}",
+                    + " armG/D={}/{} capt={} cPost={} stampPass={} views={} nest={} hys={}",
                 censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
                 censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
-                censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps,
-                censusHysteresisRenders);
+                censusCaptures, censusCapturesPost, censusStampPasses, censusStampedViews,
+                censusNestedStamps, censusHysteresisRenders);
             censusArmedFrames = 0;
             censusConsumeTrue = 0;
             censusConsumeFalse = 0;
@@ -234,6 +234,7 @@ public final class IrisStageConsistentComposite {
             censusStampedViews = 0;
             censusNestedStamps = 0;
             censusHysteresisRenders = 0;
+            censusCapturesPost = 0;
         }
         return true;
     }
@@ -241,7 +242,7 @@ public final class IrisStageConsistentComposite {
     private static int censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
         censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
         censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps,
-        censusHysteresisRenders;
+        censusHysteresisRenders, censusCapturesPost;
     private static long censusLastEmitMs = 0;
 
     /** True while this frame's portal loop runs on the new path — the doRenderPortal forks'
@@ -766,6 +767,11 @@ public final class IrisStageConsistentComposite {
         boolean[] auxValid = new boolean[AUX_TARGETS.length];
         int w = -1, h = -1, colorFmt = 0, depthFmt = 0;
         boolean pending = false;
+        // IS5-XDIM: POST_FINAL mode — this view's dest chain runs to completion (composites +
+        // final) and the capture reads MC mainRT at the finalize TAIL instead of colortex0 at
+        // the renderAll INVOKE. Decided at ARM time from mod-owned dims; PRE views are
+        // byte-identical to the shipped path.
+        boolean postFinalMode = false;
         Portal portal;
         Matrix4f modelView;
         Matrix4f projection;
@@ -840,11 +846,38 @@ public final class IrisStageConsistentComposite {
         slot.cameraPos = CHelper.getCurrentCameraPos();
         slot.partialTick = RenderStates.getPartialTick();
         slot.layer = layer;
+        // IS5-XDIM mode decision (design §shape): POST_FINAL only for CROSS-DIM views (the dest
+        // chain owns the dimension's pack look — the missing nether storm), at most ONE per dest
+        // dimension per frame (two views into one dest dim share a pipeline instance; a second
+        // renderAll would write its TAA history twice with two cameras — the judge's mutual-
+        // shimmer fold; the second window falls back PRE = storm absent there, census-visible).
+        // Same-dim views (viewDim == the player's dim, incl. A→B→A nested layers) stay PRE
+        // byte-identically — running composites on the MAIN pipeline instance mid-frame would
+        // double-run history writes on shared targets.
+        slot.postFinalMode = false;
+        if (IPGlobal.crossDimDestChain && !mechanismBroken) {
+            var mcLevel = net.minecraft.client.Minecraft.getInstance().level;
+            var destDim = portal.getDestDim();
+            if (mcLevel != null && destDim != null && destDim != mcLevel.dimension()
+                && postDimsThisFrame.add(destDim)) {
+                slot.postFinalMode = true;
+            }
+        }
         armedCapture = slot;
         viewSlotStack.addLast(slot); // popped by completeArmedView at fork (c)
         censusArmGranted++;
         return true;
     }
+
+    // IS5-XDIM state: the slot pended between the INVOKE handler (which declines to cancel for
+    // POST views) and the TAIL handler (which captures mainRT after the dest chain completed),
+    // plus the pipeline identity it was pended against and the per-frame one-POST-per-dest-dim
+    // set. All cleared at beginFrame.
+    private static CaptureSlot postPendingSlot = null;
+    private static Object postPendingPipeline = null;
+    private static final java.util.HashSet<Object> postDimsThisFrame = new java.util.HashSet<>();
+    private static boolean postFinalSeamWitnessed = false;
+    private static boolean xdimLiveNoted = false;
 
     /** True while the frame-start loop's current view is armed — the loop fork's discriminator
      *  for skipping old-path per-view work (bloom-mask arm, the post-pop stamp, old probes). */
@@ -871,10 +904,28 @@ public final class IrisStageConsistentComposite {
             );
         }
         if (!PATH_ACTIVE) return;
+        // IS5-XDIM entry leak-check: a pended POST slot still here means the PREVIOUS finalize
+        // threw between the INVOKE and TAIL (the TAIL inject does not run on exceptional exit).
+        if (postPendingSlot != null) {
+            breakMechanism("post-final pending slot never consumed (previous finalize threw"
+                + " between renderAll and TAIL?)", null);
+            postPendingSlot = null;
+            postPendingPipeline = null;
+            return;
+        }
         CaptureSlot slot = armedCapture;
         if (slot == null) return;
         armedCapture = null; // one finalize consumes one arm, success or failure
         if (mechanismBroken) return;
+        // IS5-XDIM fork (design §shape): a POST view pends here WITHOUT cancelling — the dest
+        // chain runs to completion (composites + final: the dimension's own pack look) and the
+        // TAIL handler captures the finished image from MC mainRT. PRE views: shipped body below,
+        // byte-identical.
+        if (slot.postFinalMode) {
+            postPendingSlot = slot;
+            postPendingPipeline = irisRenderingPipeline;
+            return; // no ci.cancel()
+        }
         long captureT0 = System.nanoTime();
         long readbackNs = 0;
         try {
@@ -993,7 +1044,7 @@ public final class IrisStageConsistentComposite {
             // always on, content-keyed, WARN on any dimension oddity is impossible here by
             // construction since both copies use the SAME queried w/h — the announcement is the
             // record that this frame's capture pair really is one geometry).
-            noteCaptureGeometry(w, h, colorFmt, depthFmt);
+            noteCaptureGeometry("c0", w, h, colorFmt, depthFmt);
             // Cross-dim mip hygiene, UNCONDITIONAL (judge-sharpened design §1.2): with composites
             // AND final cancelled, neither renderAll's mip regen nor renderFinalPass's
             // resetRenderTarget(turnOffMips) ever runs on this pipeline instance — stale
@@ -1014,6 +1065,121 @@ public final class IrisStageConsistentComposite {
             PerfTimers.add("is5.capture", System.nanoTime() - captureT0 - readbackNs);
         } catch (Throwable t) {
             breakMechanism("capture threw", t);
+        }
+    }
+
+    /**
+     * IS5-XDIM — THE POST_FINAL CAPTURE BODY (design {@code migration/IS5_XDIM_DESIGN.md} §1),
+     * at the finalize TAIL: the dest chain ran to completion, final deposited the finished image
+     * into MC mainRenderTarget (both iris branches — javap-pinned), and depthtex0 was READ-ONLY
+     * throughout (no composite FBO carries a depth attachment) so it still pairs with the image
+     * exactly as the PRE capture's depth does. Iris's own resetRenderTarget + swap passes ran —
+     * no mip/side hygiene replication. Mutate-last discipline as the PRE body; failure breaks
+     * loudly (a lost view for one frame, never a corrupted frame).
+     */
+    public static void onFinalizeCompleted(Object irisRenderingPipeline) {
+        if (!postFinalSeamWitnessed) {
+            postFinalSeamWitnessed = true;
+            LOGGER.info("[Seamless Portals] [IS5-XDIM] post-final seam WOVEN"
+                + " (finalizeLevelRendering TAIL) — crossDimDestChain={}",
+                IPGlobal.crossDimDestChain);
+        }
+        CaptureSlot slot = postPendingSlot;
+        if (slot == null) return;
+        postPendingSlot = null;
+        Object pendedPipeline = postPendingPipeline;
+        postPendingPipeline = null;
+        if (mechanismBroken) return;
+        if (irisRenderingPipeline != pendedPipeline) {
+            breakMechanism("post-final capture pipeline identity mismatch (pended vs TAIL)", null);
+            return;
+        }
+        long captureT0 = System.nanoTime();
+        try {
+            com.mojang.blaze3d.pipeline.RenderTarget mainRT =
+                net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
+            if (mainRT == null || !(mainRT.getColorTexture() instanceof GlTexture mainColorGl)) {
+                breakMechanism("post-final capture: mainRT color is not a GlTexture", null);
+                return;
+            }
+            int srcColor = mainColorGl.glId();
+            int w = mainRT.width;
+            int h = mainRT.height;
+            int colorFmt = GL45C.glGetTextureLevelParameteri(
+                srcColor, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+            RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(irisRenderingPipeline);
+            GpuTexture depthGpu = rts.getDepthTexture();
+            if (!(depthGpu instanceof GlTexture depthGl)) {
+                breakMechanism("post-final capture: dest depthtex0 is not a GlTexture", null);
+                return;
+            }
+            int srcDepth = depthGl.glId();
+            int depthFmt = GL45C.glGetTextureLevelParameteri(
+                srcDepth, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+            if (!ensureSlotStorage(slot, w, h, colorFmt, depthFmt)) {
+                breakMechanism("post-final capture storage alloc rejected (colorFmt=0x"
+                    + Integer.toHexString(colorFmt) + " depthFmt=0x"
+                    + Integer.toHexString(depthFmt) + ")", null);
+                return;
+            }
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the copy check */ }
+            GL43C.glCopyImageSubData(
+                srcColor, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                slot.colorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+            GL43C.glCopyImageSubData(
+                srcDepth, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                slot.depthTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+            int copyErr = GL11.glGetError();
+            if (copyErr != GL11.GL_NO_ERROR) {
+                breakMechanism("post-final capture glCopyImageSubData failed (0x"
+                    + Integer.toHexString(copyErr) + ", srcColor=" + srcColor
+                    + " srcDepth=" + srcDepth + " " + w + "x" + h + ")", null);
+                return;
+            }
+            // Aux (design §2.9 caveat honored): the pass-0 flip-set read is valid ONLY under the
+            // no-composite-writes-aux premise (measured true for Complementary c6). Enhancement-
+            // grade: a failure drops the aux, never the window.
+            Set<?> flipSet = resolvePassZeroFlipSet(
+                (List<?>) fPasses.get(fPipelineCompositeRenderer.get(irisRenderingPipeline)));
+            for (int i = 0; i < AUX_TARGETS.length; i++) {
+                slot.auxValid[i] = false;
+                if (flipSet == null) continue;
+                int t = AUX_TARGETS[i];
+                RenderTarget auxRt = rts.get(t);
+                if (auxRt == null) continue;
+                int srcAux = flipSet.contains(t)
+                    ? auxRt.getAltTexture() : auxRt.getMainTexture();
+                int auxFmt = GL45C.glGetTextureLevelParameteri(
+                    srcAux, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                if (!ensureAuxStorage(slot, i, w, h, auxFmt)) {
+                    noteAuxDropOnce("post-final aux" + t + " storage alloc rejected");
+                    continue;
+                }
+                GL43C.glCopyImageSubData(
+                    srcAux, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    slot.auxTex[i], GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                int auxErr = GL11.glGetError();
+                if (auxErr != GL11.GL_NO_ERROR) {
+                    noteAuxDropOnce("post-final aux" + t + " copy failed 0x"
+                        + Integer.toHexString(auxErr));
+                } else {
+                    slot.auxValid[i] = true;
+                }
+            }
+            noteCaptureGeometry("mainRT", w, h, colorFmt, depthFmt);
+            if (!xdimLiveNoted) {
+                xdimLiveNoted = true;
+                LOGGER.info("[Seamless Portals] [IS5-XDIM] cross-dim POST_FINAL capture LIVE"
+                    + " (dest chain ran composites+final; capture=mainRT; storm-class dest"
+                    + " composite effects now present in this window)");
+            }
+            slot.pending = true;
+            capturesPendingThisFrame++;
+            censusCaptures++;
+            censusCapturesPost++;
+            PerfTimers.add("is5.capturePost", System.nanoTime() - captureT0);
+        } catch (Throwable t) {
+            breakMechanism("post-final capture threw", t);
         }
     }
 
@@ -1105,12 +1271,17 @@ public final class IrisStageConsistentComposite {
         return true;
     }
 
-    private static void noteCaptureGeometry(int w, int h, int colorFmt, int depthFmt) {
+    // IS5-XDIM: latched PER SOURCE (c0 | mainRT) — with both modes live in one frame a single
+    // latch would bounce c0<->mainRT every frame (the stamped=1<->2 re-emission trap).
+    private static final java.util.HashMap<String, String> lastCaptureGeometryBySrc =
+        new java.util.HashMap<>();
+
+    private static void noteCaptureGeometry(String src, int w, int h, int colorFmt, int depthFmt) {
         String g = w + "x" + h + " color=0x" + Integer.toHexString(colorFmt)
             + " depth=0x" + Integer.toHexString(depthFmt);
-        if (g.equals(lastCaptureGeometry)) return;
-        lastCaptureGeometry = g;
-        LOGGER.info("[Seamless Portals] [IS5-PRE] capture geometry {}", g);
+        if (g.equals(lastCaptureGeometryBySrc.get(src))) return;
+        lastCaptureGeometryBySrc.put(src, g);
+        LOGGER.info("[Seamless Portals] [IS5-PRE] capture geometry src={} {}", src, g);
     }
 
     // ---- IS5-XTRACE (lever-gated, log-only): the crossing-flicker discriminator ----------------
@@ -1155,6 +1326,16 @@ public final class IrisStageConsistentComposite {
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
+        // IS5-XDIM frame hygiene: the one-POST-per-dest-dim set resets; an orphaned pended slot
+        // (finalize threw after pend, entry-check never reached) is recycled with the same
+        // never-stamped semantics as above.
+        postDimsThisFrame.clear();
+        if (postPendingSlot != null) {
+            LOGGER.warn("[Seamless Portals] [IS5-XDIM] a pended post-final capture survived into"
+                + " a new frame — recycled (finalize threw between renderAll and TAIL?)");
+            postPendingSlot = null;
+            postPendingPipeline = null;
+        }
         viewSlotStack.clear(); // PART4: a mid-loop throw must not poison the next frame's stack
         stampConsumedThisFrame = false;
         frameArmed = false;

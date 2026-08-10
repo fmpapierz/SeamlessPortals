@@ -53,4 +53,20 @@ public abstract class MixinIrisRenderingPipeline_PreCompositeCapture {
     private void seamlessportals$captureAndCancelForStageConsistentComposite(CallbackInfo ci) {
         IrisStageConsistentComposite.onFinalizeAboutToComposite(this, ci);
     }
+
+    /**
+     * IS5-XDIM — the POST_FINAL capture seam ({@code migration/IS5_XDIM_DESIGN.md} §1). For a
+     * CROSS-DIM armed view the INVOKE handler above pends the slot WITHOUT cancelling, the dest
+     * chain runs to completion (composites + final — the dimension's own pack look, e.g. the
+     * nether storm in composite1), and THIS TAIL handler captures the finished image from MC's
+     * mainRenderTarget (final deposits there in BOTH iris branches — RenderPass draw and the
+     * no-final-program copyTexSubImage2D fallback, javap-pinned 2026-08-10) + dest depthtex0
+     * (composites+final are depth-READ-only — no composite FBO carries a depth attachment).
+     * The 24-byte method has a single RETURN, so TAIL is unambiguous. No-op unless a POST slot
+     * is pending (same-dim views cancelled at the INVOKE above and never reach here with one).
+     */
+    @Inject(method = "finalizeLevelRendering", at = @At("TAIL"), remap = false)
+    private void seamlessportals$captureAtPostFinalForCrossDim(CallbackInfo ci) {
+        IrisStageConsistentComposite.onFinalizeCompleted(this);
+    }
 }

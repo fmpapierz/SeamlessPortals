@@ -1239,6 +1239,16 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-XDIM (2026-08-10, migration/IS5_XDIM_DESIGN.md) — cross-dim dest-chain restore,
+    // DEV DEFAULT OFF (-PcrossDimDestChain=true enables). Cross-dim portal views run their dest
+    // pipeline to COMPLETION (composites + final — the dimension's own pack look, e.g. the
+    // nether storm) and are captured from MC mainRT at the finalize TAIL; same-dim views keep
+    // the shipped pre-composite capture byte-identically. Judged trade: the window is the dest
+    // look re-graded once by the source chain (double-tonemap risk — the first leg's
+    // pre-registered gate; retreat = this lever). At most one POST view per dest dim per frame.
+    public static final boolean crossDimDestChain =
+        Boolean.getBoolean("seamlessportals.crossDimDestChain");
+
     // IS5-BLINK (2026-08-10) — the one-frame visibility-dropout FIX (query hysteresis),
     // DEFAULT ON. The new path consumes LAST frame's occlusion query; a single zero-sample
     // query (occlusion-edge noise, jitter, a skipped anchor frame) reads as a confident
