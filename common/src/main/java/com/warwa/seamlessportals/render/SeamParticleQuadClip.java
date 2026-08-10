@@ -77,7 +77,33 @@ public final class SeamParticleQuadClip {
         BlockPos cell = BlockPos.containing(x, y, z);
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
         if (seam == null) {
-            return;
+            // ★ ROUND 45 — margin ring, clip side (see SeamParticleTeleport's margin comment):
+            // a cell bordering the aperture perpendicular to the plane axis is cut by the same
+            // plane; its quads clip identically. The perpendicular displacement leaves the cell's
+            // coordinate ALONG the plane axis equal to the bound neighbor's, so the w0 math below
+            // is unchanged. Section-index gate keeps the miss path one set-lookup cheap.
+            if (!(level instanceof com.warwa.seamlessportals.passthrough.SeamIndexHolder holder)
+                || !holder.seamlessportals$sectionsWithSeams()
+                    .contains(net.minecraft.core.SectionPos.asLong(cell))) {
+                return;
+            }
+            outer:
+            for (Direction d : Direction.values()) {
+                SeamRegistry.SeamCell nc = SeamRegistry.lookup(level, cell.relative(d));
+                if (nc == null) {
+                    continue;
+                }
+                for (SeamRegistry.SeamBinding b : nc.bindings()) {
+                    if (b != null && b.isMirrorable() && b.cut() != null
+                        && d.getAxis() != b.srcFacing().getAxis()) {
+                        seam = nc;
+                        break outer;
+                    }
+                }
+            }
+            if (seam == null) {
+                return;
+            }
         }
         for (SeamRegistry.SeamBinding b : seam.bindings()) {
             if (b == null || !b.isMirrorable() || b.cut() == null) {

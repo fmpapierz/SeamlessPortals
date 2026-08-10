@@ -54,8 +54,42 @@ public final class SeamParticleTeleport {
         double x = ie.portal_getX(), y = ie.portal_getY(), z = ie.portal_getZ();
         BlockPos cell = BlockPos.containing(x, y, z);
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
+        BlockPos baseCell = cell;
         if (seam == null) {
-            return;
+            // ★ ROUND 45 — THE MARGIN RING (user live report: frameless portals let tall fire
+            // smoke exit the TOP of the bound aperture region while still hugging the plane, then
+            // cross in unbound air one jitter later — "the particles furthest past the seam are
+            // the ones bleeding"). A cell adjacent to a bound aperture cell PERPENDICULAR to the
+            // plane axis is cut by the same geometric plane, so particles there get the same
+            // treatment (particles only — block logic never sees this). A margin cell has no
+            // occupancy, so the resolved neighbor's SeamCell drives the ordinary OPEN-cell flow
+            // unchanged (transition gate, birth rule, binding choice); only the destination
+            // mapping carries the perpendicular offset (below). Cheap gate first: the per-section
+            // seam index — a particle outside every seam-bearing section pays one set lookup.
+            if (!((com.warwa.seamlessportals.passthrough.SeamIndexHolder) level)
+                .seamlessportals$sectionsWithSeams()
+                .contains(net.minecraft.core.SectionPos.asLong(cell))) {
+                return;
+            }
+            outer:
+            for (Direction d : Direction.values()) {
+                BlockPos n = cell.relative(d);
+                SeamRegistry.SeamCell nc = SeamRegistry.lookup(level, n);
+                if (nc == null) {
+                    continue;
+                }
+                for (SeamRegistry.SeamBinding b : nc.bindings()) {
+                    if (b != null && b.isMirrorable() && b.cut() != null && b.destPos() != null
+                        && d.getAxis() != b.srcFacing().getAxis()) {
+                        seam = nc;
+                        baseCell = n;
+                        break outer;
+                    }
+                }
+            }
+            if (seam == null) {
+                return;
+            }
         }
         // ★ ROUND 37 — OCCUPANCY IS NOT THE GATE (the smoke miss: flames hug the torch's own
         // occupied cell and teleported; smoke rises into the OPEN aperture cell above, crossed
@@ -174,6 +208,21 @@ public final class SeamParticleTeleport {
         double cz = (z - cell.getZ()) - 0.5;
         double ly = y - cell.getY();
         BlockPos dest = binding.destPos();
+        if (!baseCell.equals(cell)) {
+            // Margin cell: the destination is the bound neighbor's counterpart offset by the
+            // same perpendicular step, carried through the portal rotation (vertical passes
+            // through — the same convention as the velocity mapping below).
+            int ddx = cell.getX() - baseCell.getX();
+            int ddy = cell.getY() - baseCell.getY();
+            int ddz = cell.getZ() - baseCell.getZ();
+            dest = dest.offset(
+                mx.getStepX() * ddx + mz.getStepX() * ddz,
+                ddy,
+                mx.getStepZ() * ddx + mz.getStepZ() * ddz);
+            if (probe) {
+                SeamParticleProbe.onMarginTeleport();
+            }
+        }
         double nx = dest.getX() + 0.5 + mx.getStepX() * cx + mz.getStepX() * cz;
         double nz = dest.getZ() + 0.5 + mx.getStepZ() * cx + mz.getStepZ() * cz;
         double ny = dest.getY() + ly;

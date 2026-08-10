@@ -113,6 +113,13 @@ public final class SeamParticleProbe {
         tpOpenNoCrossing.incrementAndGet();
     }
 
+    private static final AtomicLong tpMargin = new AtomicLong();
+
+    /** r45 margin ring: a crossing caught in the one-cell ring around the aperture. */
+    public static void onMarginTeleport() {
+        tpMargin.incrementAndGet();
+    }
+
     // ------------------------------------------------------------- CLIP (quad clip)
 
     private static final AtomicLong quadsClipped = new AtomicLong();
@@ -359,17 +366,19 @@ public final class SeamParticleProbe {
         long rolled = tpConsumedRolled.getAndSet(0);
         long stay = tpStayOwned.getAndSet(0);
         long openRest = tpOpenNoCrossing.getAndSet(0);
+        long margin = tpMargin.getAndSet(0);
         long suppressed = crossingLinesSuppressed.getAndSet(0);
         crossingLinesThisSec.set(0);
         int distinct = distinctThisSec.size();
         distinctThisSec.clear();
-        if (open + ownedC + noDest + rolled + stay + openRest > 0) {
-            LOGGER.info("[SEAM FRAC][PTCL] TP last 1s: teleports={} (openCell={} ownedCont={})"
+        if (open + ownedC + noDest + rolled + stay + openRest + margin > 0) {
+            LOGGER.info("[SEAM FRAC][PTCL] TP last 1s: teleports={} (openCell={} ownedCont={}"
+                    + " ofWhichMarginRing={})"
                     + " consumed(noDest={} rolled={}) stayOwned={} openRestingNoCrossing={}"
                     + " distinctParticles={}"
                     + " maxLifetimeCrossingsOneParticle={} pingPongers(>= {} crossings)={}"
                     + " crossingLinesSuppressed={} byClass={} byDirection={}",
-                open + ownedC, open, ownedC, noDest, rolled, stay, openRest, distinct,
+                open + ownedC, open, ownedC, margin, noDest, rolled, stay, openRest, distinct,
                 maxTeleportsOneParticle.get(), PINGPONG_THRESHOLD, pingPongers.size(),
                 suppressed, drain(tpByClass), drain(tpByDirection));
         }
