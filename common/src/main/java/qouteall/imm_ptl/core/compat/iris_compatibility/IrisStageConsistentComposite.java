@@ -217,10 +217,11 @@ public final class IrisStageConsistentComposite {
         if (now - censusLastEmitMs >= 1000) {
             censusLastEmitMs = now;
             LOGGER.info("[Seamless Portals] [IS5-PRE] 1Hz: frames={} consumeT/F={}/{} specR/S={}/{}"
-                    + " armG/D={}/{} capt={} stampPass={} views={} nest={}",
+                    + " armG/D={}/{} capt={} stampPass={} views={} nest={} hys={}",
                 censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
                 censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
-                censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps);
+                censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps,
+                censusHysteresisRenders);
             censusArmedFrames = 0;
             censusConsumeTrue = 0;
             censusConsumeFalse = 0;
@@ -232,13 +233,15 @@ public final class IrisStageConsistentComposite {
             censusStampPasses = 0;
             censusStampedViews = 0;
             censusNestedStamps = 0;
+            censusHysteresisRenders = 0;
         }
         return true;
     }
 
     private static int censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
         censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
-        censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps;
+        censusCaptures, censusStampPasses, censusStampedViews, censusNestedStamps,
+        censusHysteresisRenders;
     private static long censusLastEmitMs = 0;
 
     /** True while this frame's portal loop runs on the new path — the doRenderPortal forks'
@@ -265,12 +268,58 @@ public final class IrisStageConsistentComposite {
     private static int speculativeSkipsThisFrame = 0;
 
     /** The armed-path replacement for testShouldRenderPortal: consume-only + capped default. */
+    // IS5-BLINK (2026-08-10): the one-frame visibility-dropout detector + hysteresis fix.
+    // The new path consumes LAST frame's query (structural: views render at frame start,
+    // before any depth exists), so a single zero-sample query — occlusion-edge noise, jitter,
+    // a query-skipped frame — is consumed as a confident "not visible" and the window goes
+    // UNSTAMPED for one frame: raw terrain where the dest should be (the user's flicker,
+    // "even when far away sometimes"; the old path decides same-frame and cannot blink).
+    // Detector: log T→F→T transitions with gap ≤2 (reads the RAW query values — independent
+    // of the fix, so one leg carries both). Fix: invisible only after 2 consecutive FALSE;
+    // a single FALSE renders on credit (census hys=). -PdisableQueryHysteresis = B direction.
+    private static final java.util.WeakHashMap<Portal, int[]> visBlinkState =
+        new java.util.WeakHashMap<>();
+    private static long blinkLogSecond = 0;
+    private static int blinkLogsThisSecond = 0;
+
     public static boolean consumeVisibilityForArmedFrame(Portal portal) {
         Boolean known = qouteall.imm_ptl.core.portal.PortalRenderInfo
             .consumeLastFrameVisibility(portal);
         if (known != null) {
-            if (known) censusConsumeTrue++; else censusConsumeFalse++;
-            return known;
+            int[] st = visBlinkState.computeIfAbsent(portal, k -> new int[]{0});
+            if (known) {
+                if (st[0] >= 1 && st[0] <= 2) {
+                    long sec = System.currentTimeMillis() / 1000L;
+                    if (sec != blinkLogSecond) { blinkLogSecond = sec; blinkLogsThisSecond = 0; }
+                    if (blinkLogsThisSecond < 5) {
+                        blinkLogsThisSecond++;
+                        double dPl;
+                        try {
+                            dPl = portal.getDistanceToNearestPointInPortal(
+                                CHelper.getCurrentCameraPos());
+                        } catch (Throwable t) { dPl = -1; }
+                        LOGGER.info("[Seamless Portals] [IS5-BLINK] portal P{} query blinked"
+                                + " FALSE for {} frame(s) then TRUE (dPl={}) — the one-frame"
+                                + " window-dropout signature{}",
+                            System.identityHashCode(portal) % 1000, st[0],
+                            String.format("%.2f", dPl),
+                            IPGlobal.disableQueryHysteresis
+                                ? " (hysteresis DISABLED — this blink was visible)"
+                                : " (hysteresis rendered frame 1 on credit)");
+                    }
+                }
+                st[0] = 0;
+                censusConsumeTrue++;
+                return true;
+            }
+            st[0]++;
+            censusConsumeFalse++;
+            if (!IPGlobal.disableQueryHysteresis && st[0] == 1) {
+                // Render on credit: one extra view for one frame per true-occlusion event.
+                censusHysteresisRenders++;
+                return true;
+            }
+            return false;
         }
         // §3.3 (PART4): the speculative cap counts LAYER 0 ONLY. Nested lookups are ALWAYS
         // unknown — the layer-0 loop consumes each portal's query once per frame, and the query
