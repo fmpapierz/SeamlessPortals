@@ -1239,6 +1239,17 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-BLINK (2026-08-10) — the one-frame visibility-dropout FIX (query hysteresis),
+    // DEFAULT ON. The new path consumes LAST frame's occlusion query; a single zero-sample
+    // query (occlusion-edge noise, jitter, a skipped anchor frame) reads as a confident
+    // "not visible" and drops the window for one frame — the user's "flicker even when far
+    // away sometimes" (the old path decides same-frame and cannot blink). Hysteresis: invisible
+    // only after 2 consecutive FALSE consumes; a single FALSE renders on credit (census hys=).
+    // The [IS5-BLINK] detector logs raw T→F→T transitions regardless of this lever, so one leg
+    // carries mechanism proof and fix proof independently. Disable = the B direction.
+    public static final boolean disableQueryHysteresis =
+        Boolean.getBoolean("seamlessportals.disableQueryHysteresis");
+
     // IS5-XFLICK (2026-08-10) — the crossing wrong-dest flicker FIX, DEFAULT ON. On the teleport
     // frame the reverse portal's query is history-wiped (unknown) and the speculative render
     // paints it full-screen from a camera on its plane (XTRACE: tp=true specR=1 dPl≈0 on 29/29
