@@ -3893,6 +3893,12 @@ public class CrossingSmoke implements FabricClientGameTest {
                 if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
                     rsSeamParticleMeasureLeg(context, fx, py, fz);
                 }
+                // ★ THE FIRE+LIGHT MAKE-SURE GATE (user order 2026-08-10): the mirrored torch
+                // must LIGHT the dest, the mirrored fire must carry a scheduled tick (D1), and
+                // fire must SPREAD from the dest seam cell to dest-side blocks with the player
+                // at the SOURCE end only (D2 — the player is absent from the nether's player
+                // map, so vanilla alone freezes the fire; the watcher gate must carry it).
+                rsSeamFireAndLightGate(context, fx, py, fz);
                 // RELOG PERSISTENCE — stage a two-object cell that SURVIVES the world close, on
                 // its own bi-way pair with a PERSISTENT forceload; the assert runs after leg 5's
                 // worldSave.open(). Full-suite only: RS-only runs never reopen the save.
@@ -6468,6 +6474,221 @@ public class CrossingSmoke implements FabricClientGameTest {
             } catch (Throwable t) {
                 SeamlessPortalsConstants.LOGGER.warn(
                     LOG + "RS OBJECT BREAK-BOTH GATE [SAME-DIM] cleanup failed", t);
+            }
+        }
+    }
+
+    /**
+     * ★ THE FIRE+LIGHT MAKE-SURE GATE (2026-08-10, user order: "make sure light spreading and
+     * fire spreading works" + "fire spreads as normal from that dest seam to dest blocks").
+     * Runs on the teardown fixture's bottom opening row with the player transported to the
+     * SOURCE end only — the nether counterpart has NO player, which is exactly the configuration
+     * vanilla's {@code fireSpreadRadiusAroundPlayer} gate freezes and the D2 watcher gate must
+     * carry. Three asserts, in causal order:
+     * <ol>
+     *   <li><b>LIGHT</b> — a torch placed at the seam mirrors, and the DEST cell's block-light
+     *       reaches torch level (emission is automatic in code; this pins it against the
+     *       playerless-dim light-engine UNKNOWN from the 2026-08-10 research).</li>
+     *   <li><b>D1</b> — a fire placed at the seam mirrors AND the mirrored fire carries a
+     *       scheduled tick (the mirror's SKIP_ON_PLACE skips vanilla's only scheduler; the
+     *       mirror now schedules explicitly).</li>
+     *   <li><b>D2 + OUTCOME</b> — oak planks staged beside the DEST fire ignite (or burn away)
+     *       within the budget: dest-side fire genuinely ticks and spreads with only a
+     *       through-portal watcher. The source fire is re-placed if it ages out mid-wait (its
+     *       burnout break-both-clears the mirrored fire — by design).</li>
+     * </ol>
+     * {@code doFireTick} is enabled ONLY inside this gate (the suite default is false) and
+     * restored in the finally, along with the bottom row, claims, and player position.
+     */
+    private static void rsSeamFireAndLightGate(ClientGameTestContext context, int fx, int py, int fz) {
+        final String tag = LOG + "[RS-SEAM-FIRE-LIGHT] ";
+        final BlockPos cellS = new BlockPos(fx, py + 1, fz);
+        AtomicReference<BlockPos> destPosRef = new AtomicReference<>(null);
+        AtomicReference<String> destDimRef = new AtomicReference<>(null);
+        runOnServer(context, server -> {
+            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+            var rec = ow == null ? null
+                : com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellS);
+            if (rec != null) {
+                for (var b : rec.bindings()) {
+                    if (b.isMirrorable() && b.cut() != null && b.destPos() != null) {
+                        destPosRef.set(b.destPos());
+                        destDimRef.set(b.destDim().identifier().toString());
+                        return;
+                    }
+                }
+            }
+        });
+        if (destPosRef.get() == null) {
+            throw new AssertionError(tag + "FIXTURE INVALID — no mirrorable cut binding at "
+                + cellS + "; the gate cannot judge anything");
+        }
+        final BlockPos destPos = destPosRef.get();
+        final String destDim = destDimRef.get();
+        String prevDim = context.computeOnClient(mc ->
+            mc.level == null ? null : mc.level.dimension().identifier().toString());
+        Vec3 prevPos = context.computeOnClient(mc ->
+            mc.player == null ? Vec3.ZERO : mc.player.position());
+        try {
+            seamStandIn(context, "minecraft:overworld", fx + 0.5, py + 1.0, fz - 3.5);
+
+            // ---- 1. LIGHT ----
+            claimOwnerHalfBothSides(context, cellS,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+            AtomicReference<Integer> lightBefore = new AtomicReference<>(-1);
+            runOnServer(context, server -> {
+                ServerLevel dl = server.getLevel(net.minecraft.resources.ResourceKey.create(
+                    net.minecraft.core.registries.Registries.DIMENSION,
+                    net.minecraft.resources.Identifier.parse(destDim)));
+                if (dl != null) {
+                    lightBefore.set(dl.getLightEngine()
+                        .getLayerListener(net.minecraft.world.level.LightLayer.BLOCK)
+                        .getLightValue(destPos));
+                }
+            });
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow != null) {
+                    writeAsPlayer(ow, cellS,
+                        net.minecraft.world.level.block.Blocks.TORCH.defaultBlockState());
+                }
+            });
+            AtomicReference<Integer> lightAfter = new AtomicReference<>(-1);
+            for (int attempt = 0; attempt < 10 && lightAfter.get() < 12; attempt++) {
+                context.waitTicks(10);
+                runOnServer(context, server -> {
+                    ServerLevel dl = server.getLevel(net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(destDim)));
+                    if (dl != null) {
+                        lightAfter.set(dl.getLightEngine()
+                            .getLayerListener(net.minecraft.world.level.LightLayer.BLOCK)
+                            .getLightValue(destPos));
+                    }
+                });
+            }
+            SeamlessPortalsConstants.LOGGER.info(tag + "LIGHT: destBlockLight before={} after={}",
+                lightBefore.get(), lightAfter.get());
+            if (lightAfter.get() < 12) {
+                throw new AssertionError(tag + "DEST LIGHT DEAD — mirrored torch at " + destPos
+                    + " (" + destDim + ") never lit its cell (before=" + lightBefore.get()
+                    + " after=" + lightAfter.get() + "); real blocks must emit real light");
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow != null) {
+                    writeAsPlayer(ow, cellS,
+                        net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                }
+            });
+            context.waitTicks(10);
+
+            // ---- 2. FIRE MIRROR + D1 SCHEDULED TICK ----
+            runCommands(context, List.of("gamerule doFireTick true"));
+            claimOwnerHalfBothSides(context, cellS,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow != null) {
+                    writeAsPlayer(ow, cellS,
+                        net.minecraft.world.level.block.Blocks.FIRE.defaultBlockState());
+                }
+            });
+            AtomicReference<Boolean> destFire = new AtomicReference<>(false);
+            AtomicReference<Boolean> destScheduled = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 12 && !destFire.get(); attempt++) {
+                context.waitTicks(5);
+                runOnServer(context, server -> {
+                    ServerLevel dl = server.getLevel(net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(destDim)));
+                    if (dl != null && dl.getBlockState(destPos)
+                        .is(net.minecraft.world.level.block.Blocks.FIRE)) {
+                        destFire.set(true);
+                        destScheduled.set(dl.getBlockTicks().hasScheduledTick(
+                            destPos, net.minecraft.world.level.block.Blocks.FIRE));
+                    }
+                });
+            }
+            if (!destFire.get()) {
+                throw new AssertionError(tag + "FIRE NEVER MIRRORED to " + destPos
+                    + " (" + destDim + ") — the seam fire scenario cannot even stage");
+            }
+            if (!destScheduled.get()) {
+                throw new AssertionError(tag + "D1 BROKEN — mirrored fire at " + destPos
+                    + " has NO scheduled tick: it is a static prop that will never spread"
+                    + " (SKIP_ON_PLACE skipped vanilla's only scheduler and the mirror did"
+                    + " not schedule)");
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "D1 OK — mirrored fire at {} carries a scheduled tick", destPos);
+
+            // ---- 3. D2 + THE OUTCOME: dest-side spread with a source-side watcher only ----
+            BlockPos planks = destPos.above();
+            runCommands(context, List.of(inDim(destDim,
+                "setblock " + planks.getX() + " " + planks.getY() + " " + planks.getZ()
+                    + " minecraft:oak_planks")));
+            AtomicReference<Boolean> spread = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 60 && !spread.get(); attempt++) {
+                context.waitTicks(20);
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel dl = server.getLevel(net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION,
+                        net.minecraft.resources.Identifier.parse(destDim)));
+                    if (dl == null) {
+                        return;
+                    }
+                    var at = dl.getBlockState(planks);
+                    var above = dl.getBlockState(planks.above());
+                    if (!at.is(net.minecraft.world.level.block.Blocks.OAK_PLANKS)
+                        || above.is(net.minecraft.world.level.block.Blocks.FIRE)) {
+                        spread.set(true);   // burned away, replaced by fire, or lit on top
+                        return;
+                    }
+                    // The source fire ages out on bare obsidian and its burnout break-both-clears
+                    // the mirrored fire (by design). Keep the scenario alive: re-place.
+                    if (ow != null && ow.getBlockState(cellS).isAir()) {
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cellS,
+                            com.warwa.seamlessportals.passthrough.SeamOccupancy.HALF_POSITIVE);
+                        writeAsPlayer(ow, cellS,
+                            net.minecraft.world.level.block.Blocks.FIRE.defaultBlockState());
+                    }
+                });
+            }
+            if (!spread.get()) {
+                throw new AssertionError(tag + "D2 BROKEN — dest-side fire at " + destPos
+                    + " never touched the planks above it within 1200 ticks: with the player"
+                    + " only at the SOURCE end, the fire tick body is frozen (the watcher gate"
+                    + " did not carry the player's presence through the portal)");
+            }
+            SeamlessPortalsConstants.LOGGER.info(
+                tag + "PASS — dest light lit, mirrored fire scheduled, and dest-side fire"
+                    + " spread to dest blocks with only a source-side watcher.");
+        } finally {
+            try {
+                runCommands(context, List.of(
+                    "gamerule doFireTick false",
+                    inDim(destDim, "setblock " + destPos.getX() + " " + destPos.getY() + " "
+                        + destPos.getZ() + " minecraft:air"),
+                    inDim(destDim, "setblock " + destPos.getX() + " " + (destPos.getY() + 1) + " "
+                        + destPos.getZ() + " minecraft:air"),
+                    inDim(destDim, "setblock " + destPos.getX() + " " + (destPos.getY() + 2) + " "
+                        + destPos.getZ() + " minecraft:air")));
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    if (ow != null) {
+                        writeAsPlayer(ow, cellS,
+                            net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                        com.warwa.seamlessportals.passthrough.SeamOccupancy.clear(ow, cellS);
+                    }
+                });
+                context.waitTicks(5);
+                if (prevDim != null) {
+                    seamStandIn(context, prevDim, prevPos.x, prevPos.y, prevPos.z);
+                }
+            } catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(tag + "cleanup failed", t);
             }
         }
     }

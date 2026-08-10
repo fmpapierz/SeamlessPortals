@@ -189,6 +189,17 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
                 com.warwa.seamlessportals.render.SeamClipRenderer.onMainPassBeforeTranslucentTerrain());
 
+            // ===== SEAM DEST-END AMBIENCE (stitched-space contract item 3, 2026-08-10) =====
+            // Same-dim portal destinations are display-tick dead by construction (vanilla samples
+            // ±31 blocks around the PLAYER; IP's remote pass walks other-dim worlds only), so a
+            // mirrored torch at the far end never emits its own flame/smoke. This pass
+            // display-ticks nearby mirrorable portals' dest regions with the camera-distance gate
+            // defeated. END_CLIENT_TICK = after vanilla's own animateTick+engine tick; queued
+            // spawns drain on the next engine tick (one-tick latency, invisible). Cross-dim stays
+            // IP's remote pass. Logic is common-side (SeamDestAmbience); this is the timing driver.
+            ClientTickEvents.END_CLIENT_TICK.register(mc ->
+                com.warwa.seamlessportals.render.SeamDestAmbience.tick(mc));
+
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (client); "
                     + "flag-ON render dispatch registered (AFTER_TRANSLUCENT_TERRAIN)");

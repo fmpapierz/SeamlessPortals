@@ -209,8 +209,19 @@ public class MixinParticleEngine implements IEParticleManager {
                         com.warwa.seamlessportals.render.SeamParticleProbe.DEST_EXTRACTED,
                         particle);
                 }
-                ((net.minecraft.client.particle.SingleQuadParticle) particle)
-                    .extract(freshState, camera, partialTick);
+                // ★ ROUND 42 — plane-exact clip side-channel (dest-pass twin of the main-pass
+                // wrap's parking; see SeamParticleQuadClip). Window content clips at the seam
+                // plane too — the r41 valve admits near-plane billboards, and this (with the
+                // re-armed hardware clip) is what trims them.
+                com.warwa.seamlessportals.render.SeamParticleQuadClip.computePendingPlane(
+                    worldFilter, camera.position(),
+                    ieParticle.portal_getX(), ieParticle.portal_getY(), ieParticle.portal_getZ());
+                try {
+                    ((net.minecraft.client.particle.SingleQuadParticle) particle)
+                        .extract(freshState, camera, partialTick);
+                } finally {
+                    com.warwa.seamlessportals.render.SeamParticleQuadClip.clearPendingPlane();
+                }
             }
             output.add(freshState);
         }

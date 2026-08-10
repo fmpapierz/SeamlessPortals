@@ -62,6 +62,14 @@ public abstract class ServerLevelFireSpreadMixin {
         // ungated and the inert-by-dormancy shape has failed 4x; structural inertness on all
         // platforms (D3), flag-OFF unchanged.
         if (SeamlessPortalsConfig.isEntityPortals()) {
+            // ★ D2 — THE ENTITY-ERA WATCHER GATE (user order 2026-08-10: mirrored fire "spreads
+            // as normal from that dest seam to dest blocks"). Same rule as the block-era branch
+            // below, rebuilt on the live qouteall Portal registry: a player within the fire
+            // gamerule radius of a portal ENTRANCE counts as within it of positions near that
+            // portal's EXIT — covering cross-dim watchers (absent from this dim's player map)
+            // AND same-dim far ends (present but beyond the radius). Only ever ADDS a true via
+            // early return; when no watcher qualifies, vanilla decides as before.
+            seamlessportals$entityEraWatcherGate(pos, cir);
             return;
         }
         ServerLevel self = (ServerLevel) (Object) this;
@@ -97,6 +105,61 @@ public abstract class ServerLevelFireSpreadMixin {
                         "[SEAMLESS FIRE] allow cross-dim fire spread at {} in {} (watcher {} in {})",
                         pos.toShortString(), thisDim.identifier(),
                         player.getName().getString(), playerDim.identifier());
+                }
+                cir.setReturnValue(true);
+                return;
+            }
+        }
+    }
+
+    /**
+     * ★ D2 entity-era body. Cost note: runs per fire scheduled-tick / lava random-tick; the
+     * portal search is {@code McHelper.findEntitiesRough} (chunk-grid scan around each player),
+     * bounded by the gamerule radius in chunks — acceptable at survival fire densities, and
+     * zero-cost when the gamerule is -1 (vanilla already allows everything).
+     */
+    private void seamlessportals$entityEraWatcherGate(
+            BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
+        ServerLevel self = (ServerLevel) (Object) this;
+        int radius = (Integer) self.getGameRules().get(
+            net.minecraft.world.level.gamerules.GameRules.FIRE_SPREAD_RADIUS_AROUND_PLAYER);
+        if (radius == -1) {
+            return;   // vanilla returns true unconditionally
+        }
+        MinecraftServer server = self.getServer();
+        if (server == null) {
+            return;
+        }
+        ResourceKey<Level> thisDim = self.dimension();
+        double radiusSq = (double) radius * radius;
+        int radiusChunks = radius / 16 + 1;
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (player.isSpectator()) {
+                continue;
+            }
+            List<qouteall.imm_ptl.core.portal.Portal> portals =
+                qouteall.imm_ptl.core.McHelper.findEntitiesRough(
+                    qouteall.imm_ptl.core.portal.Portal.class,
+                    player.level(), player.position(), radiusChunks,
+                    p -> p.getDestDim() == thisDim && p.broadcastToPlayer(player));
+            for (qouteall.imm_ptl.core.portal.Portal portal : portals) {
+                if (player.position().distanceToSqr(portal.getOriginPos()) > radiusSq) {
+                    continue;   // rough search over-collects; enforce the entrance leg exactly
+                }
+                Vec3 destCenter = portal.getDestPos();
+                if (destCenter == null) {
+                    continue;
+                }
+                if (destCenter.distanceToSqr(
+                    pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > radiusSq) {
+                    continue;   // the exit leg: fire must be within the radius of the exit
+                }
+                if (seamlessportals$fireAllowLog < 5) {
+                    seamlessportals$fireAllowLog++;
+                    SeamlessPortalsConstants.LOGGER.info(
+                        "[SEAMLESS FIRE] allow fire tick at {} in {} (watcher {} through portal at {})",
+                        pos.toShortString(), thisDim.identifier(),
+                        player.getName().getString(), portal.getOriginPos());
                 }
                 cir.setReturnValue(true);
                 return;

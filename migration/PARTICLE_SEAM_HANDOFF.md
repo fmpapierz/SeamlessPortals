@@ -201,6 +201,50 @@ Still noted: client-side dest occupancy sometimes reads 0 where the server says 
 2026-07-26 exact-only alignment policy silently declines non-lattice pairs (cost the user
 two live rounds on 2026-08-05 — chat-notice chip pending their decision).
 
+## ROUND 42 — THE STITCHED-SPACE BATCH (user-approved architecture A-E, 2026-08-10)
+
+The user's confirmed contract (memory `particle-seam-failure-ledger`): source side A ∪ dest
+side B are ONE real place; the mirrored half-torch EMITS its own flame/smoke at the dest;
+NOTHING weaker than plane-exact clipping of particle geometry; fire placed on the seam and
+mirrored SPREADS from the dest seam cell into dest blocks; all topologies. Landed:
+
+A. `render/SeamDestAmbience` + END_CLIENT_TICK driver (flag-ON): display-ticks nearby
+   mirrorable portals' SAME-DIM dest regions (dest-origin anchor, IECamera distance-gate
+   defeat, %2 cadence, NO extra engine tick — double-aging hazard; skip dests within 16
+   blocks of the player). Cross-dim stays IP's remote pass. MEASURED: AMB 10-11 passes/s;
+   window extracted the far torch's OWN organic Flame 114-144/s + Smoke 28-52/s same-dim —
+   structurally zero in every prior run.
+B. `SecondaryWorldRenderCore`: re-arm the inner clip before BOTH renderAllFeatures draw
+   sites — the submitEntities TAIL (CrossPortalEntityRenderer:171) disables the store
+   UNCONDITIONALLY mid-pass (IP 1.21.3 semantics; on 26.2 the draws come later), so ALL
+   portal-pass feature draws (entities/BEs/particles) ran unclipped. r41's valve is now
+   honest (core/particle IS clip-injected).
+C. Plane-exact quad clip: `render/SeamParticleQuadClip` + `QuadParticleRenderStateClipMixin`
+   (add/clear/buildLayer/renderRotatedQuad hooks) — per-quad camera-relative seam plane
+   side-channel recorded at the two extract sites, Sutherland-Hodgman in billboard parameter
+   space at build time (affine plane function — exact), UV-lerped, pass-agnostic AND
+   renderer-agnostic (CPU — works under sodium/iris). The r36 BAND RULE is RETIRED (it
+   over-hid the owned-side portion; the clip cuts geometry AT the plane instead). MEASURED:
+   141-342 quads/s clipped at the seam, 0 fully culled.
+D. Dest fire lives: (D1) `SeamMirror.applyToDestination` schedules the initial fire tick
+   after a mirrored FireBlock write (SKIP_ON_PLACE skips FireBlock.onPlace — vanilla's ONLY
+   scheduler; `FireBlockInvoker.getFireTickDelay`); (D2) `ServerLevelFireSpreadMixin` gained
+   the ENTITY-ERA watcher branch: a non-spectator player within the fire gamerule radius of
+   a portal ENTRANCE counts as within it of the EXIT region (McHelper.findEntitiesRough on
+   the live Portal registry; only ever ADDS true; -1 gamerule short-circuits).
+E. `rsSeamFireAndLightGate` in the teardown nest: dest block-light >= 12 after a mirrored
+   torch (NOTE: passed VACUOUSLY this run — nether baseline was already 14 from ambient;
+   improve with a darker read point later); D1 hasScheduledTick assert; D2 OUTCOME assert —
+   planks above the DEST fire ignited within ~12s with the player at the SOURCE end only
+   (source fire re-placed on age-out: its burnout break-both-clears the mirror, by design).
+   doFireTick enabled only inside the gate, restored in finally.
+
+Suite: ALL LEGS PASS with everything live; teleports still strictly one-shot (cross-dim 324,
+same-dim +168, max=1, pingPongers=0 — the new far-end population resurrected no oscillation).
+KNOWN-OPEN: light gate weak on bright nether baselines; iris portal-pass hardware clip still
+un-injected (CPU clip C covers particles); spread-arrived fire mirrors without half-claims
+(vanilla whole-cell semantics, user-accepted default).
+
 ## RESEARCH PLAN FOR THE NEXT SESSION
 1. INSTRUMENT FIRST: per-tick counters (teleports total + per particle-class, current level
    distribution of engine particles, dest-extract submissions) behind the probe lever; one

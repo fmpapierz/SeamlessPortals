@@ -2156,6 +2156,20 @@ public class SecondaryWorldRenderCore {
             Matrix4fStack mv = RenderSystem.getModelViewStack();
             mv.pushMatrix();
             mv.mul(destViewMatrix);
+            // ★ RE-ARM THE INNER CLIP FOR THE FEATURE DRAWS (2026-08-10 research finding): the
+            // submitEntities TAIL above (MixinLevelRenderer_CrossPortalEntity →
+            // CrossPortalEntityRenderer.onEndRenderingEntitiesAndBlockEntities:171) calls
+            // FrontClipping.disableClipping() UNCONDITIONALLY — correct for IP 1.21.3, where the
+            // entity RENDER ended there, but on 26.2 the DRAWS happen below in renderAllFeatures,
+            // after the submit boundary. Without this re-arm every feature draw of the pass
+            // (entities, BEs, and the particle pass — whose core/particle shader IS clip-injected)
+            // ran with the keep-all plane, letting near-plane billboards paint past the portal
+            // plane inside the window. Same call as the Step-10.5 arm; the Step-10.5 finally
+            // still disarms after the pass.
+            FrontClipping.setupInnerClipping(
+                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                destViewMatrix, -FrontClipping.ADJUSTMENT
+            );
             try {
                 acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
                 // S18 Mechanism-B dest-pass draw site (PerEntityClipBracket design §2.1.3, decided):
@@ -2462,6 +2476,14 @@ public class SecondaryWorldRenderCore {
                 Matrix4fStack mv = RenderSystem.getModelViewStack();
                 mv.pushMatrix();
                 mv.mul(destViewMatrix);
+                // ★ RE-ARM THE INNER CLIP FOR THE FEATURE DRAWS — same-dim twin of the
+                // renderPortalEntities re-arm (the submitEntities TAIL disarmed the store
+                // unconditionally; the draws below must run clipped or window particles paint
+                // past the plane). See the cross-dim site's comment for the full mechanism.
+                FrontClipping.setupInnerClipping(
+                    PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                    destViewMatrix, -FrontClipping.ADJUSTMENT
+                );
                 try {
                     sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
                     // S18 Mechanism-B same-dim draw site (mirrors renderPortalEntities): drain the

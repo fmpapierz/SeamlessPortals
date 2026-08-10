@@ -77,21 +77,24 @@ public class MixinQuadParticleGroup {
             }
             return;
         }
-        // ★ THE BAND RULE (seam round 36): a near-plane particle's billboard pokes past the cut
-        // for the frames before it crosses or drifts clear — hidden only from viewers on the
-        // EMPTY side of that cell (the flicker the teleport left behind).
-        if (com.warwa.seamlessportals.passthrough.SeamFractional.particleHiddenFromEmptySide(
-            Minecraft.getInstance().level, camera.position(),
-            ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
-            if (probe) {
-                com.warwa.seamlessportals.render.SeamParticleProbe.onMainBandDrop(
-                    particle, Minecraft.getInstance().level);
-            }
-            return;
-        }
+        // ★ ROUND 42 — the r36 BAND RULE is RETIRED here: it hid WHOLE near-plane particles from
+        // empty-side viewers to mask billboard poke, which over-hid the legitimately-visible
+        // owned-side portion. The plane-exact quad clip below replaces it — the billboard's
+        // geometry is cut AT the plane, so the poke cannot exist and the owned side stays whole
+        // (each layer one job: teleport = crossers, window rule = between-ness, CLIP = extent).
         if (probe) {
             com.warwa.seamlessportals.render.SeamParticleProbe.onMainExtracted();
         }
-        original.call(particle, state, camera, partialTick);
+        // ★ ROUND 42 — plane-exact clip side-channel (SeamParticleQuadClip): park this particle's
+        // camera-relative seam plane so the state's add-hook records it alongside the quad; the
+        // build stage clips the quad against it. Keep-all when the cell carries no cut.
+        com.warwa.seamlessportals.render.SeamParticleQuadClip.computePendingPlane(
+            Minecraft.getInstance().level, camera.position(),
+            ie.portal_getX(), ie.portal_getY(), ie.portal_getZ());
+        try {
+            original.call(particle, state, camera, partialTick);
+        } finally {
+            com.warwa.seamlessportals.render.SeamParticleQuadClip.clearPendingPlane();
+        }
     }
 }

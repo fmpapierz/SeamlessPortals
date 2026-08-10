@@ -113,6 +113,27 @@ public final class SeamParticleProbe {
         tpOpenNoCrossing.incrementAndGet();
     }
 
+    // ------------------------------------------------------------- CLIP (quad clip)
+
+    private static final AtomicLong quadsClipped = new AtomicLong();
+    private static final AtomicLong quadsCulled = new AtomicLong();
+
+    /** One quad crossed its seam plane: clipped (partial) or fully culled. */
+    public static void onQuadClip(boolean fullyCulled) {
+        (fullyCulled ? quadsCulled : quadsClipped).incrementAndGet();
+    }
+
+    // ---------------------------------------------------------- AMB (dest ambience)
+
+    private static final AtomicLong ambPasses = new AtomicLong();
+    private static volatile String ambLastAnchor = "-";
+
+    /** One dest-end display-tick pass ran (SeamDestAmbience). */
+    public static void onAmbiencePass(BlockPos anchor) {
+        ambPasses.incrementAndGet();
+        ambLastAnchor = anchor.toShortString();
+    }
+
     /**
      * One executed teleport. {@code openCell} distinguishes the round-37 open-aperture branch
      * from the owned-half material continuation; the two suspects have different signatures.
@@ -357,6 +378,17 @@ public final class SeamParticleProbe {
         if (!eng.isEmpty() || !base.isEmpty()) {
             LOGGER.info("[SEAM FRAC][PTCL] DRV last 1s: engineRedirectTicks={} baseTickReturns={}",
                 eng, base);
+        }
+        long amb = ambPasses.getAndSet(0);
+        if (amb > 0) {
+            LOGGER.info("[SEAM FRAC][PTCL] AMB last 1s: destAmbiencePasses={} lastAnchor=({})",
+                amb, ambLastAnchor);
+        }
+        long clipped = quadsClipped.getAndSet(0);
+        long culled = quadsCulled.getAndSet(0);
+        if (clipped + culled > 0) {
+            LOGGER.info("[SEAM FRAC][PTCL] CLIP last 1s: quadsClipped={} quadsFullyCulled={}",
+                clipped, culled);
         }
         long seen = mainSeen.getAndSet(0);
         if (seen > 0) {

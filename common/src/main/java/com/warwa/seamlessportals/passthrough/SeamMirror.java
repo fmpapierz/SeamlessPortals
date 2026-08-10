@@ -587,6 +587,17 @@ public final class SeamMirror {
             SeamSignalContinuity.endMirrorWrite(dest);
         }
         traceEnd(dest, destPos, written, rotated, sourceLevel, sourcePos, "aperture-mirror");
+        // ★ D1 — DEST FIRE LIVES (user order 2026-08-10: "the fire spreads as normal from that
+        // dest seam to dest blocks"). UPDATE_SKIP_ON_PLACE above skips FireBlock.onPlace, whose
+        // scheduleTick is vanilla's ONLY initial fire scheduler — so a mirrored fire never
+        // ticked: no spread, no aging, in any topology (bytecode-verified 2026-08-10 research).
+        // Schedule it explicitly, with vanilla's own delay. Spread-fire the DEST tick then
+        // writes goes through plain setBlock → onPlace → schedules itself normally.
+        if (written && rotated.getBlock() instanceof net.minecraft.world.level.block.FireBlock) {
+            dest.scheduleTick(destPos, rotated.getBlock(),
+                com.warwa.seamlessportals.mixin.passthrough.FireBlockInvoker
+                    .seamlessportals$getFireTickDelay(dest.getRandom()));
+        }
         forceClientSync(sourceLevel, dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
