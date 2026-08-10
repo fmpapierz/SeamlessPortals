@@ -330,10 +330,11 @@ public class ClientTeleportationManager {
         }
         
         lastTeleportGameTime = tickTimeForTeleportation;
-        
+        long teleportT0 = System.nanoTime(); // PERF-P1: whole per-crossing core (post-reject)
+
         LocalPlayer player = client.player;
         Validate.isTrue(player != null);
-        
+
         ResourceKey<Level> toDimension = portal.getDestDim();
         float partialTick = RenderStates.getPartialTick();
         
@@ -351,8 +352,11 @@ public class ClientTeleportationManager {
         
         if (fromDimension != toDimension) {
             ClientLevel toWorld = ClientWorldLoader.getWorld(toDimension);
-            
+
+            long changeDimT0 = System.nanoTime(); // PERF-P1: the cross-dim swap alone
             changePlayerDimension(player, fromWorld, toWorld, newThisTickEyePos);
+            com.warwa.seamlessportals.render.PerfTimers.add(
+                "ip.changeDim", System.nanoTime() - changeDimT0);
         }
         
         McHelper.setEyePos(player, newThisTickEyePos, newLastTickEyePos);
@@ -421,8 +425,10 @@ public class ClientTeleportationManager {
         
         isTeleportingTick = true;
         isTeleportingFrame = true;
-        
+
         MyGameRenderer.armVanillaTerrainSetupOverride(); // S14.9: + SOG frustum force (same-frame consumption, IP contract)
+        com.warwa.seamlessportals.render.PerfTimers.add(
+            "ip.teleportPlayer", System.nanoTime() - teleportT0);
     }
     
     
@@ -523,6 +529,7 @@ public class ClientTeleportationManager {
         // promote and the gameRenderer.setLevel below, stranding a half-cutover client —
         // swallow+log instead (vanilla's own drain is equally unguarded, but its crash doesn't
         // strand a teleport).
+        long lightDrainT0 = System.nanoTime(); // PERF-P1: the unbounded sync light drain
         try {
             toWorld.pollLightUpdates();
             toWorld.getChunkSource().getLightEngine().runLightUpdates();
@@ -530,6 +537,8 @@ public class ClientTeleportationManager {
         catch (Throwable t) {
             LOGGER.error("promote-gap light drain failed", t);
         }
+        com.warwa.seamlessportals.render.PerfTimers.add(
+            "ip.lightDrain", System.nanoTime() - lightDrainT0);
 
         // S14-A FIX-1 tail (audit MAJOR, link teleport): 26.2 re-expression of IP's implicit
         // per-frame camera-level refresh. 1.21.3 Camera.setup received minecraft.level every

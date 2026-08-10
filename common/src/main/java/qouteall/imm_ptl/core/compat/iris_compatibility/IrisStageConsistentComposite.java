@@ -31,6 +31,7 @@ import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GL45C;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import com.warwa.seamlessportals.render.PerfTimers;
 import qouteall.imm_ptl.core.CHelper;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.portal.Portal;
@@ -542,6 +543,15 @@ public final class IrisStageConsistentComposite {
             return;
         }
         if (!ensureStampProgram()) return;
+        long nestedT0 = System.nanoTime();
+        try {
+            runNestedStampBody(child, parent);
+        } finally {
+            PerfTimers.add("is5.nestedStamp", System.nanoTime() - nestedT0);
+        }
+    }
+
+    private static void runNestedStampBody(CaptureSlot child, CaptureSlot parent) {
         while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
         boolean solid = IPGlobal.debugStampSolid;
@@ -777,6 +787,8 @@ public final class IrisStageConsistentComposite {
         if (slot == null) return;
         armedCapture = null; // one finalize consumes one arm, success or failure
         if (mechanismBroken) return;
+        long captureT0 = System.nanoTime();
+        long readbackNs = 0;
         try {
             Object cr = fPipelineCompositeRenderer.get(irisRenderingPipeline);
             if (!(cr instanceof CompositeRenderer)) {
@@ -862,25 +874,32 @@ public final class IrisStageConsistentComposite {
             // capture. Makes "what does the capture HOLD" log-readable — black ⇒ unwritten or
             // cleared source side; scene-like ⇒ real content. The leg-6 magenta result proved the
             // WRITE path, so content is the open question and it must not need eyes to answer.
-            long nowMs = System.currentTimeMillis();
-            if (nowMs - lastCaptureReadbackMs >= 1000) {
-                lastCaptureReadbackMs = nowMs;
-                try {
-                    java.nio.FloatBuffer px = BufferUtils.createFloatBuffer(3);
-                    GL45C.glGetTextureSubImage(
-                        slot.colorTex, 0, w / 2, h / 2, 0, 1, 1, 1,
-                        GL11.GL_RGB, GL11.GL_FLOAT, px);
-                    LOGGER.info(
-                        "[Seamless Portals] [IS5-PRE] capture center px rgb=({}, {}, {})"
-                            + " layer={} readAlt={}",
-                        String.format("%.4f", px.get(0)), String.format("%.4f", px.get(1)),
-                        String.format("%.4f", px.get(2)), slot.layer, readAlt
-                    );
-                } catch (Throwable readbackErr) {
-                    LOGGER.info("[Seamless Portals] [IS5-PRE] capture readback unavailable: {}",
-                        readbackErr.toString());
+            // PERF-P1: a glGetTextureSubImage is a synchronous pipeline stall — lever-gated
+            // (-Pis5LiveReadbacks) with its drain, OFF by default; the arc it served is closed.
+            if (IPGlobal.is5LiveReadbacks) {
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastCaptureReadbackMs >= 1000) {
+                    lastCaptureReadbackMs = nowMs;
+                    long rbT0 = System.nanoTime();
+                    try {
+                        java.nio.FloatBuffer px = BufferUtils.createFloatBuffer(3);
+                        GL45C.glGetTextureSubImage(
+                            slot.colorTex, 0, w / 2, h / 2, 0, 1, 1, 1,
+                            GL11.GL_RGB, GL11.GL_FLOAT, px);
+                        LOGGER.info(
+                            "[Seamless Portals] [IS5-PRE] capture center px rgb=({}, {}, {})"
+                                + " layer={} readAlt={}",
+                            String.format("%.4f", px.get(0)), String.format("%.4f", px.get(1)),
+                            String.format("%.4f", px.get(2)), slot.layer, readAlt
+                        );
+                    } catch (Throwable readbackErr) {
+                        LOGGER.info("[Seamless Portals] [IS5-PRE] capture readback unavailable: {}",
+                            readbackErr.toString());
+                    }
+                    while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison the pass */ }
+                    readbackNs = System.nanoTime() - rbT0;
+                    PerfTimers.add("is5.readbackCapturePx", readbackNs);
                 }
-                while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison the pass */ }
             }
             // Capture-geometry witness (design §3.15 — the snapshot-witness discipline retargeted;
             // always on, content-keyed, WARN on any dimension oddity is impossible here by
@@ -904,6 +923,7 @@ public final class IrisStageConsistentComposite {
             capturesPendingThisFrame++;
             censusCaptures++;
             ci.cancel();
+            PerfTimers.add("is5.capture", System.nanoTime() - captureT0 - readbackNs);
         } catch (Throwable t) {
             breakMechanism("capture threw", t);
         }
@@ -1062,6 +1082,8 @@ public final class IrisStageConsistentComposite {
                 return;
             }
             stampConsumedThisFrame = true;
+            long stampT0 = System.nanoTime();
+            stampReadbackNsThisPass = 0;
             try {
                 runStampPass(
                     (IrisRenderingPipeline) mainPipeline, (CompositeRenderer) compositeRenderer);
@@ -1070,6 +1092,8 @@ public final class IrisStageConsistentComposite {
                 // break, never on a discriminator mismatch (see the comment above).
                 for (CaptureSlot s : captureSlots) s.pending = false;
                 capturesPendingThisFrame = 0;
+                PerfTimers.add("is5.stampPass",
+                    System.nanoTime() - stampT0 - stampReadbackNsThisPass);
             }
         } catch (Throwable t) {
             breakMechanism("stamp discriminator/pass threw", t);
@@ -1077,6 +1101,9 @@ public final class IrisStageConsistentComposite {
     }
 
     private static boolean stampConsumedThisFrame = false;
+    // PERF-P1: the 1Hz depth readback's elapsed inside runStampPass, subtracted from the
+    // is5.stampPass bucket so a lever-enabled readback's stall never pollutes the stamp cost.
+    private static long stampReadbackNsThisPass = 0;
 
     // =============================================================================================
     // S4b-part2 — THE STAMP PASS (design §1.3 / §3.6): paste every captured view into the main
@@ -1430,9 +1457,14 @@ public final class IrisStageConsistentComposite {
                     // the depth-only draw. Plane depth (~0.5) = the stamp lands and a persisting
                     // MB ghost rides another path; scene depth (~0.98) = the depth-only draw is a
                     // silent no-op (completeness/test) — the retest leg's discriminator.
+                    // PERF-P1: TWO synchronous glGetTextureSubImage stalls mid-stamp — lever-gated
+                    // (-Pis5LiveReadbacks) ATOMICALLY with the drain below: the drain protects this
+                    // method's final glGetError adjudication, whose failure breaks the mechanism.
                     long nowMs = System.currentTimeMillis();
-                    if (depth1Id != 0 && nowMs - lastDepthReadbackMs >= 1000) {
+                    if (IPGlobal.is5LiveReadbacks
+                        && depth1Id != 0 && nowMs - lastDepthReadbackMs >= 1000) {
                         lastDepthReadbackMs = nowMs;
+                        long rbT0 = System.nanoTime();
                         try {
                             // AIM-INDEPENDENT comparator (the first version printed depthtex1
                             // alone and was unreadable: at these projections plane-vs-scene
@@ -1457,6 +1489,9 @@ public final class IrisStageConsistentComposite {
                         } catch (Throwable ignored) {
                         }
                         while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
+                        long rbNs = System.nanoTime() - rbT0;
+                        stampReadbackNsThisPass += rbNs;
+                        PerfTimers.add("is5.readbackDepthCenter", rbNs);
                     }
                 }
             }

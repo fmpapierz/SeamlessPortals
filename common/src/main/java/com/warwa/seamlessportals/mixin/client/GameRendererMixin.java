@@ -92,9 +92,14 @@ public abstract class GameRendererMixin {
         qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.closeFrameTransientUbos();
         // S14.31: dump the one-frame draw trace (single log write; no-op unless a capture ran).
         qouteall.imm_ptl.core.render.DrawCallTrace.onFrameEnd();
-        // S14.45: teleport-flash/stutter ring row (always-on, in-memory only; one batched log
-        // write when a promote-armed or lever-armed capture window closes).
-        qouteall.imm_ptl.core.render.TeleportFlashProbe.onFrameEnd();
+        // S14.45: teleport-flash/stutter ring row. PERF-P1: lever-gated (-PflashProbe) — the row
+        // build is ~15 String.format calls EVERY frame and the batched dump is a render-thread
+        // stall on the exact post-crossing frames a freeze hunt measures; the flash + ghost-double
+        // arcs are closed user-confirmed. The debug_capture_flash one-shot still works (it arms
+        // its own window, but rows only accumulate while the lever is on — documented trade).
+        if (qouteall.imm_ptl.core.IPGlobal.flashProbe) {
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.onFrameEnd();
+        }
         // §2b dest-entity funnel probe (1Hz; byte-inert without -Dseamlessportals.entityProbe).
         qouteall.imm_ptl.core.render.EntityVisibilityProbe.onFrameEnd();
         // IS5-CEN: the composite bind census's FRAME BOUNDARY. This is the only anchor in the mod that

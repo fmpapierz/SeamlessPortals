@@ -150,6 +150,10 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
         );
         qouteall.imm_ptl.core.render.TeleportFlashProbe.discoveryNanosThisFrame +=
             System.nanoTime() - discoveryT0;
+        // PERF-P1: mirror into the 5s aggregator (dMs= only surfaces when the flash probe is
+        // armed; the crossing hunt needs the discovery flood's cost always attributable).
+        com.warwa.seamlessportals.render.PerfTimers.add(
+            "ip.discoveryFlood", System.nanoTime() - discoveryT0);
         Profiler.get().pop();
     }
 }

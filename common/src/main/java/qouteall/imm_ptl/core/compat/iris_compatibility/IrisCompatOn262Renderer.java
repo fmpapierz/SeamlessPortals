@@ -16,6 +16,7 @@ import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.portal.PortalRenderInfo;
 import qouteall.imm_ptl.core.render.CrossPortalViewRendering;
 import qouteall.imm_ptl.core.render.IrisCompatPaste;
+import com.warwa.seamlessportals.render.PerfTimers;
 import qouteall.imm_ptl.core.render.MyGameRenderer;
 import qouteall.imm_ptl.core.render.SecondaryFrameBuffer;
 import qouteall.imm_ptl.core.render.ViewAreaRenderer;
@@ -279,6 +280,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         if (!IrisStageConsistentComposite.tryArmFrame(this.getClass().getSimpleName())) {
             return;
         }
+        long frameStartT0 = System.nanoTime(); // PERF-P1: the whole armed frame-start bracket
 
         // ---- IS5-PRE FRAME-START LOOP (design §1.1) with its brackets --------------------------
         // §3.10 weather: the nested same-dim path's weatherRenderState.reset() is the one
@@ -301,7 +303,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         boolean trackerSaved = IrisStageConsistentComposite.cameraTrackerSave();
         // §3.9 temporal guard: same save/restore machinery, new position — the loop now precedes
         // the main render, so the pollution it undoes would otherwise hit THIS frame's composites.
+        long guardT0 = System.nanoTime();
         boolean guardSaved = IrisTemporalTargetGuard.save();
+        PerfTimers.add("is5.temporalGuard", System.nanoTime() - guardT0);
         // §3.8 deliberately ABSENT: no prev-camera bracket — IrisDestPrevCamera corrects at every
         // guarded composite draw, ordering-independent (pre-registered live check on the first
         // leg; fallback named in the design). The IS5-PH heal is likewise suppressed in the
@@ -324,7 +328,9 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             IrisShadowCompositeSuppressor.uninstall();
             GL11.glDisable(GL_STENCIL_TEST); // belt parity with the workhorse's neutralize
             if (guardSaved) {
+                long guardT1 = System.nanoTime();
                 IrisTemporalTargetGuard.restore();
+                PerfTimers.add("is5.temporalGuard", System.nanoTime() - guardT1);
             }
             if (trackerSaved) {
                 IrisStageConsistentComposite.cameraTrackerRestore();
@@ -338,6 +344,7 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             weather.snowColumns.addAll(savedSnow);
             weather.intensity = savedWeatherIntensity;
             weather.radius = savedWeatherRadius;
+            PerfTimers.add("is5.frameStart", System.nanoTime() - frameStartT0);
         }
     }
 
@@ -379,11 +386,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
             // frame-start loop would yield previous==current==main(N), zeroing the main camera
             // delta (the judged V4 trap). DestPrevCamera's draw-time correction is the cover.
             anyFullPipelineDestRendered = false;
+            long queryT0 = System.nanoTime(); // PERF-P1: the post-main query-only loop
             for (Portal portal : getPortalsToRender(modelView)) {
                 // Issue + shipped bookkeeping; the decision is deliberately discarded — it was
                 // already consumed at frame start from LAST frame's query.
                 testShouldRenderPortal(portal, modelView);
             }
+            PerfTimers.add("is5.queryLoop", System.nanoTime() - queryT0);
             return;
         }
         // Fable-fold ledger (port-note §2.5, F-NOTE-2): the S15 mid-packet MISMATCH frame
@@ -1021,11 +1030,13 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         // targets (restored later) while the dest reads its own per-dim pipeline — wasted-but-
         // harmless; counts include cross-dim portals. No-op unless the guard saved this frame.
         IrisTemporalTargetGuard.clearForDestPass();
+        long destT0 = System.nanoTime(); // PERF-P1: the nested full-pipeline dest render proper
         try {
             MyGameRenderer.renderWorldFullPipeline(worldRenderInfo);
         }
         finally {
             IrisInterface.invoker.bumpPerFrameUniformCounter();
+            PerfTimers.add("is5.destRender", System.nanoTime() - destT0);
         }
     }
 
@@ -1073,7 +1084,18 @@ public class IrisCompatOn262Renderer extends PortalRenderer {
         com.warwa.seamlessportals.render.ActSeedProbe.onPortalListSize(portalsToRender.size());
 
         for (Portal portal : portalsToRender) {
-            doRenderPortal(portal, modelView);
+            // PERF-P1: THE per-view bracket — the single choke point for all three dispatch
+            // paths (frame-start loop, old-path anchor loop, nested layer loop). Keyed by layer
+            // so recursion cost separates from layer-0 cost; nested instances are contained by
+            // their parent's bracket (hierarchical, never sum flat).
+            long viewT0 = System.nanoTime();
+            try {
+                doRenderPortal(portal, modelView);
+            } finally {
+                PerfTimers.add(
+                    PortalRendering.getPortalLayer() == 0 ? "is5.view.L0" : "is5.view.nested",
+                    System.nanoTime() - viewT0);
+            }
         }
     }
 
