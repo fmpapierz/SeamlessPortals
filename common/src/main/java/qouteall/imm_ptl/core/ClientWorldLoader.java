@@ -48,6 +48,7 @@ import qouteall.imm_ptl.core.mixin.client.accessor.IEClientLevel_Accessor;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.render.context_management.DimensionRenderHelper;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
+import com.warwa.seamlessportals.render.PerfTimers;
 import qouteall.q_misc_util.Helper;
 import qouteall.q_misc_util.my_util.CountDownInt;
 
@@ -1141,12 +1142,22 @@ public class ClientWorldLoader {
                 .ip_getBuiltChunkStorage() == null,
             toWorld.getChunkSource().getLoadedChunksCount()
         );
-        qouteall.imm_ptl.core.render.RenderChainProbe.armOnPromote();
-        // S14.45: arm the teleport-flash/stutter capture (batched ring dump ~40 frames later).
-        qouteall.imm_ptl.core.render.TeleportFlashProbe.armOnPromote(
-            fromDim.identifier().getPath(), toDim.identifier().getPath(), coldPromote);
+        // PERF-P1: both post-crossing auto-arms are lever-gated — each emits render-thread log
+        // traffic in the exact window a freeze hunt measures (RenderChainProbe: 1 line/s for ~20s;
+        // FlashProbe: a 10-20KB batched dump ~40 frames later). One-shot debug commands unaffected.
+        if (IPGlobal.renderChainProbeAutoArm) {
+            qouteall.imm_ptl.core.render.RenderChainProbe.armOnPromote();
+        }
+        if (IPGlobal.flashProbe) {
+            // S14.45: arm the teleport-flash/stutter capture (batched ring dump ~40 frames later).
+            qouteall.imm_ptl.core.render.TeleportFlashProbe.armOnPromote(
+                fromDim.identifier().getPath(), toDim.identifier().getPath(), coldPromote);
+        }
         qouteall.imm_ptl.core.render.TeleportFlashProbe.promoteNanosThisFrame +=
             System.nanoTime() - promoteT0;
+        // PERF-P1: mirror the promote wall-clock into the 5s aggregator (the flash probe's pMs=
+        // column only surfaces when that probe is armed; the crossing hunt needs it always).
+        PerfTimers.add("ip.promoteDemote", System.nanoTime() - promoteT0);
     }
 
     public static Set<ResourceKey<Level>> getServerDimensions() {

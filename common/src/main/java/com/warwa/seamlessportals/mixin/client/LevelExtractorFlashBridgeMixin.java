@@ -87,9 +87,12 @@ public abstract class LevelExtractorFlashBridgeMixin {
         }
         this.levelRenderer.clearVisibleSections();
         int viewDistance = this.minecraft.options.getEffectiveRenderDistance();
+        long floodT0 = System.nanoTime(); // PERF-P1: per-frame bridge flood during the window
         VisibleSectionDiscovery.discoverVisibleSections(
             viewArea, cameraPos, frustum, viewDistance, this.level,
             this.levelRenderer.visibleSections());
+        com.warwa.seamlessportals.render.PerfTimers.add(
+            "bridge.floodFill", System.nanoTime() - floodT0);
         ci.cancel();
     }
 

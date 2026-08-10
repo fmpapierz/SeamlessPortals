@@ -597,6 +597,15 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableStageConsistentComposite=true
             if (project.findProperty('stageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.stageConsistentComposite=true') }
             if (project.findProperty('disableStageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.disableStageConsistentComposite=true') }
+            // PERF-P1 (2026-08-10) — the perf-milestone instrument mutes, all DEFAULT OFF.
+            // is5LiveReadbacks re-arms the two 1Hz GL-stall readbacks (capture center px +
+            // depth center after stamp); flashProbe re-arms TeleportFlashProbe's per-frame ring
+            // row + post-crossing batched dump; renderChainProbeAutoArm re-arms the ~20s of 1Hz
+            // post-promote render-chain lines. Re-enable only for defect legs —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -Pis5LiveReadbacks=true
+            if (project.findProperty('is5LiveReadbacks') == 'true') { vmArg('-Dseamlessportals.is5LiveReadbacks=true') }
+            if (project.findProperty('flashProbe') == 'true') { vmArg('-Dseamlessportals.flashProbe=true') }
+            if (project.findProperty('renderChainProbeAutoArm') == 'true') { vmArg('-Dseamlessportals.renderChainProbeAutoArm=true') }
             // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
             // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
             // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
@@ -1001,6 +1010,10 @@ loom {
             // for lever-row parity) —
             if (project.findProperty('stageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.stageConsistentComposite=true') }
             if (project.findProperty('disableStageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.disableStageConsistentComposite=true') }
+            // PERF-P1 instrument-mute rows (mirror; lever-row parity) —
+            if (project.findProperty('is5LiveReadbacks') == 'true') { vmArg('-Dseamlessportals.is5LiveReadbacks=true') }
+            if (project.findProperty('flashProbe') == 'true') { vmArg('-Dseamlessportals.flashProbe=true') }
+            if (project.findProperty('renderChainProbeAutoArm') == 'true') { vmArg('-Dseamlessportals.renderChainProbeAutoArm=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1087,6 +1100,10 @@ loom {
             if (project.hasProperty('is5C2HoldSeconds')) { vmArg("-Dseamlessportals.is5.c2holdSeconds=" + project.is5C2HoldSeconds) }
             if (project.findProperty('stageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.stageConsistentComposite=true') }
             if (project.findProperty('disableStageConsistentComposite') == 'true') { vmArg('-Dseamlessportals.disableStageConsistentComposite=true') }
+            // PERF-P1 instrument-mute rows (mirror; a driver leg re-arms them explicitly) —
+            if (project.findProperty('is5LiveReadbacks') == 'true') { vmArg('-Dseamlessportals.is5LiveReadbacks=true') }
+            if (project.findProperty('flashProbe') == 'true') { vmArg('-Dseamlessportals.flashProbe=true') }
+            if (project.findProperty('renderChainProbeAutoArm') == 'true') { vmArg('-Dseamlessportals.renderChainProbeAutoArm=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }

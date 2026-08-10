@@ -1216,6 +1216,29 @@ public class IPGlobal {
             || (STAGE_CONSISTENT_COMPOSITE_DEFAULT
                 && !Boolean.getBoolean("seamlessportals.disableStageConsistentComposite"));
 
+    // PERF-P1 (2026-08-10) — the perf-milestone instrument mutes. The two 1Hz GL readbacks
+    // ("capture center px" + "depth center after stamp") are synchronous GPU pipeline stalls that
+    // answered questions in arcs now CLOSED (leg-6/leg-7 write-path proof; part5 depth comparator,
+    // ghost-double dd01b4d). Each block gates ATOMICALLY (guard + body + glGetError drain together —
+    // the drain at the depth readback protects runStampPass's final error check whose failure
+    // breaks the mechanism; never leave a readback live with its drain gated off).
+    public static final boolean is5LiveReadbacks =
+        Boolean.getBoolean("seamlessportals.is5LiveReadbacks");
+
+    // PERF-P1 — TeleportFlashProbe's ALWAYS-ON half: a ~15-String.format ring row built EVERY
+    // frame (portal or not) + a 10-20KB render-thread batched dump 40 frames after every crossing.
+    // The flash + ghost-double arcs are closed user-confirmed; the row build is measurable
+    // allocation pressure and the dump is itself a crossing-frame stall (self-marked in the probe).
+    // OFF by default; the debug_capture_flash one-shot command path stays live regardless.
+    public static final boolean flashProbe =
+        Boolean.getBoolean("seamlessportals.flashProbe");
+
+    // PERF-P1 — RenderChainProbe's post-crossing AUTO-ARM (1 line/s on the render thread for ~20s
+    // after every promote — exactly the window a freeze hunt measures; S20-removal-ledgered).
+    // OFF by default; the debug_dump_render_chain one-shot command path stays live regardless.
+    public static final boolean renderChainProbeAutoArm =
+        Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
+
     public static boolean doCheckGlError = true;
 
     public static boolean renderYourselfInPortal = true;

@@ -1857,6 +1857,8 @@ public class PortalWorldManager {
         ResourceKey<Level> activeDim = mc.level.dimension();
         int remaining = COMPILE_PUMP_BUDGET_PER_TICK;
 
+        long pumpT0 = System.nanoTime(); // PERF-P1: worst-case 48x ~1ms sync createRegion/tick
+
         // IP scope: only pump compiles on a secondary while a portal looking into it
         // is near the player. A paused (far-away) dim wastes no chunk-builder budget.
         refreshDestScopes();
@@ -1869,6 +1871,8 @@ public class PortalWorldManager {
             ClientLevel level = levels.get(dim);
             remaining -= advanceOneRenderer(dim, entry.getValue(), level, remaining);
         }
+        com.warwa.seamlessportals.render.PerfTimers.add(
+            "pump.compile", System.nanoTime() - pumpT0);
     }
 
     /**
