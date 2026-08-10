@@ -329,6 +329,23 @@ public class PerEntityClipBracket {
     }
 
     /**
+     * ★ ROUND 43 — a direct phase override for pass-level exemptions (the r42 outline regression):
+     * the pass-wide clip re-arm in {@code SecondaryWorldRenderCore} correctly clips particle/entity
+     * feature draws, but the block-selection outline lives ON the seam plane and fragment-fights
+     * the clip boundary (user-reported dest-side flicker). The draw sites register the storage's
+     * outline phases with a DISABLED snapshot around {@code renderAllFeatures}; the existing
+     * executePhase bracket then swaps to keep-all for exactly those draws. Callers must
+     * unregister in a finally (the registry is global and phase objects persist per storage).
+     */
+    public static void registerPhaseOverride(FeatureRenderPhase<?> phase, Snapshot snapshot) {
+        phaseRegistry.put(phase, snapshot);
+    }
+
+    public static void unregisterPhaseOverride(FeatureRenderPhase<?> phase) {
+        phaseRegistry.remove(phase);
+    }
+
+    /**
      * Mechanism A execute bracket (called by the S12 {@code executePhase} HEAD mixin, design §1.2.4). If
      * the phase is registered, captures the current store, pushes the registered plane, and returns the
      * captured previous snapshot for {@link #endPhase} to restore at RETURN. Returns {@code null} when the

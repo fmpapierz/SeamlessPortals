@@ -2170,6 +2170,17 @@ public class SecondaryWorldRenderCore {
                 PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
                 destViewMatrix, -FrontClipping.ADJUSTMENT
             );
+            // ★ ROUND 43 — OUTLINE EXEMPTION from the re-armed clip (user-reported dest-side
+            // outline flicker, r42 regression): the seam counterpart outline lives ON the plane
+            // and fragment-fights the clip boundary. The outline phases draw with keep-all, as
+            // they did pre-r42; everything else in the pass stays clipped.
+            var out0 = storage.order(0);
+            com.warwa.seamlessportals.render.FrontClipping.Snapshot noClip =
+                new com.warwa.seamlessportals.render.FrontClipping.Snapshot(0, 0, 0, 1, false);
+            qouteall.imm_ptl.core.render.PerEntityClipBracket
+                .registerPhaseOverride(out0.shapeOutlines, noClip);
+            qouteall.imm_ptl.core.render.PerEntityClipBracket
+                .registerPhaseOverride(out0.outline, noClip);
             try {
                 acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
                 // S18 Mechanism-B dest-pass draw site (PerEntityClipBracket design §2.1.3, decided):
@@ -2179,6 +2190,10 @@ public class SecondaryWorldRenderCore {
                 // Mechanism A (empty deferred list).
                 qouteall.imm_ptl.core.render.PerEntityClipBracket.drawBracketedEntitiesIfAny(storage);
             } finally {
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .unregisterPhaseOverride(out0.shapeOutlines);
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .unregisterPhaseOverride(out0.outline);
                 mv.popMatrix();
             }
         } catch (Throwable t) {
@@ -2484,6 +2499,14 @@ public class SecondaryWorldRenderCore {
                     PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
                     destViewMatrix, -FrontClipping.ADJUSTMENT
                 );
+                // ★ ROUND 43 — outline exemption, same-dim twin (see renderPortalEntities).
+                var sdOut0 = sameDimSubmitStorage.order(0);
+                com.warwa.seamlessportals.render.FrontClipping.Snapshot sdNoClip =
+                    new com.warwa.seamlessportals.render.FrontClipping.Snapshot(0, 0, 0, 1, false);
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .registerPhaseOverride(sdOut0.shapeOutlines, sdNoClip);
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .registerPhaseOverride(sdOut0.outline, sdNoClip);
                 try {
                     sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
                     // S18 Mechanism-B same-dim draw site (mirrors renderPortalEntities): drain the
@@ -2492,6 +2515,10 @@ public class SecondaryWorldRenderCore {
                     qouteall.imm_ptl.core.render.PerEntityClipBracket
                         .drawBracketedEntitiesIfAny(sameDimSubmitStorage);
                 } finally {
+                    qouteall.imm_ptl.core.render.PerEntityClipBracket
+                        .unregisterPhaseOverride(sdOut0.shapeOutlines);
+                    qouteall.imm_ptl.core.render.PerEntityClipBracket
+                        .unregisterPhaseOverride(sdOut0.outline);
                     mv.popMatrix();
                 }
             } finally {
