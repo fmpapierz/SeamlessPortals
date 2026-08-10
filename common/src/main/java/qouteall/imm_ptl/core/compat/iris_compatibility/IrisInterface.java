@@ -108,6 +108,11 @@ public class IrisInterface {
         public String getShaderpackName() {
             return null;
         }
+
+        /** PERF-P2: per-frame pipeline pre-warm pump (compiles cross-dim pipelines at the
+         *  moment a main-pipeline generation appears instead of on first portal look). No-op
+         *  when iris is absent (byte-identical). */
+        public void tickPipelinePrewarm() {}
     }
     
     public static class OnIrisPresent extends Invoker {
@@ -364,6 +369,11 @@ public class IrisInterface {
         @Override
         public String getShaderpackName() {
             return Iris.getCurrentPackName();
+        }
+
+        @Override
+        public void tickPipelinePrewarm() {
+            IrisPipelinePrewarm.tick();
         }
     }
     

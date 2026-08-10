@@ -117,6 +117,11 @@ public abstract class GameRendererMixin {
         // been rendered by then it emits the config block anyway, so a run that measured nothing still
         // says so IN THE LOG rather than looking deceptively healthy.
         com.warwa.seamlessportals.render.RunConfigReport.tickFrame();
+        // PERF-P2: pipeline pre-warm pump — compiles cross-dim iris pipelines when a main-pipeline
+        // generation appears (join/reload/toggle) instead of on first portal look (the P1-measured
+        // 3s mid-gameplay freeze). Frame-TAIL placement: the manager-slot switch+restore inside
+        // runs after all rendering. No-op iris-absent via the invoker facade.
+        qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.invoker.tickPipelinePrewarm();
         // TP-XDIM: the census FRAME BOUNDARY — same anchor and same reasoning as the IS5-CEN
         // boundary above. GameRenderer.render TAIL is the only hook in the mod that fires exactly
         // once per rendered frame unconditionally, INCLUDING the cross-view frames where

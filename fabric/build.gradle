@@ -606,6 +606,11 @@ loom {
             if (project.findProperty('is5LiveReadbacks') == 'true') { vmArg('-Dseamlessportals.is5LiveReadbacks=true') }
             if (project.findProperty('flashProbe') == 'true') { vmArg('-Dseamlessportals.flashProbe=true') }
             if (project.findProperty('renderChainProbeAutoArm') == 'true') { vmArg('-Dseamlessportals.renderChainProbeAutoArm=true') }
+            // PERF-P2 iris pipeline pre-warm, DEFAULT ON (cross-dim pipelines compile at world
+            // join instead of on first portal look — the P1-measured 3s freeze). Disable row =
+            // the on-demand first-look reproduction —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisablePipelinePrewarm=true
+            if (project.findProperty('disablePipelinePrewarm') == 'true') { vmArg('-Dseamlessportals.disablePipelinePrewarm=true') }
             // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
             // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
             // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
@@ -1014,6 +1019,7 @@ loom {
             if (project.findProperty('is5LiveReadbacks') == 'true') { vmArg('-Dseamlessportals.is5LiveReadbacks=true') }
             if (project.findProperty('flashProbe') == 'true') { vmArg('-Dseamlessportals.flashProbe=true') }
             if (project.findProperty('renderChainProbeAutoArm') == 'true') { vmArg('-Dseamlessportals.renderChainProbeAutoArm=true') }
+            if (project.findProperty('disablePipelinePrewarm') == 'true') { vmArg('-Dseamlessportals.disablePipelinePrewarm=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1104,6 +1110,7 @@ loom {
             if (project.findProperty('is5LiveReadbacks') == 'true') { vmArg('-Dseamlessportals.is5LiveReadbacks=true') }
             if (project.findProperty('flashProbe') == 'true') { vmArg('-Dseamlessportals.flashProbe=true') }
             if (project.findProperty('renderChainProbeAutoArm') == 'true') { vmArg('-Dseamlessportals.renderChainProbeAutoArm=true') }
+            if (project.findProperty('disablePipelinePrewarm') == 'true') { vmArg('-Dseamlessportals.disablePipelinePrewarm=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
