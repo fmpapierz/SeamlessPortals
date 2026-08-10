@@ -1239,6 +1239,14 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // PERF-P2 (2026-08-10, user-picked) — iris pipeline PRE-WARM, DEFAULT ON. Compiles every
+    // server dimension's shaderpack pipeline when a main-pipeline generation appears (world join /
+    // pack reload / K toggle) instead of on the first portal LOOK into that dimension — the
+    // P1-measured 3s mid-gameplay freeze (census gap 13:57:50-53, GL-burst-correlated). The
+    // disable row reverts to on-demand first-look compiles.
+    public static final boolean disablePipelinePrewarm =
+        Boolean.getBoolean("seamlessportals.disablePipelinePrewarm");
+
     public static boolean doCheckGlError = true;
 
     public static boolean renderYourselfInPortal = true;
