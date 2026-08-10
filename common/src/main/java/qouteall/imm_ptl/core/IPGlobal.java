@@ -1239,6 +1239,14 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-XFLICK (2026-08-10) — the crossing wrong-dest flicker FIX, DEFAULT ON. On the teleport
+    // frame the reverse portal's query is history-wiped (unknown) and the speculative render
+    // paints it full-screen from a camera on its plane (XTRACE: tp=true specR=1 dPl≈0 on 29/29
+    // crossings) — one frame of the SOURCE world. The fix skips near-plane (<1 block) unknowns
+    // on teleport frames only; the disable row reproduces the flicker on command (B direction).
+    public static final boolean disableTeleportSpecSkip =
+        Boolean.getBoolean("seamlessportals.disableTeleportSpecSkip");
+
     // IS5-XTRACE (2026-08-10) — the crossing-flicker discriminator trace, log-only, DEFAULT OFF.
     // ±8 frames around every teleport, one line per frame: dim, teleport flag, stamp-ran,
     // speculative counters, and per-stamped-slot [portal, layer, ARM-camera-vs-STAMP-camera
