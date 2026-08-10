@@ -344,12 +344,27 @@ public final class IrisStageConsistentComposite {
         if (!IPGlobal.disableTeleportSpecSkip
             && qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame) {
             double dPl;
+            boolean inFrontHemisphere = true;
             try {
-                dPl = portal.getDistanceToNearestPointInPortal(CHelper.getCurrentCameraPos());
+                Vec3 camPos = CHelper.getCurrentCameraPos();
+                dPl = portal.getDistanceToNearestPointInPortal(camPos);
+                // BACKWARD-CROSSING refinement (2026-08-10, user: "walk backwards through a
+                // portal → the dest DIM flashes briefly"): a backward arrival FACES the reverse
+                // portal, so the one-frame skip that is invisible on forward arrivals (portal
+                // behind the camera) becomes a visible unstamped-window flash. Skip ONLY when
+                // the portal sits in the camera's BACK hemisphere — the forward flicker stays
+                // dead, the backward arrival renders its legitimately-on-screen window.
+                // 26.2: Minecraft.cameraEntity FIELD is gone; only getCameraEntity() remains.
+                var camEnt = net.minecraft.client.Minecraft.getInstance().getCameraEntity();
+                if (camEnt != null) {
+                    Vec3 look = camEnt.getViewVector(RenderStates.getPartialTick());
+                    Vec3 toPortal = portal.getOriginPos().subtract(camPos);
+                    inFrontHemisphere = look.dot(toPortal) > 0;
+                }
             } catch (Throwable t) {
                 dPl = Double.MAX_VALUE; // unreadable geometry: keep the shipped behavior
             }
-            if (dPl < 1.0) {
+            if (dPl < 1.0 && !inFrontHemisphere) {
                 speculativeSkipsThisFrame++;
                 censusSpecSkipped++;
                 noteTeleportSpecSkipOnce();
