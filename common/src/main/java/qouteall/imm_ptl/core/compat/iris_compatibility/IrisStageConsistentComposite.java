@@ -280,6 +280,32 @@ public final class IrisStageConsistentComposite {
         if (PortalRendering.getPortalLayer() > 0) {
             return true;
         }
+        // IS5-XFLICK (2026-08-10, XTRACE-adjudicated): on the TELEPORT frame the dim change has
+        // wiped query history, so the just-exited reverse portal arrives here UNKNOWN and the
+        // speculative render paints it from a camera sitting ON its plane (trace: tp=true
+        // specR=1 dPl=0.00-0.11 on all 29 crossings; dCam=0 everywhere — the arm/stamp camera
+        // hypothesis is refuted). Under the crossing-window clip suspension that is one
+        // full-screen frame of the SOURCE world — the user's "flicker of wrong dest". The old
+        // path's post-main depth-tested stamp rejects the same paint, which is why the B leg is
+        // clean. Fix: on teleport frames, an unknown portal NEAR the camera (the reverse portal;
+        // <1 block) is skip-if-unknown — it is behind the player and pops in next frame (the §5
+        // bounded pop-in class). DISTANT unknowns still render so arrival-frame windows ahead do
+        // not pop. -PdisableTeleportSpecSkip reproduces the flicker on command.
+        if (!IPGlobal.disableTeleportSpecSkip
+            && qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame) {
+            double dPl;
+            try {
+                dPl = portal.getDistanceToNearestPointInPortal(CHelper.getCurrentCameraPos());
+            } catch (Throwable t) {
+                dPl = Double.MAX_VALUE; // unreadable geometry: keep the shipped behavior
+            }
+            if (dPl < 1.0) {
+                speculativeSkipsThisFrame++;
+                censusSpecSkipped++;
+                noteTeleportSpecSkipOnce();
+                return false;
+            }
+        }
         if (speculativeRendersThisFrame < SPECULATIVE_CAP) {
             speculativeRendersThisFrame++;
             censusSpecRendered++;
@@ -288,6 +314,19 @@ public final class IrisStageConsistentComposite {
         speculativeSkipsThisFrame++;
         censusSpecSkipped++;
         return false;
+    }
+
+    private static boolean teleportSpecSkipNoted = false;
+
+    /** IS5-XFLICK once-note (monotonic latch — the bouncing-key rule): the first arrival-frame
+     *  near-plane speculative skip announces the fix is live and consuming. */
+    private static void noteTeleportSpecSkipOnce() {
+        if (!teleportSpecSkipNoted) {
+            teleportSpecSkipNoted = true;
+            LOGGER.info("[Seamless Portals] [IS5-XFLICK] teleport-frame near-plane speculative"
+                + " skip LIVE (the crossing wrong-dest flicker fix; first consume this session;"
+                + " reproduce the flicker: -PdisableTeleportSpecSkip)");
+        }
     }
 
     // ---- §3.7 counter bracket (distant-offset — the judged +1 bump ALIASES; see the design) ----
