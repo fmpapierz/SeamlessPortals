@@ -622,6 +622,10 @@ loom {
             // disable = on-command dropout reproduction (the [IS5-BLINK] detector logs either way) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableQueryHysteresis=true
             if (project.findProperty('disableQueryHysteresis') == 'true') { vmArg('-Dseamlessportals.disableQueryHysteresis=true') }
+            // IS5-XDIM cross-dim dest-chain restore (nether storm in cross-dim windows), DEV
+            // DEFAULT OFF — the first-leg lever (migration/IS5_XDIM_DESIGN.md kill-checks) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossDimDestChain=true
+            if (project.findProperty('crossDimDestChain') == 'true') { vmArg('-Dseamlessportals.crossDimDestChain=true') }
             // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
             // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
             // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
@@ -1034,6 +1038,7 @@ loom {
             if (project.findProperty('is5CrossingTrace') == 'true') { vmArg('-Dseamlessportals.is5CrossingTrace=true') }
             if (project.findProperty('disableTeleportSpecSkip') == 'true') { vmArg('-Dseamlessportals.disableTeleportSpecSkip=true') }
             if (project.findProperty('disableQueryHysteresis') == 'true') { vmArg('-Dseamlessportals.disableQueryHysteresis=true') }
+            if (project.findProperty('crossDimDestChain') == 'true') { vmArg('-Dseamlessportals.crossDimDestChain=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1128,6 +1133,7 @@ loom {
             if (project.findProperty('is5CrossingTrace') == 'true') { vmArg('-Dseamlessportals.is5CrossingTrace=true') }
             if (project.findProperty('disableTeleportSpecSkip') == 'true') { vmArg('-Dseamlessportals.disableTeleportSpecSkip=true') }
             if (project.findProperty('disableQueryHysteresis') == 'true') { vmArg('-Dseamlessportals.disableQueryHysteresis=true') }
+            if (project.findProperty('crossDimDestChain') == 'true') { vmArg('-Dseamlessportals.crossDimDestChain=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
