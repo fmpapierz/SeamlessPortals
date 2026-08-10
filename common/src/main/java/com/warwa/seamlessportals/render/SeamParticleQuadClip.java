@@ -46,6 +46,16 @@ public final class SeamParticleQuadClip {
     public static final float KEEP_ALL_NX = 0.0f, KEEP_ALL_NY = 0.0f, KEEP_ALL_NZ = 0.0f,
         KEEP_ALL_D = 1.0f;
 
+    /**
+     * ★ ROUND 44 — the boundary inset (user live report: "a tiny sliver of bleed right at the
+     * portal seam"). A polygon edge lying EXACTLY on the plane still rasterizes the plane's own
+     * pixel column, so a mathematically-exact cut shows a sub-voxel colored line from the other
+     * side. The cut edge is pulled this far INTO the particle's own side — the same guard both
+     * the terrain seam clip (round-20 epsilon note) and IP's inner clip (ADJUSTMENT = 0.01)
+     * apply at this exact boundary. Sub-pixel at any normal view distance; terrain fills the gap.
+     */
+    private static final float CLIP_INSET = 0.01f;
+
     // --------------------------------------------------------------- pending (extract stage)
 
     private static boolean pendingSet = false;
@@ -154,7 +164,7 @@ public final class SeamParticleQuadClip {
         org.joml.Quaternionf q = new org.joml.Quaternionf(qx, qy, qz, qw);
         org.joml.Vector3f ax = new org.joml.Vector3f(1, 0, 0).rotate(q);
         org.joml.Vector3f ay = new org.joml.Vector3f(0, 1, 0).rotate(q);
-        float f0 = plane[0] * x + plane[1] * y + plane[2] * z + plane[3];
+        float f0 = plane[0] * x + plane[1] * y + plane[2] * z + plane[3] - CLIP_INSET;
         float ga = size * (plane[0] * ax.x + plane[1] * ax.y + plane[2] * ax.z);
         float gb = size * (plane[0] * ay.x + plane[1] * ay.y + plane[2] * ay.z);
         // Vanilla corner order (bytecode): (+1,-1), (+1,+1), (-1,+1), (-1,-1).
