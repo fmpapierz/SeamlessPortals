@@ -1372,6 +1372,20 @@ public final class IrisStageConsistentComposite {
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
+        // IS5-HIST eviction (render thread, GL current): removed portals' prev-capture textures
+        // are deleted explicitly (strong keys — a silent WeakHashMap GC would leak the GL ids);
+        // the map is bounded at 16, eldest first.
+        if (!prevCaptureByPortal.isEmpty()) {
+            var it = prevCaptureByPortal.entrySet().iterator();
+            while (it.hasNext()) {
+                var e = it.next();
+                if (e.getKey().isRemoved()
+                    || prevCaptureByPortal.size() > 16) {
+                    if (e.getValue()[0] != 0) GL11.glDeleteTextures(e.getValue()[0]);
+                    it.remove();
+                }
+            }
+        }
         // IS5-XDIM frame hygiene: the one-POST-per-dest-dim set resets; an orphaned pended slot
         // (finalize threw after pend, entry-check never reached) is recycled with the same
         // never-stamped semantics as above.
@@ -1482,11 +1496,21 @@ public final class IrisStageConsistentComposite {
      *  never tinted, never solid-replaced; the history gets the SAME value as fragColor (under
      *  the debug levers a magenta history is consistent and diagnosable). Depth-only draws
      *  (depthtex1/2 FBOs, noDrawBuffers) drop all colour outs and keep the gl_FragDepth floor. */
+    // IS5-HIST (2026-08-10): histColor = the PREVIOUS frame's capture when one exists
+    // (u_havePrev=1). history=current left TAA's reprojected history read one frame WRONG at
+    // window pixels — the user's "ugly blur on approach with MB off" (jitter=0 leg refuted the
+    // jitter-only story; the blend's wrong-time history is the surviving mechanism, and MB-on
+    // merely masks it into the kept cool look). With prev content the window gets REAL temporal
+    // accumulation: jitter averages, the blend resolves. u_capturePrev is the raw previous
+    // capture (untinted — under -PdebugTintStamp the history is deliberately untinted prev
+    // content; diagnosable, documented divergence from the magenta-consistency note).
     private static final String STAMP_FRAGMENT_SRC = """
         #version 330 core
         uniform sampler2D u_capture;
         uniform sampler2D u_captureAux;
+        uniform sampler2D u_capturePrev;
         uniform float u_solid;
+        uniform float u_havePrev;
         in vec4 vertexColor;
         layout(location = 0) out vec4 fragColor;
         layout(location = 1) out vec4 auxColor;
@@ -1495,7 +1519,8 @@ public final class IrisStageConsistentComposite {
             vec4 sampled = vec4(texelFetch(u_capture, ivec2(gl_FragCoord.xy), 0).rgb, 1.0);
             fragColor = mix(sampled * vertexColor, vertexColor, u_solid);
             auxColor = texelFetch(u_captureAux, ivec2(gl_FragCoord.xy), 0);
-            histColor = fragColor;
+            histColor = mix(fragColor,
+                vec4(texelFetch(u_capturePrev, ivec2(gl_FragCoord.xy), 0).rgb, 1.0), u_havePrev);
             gl_FragDepth = max(gl_FragCoord.z, 0.001);
         }
         """;
@@ -1509,8 +1534,18 @@ public final class IrisStageConsistentComposite {
     private static int locCombined = -1;
     private static int locCapture = -1;
     private static int locCaptureAux = -1;
+    private static int locCapturePrev = -1;
     private static int locSolid = -1;
+    private static int locHavePrev = -1;
     private static final FloatBuffer matBuf = BufferUtils.createFloatBuffer(16);
+
+    // IS5-HIST: per-portal PREVIOUS-frame capture store {texId, w, h, fmt}. STRONG keys with
+    // explicit eviction (a WeakHashMap would GC entries silently and LEAK the GL textures —
+    // the §8-20 teardown class): beginFrame evicts removed portals and bounds the map at 16
+    // (eldest first), deleting textures on the render thread. Updated AFTER each slot's stamp
+    // draw (the draw reads the OLD prev = last frame's content; then prev ← this frame's).
+    private static final java.util.LinkedHashMap<Portal, int[]> prevCaptureByPortal =
+        new java.util.LinkedHashMap<>();
 
     private static boolean ensureStampProgram() {
         if (stampProgram != 0) return true;
@@ -1543,7 +1578,9 @@ public final class IrisStageConsistentComposite {
         locCombined = GL20C.glGetUniformLocation(prog, "u_combined");
         locCapture = GL20C.glGetUniformLocation(prog, "u_capture");
         locCaptureAux = GL20C.glGetUniformLocation(prog, "u_captureAux");
+        locCapturePrev = GL20C.glGetUniformLocation(prog, "u_capturePrev");
         locSolid = GL20C.glGetUniformLocation(prog, "u_solid");
+        locHavePrev = GL20C.glGetUniformLocation(prog, "u_havePrev");
         return true;
     }
 
@@ -1718,6 +1755,7 @@ public final class IrisStageConsistentComposite {
             GlStateManager._glUseProgram(stampProgram);
             GL20C.glUniform1i(locCapture, 0);
             GL20C.glUniform1i(locCaptureAux, 1);
+            GL20C.glUniform1i(locCapturePrev, 2);
             GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
 
@@ -1789,6 +1827,20 @@ public final class IrisStageConsistentComposite {
                         GlStateManager._bindTexture(slot.auxTex[0]);
                         GlStateManager._activeTexture(GL13.GL_TEXTURE0);
                     }
+                    // IS5-HIST: bind the portal's PREVIOUS-frame capture for the history out
+                    // (size/format-matched; first frame or mismatch ⇒ u_havePrev=0 = the old
+                    // history=current behavior for that one frame). -PdisableWindowHistoryPrev
+                    // reproduces the ugly MB-off approach-blur on command.
+                    int[] prev = IPGlobal.disableWindowHistoryPrev ? null
+                        : prevCaptureByPortal.get(slot.portal);
+                    boolean havePrev = prev != null && prev[0] != 0
+                        && prev[1] == w && prev[2] == h && prev[3] == slot.colorFmt;
+                    if (havePrev) {
+                        GlStateManager._activeTexture(GL13.GL_TEXTURE2);
+                        GlStateManager._bindTexture(prev[0]);
+                        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                    }
+                    GL20C.glUniform1f(locHavePrev, havePrev ? 1.0f : 0.0f);
                     GlStateManager._bindTexture(slot.colorTex);
                     ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
                         .vertexArrayCache().bindVertexArray(
@@ -1812,6 +1864,42 @@ public final class IrisStageConsistentComposite {
                     if (stampFboDepth2 != null) {
                         stampFboDepth2.bind();
                         GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    }
+                    // IS5-HIST prev-store update — AFTER the draw consumed the OLD prev: this
+                    // frame's capture becomes next frame's history. Enhancement-grade: a failed
+                    // alloc/copy drops prev for that portal (one frame of history=current),
+                    // never the window.
+                    if (!IPGlobal.disableWindowHistoryPrev && slot.portal != null) {
+                        try {
+                            int[] p = prevCaptureByPortal.get(slot.portal);
+                            if (p == null) {
+                                p = new int[]{0, -1, -1, 0};
+                                prevCaptureByPortal.put(slot.portal, p);
+                            }
+                            if (p[0] == 0 || p[1] != w || p[2] != h || p[3] != slot.colorFmt) {
+                                if (p[0] != 0) GL11.glDeleteTextures(p[0]);
+                                while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+                                int t = GL45C.glCreateTextures(GL11.GL_TEXTURE_2D);
+                                GL45C.glTextureStorage2D(t, 1, slot.colorFmt, w, h);
+                                if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                                    GL11.glDeleteTextures(t);
+                                    p[0] = 0;
+                                } else {
+                                    p[0] = t; p[1] = w; p[2] = h; p[3] = slot.colorFmt;
+                                }
+                            }
+                            if (p[0] != 0) {
+                                GL43C.glCopyImageSubData(
+                                    slot.colorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                                    p[0], GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                                if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                                    GL11.glDeleteTextures(p[0]);
+                                    p[0] = 0;
+                                }
+                            }
+                        } catch (Throwable histErr) {
+                            noteAuxDropOnce("prev-capture store failed: " + histErr);
+                        }
                     }
                     // 1Hz depth-stamp verification (log-only): centre texel of depthtex1 AFTER
                     // the depth-only draw. Plane depth (~0.5) = the stamp lands and a persisting

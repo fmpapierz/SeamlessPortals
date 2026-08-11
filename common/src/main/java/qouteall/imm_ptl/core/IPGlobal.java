@@ -1239,6 +1239,14 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
+    // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
+    // pixels — the ugly MB-off approach-blur (jitter=0 leg refuted jitter-alone; the blend's
+    // wrong-time history is the surviving mechanism; MB-on masks it into the KEPT cool look).
+    // Prev content = real temporal accumulation. Disable = the ugly blur on command.
+    public static final boolean disableWindowHistoryPrev =
+        Boolean.getBoolean("seamlessportals.disableWindowHistoryPrev");
+
     // IS5-XDIM (2026-08-10, migration/IS5_XDIM_DESIGN.md) — cross-dim dest-chain restore,
     // DEV DEFAULT OFF (-PcrossDimDestChain=true enables). Cross-dim portal views run their dest
     // pipeline to COMPLETION (composites + final — the dimension's own pack look, e.g. the
