@@ -548,6 +548,10 @@ public class CrossingSmoke implements FabricClientGameTest {
             // notify the far side) and in arm A's lamp (power originating beyond the seam).
             rsSignalLegDisjoint(context);
             rsSignalLegCoincident(context, py);
+            // RS (c) STEP 2 — DUST. After the signal legs on purpose: it consumes the same
+            // fixture shape and the (c) primitives those just proved, so a failure here is a
+            // wire bug. Carries its own volume ceiling (the 2026-08-10 revert-loop scar).
+            rsWireLegCoincident(context, py);
 
             // DIAGNOSTIC REPRO (probe-gated, asserts the DESIGN expectation): the user's live
             // 2026-07-27 report — same-dim COINCIDENT (make_portal-style mid-block planes) with a
@@ -2638,6 +2642,338 @@ public class CrossingSmoke implements FabricClientGameTest {
     }
 
     /**
+     * ★ RS-WIRE GATE — redstone DUST crosses the seam ((c) step 2, spec §6.2; user ruling
+     * 2026-08-10: full continuity, "the lit dust should also propagate down the stream"). The
+     * surface the 2026-08-10 live sweep found completely dark: no {@code RedStoneWireBlock} hook
+     * existed, dust stopped dead at the plane, and mirrored seam dust fought the authority revert
+     * in a 1M-chained-update loop that ran the server 837 ticks behind (81 cap-trips).
+     *
+     * <p>Four arms on the RS-SIGNAL-A obsidian fixture shape, all outcome-asserted on far-world
+     * {@code POWER}/{@code LIT} block state:
+     * <ol>
+     *   <li><b>FORWARD</b> — near redstone block: the mirrored pair agrees on POWER, the far
+     *       continuation decays one per step, the far lamp lights. Rides shape sync + the far
+     *       side's local decay through the synced mirror half.</li>
+     *   <li><b>STABILITY</b> — the pair's POWER is sampled twice 20 ticks apart and must not
+     *       move: the revert loop's signature is a per-tick flap.</li>
+     *   <li><b>OFF</b> — the source removed: every dust on both sides reaches 0 and the lamp
+     *       goes dark (the user's "seam dust not powering off", asserted).</li>
+     *   <li><b>REVERSE</b> — far redstone block: the near side powers THROUGH the seam. This arm
+     *       is the wire machinery's real coverage: the far change pokes the marked mirror half,
+     *       whose cancelled notification forwards to the player half (wire authority + power-wake),
+     *       which re-derives through the bridged evaluator reads ({@code SeamWireBridge}) — the
+     *       decay-read counter must MOVE (power that appeared without the bridge proves
+     *       nothing).</li>
+     * </ol>
+     *
+     * <p><b>VOLUME CEILING (the scar rule):</b> {@code SeamMirror.shapeReverted} may grow by at
+     * most 20 across the whole leg — the loop this gate exists to catch produced one revert per
+     * re-wake, thousands per tick, while every correctness gate stayed green. Never watch
+     * correctness without watching volume.
+     *
+     * <p>Skips loudly under {@code -PdisableSeamWire}/{@code -PdisableSeamSignal}/{@code
+     * -PdisableSeamShapeSync}: staging mirrored seam dust with the wire fix off DELIBERATELY
+     * reproduces the revert loop (the lever doc says so — diagnosis is a live-session activity,
+     * not something to run inside a queued suite at one stalled tick per second).
+     */
+    private static void rsWireLegCoincident(ClientGameTestContext context, int py) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        if (AperturePassthroughLever.DISABLE_SEAM_WIRE
+            || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+            || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC) {
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-WIRE SKIPPED under a disabling lever"
+                + " — mirrored seam dust with the wire machinery off reproduces the 2026-08-10"
+                + " revert loop by design; A/B that live, not in-suite.");
+            return;
+        }
+        final int fx = 7200, fz = -7200;
+        final BlockPos cellSA = new BlockPos(fx, py + 1, fz);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Vec3> destSeen = new AtomicReference<>(null);
+        final var POWER = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWER;
+        final var LIT = net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT;
+        final var WIRE = net.minecraft.world.level.block.Blocks.REDSTONE_WIRE;
+        final java.util.concurrent.atomic.AtomicLong revertsBefore =
+            new java.util.concurrent.atomic.AtomicLong();
+        try {
+            // ── Fixture: the RS-SIGNAL-A obsidian frame shape at fresh coordinates. ──
+            runCommands(context, List.of(
+                "forceload add " + (fx - 16) + " " + (fz - 16) + " " + (fx + 16) + " " + (fz + 16),
+                "fill " + (fx - 2) + " " + py + " " + (fz - 4) + " "
+                    + (fx + 3) + " " + (py + 5) + " " + (fz + 4) + " minecraft:air",
+                fill(fx - 1, py, fz, fx + 2, py, fz),
+                fill(fx - 1, py + 4, fz, fx + 2, py + 4, fz),
+                fill(fx - 1, py + 1, fz, fx - 1, py + 3, fz),
+                fill(fx + 2, py + 1, fz, fx + 2, py + 3, fz)
+            ));
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                        new BlockPos(fx, py + 1, fz), null);
+                if (!fired) {
+                    failure.set("ignition entry rejected the frame");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-WIRE SETUP FAILED: " + failure.get());
+            }
+            final net.minecraft.world.phys.AABB frameBox = new net.minecraft.world.phys.AABB(
+                fx - 8, py - 8, fz - 8, fx + 8, py + 8, fz + 8);
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    if (server == null) {
+                        return false;
+                    }
+                    return !server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                        frameBox, x -> true).isEmpty();
+                }, 1200);
+            }
+            catch (Throwable t) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: no NetherPortalEntity generated"
+                    + " within 1200 ticks", t);
+            }
+            runOnServer(context, server -> {
+                var portals = server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    frameBox, x -> true);
+                destSeen.set(portals.get(0).getDestPos());
+            });
+            AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bindingRef =
+                new AtomicReference<>(null);
+            for (int attempt = 0; attempt < 30 && bindingRef.get() == null; attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellSA);
+                    if (cell == null) {
+                        return;
+                    }
+                    cell.bindings().stream()
+                        .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                        .findFirst().ifPresent(bindingRef::set);
+                });
+                if (bindingRef.get() == null) {
+                    context.waitTicks(10);
+                }
+            }
+            var binding = bindingRef.get();
+            if (binding == null) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: aperture cell " + cellSA
+                    + " never bound with a mirrorable binding");
+            }
+            if (binding.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
+                || !binding.seamContinuous()) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: obsidian binding phase="
+                    + binding.phase() + " continuous=" + binding.seamContinuous());
+            }
+            final net.minecraft.core.Direction crossDir = binding.crossDir();
+            final net.minecraft.core.Direction approachDir = crossDir.getOpposite();
+            final BlockPos destPos = binding.destPos();                       // S' — the far half
+            final BlockPos contB1 = binding.continuationToward(crossDir);     // B1
+            final net.minecraft.world.level.block.Rotation rotR = binding.stateRotation();
+            final net.minecraft.core.Direction farStep = rotR.rotate(crossDir);
+            final BlockPos contB2 = contB1.relative(farStep);                 // B2
+            final BlockPos lampPos = contB2.relative(farStep);
+            final BlockPos a1 = cellSA.relative(approachDir);
+            final BlockPos a0 = a1.relative(approachDir);
+            final BlockPos powerPos = a0.relative(crossDir.getClockWise());
+            final BlockPos farPowerPos = contB2.relative(farStep.getClockWise());
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "RS-WIRE geometry: S={} crossDir={} S'={} in {} B1={} B2={} lamp={} A1={}"
+                    + " A0={} power={} farPower={} R={}",
+                cellSA, crossDir, destPos, binding.destDim().identifier(), contB1, contB2, lampPos,
+                a1, a0, powerPos, farPowerPos, rotR);
+            // Failure diagnostics: every relevant cell's FULL state (properties included) plus the
+            // mirror/bridge/dispatch counters — a timed-out poll must name the broken link, not
+            // just the arm (first run's lesson: three conditions shared one message).
+            final Runnable dump = () -> runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel far = server.getLevel(binding.destDim());
+                var owH = (com.warwa.seamlessportals.passthrough.SeamIndexHolder) ow;
+                var farH = (com.warwa.seamlessportals.passthrough.SeamIndexHolder) far;
+                SeamlessPortalsConstants.LOGGER.info(LOG + "RS-WIRE DUMP:"
+                    + " S=" + ow.getBlockState(cellSA)
+                    + " A1=" + ow.getBlockState(a1)
+                    + " A0=" + ow.getBlockState(a0)
+                    + " power=" + ow.getBlockState(powerPos)
+                    + " | S'=" + far.getBlockState(destPos)
+                    + " B1=" + far.getBlockState(contB1)
+                    + " B2=" + far.getBlockState(contB2)
+                    + " lamp=" + far.getBlockState(lampPos)
+                    + " farPower=" + far.getBlockState(farPowerPos)
+                    + " | S.marked=" + owH.seamlessportals$mirrorCreatedCells().contains(cellSA.asLong())
+                    + " S'.marked=" + farH.seamlessportals$mirrorCreatedCells().contains(destPos.asLong())
+                    + " | mirror{" + com.warwa.seamlessportals.passthrough.SeamMirror.counters() + "}"
+                    + " | wire{" + com.warwa.seamlessportals.passthrough.SeamWireBridge.counters() + "}"
+                    + " | signal{" + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters() + "}");
+            });
+            // Far side must bind through ITS OWN registry (the RS-SIGNAL-A lesson: forceload is a
+            // ticking ticket; the mirror's one-off getChunk is not).
+            runCommands(context, List.of(
+                "execute in minecraft:the_nether run forceload add "
+                    + (destPos.getX() - 16) + " " + (destPos.getZ() - 16) + " "
+                    + (destPos.getX() + 16) + " " + (destPos.getZ() + 16)));
+            pollOrDump(dump, context, 30, 10, "RS-WIRE nether side never bound", server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                return nether != null
+                    && com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(nether, destPos) != null;
+            });
+
+            // ── Staging: floors, then the dust line, then (last) power. ──
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+                for (BlockPos p : new BlockPos[] {a1, a0, powerPos}) {
+                    ow.setBlockAndUpdate(p.below(), stone);
+                }
+                for (BlockPos p : new BlockPos[] {contB1, contB2, lampPos, farPowerPos}) {
+                    nether.setBlockAndUpdate(p.below(), stone);
+                }
+                revertsBefore.set(com.warwa.seamlessportals.passthrough.SeamMirror.shapeRevertedCount());
+            });
+            context.waitTicks(5);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                ow.setBlockAndUpdate(a0, WIRE.defaultBlockState());
+                ow.setBlockAndUpdate(a1, WIRE.defaultBlockState());
+                nether.setBlockAndUpdate(contB1, WIRE.defaultBlockState());
+                nether.setBlockAndUpdate(contB2, WIRE.defaultBlockState());
+                nether.setBlockAndUpdate(lampPos,
+                    net.minecraft.world.level.block.Blocks.REDSTONE_LAMP.defaultBlockState());
+            });
+            context.waitTicks(5);
+            runOnServer(context, server ->
+                writeAsPlayer(server.getLevel(Level.OVERWORLD), cellSA, WIRE.defaultBlockState()));
+            pollOrDump(dump, context, 20, 5, "RS-WIRE seam dust never mirrored to the far half",
+                server -> {
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    return nether != null && nether.getBlockState(destPos).is(WIRE);
+                });
+
+            // ── ARM F: forward. ──
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                powerPos, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5, "RS-WIRE far dust never powered (forward)", server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var b1 = nether.getBlockState(contB1);
+                var b2 = nether.getBlockState(contB2);
+                return b1.is(WIRE) && b2.is(WIRE)
+                    && b1.getValue(POWER) > 0
+                    && b2.getValue(POWER) == Math.max(b1.getValue(POWER) - 1, 0)
+                    && nether.getBlockState(lampPos).getValue(LIT);
+            });
+            pollOrDump(dump, context, 20, 5, "RS-WIRE mirrored pair never agreed on POWER", server -> {
+                int s = server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER);
+                int sp = server.getLevel(binding.destDim()).getBlockState(destPos).getValue(POWER);
+                return s > 0 && s == sp;
+            });
+            // ── ARM S: stability — the loop's signature is a per-tick flap. ──
+            final int[] sampleA = new int[2];
+            runOnServer(context, server -> {
+                sampleA[0] = server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER);
+                sampleA[1] = server.getLevel(binding.destDim()).getBlockState(destPos).getValue(POWER);
+            });
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                int s = server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER);
+                int sp = server.getLevel(binding.destDim()).getBlockState(destPos).getValue(POWER);
+                if (s != sampleA[0] || sp != sampleA[1]) {
+                    failure.set("PAIR FLAPPED across 20 ticks: " + sampleA[0] + "/" + sampleA[1]
+                        + " -> " + s + "/" + sp + " — the revert-loop signature");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: " + failure.get());
+            }
+            // ── ARM O: off. ──
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                powerPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5, "RS-WIRE seam dust never powered OFF", server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                return ow.getBlockState(cellSA).getValue(POWER) == 0
+                    && nether.getBlockState(destPos).getValue(POWER) == 0
+                    && nether.getBlockState(contB1).getValue(POWER) == 0
+                    && nether.getBlockState(contB2).getValue(POWER) == 0
+                    && !nether.getBlockState(lampPos).getValue(LIT);
+            });
+            // ── ARM R: reverse — the wire authority wake + the evaluator bridge, both must move. ──
+            final long decayBefore =
+                com.warwa.seamlessportals.passthrough.SeamWireBridge.decayReadsCount();
+            runOnServer(context, server -> server.getLevel(binding.destDim()).setBlockAndUpdate(
+                farPowerPos, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5, "RS-WIRE near dust never powered from the far side (reverse)",
+                server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var s = ow.getBlockState(cellSA);
+                    var w1 = ow.getBlockState(a1);
+                    return s.is(WIRE) && w1.is(WIRE)
+                        && s.getValue(POWER) > 0
+                        && w1.getValue(POWER) == Math.max(s.getValue(POWER) - 1, 0);
+                });
+            if (com.warwa.seamlessportals.passthrough.SeamWireBridge.decayReadsCount() <= decayBefore) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: near side powered but the decay"
+                    + " bridge never read across — power that appeared without the bridge proves"
+                    + " nothing. " + com.warwa.seamlessportals.passthrough.SeamWireBridge.counters());
+            }
+            runOnServer(context, server -> server.getLevel(binding.destDim()).setBlockAndUpdate(
+                farPowerPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5, "RS-WIRE near dust never powered OFF (reverse)", server ->
+                server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER) == 0);
+            // ── VOLUME CEILING. ──
+            AtomicReference<Long> revertDelta = new AtomicReference<>(0L);
+            runOnServer(context, server -> revertDelta.set(
+                com.warwa.seamlessportals.passthrough.SeamMirror.shapeRevertedCount()
+                    - revertsBefore.get()));
+            if (revertDelta.get() > 20) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: RUNAWAY — shapeReverted grew by "
+                    + revertDelta.get() + " across one leg (healthy ≤ 20; the 2026-08-10 loop"
+                    + " produced thousands per tick). "
+                    + com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-WIRE PASS — dust carried signal across"
+                + " the obsidian seam both directions, decayed one per step, agreed across the"
+                + " mirrored pair, went dark on source removal, and stayed volume-bounded"
+                + " (shapeReverted +" + revertDelta.get() + "). "
+                + com.warwa.seamlessportals.passthrough.SeamWireBridge.counters() + " | "
+                + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+        }
+        finally {
+            try {
+                runOnServer(context, server ->
+                    writeAsPlayer(server.getLevel(Level.OVERWORLD), cellSA,
+                        net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+                runCommands(context, List.of(
+                    "fill " + (fx - 2) + " " + (py - 1) + " " + (fz - 4) + " "
+                        + (fx + 3) + " " + (py + 5) + " " + (fz + 4) + " minecraft:air",
+                    "forceload remove " + (fx - 16) + " " + (fz - 16) + " "
+                        + (fx + 16) + " " + (fz + 16)
+                ));
+                Vec3 d = destSeen.get();
+                if (d != null) {
+                    int dx = (int) Math.floor(d.x), dy = (int) Math.floor(d.y), dz = (int) Math.floor(d.z);
+                    runCommands(context, List.of(
+                        inDim("minecraft:the_nether", "fill " + (dx - 6) + " " + (dy - 2) + " "
+                            + (dz - 6) + " " + (dx + 6) + " " + (dy + 5) + " " + (dz + 6)
+                            + " minecraft:air"),
+                        "execute in minecraft:the_nether run forceload remove " + (dx - 16) + " "
+                            + (dz - 16) + " " + (dx + 16) + " " + (dz + 16)
+                    ));
+                }
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-WIRE cleanup failed", t);
+            }
+        }
+    }
+
+    /**
      * RS (c) SIGNAL LEG, TOPOLOGY B — the DISJOINT (boundary-phase) seam carries signal with no
      * mirror to lean on ({@code REDSTONE_C_SPEC.md} §5 arm B). This is the arm where the DISPATCH
      * lever inverts for RAILS: in topology A the mirror's flags-515 far write already notifies the
@@ -3672,6 +4008,29 @@ public class CrossingSmoke implements FabricClientGameTest {
      * {@code failure} ref and a later coverage check OVERWROTE the real verdict — the run's actual
      * failure ("far rails never powered") surfaced as an unrelated coverage message.
      */
+    /**
+     * {@link #pollOrFail} plus a leg-supplied state dump on the failure path — a timed-out poll
+     * must name the broken link (which cell, holding what), not just the arm. The dump itself must
+     * never mask the real verdict, so its own faults are swallowed.
+     */
+    private static void pollOrDump(
+        Runnable dump, ClientGameTestContext context, int attempts, int stepTicks,
+        String what, java.util.function.Predicate<MinecraftServer> condition
+    ) {
+        try {
+            pollOrFail(context, attempts, stepTicks, what, condition);
+        }
+        catch (AssertionError e) {
+            try {
+                dump.run();
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "failure dump itself failed", t);
+            }
+            throw e;
+        }
+    }
+
     private static void pollOrFail(
         ClientGameTestContext context, int attempts, int stepTicks,
         String what, java.util.function.Predicate<MinecraftServer> condition

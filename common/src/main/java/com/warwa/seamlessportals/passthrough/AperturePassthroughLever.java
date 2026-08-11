@@ -446,16 +446,38 @@ public final class AperturePassthroughLever {
      * Disables the POWER-WAKE carve-out in the mirror-authority rule —
      * {@code -Dseamlessportals.disableSeamPowerWake=true}.
      *
-     * <p>With the fix ON (default), a provenance-marked (mirror-created) POWERED RAIL still runs
-     * its POWER-ONLY evaluation ({@code PoweredRailBlock.updateState} — POWERED property only,
-     * never shape, never removal) when notified; shape re-resolution and support-deletion stay
-     * suppressed exactly as the authority rule demands. With it OFF, the (a)-era full suppression
-     * returns and the LIVE defect of 2026-07-28 reproduces: signal entering a coincident pair from
-     * the MIRROR half's side dies at the seam ("stops at the first half of the seam rail"),
-     * half/side-dependently on provenance, with break-and-replace as the only workaround.
+     * <p>With the fix ON (default), a notification arriving at a provenance-marked (mirror-created)
+     * rail or wire is still cancelled — the marked half never evaluates or writes in place (the
+     * first build did, and looped ~500k same-drain iterations against the authority revert) — but
+     * the poke is FORWARDED to the counterpart (the player half) through the tick-end dispatch
+     * queue, which re-derives with the bridged reads and shape-syncs back. With it OFF, the (a)-era
+     * full suppression returns and the LIVE defect of 2026-07-28 reproduces: signal entering a
+     * coincident pair from the MIRROR half's side dies at the seam ("stops at the first half of the
+     * seam rail"), half/side-dependently on provenance, with break-and-replace as the only
+     * workaround.
      */
     public static final boolean DISABLE_SEAM_POWER_WAKE =
         Boolean.getBoolean("seamlessportals.disableSeamPowerWake");
+
+    /**
+     * MASTER OFF-SWITCH for (c) step 2 — redstone WIRE (dust) continuity across the seam —
+     * {@code -Dseamlessportals.disableSeamWire=true}.
+     *
+     * <p>With the fix ON (default), dust participates in the stitched space (user ruling
+     * 2026-08-10: full continuity, "the lit dust should also propagate down the stream"): the wire
+     * evaluator's neighbour reads ({@code getIncomingWireSignal} — spec F11: raw
+     * {@code getBlockState}+POWER, untouched by step 1's SignalGetter bridge), the connection-shape
+     * reads ({@code getConnectingSide}), and the block-power intake
+     * ({@code getBlockSignal → getBestNeighborSignal}) all see across the seam
+     * ({@link SeamWireBridge}, {@code SeamSignalContinuity.neighborSignalStrengthAcross}); the
+     * wire-side mirror-authority mixin suppresses self-derivation at marked cells with the same
+     * poke-forward as rails. With it OFF, dust reverts to 2026-08-10-morning behaviour: stops dead
+     * at the plane, ignores far power — and, at a mirrored seam cell, fights the authority revert
+     * in the 1M-chained-update loop that stalled the server 42 s that evening (the wire authority
+     * mixin also honours this lever, so OFF reproduces the loop for diagnosis; that is deliberate).
+     */
+    public static final boolean DISABLE_SEAM_WIRE =
+        Boolean.getBoolean("seamlessportals.disableSeamWire");
 
     // RETIRED SAME-DAY (2026-07-27): disableSeamCrossPreference. A "crossing-preference" fix for
     // bi-faced cluster binding selection was implemented on the theory that the two twins' bindings

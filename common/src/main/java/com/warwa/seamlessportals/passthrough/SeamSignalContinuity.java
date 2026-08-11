@@ -220,6 +220,98 @@ public final class SeamSignalContinuity {
     }
 
     /**
+     * The far side's contribution to a WIRE's block-power intake
+     * ({@code RedStoneWireBlock.getBlockSignal → getBestNeighborSignal}), strength-valued, or 0.
+     * Callers use {@code max(local, this)} — additive only. Same geometry and guards as
+     * {@link #hasNeighborSignalAcross}; a separate entry because wire needs the STRENGTH (decay
+     * arithmetic), not a boolean, and because it runs inside the {@code shouldSignal} window —
+     * far-side wire correctly answers 0 there (the latch lives on the shared block singleton), so
+     * this carries block power only; wire-to-wire decay is {@link SeamWireBridge}'s read family.
+     */
+    public static int neighborSignalStrengthAcross(Level level, BlockPos pos) {
+        try {
+            if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+                || AperturePassthroughLever.DISABLE_SEAM_WIRE
+                || !SeamlessPortalsConfig.isEntityPortals()
+                || !(level instanceof ServerLevel src)
+                || !SeamRegistry.sectionHasSeam(level, pos)) {
+                return 0;
+            }
+            MinecraftServer server = src.getServer();
+            if (server == null || !server.isSameThread()) {
+                return 0;
+            }
+            SeamRegistry.SeamCell cell = SeamRegistry.lookup(level, pos);
+            if (cell == null) {
+                return 0;
+            }
+            unionReads++;
+            int best = 0;
+            BlockPos lastTarget = null;
+            ResourceKey<Level> lastDim = null;
+            for (SeamRegistry.SeamBinding b : cell.bindings()) {
+                if (!b.isMirrorable() || !b.seamContinuous()) {
+                    continue;
+                }
+                boolean coincident = b.phase() == SeamMap.SeamPhase.COINCIDENT;
+                BlockPos target = coincident ? b.destPos() : b.continuationToward(b.crossDir());
+                if (target == null || (target.equals(lastTarget) && b.destDim().equals(lastDim))) {
+                    continue;
+                }
+                lastTarget = target;
+                lastDim = b.destDim();
+                ServerLevel far = server.getLevel(b.destDim());
+                if (far == null) {
+                    continue;
+                }
+                if (coincident) {
+                    for (Direction d : Direction.values()) {
+                        BlockPos n = target.relative(d);
+                        if (!far.isInsideBuildHeight(n) || !far.hasChunkAt(n)) {
+                            declineCold(src, pos, far, n);
+                            continue;
+                        }
+                        best = Math.max(best, guardedFarSignal(far, n, d, src, pos));
+                        if (best >= 15) {
+                            unionHits++;
+                            return best;
+                        }
+                    }
+                }
+                else {
+                    if (!far.isInsideBuildHeight(target) || !far.hasChunkAt(target)) {
+                        declineCold(src, pos, far, target);
+                        continue;
+                    }
+                    best = Math.max(best,
+                        guardedFarSignal(far, target, SeamRegistry.mapDir(b, b.crossDir()), src, pos));
+                    if (best >= 15) {
+                        unionHits++;
+                        return best;
+                    }
+                }
+            }
+            if (best > 0) {
+                unionHits++;
+                probeLog("wire strength union {} at {} in {}",
+                    best, pos, src.dimension().identifier());
+            }
+            return best;
+        }
+        catch (Throwable t) {
+            readFault(t);
+            return 0;
+        }
+    }
+
+    /** {@link SeamWireBridge}'s door into {@link #declineCold} — same retry semantics as any read. */
+    public static void wireDeclineCold(Level level, BlockPos wirePos, ServerLevel far, BlockPos farPos) {
+        if (level instanceof ServerLevel src) {
+            declineCold(src, wirePos, far, farPos);
+        }
+    }
+
+    /**
      * Vanilla {@code SignalGetter.getSignal} hand-rolled with per-read chunk-residency guards
      * (panel finding: the one-hop guard was not enough — a CONDUCTOR neighbor fans the read out to
      * ITS six neighbors via {@code getDirectSignalTo}, and any of those can sit in a cold chunk,

@@ -1062,4 +1062,13 @@ public final class SeamMirror {
             + " shapeSynced=" + shapeSynced
             + " shapeReverted=" + shapeReverted;
     }
+
+    /**
+     * The revert counter alone, numeric — the RS-WIRE gate's volume ceiling asserts a bounded
+     * delta of it (the 2026-08-10 dust loop was ~one revert per re-wake, thousands per tick;
+     * a healthy leg produces a handful).
+     */
+    public static long shapeRevertedCount() {
+        return shapeReverted;
+    }
 }
