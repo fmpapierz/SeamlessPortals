@@ -56,28 +56,17 @@ public final class SeamParticleTeleport {
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
         BlockPos baseCell = cell;
         if (seam == null) {
-            // ★ ROUND 46 — THE MARGIN INDEX (supersedes r45's one-cell ring; user live report:
-            // "the particles furthest LATERALLY from the seam are the ones bleeding" — fire smoke
-            // wanders blocks along the plane before crossing its extension, far beyond any
-            // fixed-cost neighborhood scan). Every in-plane cell within
-            // SeamRegistry.PARTICLE_MARGIN_RADIUS of an aperture maps to its governing aperture
-            // cell in a per-level index registered at bind time — ONE map get resolves any
-            // near-portal crossing; particles nowhere near a portal pay the same single get
-            // against a usually-empty map. A margin cell has no occupancy, so the governing
-            // cell's SeamCell drives the ordinary OPEN-cell flow unchanged (transition gate,
-            // birth rule, binding choice); the in-plane displacement leaves the coordinate ALONG
-            // the plane axis equal to the base cell's, so every side test below is exact; only
-            // the destination mapping carries the offset (further below).
-            long base = ((com.warwa.seamlessportals.passthrough.SeamIndexHolder) level)
-                .seamlessportals$particleMargin().getOrDefault(cell.asLong(), Long.MIN_VALUE);
-            if (base == Long.MIN_VALUE) {
-                return;
-            }
-            baseCell = BlockPos.of(base);
-            seam = SeamRegistry.lookup(level, baseCell);
-            if (seam == null) {
-                return;   // stale entry racing an unbind sweep — fail open
-            }
+            // ★ F7 RULING (user, 2026-08-10, superseding r46's margin fallback here): teleport
+            // governance applies to ACTUAL SEAM CELLS ONLY — "the margin should just worry about
+            // the seam cells... we don't need an 8 block buffer zone". The r46 margin-index
+            // teleports let oscillating classes (FallingLeavesParticle sways sinusoidally every
+            // tick) re-qualify on every sway: one leaf logged 124 crossings in one lifetime,
+            // blinking between ends at up to 19 Hz — every one via this fallback. The index
+            // itself stays registered: SeamParticleQuadClip still consults it so near-plane
+            // billboards keep their plane-exact cut (the bleed standard, contract point 4).
+            // If lateral-wander bleed (the r46 driver) resurfaces live, the recorded principled
+            // alternative is birth-side tagging — a decision for the user, with evidence first.
+            return;
         }
         // ★ ROUND 37 — OCCUPANCY IS NOT THE GATE (the smoke miss: flames hug the torch's own
         // occupied cell and teleported; smoke rises into the OPEN aperture cell above, crossed
