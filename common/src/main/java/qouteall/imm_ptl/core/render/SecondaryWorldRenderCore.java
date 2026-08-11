@@ -2220,10 +2220,16 @@ public class SecondaryWorldRenderCore {
      * {@code SubmitNodeCollector.submitShapeOutline} API into the pass's own storage. Exists
      * because the vanilla method carries Fabric API's injected BEFORE_BLOCK_OUTLINE handler, which
      * NPEs outside the real framegraph render (its per-frame context is null there) — see the
-     * call-site note. {@code afterTerrain} = {@code state.isTranslucent()} exactly as vanilla
-     * passes it (the LevelRendererBlockOutlineMixin re-bucket does not apply to this copy —
-     * irrelevant in-pass: both buckets drain in the same renderAllFeatures, verified
-     * wf_8a0f8152-4d8).
+     * call-site note. DEVIATION from vanilla (F2, 2026-08-10 live): {@code afterTerrain} is forced
+     * {@code false} instead of {@code state.isTranslucent()}. Vanilla's bucket choice routes
+     * translucent-MODEL targets (redstone dust is {@code force_translucent}, also slime/ice/honey)
+     * into the {@code afterTerrain} phase — but the r43 clip exemption brackets only
+     * {@code shapeOutlines} + {@code outline}, so an afterTerrain outline draws with the pass's
+     * re-armed inner clip while the lines shader's injected clip write is garbage for its NDC-space
+     * position math (per-frame flicker on the dest side). The bucket choice is order-irrelevant
+     * in-pass — both buckets drain in the same renderAllFeatures (verified wf_8a0f8152-4d8) — so
+     * every dest outline takes the exempted bucket. Do NOT instead exempt the afterTerrain phase:
+     * the window particle draws live there and the re-armed clip is what stops the r42 bleed.
      */
     private static void submitDestBlockOutline(
         LevelRenderState destLRS, SubmitNodeStorage storage
@@ -2243,7 +2249,7 @@ public class SecondaryWorldRenderCore {
             submitDestHitOutline(
                 poseStack, storage,
                 net.minecraft.client.renderer.rendertype.RenderTypes.secondaryBlockOutline(),
-                state, -16777216, 7.0F, state.isTranslucent());
+                state, -16777216, 7.0F, false);
         }
         int outlineColor = state.highContrast() ? -11010079 : ARGB.black(102);
         submitDestHitOutline(
@@ -2251,7 +2257,7 @@ public class SecondaryWorldRenderCore {
             net.minecraft.client.renderer.rendertype.RenderTypes.lines(),
             state, outlineColor,
             client.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth,
-            state.isTranslucent());
+            false);
         poseStack.popPose();
     }
 
