@@ -479,6 +479,23 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_SEAM_WIRE =
         Boolean.getBoolean("seamlessportals.disableSeamWire");
 
+    /**
+     * Disables F8 half-scoping of seam redstone —
+     * {@code -Dseamlessportals.disableSeamHalfScope=true}.
+     *
+     * <p>With the fix ON (default), a seam cell with a claimed primary half participates in
+     * redstone per-half (user live finding 2026-08-11: "seam redstone powers too broadly —
+     * source side A ... sends power to dest side A AND source side B"): raw reads of the cell
+     * from its empty side see the Secondary or air; the cell's own reads use exactly one
+     * candidate per seam-axis direction (owned side local, empty side far); the far six-scans
+     * skip the counterpart's behind-plane neighbour; repeater/comparator raw wire reads gate the
+     * same way. With it OFF, the 2026-08-11-morning leak reproduces. Cells with no claimed
+     * primary (every command-staged fixture) are never affected either way. The ONE
+     * implementation gate is {@code SeamFractional.emptyHalfDir}.
+     */
+    public static final boolean DISABLE_SEAM_HALF_SCOPE =
+        Boolean.getBoolean("seamlessportals.disableSeamHalfScope");
+
     // RETIRED SAME-DAY (2026-07-27): disableSeamCrossPreference. A "crossing-preference" fix for
     // bi-faced cluster binding selection was implemented on the theory that the two twins' bindings
     // answer along-axis queries differently (180°-apart rotations) — and REFUTED by its own

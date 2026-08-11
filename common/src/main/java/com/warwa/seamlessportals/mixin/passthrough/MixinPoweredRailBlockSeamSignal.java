@@ -64,7 +64,16 @@ public abstract class MixinPoweredRailBlockSeamSignal {
 
     @Unique
     private boolean seamlessportals$union(Level l, BlockPos p, Operation<Boolean> op) {
-        return op.call(l, p) || SeamSignalContinuity.hasNeighborSignalAcross(l, p);
+        // F8 — a claimed rail's LOCAL intake skips its empty-half direction (this side's
+        // behind-plane region belongs to the other stitching); unclaimed cells stay vanilla.
+        net.minecraft.core.Direction emptyDir =
+            l instanceof net.minecraft.server.level.ServerLevel
+                ? com.warwa.seamlessportals.passthrough.SeamFractional.emptyHalfDir(l, p)
+                : null;
+        boolean local = emptyDir == null
+            ? op.call(l, p)
+            : SeamSignalContinuity.hasLocalNeighborSignalSkippingEmptyHalf(l, p, emptyDir);
+        return local || SeamSignalContinuity.hasNeighborSignalAcross(l, p);
     }
 
     // ── findPoweredRailSignal:100-102 — the two step probes (stepped cell, then one below). A

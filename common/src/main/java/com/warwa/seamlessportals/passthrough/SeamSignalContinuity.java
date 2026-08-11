@@ -184,7 +184,14 @@ public final class SeamSignalContinuity {
                     continue;
                 }
                 if (coincident) {
+                    // F8: the counterpart's behind-plane neighbour belongs to the OTHER stitched
+                    // space — skip it when the counterpart is half-claimed (panel finding #2).
+                    Direction farEmpty = far.hasChunkAt(target)
+                        ? SeamFractional.emptyHalfDir(far, target) : null;
                     for (Direction d : Direction.values()) {
+                        if (d == farEmpty) {
+                            continue;
+                        }
                         BlockPos n = target.relative(d);
                         if (!far.isInsideBuildHeight(n) || !far.hasChunkAt(n)) {
                             declineCold(src, pos, far, n);
@@ -265,7 +272,13 @@ public final class SeamSignalContinuity {
                     continue;
                 }
                 if (coincident) {
+                    // F8: skip the counterpart's behind-plane neighbour — the other stitching.
+                    Direction farEmpty = far.hasChunkAt(target)
+                        ? SeamFractional.emptyHalfDir(far, target) : null;
                     for (Direction d : Direction.values()) {
+                        if (d == farEmpty) {
+                            continue;
+                        }
                         BlockPos n = target.relative(d);
                         if (!far.isInsideBuildHeight(n) || !far.hasChunkAt(n)) {
                             declineCold(src, pos, far, n);
@@ -309,6 +322,43 @@ public final class SeamSignalContinuity {
         if (level instanceof ServerLevel src) {
             declineCold(src, wirePos, far, farPos);
         }
+    }
+
+    /**
+     * F8 — the LOCAL half of a claimed cell's own intake: vanilla's six-direction best-neighbour
+     * scan minus the empty-half direction (that neighbour is this side's behind-plane region —
+     * the other stitched space). Callers resolve {@code emptyDir} themselves via
+     * {@link SeamFractional#emptyHalfDir} and fall through to the vanilla operation when it is
+     * null; boolean and strength forms for the two consumer families.
+     */
+    public static boolean hasLocalNeighborSignalSkippingEmptyHalf(
+        Level level, BlockPos pos, Direction emptyDir
+    ) {
+        for (Direction d : Direction.values()) {
+            if (d == emptyDir) {
+                continue;
+            }
+            if (level.getSignal(pos.relative(d), d) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static int localNeighborSignalSkippingEmptyHalf(
+        Level level, BlockPos pos, Direction emptyDir
+    ) {
+        int best = 0;
+        for (Direction d : Direction.values()) {
+            if (d == emptyDir) {
+                continue;
+            }
+            best = Math.max(best, level.getSignal(pos.relative(d), d));
+            if (best >= 15) {
+                return best;
+            }
+        }
+        return best;
     }
 
     /**

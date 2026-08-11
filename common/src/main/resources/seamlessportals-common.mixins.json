@@ -96,6 +96,7 @@
     "passthrough.MixinRedStoneWireBlockSeamAuthority",
     "passthrough.MixinRedStoneWireBlockSeamSignal",
     "passthrough.MixinRedstoneWireEvaluatorSeam",
+    "passthrough.MixinDiodeBlockSeamHalf",
     "passthrough.MixinBlockItemPlaceSource",
     "passthrough.MixinAbstractMinecartSeamCart",
     "passthrough.MinecartBehaviorAccessor",

@@ -2926,6 +2926,115 @@ public class CrossingSmoke implements FabricClientGameTest {
                 farPowerPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
             pollOrDump(dump, context, 40, 5, "RS-WIRE near dust never powered OFF (reverse)", server ->
                 server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER) == 0);
+
+            // ══ ARM H — F8 HALF-SCOPE (the 2026-08-11 live leak: "seam redstone powers too
+            // broadly"). The pair is re-staged WITH a claimed occupancy half (the arms above run
+            // mask-0 = whole-cell vanilla on purpose — the panel-verified carve-out that keeps
+            // them green). Asserts: continuity SURVIVES the claim (the over-void failure mode),
+            // and both behind-plane directions stay dark — dest side A (local, behind the near
+            // plane) and source side B (the far end's approach side). ══
+            final BlockPos behindNear = cellSA.relative(crossDir);
+            final BlockPos behindFar = destPos.relative(farStep.getOpposite());
+            runOnServer(context, server ->
+                writeAsPlayer(server.getLevel(Level.OVERWORLD), cellSA,
+                    net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+            context.waitTicks(10);
+            claimOwnerHalfBothSides(context, cellSA,
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.halfOf(approachDir));
+            runOnServer(context, server ->
+                writeAsPlayer(server.getLevel(Level.OVERWORLD), cellSA, WIRE.defaultBlockState()));
+            pollOrDump(dump, context, 20, 5, "RS-WIRE claimed dust never mirrored", server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                return nether.getBlockState(destPos).is(WIRE)
+                    && com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .occupancyOf(nether, destPos) != 0;
+            });
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+                ow.setBlockAndUpdate(behindNear.below(), stone);
+                nether.setBlockAndUpdate(behindFar.below(), stone);
+                ow.setBlockAndUpdate(behindNear, WIRE.defaultBlockState());
+                nether.setBlockAndUpdate(behindFar, WIRE.defaultBlockState());
+            });
+            context.waitTicks(5);
+            // H-F: forward under claims — continuity lives, both behind-plane dusts stay dark.
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                powerPos, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5,
+                "RS-WIRE claimed pair lost continuity (half-scope over-void)", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    int s = ow.getBlockState(cellSA).getValue(POWER);
+                    return s > 0 && nether.getBlockState(destPos).getValue(POWER) == s
+                        && nether.getBlockState(contB1).getValue(POWER) > 0;
+                });
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                int bn = ow.getBlockState(behindNear).getValue(POWER);
+                int bf = nether.getBlockState(behindFar).getValue(POWER);
+                if (bn != 0 || bf != 0) {
+                    failure.set("HALF-SCOPE LEAK under forward power: behindNear(dest side A)="
+                        + bn + " behindFar(source side B)=" + bf + " — both must be 0");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: " + failure.get());
+            }
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                powerPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5, "RS-WIRE claimed dust never powered OFF", server ->
+                server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER) == 0);
+            // H-I: intake — a source adjacent ONLY on the behind-plane side must not power the
+            // claimed dust (the symmetric half of the user's leak).
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                behindNear, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            context.waitTicks(40);
+            runOnServer(context, server -> {
+                int s = server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER);
+                int sp = server.getLevel(binding.destDim()).getBlockState(destPos).getValue(POWER);
+                if (s != 0 || sp != 0) {
+                    failure.set("HALF-SCOPE INTAKE LEAK: a behind-plane redstone block powered the"
+                        + " claimed seam dust (S=" + s + " S'=" + sp + " — both must stay 0)");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: " + failure.get());
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ow.setBlockAndUpdate(behindNear, WIRE.defaultBlockState());
+            });
+            // H-R: reverse under claims — far power reaches the near side, behind-plane stays dark.
+            runOnServer(context, server -> server.getLevel(binding.destDim()).setBlockAndUpdate(
+                farPowerPos, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5,
+                "RS-WIRE claimed pair lost REVERSE continuity (half-scope over-void)", server ->
+                    server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER) > 0);
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                int bn = server.getLevel(Level.OVERWORLD).getBlockState(behindNear).getValue(POWER);
+                int bf = server.getLevel(binding.destDim()).getBlockState(behindFar).getValue(POWER);
+                if (bn != 0 || bf != 0) {
+                    failure.set("HALF-SCOPE LEAK under reverse power: behindNear=" + bn
+                        + " behindFar=" + bf + " — both must be 0");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: " + failure.get());
+            }
+            runOnServer(context, server -> {
+                server.getLevel(binding.destDim()).setBlockAndUpdate(
+                    farPowerPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                ow.setBlockAndUpdate(behindNear, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                nether.setBlockAndUpdate(behindFar, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            });
+
             // ── VOLUME CEILING. ──
             AtomicReference<Long> revertDelta = new AtomicReference<>(0L);
             runOnServer(context, server -> revertDelta.set(

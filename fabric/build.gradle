@@ -176,6 +176,8 @@ loom {
             if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
             // RS (c) STEP 2 — redstone WIRE (dust) continuity; disableSeamWire is its A/B switch.
             if (project.findProperty('disableSeamWire') == 'true') { vmArg('-Dseamlessportals.disableSeamWire=true') }
+            // F8 — half-scoped seam redstone (claimed cells emit/intake per-half).
+            if (project.findProperty('disableSeamHalfScope') == 'true') { vmArg('-Dseamlessportals.disableSeamHalfScope=true') }
             // RS (c) PROBE LEVER — DEFAULT-OFF.
             if (project.findProperty('seamSignalProbe') == 'true') { vmArg('-Dseamlessportals.seamSignalProbe=true') }
             // RS (d) FIX LEVERS — minecart rail following across the seam. disableSeamCartRail is
@@ -388,6 +390,7 @@ loom {
             if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
             if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
             if (project.findProperty('disableSeamWire') == 'true') { vmArg('-Dseamlessportals.disableSeamWire=true') }
+            if (project.findProperty('disableSeamHalfScope') == 'true') { vmArg('-Dseamlessportals.disableSeamHalfScope=true') }
             if (project.findProperty('seamSignalProbe') == 'true') { vmArg('-Dseamlessportals.seamSignalProbe=true') }
             // RS (d) FIX LEVERS — see the client block's rows.
             if (project.findProperty('disableSeamCartRail') == 'true') { vmArg('-Dseamlessportals.disableSeamCartRail=true') }

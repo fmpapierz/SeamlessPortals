@@ -35,7 +35,7 @@ public abstract class MixinRedstoneLampBlockSeamSignal {
         require = 1, allow = 1
     )
     private boolean seamlessportals$placementIntake(Level l, BlockPos p, Operation<Boolean> op) {
-        return op.call(l, p) || SeamSignalContinuity.hasNeighborSignalAcross(l, p);
+        return seamlessportals$halfAwareUnion(l, p, () -> op.call(l, p));
     }
 
     @WrapOperation(
@@ -45,7 +45,7 @@ public abstract class MixinRedstoneLampBlockSeamSignal {
         require = 1, allow = 1
     )
     private boolean seamlessportals$neighborIntake(Level l, BlockPos p, Operation<Boolean> op) {
-        return op.call(l, p) || SeamSignalContinuity.hasNeighborSignalAcross(l, p);
+        return seamlessportals$halfAwareUnion(l, p, () -> op.call(l, p));
     }
 
     @WrapOperation(
@@ -55,6 +55,24 @@ public abstract class MixinRedstoneLampBlockSeamSignal {
         require = 1, allow = 1
     )
     private boolean seamlessportals$tickIntake(ServerLevel l, BlockPos p, Operation<Boolean> op) {
-        return op.call(l, p) || SeamSignalContinuity.hasNeighborSignalAcross(l, p);
+        return seamlessportals$halfAwareUnion(l, p, () -> op.call(l, p));
+    }
+
+    /**
+     * F8 — a claimed lamp's LOCAL intake skips its empty-half direction (that neighbour is this
+     * side's behind-plane region); unclaimed cells run the vanilla operation untouched. The far
+     * union is unchanged (its own F8 skip lives inside {@code hasNeighborSignalAcross}).
+     */
+    @org.spongepowered.asm.mixin.Unique
+    private static boolean seamlessportals$halfAwareUnion(
+        Level l, BlockPos p, java.util.function.BooleanSupplier vanilla
+    ) {
+        net.minecraft.core.Direction emptyDir = l instanceof ServerLevel
+            ? com.warwa.seamlessportals.passthrough.SeamFractional.emptyHalfDir(l, p)
+            : null;
+        boolean local = emptyDir == null
+            ? vanilla.getAsBoolean()
+            : SeamSignalContinuity.hasLocalNeighborSignalSkippingEmptyHalf(l, p, emptyDir);
+        return local || SeamSignalContinuity.hasNeighborSignalAcross(l, p);
     }
 }

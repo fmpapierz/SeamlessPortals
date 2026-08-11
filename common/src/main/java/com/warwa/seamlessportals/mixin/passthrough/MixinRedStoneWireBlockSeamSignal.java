@@ -50,7 +50,15 @@ public abstract class MixinRedStoneWireBlockSeamSignal {
         require = 1, allow = 1
     )
     private int seamlessportals$blockPowerIntake(Level level, BlockPos pos, Operation<Integer> op) {
-        int local = op.call(level, pos);
+        // F8: a claimed cell's own intake skips its empty-half direction — that neighbour is
+        // this side's behind-plane region (the other stitched space). Unclaimed → vanilla.
+        net.minecraft.core.Direction emptyDir =
+            level instanceof net.minecraft.server.level.ServerLevel
+                ? com.warwa.seamlessportals.passthrough.SeamFractional.emptyHalfDir(level, pos)
+                : null;
+        int local = emptyDir == null
+            ? op.call(level, pos)
+            : SeamSignalContinuity.localNeighborSignalSkippingEmptyHalf(level, pos, emptyDir);
         if (local >= 15) {
             return local;               // ── LOCAL FIRST ──
         }

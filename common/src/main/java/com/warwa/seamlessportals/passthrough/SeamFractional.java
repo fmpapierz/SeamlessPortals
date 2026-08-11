@@ -110,6 +110,86 @@ public final class SeamFractional {
         return dir.getOpposite() != ownedDir;
     }
 
+    // =============================================================================================
+    // F8 — HALF-SCOPED RAW READS (2026-08-11 live leak: "seam redstone powers too broadly").
+    // blocksSignalTowards above gates the getSignal FAMILY (round 27); wire, repeaters and
+    // comparators read neighbour BlockState + POWER RAW and bypassed it entirely — the user's
+    // source-A dust powered dest side A and source side B. These helpers are the raw-read family's
+    // gate, verified by a three-lens adversarial panel (wf_bcc95ef6-045) before implementation.
+    // =============================================================================================
+
+    /**
+     * The claimed PRIMARY half of a cut seam cell, or 0 when underivable (panel discriminator):
+     * a single-bit mask IS the primary; a BOTH mask with a {@link SeamOccupancy.Secondary} names
+     * the primary as the secondary's other half; mask 0, or BOTH with no secondary, has no
+     * derivable primary and stays whole-cell vanilla — which is what keeps every command-staged
+     * suite fixture (raw {@code writeAsPlayer}, never {@code BlockItem.place}, never claims)
+     * byte-identical under this gate.
+     */
+    public static byte primaryHalf(net.minecraft.world.level.Level lvl, BlockPos pos) {
+        byte mask = SeamOccupancy.occupancyOf(lvl, pos);
+        if (mask == SeamOccupancy.HALF_POSITIVE || mask == SeamOccupancy.HALF_NEGATIVE) {
+            return mask;
+        }
+        if (mask == SeamOccupancy.BOTH) {
+            SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(lvl, pos);
+            if (sec != null) {
+                return SeamOccupancy.otherHalf(sec.half());
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * The axis direction pointing INTO the non-primary half of a primary-claimed cut cell, or
+     * null when the cell has no derivable primary or no live COINCIDENT cut binding (stale-claim
+     * safety — the same liveness condition {@link #blocksSignalTowards} carries).
+     */
+    @org.jetbrains.annotations.Nullable
+    public static Direction emptyHalfDir(net.minecraft.world.level.Level lvl, BlockPos pos) {
+        // The ONE F8 lever point: null here means every consumer (bridge gates, six-scan skips,
+        // intake scans, diode wraps) falls through to pre-F8 behaviour.
+        if (!supportActive() || AperturePassthroughLever.DISABLE_SEAM_HALF_SCOPE) {
+            return null;
+        }
+        byte primary = primaryHalf(lvl, pos);
+        if (primary == 0) {
+            return null;
+        }
+        SeamRegistry.SeamBinding binding = cuttingBinding(lvl, pos);
+        if (binding == null || binding.cut() == null) {
+            return null;
+        }
+        return Direction.get(
+            primary == SeamOccupancy.HALF_POSITIVE
+                ? Direction.AxisDirection.NEGATIVE : Direction.AxisDirection.POSITIVE,
+            binding.srcFacing().getAxis());
+    }
+
+    /**
+     * A RAW read of a cut seam cell as seen from one side of its plane. {@code sideTowardReader}
+     * is the direction from the cell toward whoever is reading. The primary's real chunk state
+     * answers on the primary's own side; the {@link SeamOccupancy.Secondary}'s stored state
+     * answers on the other side when one exists (v1 F4 deferral: secondaries render and collide
+     * but do not yet carry power — their state reads as the unpowered fragment it visibly is);
+     * AIR answers where that half is genuinely empty. Cells with no derivable primary fall
+     * through to the actual state, whole-cell vanilla.
+     */
+    public static net.minecraft.world.level.block.state.BlockState readCellFromSide(
+        net.minecraft.world.level.Level lvl, BlockPos pos, Direction sideTowardReader,
+        net.minecraft.world.level.block.state.BlockState actual
+    ) {
+        Direction emptyDir = emptyHalfDir(lvl, pos);
+        if (emptyDir == null || sideTowardReader != emptyDir) {
+            return actual;   // no derivable primary, off-axis reader, or the primary's own side
+        }
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(lvl, pos);
+        if (sec != null) {
+            return sec.state();
+        }
+        return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+    }
+
     /**
      * ★ ROUND 28 — is this world POSITION inside the EMPTY half of a cut seam cell? The particle
      * rule, restated as an invariant about the WORLD instead of the camera (round 27's
