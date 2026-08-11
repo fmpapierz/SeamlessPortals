@@ -1239,6 +1239,16 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-DEPTHFORK (2026-08-11) — the window depthtex1 fork, DEFAULT OFF (= PLANE, today's
+    // behavior). Complementary reads depthtex1 for BOTH MB velocity (composite4:90 — the KEPT
+    // cool plane-depth blur) and TAA reprojection (composite6:39 — the MB-off translation
+    // ghost): one texture, no clean split. -Pis5WindowContentDepth=true stamps the captured
+    // dest CONTENT depth into depthtex1 (identity remap — judge-proven: the capture's depth IS
+    // the main-view clip depth of the virtual content) — ghost dies, MB becomes
+    // ordinary-correct. The user picks the fork per their taste.
+    public static final boolean is5WindowContentDepth =
+        Boolean.getBoolean("seamlessportals.is5WindowContentDepth");
+
     // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
     // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
     // pixels — the ugly MB-off approach-blur (jitter=0 leg refuted jitter-alone; the blend's

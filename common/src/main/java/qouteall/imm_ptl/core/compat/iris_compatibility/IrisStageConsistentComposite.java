@@ -1509,8 +1509,11 @@ public final class IrisStageConsistentComposite {
         uniform sampler2D u_capture;
         uniform sampler2D u_captureAux;
         uniform sampler2D u_capturePrev;
+        uniform sampler2D u_captureDepth;
+        uniform sampler2D u_stampedDepth0;
         uniform float u_solid;
         uniform float u_havePrev;
+        uniform int u_depthMode;
         in vec4 vertexColor;
         layout(location = 0) out vec4 fragColor;
         layout(location = 1) out vec4 auxColor;
@@ -1521,7 +1524,23 @@ public final class IrisStageConsistentComposite {
             auxColor = texelFetch(u_captureAux, ivec2(gl_FragCoord.xy), 0);
             histColor = mix(fragColor,
                 vec4(texelFetch(u_capturePrev, ivec2(gl_FragCoord.xy), 0).rgb, 1.0), u_havePrev);
-            gl_FragDepth = max(gl_FragCoord.z, 0.001);
+            // IS5-DEPTHFORK: u_depthMode=1 (the CONTENT-depth replay into depthtex1 only, lever
+            // -Pis5WindowContentDepth): the captured dest depth IS the main-view clip depth of
+            // the virtual content (the same screen-alignment invariant as the 1:1 color fetch —
+            // slot matrices are SOURCE-side, dCam=0 XTRACE-proven; the judged remap chain
+            // collapses to IDENTITY). Test-on-plane-write-content: the color draw already left
+            // PLANE depth in depthtex0 exactly where the window won; discard where a nearer
+            // occluder won (eps ~2^-24, format-derived — a 1e-6 band silently content-stamps
+            // plane-hugging occluders). Never nearer than plane: the hand floor + C4-SEAM bound
+            // ride planeZ. Mode 0 = the exact shipped expression (byte-identical PLANE path).
+            float planeZ = max(gl_FragCoord.z, 0.001);
+            if (u_depthMode == 1) {
+                ivec2 tc = ivec2(gl_FragCoord.xy);
+                if (texelFetch(u_stampedDepth0, tc, 0).r < planeZ - 6.0e-8) discard;
+                gl_FragDepth = max(texelFetch(u_captureDepth, tc, 0).r, planeZ);
+            } else {
+                gl_FragDepth = planeZ;
+            }
         }
         """;
 
@@ -1535,8 +1554,11 @@ public final class IrisStageConsistentComposite {
     private static int locCapture = -1;
     private static int locCaptureAux = -1;
     private static int locCapturePrev = -1;
+    private static int locCaptureDepth = -1;
+    private static int locStampedDepth0 = -1;
     private static int locSolid = -1;
     private static int locHavePrev = -1;
+    private static int locDepthMode = -1;
     private static final FloatBuffer matBuf = BufferUtils.createFloatBuffer(16);
 
     // IS5-HIST: per-portal PREVIOUS-frame capture store {texId, w, h, fmt}. STRONG keys with
@@ -1579,8 +1601,11 @@ public final class IrisStageConsistentComposite {
         locCapture = GL20C.glGetUniformLocation(prog, "u_capture");
         locCaptureAux = GL20C.glGetUniformLocation(prog, "u_captureAux");
         locCapturePrev = GL20C.glGetUniformLocation(prog, "u_capturePrev");
+        locCaptureDepth = GL20C.glGetUniformLocation(prog, "u_captureDepth");
+        locStampedDepth0 = GL20C.glGetUniformLocation(prog, "u_stampedDepth0");
         locSolid = GL20C.glGetUniformLocation(prog, "u_solid");
         locHavePrev = GL20C.glGetUniformLocation(prog, "u_havePrev");
+        locDepthMode = GL20C.glGetUniformLocation(prog, "u_depthMode");
         return true;
     }
 
@@ -1756,7 +1781,11 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1i(locCapture, 0);
             GL20C.glUniform1i(locCaptureAux, 1);
             GL20C.glUniform1i(locCapturePrev, 2);
+            GL20C.glUniform1i(locCaptureDepth, 3);
+            GL20C.glUniform1i(locStampedDepth0, 4);
             GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
+            // IS5-DEPTHFORK: mode 0 asserted explicitly per pass — never rely on defaults.
+            GL20C.glUniform1i(locDepthMode, 0);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
 
             // STAMP-TIME MATRICES (design §3.2 note): by renderAll HEAD, THIS frame's true
@@ -1859,7 +1888,31 @@ public final class IrisStageConsistentComposite {
                     // dropped (noDrawBuffers); depthtex1's solid-hand content survives the test.
                     if (stampFboDepth1 != null) {
                         stampFboDepth1.bind();
+                        // IS5-DEPTHFORK (the MB-off translation-ghost fork, judge-corrected to
+                        // the IDENTITY remap): in CONTENT mode the depthtex1 replay writes the
+                        // captured dest depth (TAA reprojects window content by its TRUE
+                        // parallax — the ghost dies) under GL_ALWAYS + the plane-visibility
+                        // discard (the shader's u_depthMode=1 block). PLANE mode (default) is
+                        // byte-identical to shipped — the KEPT MB-on look lives here. The pack
+                        // reads depthtex1 for BOTH MB velocity and TAA reprojection (measured:
+                        // composite4:90 / composite6:39) — no clean split exists; the lever is
+                        // the user's fork. depthtex0 + depthtex2 stay PLANE in both modes.
+                        boolean contentDepth = IPGlobal.is5WindowContentDepth
+                            && slot.depthTex != 0;
+                        if (contentDepth) {
+                            GlStateManager._activeTexture(GL13.GL_TEXTURE3);
+                            GlStateManager._bindTexture(slot.depthTex);
+                            GlStateManager._activeTexture(GL13.GL_TEXTURE4);
+                            GlStateManager._bindTexture(depthGl.glId());
+                            GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                            GL20C.glUniform1i(locDepthMode, 1);
+                            GlStateManager._depthFunc(GL11.GL_ALWAYS);
+                        }
                         GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                        if (contentDepth) {
+                            GL20C.glUniform1i(locDepthMode, 0);
+                            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+                        }
                     }
                     if (stampFboDepth2 != null) {
                         stampFboDepth2.bind();
@@ -1930,10 +1983,17 @@ public final class IrisStageConsistentComposite {
                                 GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, d1px);
                             float d0 = d0px.get(0);
                             float d1 = d1px.get(0);
+                            // IS5-DEPTHFORK (judge change 3): the discriminator is MODE-AWARE —
+                            // PLANE mode: EQUAL = the depth1 stamp lands (shipped semantics);
+                            // CONTENT mode: DIFF at a window-center pixel is EXPECTED (content
+                            // vs plane) and EQUAL means the content depth degenerated to plane.
                             LOGGER.info("[Seamless Portals] [IS5-PRE] depth center after stamp:"
-                                    + " d0={} d1={} {}",
+                                    + " d0={} d1={} {} (mode={})",
                                 String.format("%.6f", d0), String.format("%.6f", d1),
-                                Math.abs(d0 - d1) < 1e-6 ? "EQUAL" : "DIFF");
+                                Math.abs(d0 - d1) < 1e-6 ? "EQUAL" : "DIFF",
+                                IPGlobal.is5WindowContentDepth
+                                    ? "CONTENT: DIFF expected at window pixels"
+                                    : "PLANE: EQUAL = stamp lands");
                         } catch (Throwable ignored) {
                         }
                         while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
