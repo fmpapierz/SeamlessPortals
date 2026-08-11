@@ -1249,6 +1249,15 @@ public class IPGlobal {
     public static final boolean crossDimDestChain =
         Boolean.getBoolean("seamlessportals.crossDimDestChain");
 
+    // IS5-ARRIVE (2026-08-10, migration/IS5_ARRIVE_DESIGN.md) — the sideways-arrival fix,
+    // DEFAULT ON. On teleport frames a sideways-classified (|look·N| ≤ 0.2, near-plane) reverse
+    // portal RENDERS with the V2 suspension withheld for that one portal/frame (armed V1 clip,
+    // eye pinned +0.20) — the correct half-split instead of the round-2 hole or the round-1
+    // wrong-content paint. Forward keeps the XFLICK skip; backward keeps render+suspension.
+    // The disable row restores shipped round-2 bit-identically (sideways hole on command).
+    public static final boolean disableSeamArrivalScope =
+        Boolean.getBoolean("seamlessportals.disableSeamArrivalScope");
+
     // IS5-BLINK (2026-08-10) — the one-frame visibility-dropout FIX (query hysteresis),
     // DEFAULT ON. The new path consumes LAST frame's occlusion query; a single zero-sample
     // query (occlusion-edge noise, jitter, a skipped anchor frame) reads as a confident

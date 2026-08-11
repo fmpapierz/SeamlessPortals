@@ -284,6 +284,49 @@ public final class IrisStageConsistentComposite {
     private static int blinkLogsThisSecond = 0;
 
     public static boolean consumeVisibilityForArmedFrame(Portal portal) {
+        // IS5-ARRIVE tp-frame arrival classification (design §2.3, judge-folded): computed ONCE,
+        // BEFORE the query consume — same-dim crossings have no query wipe, so the reverse portal
+        // can arrive KNOWN (or hysteresis-credited) and return before the XFLICK block; the mark
+        // is about arrival GEOMETRY, not query state (judge B required-change 1). Layer 0 only
+        // (nested lookups never took the XFLICK path either). The classification feeds both the
+        // sideways MARK (suspension withhold, read by shouldSuspendInnerClipForCrossing) and the
+        // XFLICK skip decision below. Shipped cells preserved exactly: throw ⇒ dPl=MAX ⇒ the
+        // render path (C3); camEnt-null ⇒ readable=false ⇒ the skip cell.
+        boolean tpFrame =
+            qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame;
+        double tpDPl = Double.MAX_VALUE;
+        double tpDot = 0;
+        boolean tpReadable = false;
+        boolean tpSideways = false;
+        if (tpFrame && PortalRendering.getPortalLayer() == 0) {
+            try {
+                Vec3 camPos = CHelper.getCurrentCameraPos();
+                tpDPl = portal.getDistanceToNearestPointInPortal(camPos);
+                // 26.2: Minecraft.cameraEntity FIELD is gone; only getCameraEntity() remains.
+                var camEnt = net.minecraft.client.Minecraft.getInstance().getCameraEntity();
+                if (camEnt != null) {
+                    Vec3 look = camEnt.getViewVector(RenderStates.getPartialTick());
+                    tpDot = look.dot(portal.getNormal());
+                    tpReadable = true;
+                }
+            } catch (Throwable t) {
+                tpDPl = Double.MAX_VALUE; // unreadable geometry: keep the shipped behavior
+                tpReadable = false;
+            }
+            tpSideways = !IPGlobal.disableSeamArrivalScope
+                && tpReadable && tpDPl < 1.0 && Math.abs(tpDot) <= 0.2;
+            if (tpSideways) {
+                // Mark regardless of query state — a marked portal that ends up NOT rendered
+                // (query-false skip, spec-cap skip) leaves the mark unread: harmless.
+                com.warwa.seamlessportals.render.SeamArrivalScope.markSidewaysArrival(portal);
+            }
+            if (IPGlobal.is5CrossingTrace && traceWindowFrames > 0) {
+                char cls = !tpReadable ? 'u' : (tpDot < -0.2 ? 'b' : (tpSideways ? 's' : 'f'));
+                traceSlots.append(String.format("consume:P%03d cls=%c%s dPl=%.2f; ",
+                    System.identityHashCode(portal) % 1000, cls,
+                    tpSideways ? "+mark" : "", tpDPl));
+            }
+        }
         Boolean known = qouteall.imm_ptl.core.portal.PortalRenderInfo
             .consumeLastFrameVisibility(portal);
         if (known != null) {
@@ -341,32 +384,18 @@ public final class IrisStageConsistentComposite {
         // <1 block) is skip-if-unknown — it is behind the player and pops in next frame (the §5
         // bounded pop-in class). DISTANT unknowns still render so arrival-frame windows ahead do
         // not pop. -PdisableTeleportSpecSkip reproduces the flicker on command.
-        if (!IPGlobal.disableTeleportSpecSkip
-            && qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame) {
-            double dPl;
-            boolean clearlyLookingIntoFace = false;
-            try {
-                Vec3 camPos = CHelper.getCurrentCameraPos();
-                dPl = portal.getDistanceToNearestPointInPortal(camPos);
-                // BACKWARD/SIDEWAYS refinement round 2 (2026-08-10, user: hemisphere version =
-                // "less flash but still there sometimes when crossing portals sideways"). The
-                // origin-hemisphere dot is noisy edge-on — when it wrongly said "in front", the
-                // degenerate near-plane mesh painted full-screen SOURCE again. The correct axis
-                // is the portal's NORMAL: render the near-plane unknown ONLY when the camera is
-                // clearly looking INTO the portal's face (backward arrival, look·N ≈ -1);
-                // forward (≈ +1) and edge-on sideways (≈ 0) both SKIP — sideways then shows one
-                // frame of plain dest terrain (near-correct) instead of a full-screen wrong
-                // paint. Threshold -0.2 keeps the render branch for unambiguous look-back only.
-                // 26.2: Minecraft.cameraEntity FIELD is gone; only getCameraEntity() remains.
-                var camEnt = net.minecraft.client.Minecraft.getInstance().getCameraEntity();
-                if (camEnt != null) {
-                    Vec3 look = camEnt.getViewVector(RenderStates.getPartialTick());
-                    clearlyLookingIntoFace = look.dot(portal.getNormal()) < -0.2;
-                }
-            } catch (Throwable t) {
-                dPl = Double.MAX_VALUE; // unreadable geometry: keep the shipped behavior
-            }
-            if (dPl < 1.0 && !clearlyLookingIntoFace) {
+        // IS5-XFLICK (round 3, IS5-ARRIVE-folded): per-direction arrival disposition using the
+        // hoisted classification above. FORWARD (dot > +0.2) keeps the shipped skip (its mesh is
+        // null anyway — facts-derived); BACKWARD (dot < -0.2) keeps the shipped render UNDER
+        // suspension (user-clean; V1 there is the measured-band geometry); SIDEWAYS (|dot| ≤ 0.2,
+        // marked above) falls through to RENDER — its dest pass runs under the ARMED V1 clip via
+        // the suspension withhold, giving the correct half-split instead of the round-2 hole or
+        // the round-1 wrong-content paint. camEnt-null/unreadable keeps the shipped skip cell.
+        // -PdisableTeleportSpecSkip = render-everything (the original flicker reproduction);
+        // -PdisableSeamArrivalScope = shipped round-2 exactly (sideways hole reproduction).
+        if (!IPGlobal.disableTeleportSpecSkip && tpFrame && !tpSideways) {
+            boolean clearlyLookingIntoFace = tpReadable && tpDot < -0.2;
+            if (tpDPl < 1.0 && !clearlyLookingIntoFace) {
                 speculativeSkipsThisFrame++;
                 censusSpecSkipped++;
                 noteTeleportSpecSkipOnce();

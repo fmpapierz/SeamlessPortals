@@ -175,6 +175,19 @@ public class FrontClipping {
         if (PortalRendering.getPortalLayer() > 1) {
             return false;
         }
+        // IS5-ARRIVE (2026-08-10, migration/IS5_ARRIVE_DESIGN.md): on the TELEPORT frame the
+        // sideways-classified just-exited reverse portal keeps the ARMED V1 clip (the caller's
+        // !seamSuspend branch arms seamClipCorrection unconditionally — planeW pinned at
+        // +CROSSING_EYE_CLEARANCE, armedVoidRisk=0 by arithmetic) instead of suspending — the
+        // suspension was the sideways wrong-content paint's root. Backward arrivals keep
+        // suspension (user-clean; V1 there is the measured-band geometry). ONE frame only:
+        // every re-approach/re-cross frame after the tp frame gets full V2 by construction
+        // (the mark and the flag both die at the next manageTeleportation).
+        if (qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame
+            && com.warwa.seamlessportals.render.SeamArrivalScope.isMarked(renderingPortal)) {
+            com.warwa.seamlessportals.render.SeamArrivalScope.noteWithheld();
+            return false;
+        }
         Vec3 n = plane.normal();
         Vec3 p = plane.pos();
         double camToPlane = n.x * (renderCameraPos.x - p.x)

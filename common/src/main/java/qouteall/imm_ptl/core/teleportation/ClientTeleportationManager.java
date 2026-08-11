@@ -121,14 +121,19 @@ public class ClientTeleportationManager {
     }
     
     public static void manageTeleportation(boolean isTicking_) {
+        // IS5-ARRIVE hygiene (judge C1): the mark clear must sit ABOVE the disableTeleportation
+        // early-return — that flag is a mutable runtime static, and toggling it right after a
+        // sideways arrival would otherwise latch isTeleportingFrame=true + the mark forever
+        // (sustained V1-in-doorway = the measured unlit-face band while hovering).
+        com.warwa.seamlessportals.render.SeamArrivalScope.clear();
         if (IPGlobal.disableTeleportation) {
             return;
         }
-        
+
         isTicking = isTicking_;
-        
+
         teleportationCounter++;
-        
+
         isTeleportingFrame = false;
         
         if (client.level == null || client.player == null) {

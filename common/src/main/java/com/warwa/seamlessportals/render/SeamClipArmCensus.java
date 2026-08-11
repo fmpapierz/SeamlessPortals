@@ -206,7 +206,9 @@ public final class SeamClipArmCensus {
                 + " is EXPECTED in every leg) | FIX HEALTH armedVoidRisk={} (d < {} with armed"
                 + " clearance < {}; relax ON => MUST be 0, nonzero = clearance outrun — scaled"
                 + " portal / extreme FOV; relax OFF leg => fires on approach, the pre-fix"
-                + " signature) | maxAbsFeedErr={} (expected ~0; planeW - camToPlane + corr).",
+                + " signature) | maxAbsFeedErr={} (expected ~0; planeW - camToPlane + corr)"
+                + " | arrivalWithheld={} (IS5-ARRIVE sideways tp-frame suspension withholds —"
+                + " those frames are ARMED, so armedVoidRisk is their live void detector).",
             GATE_DIST, framesArmed, framesSuspended, framesDisarmed, framesNullPlane,
             fmt(minCamToPlane), fmt(maxCamToPlane),
             fmt(minPlaneW), fmt(maxPlaneW),
@@ -214,8 +216,10 @@ public final class SeamClipArmCensus {
             baselineVoidFrames, baselineStraddleFrames,
             armedVoidRiskFrames,
             qouteall.imm_ptl.core.render.FrontClipping.SLIVER_ZONE, RISK_MARGIN,
-            fmt(maxAbsFeedErr)
+            fmt(maxAbsFeedErr),
+            SeamArrivalScope.withheldCount
         );
+        SeamArrivalScope.withheldCount = 0;
         framesArmed = 0;
         framesDisarmed = 0;
         framesSuspended = 0;
