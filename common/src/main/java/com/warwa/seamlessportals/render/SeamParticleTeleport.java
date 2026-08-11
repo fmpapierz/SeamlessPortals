@@ -56,39 +56,27 @@ public final class SeamParticleTeleport {
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
         BlockPos baseCell = cell;
         if (seam == null) {
-            // ★ ROUND 45 — THE MARGIN RING (user live report: frameless portals let tall fire
-            // smoke exit the TOP of the bound aperture region while still hugging the plane, then
-            // cross in unbound air one jitter later — "the particles furthest past the seam are
-            // the ones bleeding"). A cell adjacent to a bound aperture cell PERPENDICULAR to the
-            // plane axis is cut by the same geometric plane, so particles there get the same
-            // treatment (particles only — block logic never sees this). A margin cell has no
-            // occupancy, so the resolved neighbor's SeamCell drives the ordinary OPEN-cell flow
-            // unchanged (transition gate, birth rule, binding choice); only the destination
-            // mapping carries the perpendicular offset (below). Cheap gate first: the per-section
-            // seam index — a particle outside every seam-bearing section pays one set lookup.
-            if (!((com.warwa.seamlessportals.passthrough.SeamIndexHolder) level)
-                .seamlessportals$sectionsWithSeams()
-                .contains(net.minecraft.core.SectionPos.asLong(cell))) {
+            // ★ ROUND 46 — THE MARGIN INDEX (supersedes r45's one-cell ring; user live report:
+            // "the particles furthest LATERALLY from the seam are the ones bleeding" — fire smoke
+            // wanders blocks along the plane before crossing its extension, far beyond any
+            // fixed-cost neighborhood scan). Every in-plane cell within
+            // SeamRegistry.PARTICLE_MARGIN_RADIUS of an aperture maps to its governing aperture
+            // cell in a per-level index registered at bind time — ONE map get resolves any
+            // near-portal crossing; particles nowhere near a portal pay the same single get
+            // against a usually-empty map. A margin cell has no occupancy, so the governing
+            // cell's SeamCell drives the ordinary OPEN-cell flow unchanged (transition gate,
+            // birth rule, binding choice); the in-plane displacement leaves the coordinate ALONG
+            // the plane axis equal to the base cell's, so every side test below is exact; only
+            // the destination mapping carries the offset (further below).
+            long base = ((com.warwa.seamlessportals.passthrough.SeamIndexHolder) level)
+                .seamlessportals$particleMargin().getOrDefault(cell.asLong(), Long.MIN_VALUE);
+            if (base == Long.MIN_VALUE) {
                 return;
             }
-            outer:
-            for (Direction d : Direction.values()) {
-                BlockPos n = cell.relative(d);
-                SeamRegistry.SeamCell nc = SeamRegistry.lookup(level, n);
-                if (nc == null) {
-                    continue;
-                }
-                for (SeamRegistry.SeamBinding b : nc.bindings()) {
-                    if (b != null && b.isMirrorable() && b.cut() != null && b.destPos() != null
-                        && d.getAxis() != b.srcFacing().getAxis()) {
-                        seam = nc;
-                        baseCell = n;
-                        break outer;
-                    }
-                }
-            }
+            baseCell = BlockPos.of(base);
+            seam = SeamRegistry.lookup(level, baseCell);
             if (seam == null) {
-                return;
+                return;   // stale entry racing an unbind sweep — fail open
             }
         }
         // ★ ROUND 37 — OCCUPANCY IS NOT THE GATE (the smoke miss: flames hug the torch's own

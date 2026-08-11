@@ -77,6 +77,13 @@ public final class SeamRegistry {
      * costs no persistence and no packet (both sides run the same bind handler off their own tick
      * signal, and portal geometry is already synced as entity data).
      */
+    /**
+     * ★ ROUND 46 — in-plane margin radius (cells beyond the aperture) inside which PARTICLES are
+     * still governed by the seam (teleport + clip). Fire smoke wanders this far before crossing;
+     * beyond it, a crossing is genuinely "around the portal" and flows free.
+     */
+    public static final int PARTICLE_MARGIN_RADIUS = 8;
+
     public record SeamCut(
         double srcPlaneOffset,
         @Nullable Direction destFacing,
@@ -369,6 +376,32 @@ public final class SeamRegistry {
             SeamCell updated = existing == null ? new SeamCell(binding, null) : existing.with(binding);
             holder.seamlessportals$seamCells().put(key, updated);
             holder.seamlessportals$sectionsWithSeams().add(SectionPos.asLong(src));
+            // ★ ROUND 46 — PARTICLE MARGIN INDEX. Fire smoke wanders blocks along the plane
+            // before crossing its extension (user live rounds 2026-08-10: "the particles
+            // furthest laterally from the seam are the ones bleeding"), so the in-plane margin
+            // around every aperture cell maps back to its governing cell for the PARTICLE
+            // teleport/clip — one map get per particle, any radius. Blocks never read this.
+            // Entries carry no owner: the unbind sweep drops any entry whose base cell is no
+            // longer bound, which survives bi-faced double-registration and partner teardown
+            // (a UUID sweep here would orphan the surviving face — the fingerprint gate means
+            // no rebind ever repairs it).
+            {
+                Direction.Axis marginAxis = facing.getAxis();
+                Direction.Axis u = marginAxis == Direction.Axis.X ? Direction.Axis.Y : Direction.Axis.X;
+                Direction.Axis v = marginAxis == Direction.Axis.Z ? Direction.Axis.Y : Direction.Axis.Z;
+                for (int du = -PARTICLE_MARGIN_RADIUS; du <= PARTICLE_MARGIN_RADIUS; du++) {
+                    for (int dv = -PARTICLE_MARGIN_RADIUS; dv <= PARTICLE_MARGIN_RADIUS; dv++) {
+                        if (du == 0 && dv == 0) {
+                            continue;
+                        }
+                        BlockPos m = src.offset(
+                            (u == Direction.Axis.X ? du : 0) + (v == Direction.Axis.X ? dv : 0),
+                            (u == Direction.Axis.Y ? du : 0) + (v == Direction.Axis.Y ? dv : 0),
+                            (u == Direction.Axis.Z ? du : 0) + (v == Direction.Axis.Z ? dv : 0));
+                        holder.seamlessportals$particleMargin().put(m.asLong(), key);
+                    }
+                }
+            }
             bound++;
         }
 
@@ -575,6 +608,15 @@ public final class SeamRegistry {
             if (!stillUsed) {
                 holder.seamlessportals$sectionsWithSeams().remove(section);
             }
+        }
+
+        // ★ ROUND 46 — margin-index sweep by BASE-CELL LIVENESS: an entry lives exactly while its
+        // governing aperture cell is bound. UUID-free on purpose — a bi-faced pair registers the
+        // same margin twice, and sweeping by the departing face's UUID would orphan the survivor
+        // (whose fingerprint-gated bind never re-runs on unchanged geometry).
+        if (removed > 0) {
+            holder.seamlessportals$particleMargin().values().removeIf(
+                base -> !holder.seamlessportals$seamCells().containsKey((long) base));
         }
 
         if (AperturePassthroughLever.SEAM_RECONCILE_PROBE) {

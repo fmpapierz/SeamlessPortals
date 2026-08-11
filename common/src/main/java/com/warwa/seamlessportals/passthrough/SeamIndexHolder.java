@@ -32,6 +32,18 @@ public interface SeamIndexHolder {
     Long2ObjectOpenHashMap<SeamRegistry.SeamCell> seamlessportals$seamCells();
 
     /**
+     * ★ PARTICLE MARGIN INDEX (round 46) — margin cell ({@code BlockPos.asLong}) → governing
+     * aperture cell ({@code BlockPos.asLong}); readers use
+     * {@code getOrDefault(key, Long.MIN_VALUE)} (0 is a valid cell). In-plane cells within
+     * {@link SeamRegistry#PARTICLE_MARGIN_RADIUS} of an aperture, PARTICLES ONLY: fire smoke
+     * wanders blocks from the window before crossing the plane's extension (user live rounds
+     * 2026-08-10), and a per-particle neighborhood scan at that radius would be hot-path poison —
+     * one map get answers it. Registered by {@code bind}, swept by {@code unbind} on base-cell
+     * liveness.
+     */
+    it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap seamlessportals$particleMargin();
+
+    /**
      * Cells whose current occupant was created by MIRRORING rather than placed by a player, keyed by
      * {@code BlockPos.asLong}.
      *

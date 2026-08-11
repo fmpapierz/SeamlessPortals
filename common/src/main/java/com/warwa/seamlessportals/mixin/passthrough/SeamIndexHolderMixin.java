@@ -90,4 +90,24 @@ public abstract class SeamIndexHolderMixin
     public java.util.Map<java.util.UUID, Long> seamlessportals$bindFingerprints() {
         return seamlessportals$bindFingerprints;
     }
+
+    /**
+     * ★ PARTICLE MARGIN INDEX (round 46) — in-plane margin cells around each aperture, mapping to
+     * their governing aperture cell ({@code BlockPos.asLong}). PARTICLES ONLY — block logic never
+     * reads this. Registered alongside {@code bind}, swept on {@code unbind} by base-cell
+     * liveness (no UUID bookkeeping — an entry lives exactly while its aperture cell is bound).
+     */
+    // Plain inline construction ON PURPOSE: this initializer runs inside Level's constructor
+    // (mixin @Unique fields merge into every ctor), and a cross-class static call there
+    // (the first build used a SeamRegistry factory) risks a class-initialization cycle during
+    // world creation — observed 2026-08-10 as a silent client freeze two seconds into the
+    // suite, twice. The miss sentinel lives at the READ sites via getOrDefault.
+    @Unique
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap seamlessportals$particleMargin =
+        new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+
+    @Override
+    public it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap seamlessportals$particleMargin() {
+        return seamlessportals$particleMargin;
+    }
 }
