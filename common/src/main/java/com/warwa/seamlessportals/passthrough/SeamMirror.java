@@ -534,6 +534,17 @@ public final class SeamMirror {
                 traceEnd(dest, destPos, cleared, air, sourceLevel, sourcePos, "aperture-clear");
                 forceClientSync(sourceLevel, dest, destPos);
                 clearedMirrors++;
+                // ★ F1 (2026-08-11, user ruling): the counterpart's end fires its OWN native
+                // destroy burst + sound — the silent setBlockAndUpdate clear never showed one,
+                // so a broken pair's far half just blinked out while the breaking end's burst
+                // was half-eaten by birth-teleports. levelEvent 2001 is vanilla's own destroy
+                // effect for the cleared state; the client-side TerrainParticle birth cull
+                // (SeamParticleTeleport) half-scopes each end's burst to its own side of the
+                // plane, so together the two ends show one full block's worth of crumbs.
+                if (cleared) {
+                    dest.levelEvent(2001, destPos,
+                        net.minecraft.world.level.block.Block.getId(existing));
+                }
                 probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
                 // ★ THE COUNTERPART'S OCCUPANCY BOOKKEEPING MUST HAPPEN HERE — its own driver never
                 // runs it. This whole block executes under `applying = true`, and the counterpart's
