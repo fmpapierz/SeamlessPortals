@@ -344,27 +344,29 @@ public final class IrisStageConsistentComposite {
         if (!IPGlobal.disableTeleportSpecSkip
             && qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.isTeleportingFrame) {
             double dPl;
-            boolean inFrontHemisphere = true;
+            boolean clearlyLookingIntoFace = false;
             try {
                 Vec3 camPos = CHelper.getCurrentCameraPos();
                 dPl = portal.getDistanceToNearestPointInPortal(camPos);
-                // BACKWARD-CROSSING refinement (2026-08-10, user: "walk backwards through a
-                // portal → the dest DIM flashes briefly"): a backward arrival FACES the reverse
-                // portal, so the one-frame skip that is invisible on forward arrivals (portal
-                // behind the camera) becomes a visible unstamped-window flash. Skip ONLY when
-                // the portal sits in the camera's BACK hemisphere — the forward flicker stays
-                // dead, the backward arrival renders its legitimately-on-screen window.
+                // BACKWARD/SIDEWAYS refinement round 2 (2026-08-10, user: hemisphere version =
+                // "less flash but still there sometimes when crossing portals sideways"). The
+                // origin-hemisphere dot is noisy edge-on — when it wrongly said "in front", the
+                // degenerate near-plane mesh painted full-screen SOURCE again. The correct axis
+                // is the portal's NORMAL: render the near-plane unknown ONLY when the camera is
+                // clearly looking INTO the portal's face (backward arrival, look·N ≈ -1);
+                // forward (≈ +1) and edge-on sideways (≈ 0) both SKIP — sideways then shows one
+                // frame of plain dest terrain (near-correct) instead of a full-screen wrong
+                // paint. Threshold -0.2 keeps the render branch for unambiguous look-back only.
                 // 26.2: Minecraft.cameraEntity FIELD is gone; only getCameraEntity() remains.
                 var camEnt = net.minecraft.client.Minecraft.getInstance().getCameraEntity();
                 if (camEnt != null) {
                     Vec3 look = camEnt.getViewVector(RenderStates.getPartialTick());
-                    Vec3 toPortal = portal.getOriginPos().subtract(camPos);
-                    inFrontHemisphere = look.dot(toPortal) > 0;
+                    clearlyLookingIntoFace = look.dot(portal.getNormal()) < -0.2;
                 }
             } catch (Throwable t) {
                 dPl = Double.MAX_VALUE; // unreadable geometry: keep the shipped behavior
             }
-            if (dPl < 1.0 && !inFrontHemisphere) {
+            if (dPl < 1.0 && !clearlyLookingIntoFace) {
                 speculativeSkipsThisFrame++;
                 censusSpecSkipped++;
                 noteTeleportSpecSkipOnce();
