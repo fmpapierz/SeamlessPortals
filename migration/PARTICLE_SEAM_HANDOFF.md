@@ -1,4 +1,4 @@
-# PARTICLE SEAM HANDOFF — rounds 27–38, current state BROKEN, research before any fix
+# PARTICLE SEAM HANDOFF — rounds 27-46, USER-CONFIRMED CLEAN 2026-08-10 ("seams good" at 30a4ee5)
 
 Worktree `C:\Users\warwa\ModDev\Portals\Portal 26.2\.claude\worktrees\redstone`, branch
 `redstone/passthrough`, tip `51b3eab` (round 38). Suite: `gradlew :fabric:runCrossingGametest
