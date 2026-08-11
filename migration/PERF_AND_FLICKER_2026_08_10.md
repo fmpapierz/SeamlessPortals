@@ -76,6 +76,32 @@ handoff). **Implementation blocked on two §4 user decisions:** the nested-windo
 disposition (rim-accept / PRE-demote / single-layer) and pre-acceptance of the
 double-tonemap risk (SEVERE branch possible; retreat = lever = storm stays missing).
 
+## §4b THE SIDEWAYS-ARRIVAL RESIDUAL (late-session finding — the next arc's brief)
+
+After BLINK closed, three refinement rounds on the ARRIVAL-frame near-plane case
+(`77fe2c6` tip): forward and backward crossings are CLEAN (user-verified); SIDEWAYS
+crossings still flash ("flashing only on side to side"). The trace adjudicated the final
+round: sideways arrivals take the skip branch (look·N ≈ 0) and the flash is the ONE-FRAME
+UNSTAMPED HOLE — half a screen of window legitimately missing for one frame
+(tp=true stampRan=false specR/S=0/1 → next frame stamps at dPl 0.01-0.20).
+
+ROOT CAUSE (read, not guessed — ViewAreaRenderer has NO screen-cover branch; the mesh is
+always true clipped portal geometry): the render branch's wrongness is not the mesh, it is
+the CONTENT — on arrival frames the V2 crossing-window clip SUSPENSION (the closed
+seam-clip arc's mechanism, `shouldSuspendInnerClipForCrossing`) applies to the
+just-arrived reverse portal's content render, so the captured view contains UNCLIPPED
+wrong-side geometry. Skip = hole flash; render = wrong-content flash. Neither branch can
+be right for sideways.
+
+THE PROPER FIX (next arc, closed-arc discipline): scope the V2 suspension to the portal
+being CROSSED INTO (the outgoing window it was built for — its black-void rationale) and
+NOT to the just-arrived reverse portal; then the arrival frame can RENDER with the clip
+active — forward clips to nothing, backward fills the screen, sideways gets the correct
+half-split. Must re-verify on the leg: the seam black band (the suspension's raison
+d'être), the crossing blur-burst feature, and both XFLICK directions. Until then the
+shipped state is: forward/backward clean, sideways = one-frame dest-terrain blink
+(much milder than the original wrong-content paint, disclosed).
+
 ## §5 OPEN AFTER THIS SESSION
 
 - destRender 7.4ms/view steady-state (the 2-portal collapse) — the three declined levers
