@@ -626,6 +626,10 @@ loom {
             // round-2 behavior bit-identically (the one-frame sideways hole on command) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSeamArrivalScope=true
             if (project.findProperty('disableSeamArrivalScope') == 'true') { vmArg('-Dseamlessportals.disableSeamArrivalScope=true') }
+            // IS5-HIST prev-capture window history, DEFAULT ON; disable = the ugly MB-off
+            // approach-blur reproduction (history=current) —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableWindowHistoryPrev=true
+            if (project.findProperty('disableWindowHistoryPrev') == 'true') { vmArg('-Dseamlessportals.disableWindowHistoryPrev=true') }
             // IS5-XDIM cross-dim dest-chain restore (nether storm in cross-dim windows), DEV
             // DEFAULT OFF — the first-leg lever (migration/IS5_XDIM_DESIGN.md kill-checks) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossDimDestChain=true
@@ -1044,6 +1048,7 @@ loom {
             if (project.findProperty('disableQueryHysteresis') == 'true') { vmArg('-Dseamlessportals.disableQueryHysteresis=true') }
             if (project.findProperty('crossDimDestChain') == 'true') { vmArg('-Dseamlessportals.crossDimDestChain=true') }
             if (project.findProperty('disableSeamArrivalScope') == 'true') { vmArg('-Dseamlessportals.disableSeamArrivalScope=true') }
+            if (project.findProperty('disableWindowHistoryPrev') == 'true') { vmArg('-Dseamlessportals.disableWindowHistoryPrev=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1140,6 +1145,7 @@ loom {
             if (project.findProperty('disableQueryHysteresis') == 'true') { vmArg('-Dseamlessportals.disableQueryHysteresis=true') }
             if (project.findProperty('crossDimDestChain') == 'true') { vmArg('-Dseamlessportals.crossDimDestChain=true') }
             if (project.findProperty('disableSeamArrivalScope') == 'true') { vmArg('-Dseamlessportals.disableSeamArrivalScope=true') }
+            if (project.findProperty('disableWindowHistoryPrev') == 'true') { vmArg('-Dseamlessportals.disableWindowHistoryPrev=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }
