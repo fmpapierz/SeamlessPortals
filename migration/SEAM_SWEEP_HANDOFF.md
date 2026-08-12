@@ -1,6 +1,6 @@
-# SEAM FULL-FUNCTIONALITY SWEEP — HANDOFF (2026-08-11)
+# SEAM FULL-FUNCTIONALITY SWEEP — HANDOFF (2026-08-11, updated post-ARM-T)
 
-Branch `claude/particle-seam-regression-c2f79c`, code tip **`09775b8`**, worktree
+Branch `claude/particle-seam-regression-c2f79c`, code tip **`b58000c`**, worktree
 `E:\Immersive Portals - Copy\.claude\worktrees\particle-seam-regression-c2f79c`.
 
 This is the CURRENT-STATE map for the post-closure regression sweep. Predecessors, still valid
@@ -11,21 +11,15 @@ closure) and `migration/PARTICLE_SEAM_HANDOFF.md` (the saga). Do not re-derive t
 
 ## 0. THE ONE THING TO READ FIRST
 
-Five fixes LANDED and are suite-green + mostly live-confirmed. **Two more (F1 round 2 and F4)
-are written, compiling, and UNCOMMITTED because the suite is RED on one new gate arm.** The red
-is a *new gate the same commit adds* (ARM T), not a regression of anything that shipped.
+**All seven sweep fixes are LANDED and suite-green** (`ALL LEGS PASS`, run of 2026-08-11 20:16).
+The working tree is clean (only the untracked build scaffolding remains, as always). ARM T's red
+was resolved evidence-first — the full story is §4, kept as a post-mortem because it earned two
+new machine-wide lessons (the seam-axis half FLIP, and `updateNeighborsAt` semantics).
 
-**Uncommitted files in the worktree — do NOT `git stash`, `git checkout --`, or reset them:**
-
-```
-common/src/main/java/com/warwa/seamlessportals/render/SeamParticleTeleport.java      (F1 round 2)
-common/src/main/java/com/warwa/seamlessportals/passthrough/SeamWireBridge.java        (F4)
-common/src/main/java/com/warwa/seamlessportals/mixin/passthrough/MixinRedStoneWireBlockSeamAuthority.java (F4 wake)
-common/src/main/java/com/warwa/seamlessportals/mixin/passthrough/MixinBaseRailBlockMirrorAuthority.java   (F4 wake)
-fabric/src/main/java/com/warwa/seamlessportals/fabric/gametest/CrossingSmoke.java     (ARM T + ceilings)
-```
-
-House rule holds: **suite green before any commit.** Finish ARM T, then commit F1-r2 + F4.
+**NOT yet live-verified: F1 (both rounds) and F4** — each landing is owed its one live-verify
+round (F1: break a seam block from both sides, watch the burst play to completion at both ends;
+F4: stage a two-object cell, power each circuit separately and together). Next in queue after
+that: F5+F6 (§5), whose first step is a user-driven cart-probe retest.
 
 ---
 
@@ -100,6 +94,9 @@ Rulings taken this sweep, verbatim in intent:
 | `7bac675` | **F1 round 1** dest burst | The counterpart clear was a silent `setBlockAndUpdate` — no destroy effect ever fired at the far end. Now fires vanilla `levelEvent(2001)` for the cleared state. (The crumb half of F1 was wrong — see §4.) |
 | `09775b8` | **F8** power respects the half | The user's live leak: source-A seam dust powered **dest side A and source side B**. A seam occupant is a whole vanilla block, so its RAW-read family ignored the cut (round-27 `blocksSignalTowards` covers only the `getSignal` family — which is exactly why the leak was dust-shaped). Landed rule: a cut cell with a derivable PRIMARY half participates per-half — raw reads from its empty side see the Secondary or air; its own reads use exactly ONE candidate per seam-axis direction (owned side local-only, empty side far-only); far six-scans skip the counterpart's behind-plane neighbour; wire/lamp/rail local intake skips the empty-half direction; `MixinDiodeBlockSeamHalf` gates the two raw wire-POWER paths (`getInputSignal`, `getAlternateSignal`'s two `getControlInputSignal` calls). **Unclaimed cells (mask 0) stay whole-cell vanilla** — that carve-out is what keeps every command-staged fixture byte-identical. One gate point: `SeamFractional.emptyHalfDir`. One lever: `-PdisableSeamHalfScope`. |
 
+| `52aa99f` | **F1 round 2** crumbs never teleport | The user's live probe showed round 1's birth-cull missed the real drain: the OWNED-cell material-continuation branch (`ownedCont=29–31` teleports/s through the whole animation). The cull moved to AFTER binding selection, so a `TerrainParticle` is consumed whichever branch chose to move it; crumbs staying in their own half are never touched. Green run: `consumed=64` both topologies, max crossings 2, pingPongers 0. |
+| `b58000c` | **F4** the second object's power lifecycle | `SeamWireBridge.refreshSecondary`: evaluate the fragment from BOTH of its circuit's sides over the IDENTICAL physical set, store into the side table, sync the counterpart with the MIRRORED half, broadcast, fan `{pos} ∪ shell`. Woken from the authority-cancel branch (marked) + `neighborChanged` TAIL (unmarked) in both authority mixins. ARM T + `secondaryRefreshes ≤ 5000` ceiling. Three-build saga in §4. |
+
 **Live-verified by the user:** F2, F3, F7 ("all good"), and F8's targeted leak ("seam redstone not
 sending power incorrectly anymore; good").
 **NOT yet live-verified:** F1 (both rounds), F4.
@@ -121,9 +118,37 @@ Both have `-P` rows in BOTH `fabric/build.gradle` blocks.
 
 ---
 
-## 4. WHAT IS UNCOMMITTED AND RED — START HERE
+## 4. THE ARM T SAGA — RESOLVED 2026-08-11 (kept as a post-mortem; landed in `b58000c`)
 
-### 4a. F1 round 2 (believed correct, rides the red suite)
+**How it resolved (evidence-first, zero guessed fixes).** The recommended probe was added
+(`[F4-REFRESH]` in `SeamWireBridge`, one line per refresh exit branch, probe-gated and
+volume-bounded — it fires only for cells that HOLD a secondary), the suite ran with
+`-PseamSignalProbe=true`, and the log overturned **all three ranked hypotheses below** in one
+line: the refresh at S' fired and WROTE (`WROTE power=14 via srcFacing=south`). The fixture was
+right, the wake reached, the binding matched. Two real defects, found in sequence:
+
+1. **The seam-axis half FLIP (probe run).** `refreshSecondaryInner` used `mapDir(b, secDir)` as
+   the counterpart fragment's own side and half — but crossing the seam MIRRORS which side of the
+   plane matter is on (`claimCrossingHalf` had the flip all along; this path didn't). The sync
+   stamped the cellSA fragment onto the primary's claimed half (probe: `secHalf 1→2`, dump:
+   `secS=[…, half=2]`), the far scan read the OTHER object's circuit side, and the fan skip
+   pointed backwards. Fixed at all three sites: the mapped secDir names the far PRIMARY side.
+2. **The dropped `{pos}` in the fan (found by the parallel verification workflow
+   `wf_18eea323-8f1`, then confirmed by a falsifiable run).** `Level.updateNeighborsAt(P)`
+   notifies the six cells AROUND P, never P itself (bytecode: `MultiNeighborUpdate.runNext`
+   executes at `sourcePos.relative(dir)`). Vanilla wire fans `{pos} ∪ pos.relative(6)`; the
+   refresh fan had copied the shell and dropped `{pos}`, so **no face-adjacent wire was ever
+   poked** — `behindNear` could not re-evaluate no matter what was written. The half-flip-only
+   run confirmed the prediction exactly (correct sync half, `behindNear` still dark), then both
+   fans got the leading `{pos}` entry and the suite went green: `ALL LEGS PASS`, RS-WIRE PASS,
+   `secondaryRefreshes=8`.
+
+Original state analysis below, kept verbatim for the record — note that all three ranked
+hypotheses were WRONG (structurally sound guesses, each individually exonerated by the
+workflow's static traces and the probe): the standing "do not guess, let the log speak" rule is
+what prevented three more wrong builds.
+
+### 4a. F1 round 2 (believed correct — confirmed, landed in `52aa99f`)
 The user re-reported after F1 round 1: *"seam block break particles are still too fast/suppressed,
 reanalyze the cause."* Their live probe was decisive: round 1 culled only **open-cell BIRTH**
 crossers, but the actual drain was the **owned-cell material-continuation branch** —
@@ -136,7 +161,7 @@ Evidence it works, from the red run's own log (these legs ran BEFORE the failure
 `[same-dim] teleports=907 consumed=64` — crumbs consumed instead of teleported, and
 `[RS-SEAM-FIRE-LIGHT] PASS` (flame/smoke behaviour untouched, as intended).
 
-### 4b. F4 two-object participation — the actual blocker
+### 4b. F4 two-object participation — the blocker (resolved above; original analysis verbatim)
 `SeamWireBridge.refreshSecondary` gives a side-table fragment a power lifecycle: evaluate from
 both of its circuit's sides, store into the side table, sync the object's counterpart fragment,
 broadcast (the payload carries full state ids, so lit fragments render), and fan neighbour updates.
