@@ -261,10 +261,25 @@ each way. Wire behaviour needs LIVE eyes — ask the user after landing.
    mixin, repo-precedented): forwards a neighborChanged DELIVERY into a seam cell (no state
    change) to the counterpart. Only needed for conductor strong-power relays and no-flip cases —
    none reachable in step-1 scope. Guards designed: `forwarding` bracket, `isApplying`, dedupe.
-2. **Wire-to-wire decay** (F11): needs `getBlockState`-level bridging in
-   `RedstoneWireEvaluator.getIncomingWireSignal` (or an evaluator substitution) + wire
-   connection-shape (`getConnectionState`) + `updateIndirectNeighbourShapes` diagonal routes +
-   the shape-update channel. The `shouldSignal` singleton rules (F8) are already written for it.
+2. ~~**Wire-to-wire decay** (F11)~~ — **★ LANDED 2026-08-11 (`584c138`, user ruling: full
+   continuity, no staging).** `MixinRedstoneWireEvaluatorSeam` bridges `getIncomingWireSignal`'s
+   four raw reads; `MixinRedStoneWireBlockSeamSignal` bridges the block-power intake and the
+   4-arg `getConnectingSide`'s three reads; `MixinRedStoneWireBlockSeamAuthority` is the wire twin
+   of the rail authority (and killed the mirror-revert loop that stalled the server 42 s). Reads
+   are UNION + F8-half-scoped, never-load-guarded, exception-proofed per the `shouldSignal`
+   hazard. Lever `-PdisableSeamWire`. Gate: RS-WIRE in `CrossingSmoke`.
+   *Still deferred inside this item:* `updateIndirectNeighbourShapes` diagonal routes and the
+   shape-update channel as a second dispatch channel.
+
+2b. **★ TODO — FUTURE POLISH (user decision, 2026-08-11): far-side rail curve/junction
+   switching.** A rail curve or junction does NOT re-orient in response to a power source on the
+   far side of a seam; it was dropped during the (c) landing as unreachable-and-sticky. The user
+   was asked to rule on it and answered: *"add for future polish, document it as a todo."* So:
+   power crossing the seam drives rails, lamps and carts correctly, but the SHAPE-switching
+   special case stays unimplemented until someone picks this up. Everything else about the
+   July-28 provisional trio is CONFIRMED KEEP: (1) the seam transmits POWER only and never
+   block-mirrors to fake a lit state; (2) signal crosses BOTH geometries (coincident and
+   boundary-phase).
 3. **General consumers via a `SignalGetter` default-method interface mixin** (F1/F10): one hook
    covers doors, dispensers, pistons, TNT, note blocks… Feasible per bytecode gates; needs a
    one-launch smoke test; needs a WorldGenRegion/instanceof guard (a SignalGetter injection also
