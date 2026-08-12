@@ -635,6 +635,10 @@ loom {
             // DEFAULT OFF (= PLANE, shipped behavior) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -Pis5WindowContentDepth=true
             if (project.findProperty('is5WindowContentDepth') == 'true') { vmArg('-Dseamlessportals.is5WindowContentDepth=true') }
+            // IS5-OUTLINE selection-outline sliver fix (shaders-ON, depth-write-off swap),
+            // DEFAULT ON; disable = the sliver reproduction —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableOutlineDepthWriteFix=true
+            if (project.findProperty('disableOutlineDepthWriteFix') == 'true') { vmArg('-Dseamlessportals.disableOutlineDepthWriteFix=true') }
             // IS5-XDIM cross-dim dest-chain restore (nether storm in cross-dim windows), DEV
             // DEFAULT OFF — the first-leg lever (migration/IS5_XDIM_DESIGN.md kill-checks) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossDimDestChain=true
@@ -1055,6 +1059,7 @@ loom {
             if (project.findProperty('disableSeamArrivalScope') == 'true') { vmArg('-Dseamlessportals.disableSeamArrivalScope=true') }
             if (project.findProperty('disableWindowHistoryPrev') == 'true') { vmArg('-Dseamlessportals.disableWindowHistoryPrev=true') }
             if (project.findProperty('is5WindowContentDepth') == 'true') { vmArg('-Dseamlessportals.is5WindowContentDepth=true') }
+            if (project.findProperty('disableOutlineDepthWriteFix') == 'true') { vmArg('-Dseamlessportals.disableOutlineDepthWriteFix=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1153,6 +1158,7 @@ loom {
             if (project.findProperty('disableSeamArrivalScope') == 'true') { vmArg('-Dseamlessportals.disableSeamArrivalScope=true') }
             if (project.findProperty('disableWindowHistoryPrev') == 'true') { vmArg('-Dseamlessportals.disableWindowHistoryPrev=true') }
             if (project.findProperty('is5WindowContentDepth') == 'true') { vmArg('-Dseamlessportals.is5WindowContentDepth=true') }
+            if (project.findProperty('disableOutlineDepthWriteFix') == 'true') { vmArg('-Dseamlessportals.disableOutlineDepthWriteFix=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }

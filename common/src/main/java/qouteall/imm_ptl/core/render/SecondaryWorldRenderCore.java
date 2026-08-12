@@ -2638,7 +2638,13 @@ public class SecondaryWorldRenderCore {
         int outlineColor = state.highContrast() ? -11010079 : ARGB.black(102);
         submitDestHitOutline(
             poseStack, storage,
-            net.minecraft.client.renderer.rendertype.RenderTypes.lines(),
+            // IS5-OUTLINE: the dest-view twin of LevelRendererBlockOutlineMixin's
+            // depth-write-off swap (same sliver class on nested windows) — shaders-ON only,
+            // same lever.
+            (!IPGlobal.disableOutlineDepthWriteFix
+                && qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.invoker.isShaders())
+                ? net.minecraft.client.renderer.rendertype.RenderTypes.linesTranslucent()
+                : net.minecraft.client.renderer.rendertype.RenderTypes.lines(),
             state, outlineColor,
             client.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth,
             state.isTranslucent());
