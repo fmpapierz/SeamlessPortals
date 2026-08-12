@@ -68,4 +68,43 @@ public abstract class LevelRendererBlockOutlineMixin {
                     .lastPortalRenderInfos.isEmpty()
                 : StencilPortalRenderer.anyPortalNearCamera());
     }
+
+    /**
+     * IS5-OUTLINE (2026-08-11, the shaders-ON sliver): the re-bucket above cannot help the
+     * compat path — the IS5-PRE stamp runs at composite renderAll HEAD, AFTER every world
+     * bucket, so the outline's depth (RenderPipelines.LINES = DepthStencilState.DEFAULT =
+     * writeDepth TRUE, bytecode-pinned) is in depthtex0 before the stamp regardless, the
+     * stamp's LEQUAL loses on the line's overhang past the block silhouette, and the raw
+     * pre-stamp SOURCE terrain shows as a sliver hugging the outline. Fix: swap the MAIN
+     * outline draw (the second submitHitOutline, ordinal=1 — the high-contrast backing line
+     * at ordinal 0 already has writeDepth FALSE) to RenderTypes.linesTranslucent() — the
+     * IDENTICAL pipeline (same LINES_SNIPPET, same iris ShaderKey.LINES/gbuffers_line
+     * mapping, same blend/format/layering) differing ONLY in writeDepth=false. The stamp
+     * then wins the window; the outline stays intact on the block faces (the block is nearer
+     * than the plane) and is clipped at the window edge — the same visual outcome the
+     * stencil path's re-bucket achieves. Gated to shaders-ON so the closed stencil-path arc
+     * keeps its variables; MixinExtras is NOT on the classpath (repo-documented) — vanilla
+     * @ModifyArg with an ordinal-pinned @At, composing with the index-6 handler above
+     * (different argument slots). Caveat (agent-recorded): linesTranslucent has no iris
+     * shadow-pass mapping — irrelevant here, the outline never submits in the shadow pass.
+     * -PdisableOutlineDepthWriteFix = the sliver reproduction.
+     */
+    @ModifyArg(
+        method = "submitBlockOutline",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;submitHitOutline(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/rendertype/RenderType;Lnet/minecraft/client/renderer/state/level/BlockOutlineRenderState;IFZ)V",
+            ordinal = 1
+        ),
+        index = 2
+    )
+    private net.minecraft.client.renderer.rendertype.RenderType seamlessportals$outlineNoDepthWrite(
+        net.minecraft.client.renderer.rendertype.RenderType renderType
+    ) {
+        if (!qouteall.imm_ptl.core.IPGlobal.disableOutlineDepthWriteFix
+            && qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.invoker.isShaders()) {
+            return net.minecraft.client.renderer.rendertype.RenderTypes.linesTranslucent();
+        }
+        return renderType;
+    }
 }

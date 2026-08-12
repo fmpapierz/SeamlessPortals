@@ -1239,6 +1239,15 @@ public class IPGlobal {
     public static final boolean renderChainProbeAutoArm =
         Boolean.getBoolean("seamlessportals.renderChainProbeAutoArm");
 
+    // IS5-OUTLINE (2026-08-11) — the shaders-ON selection-outline sliver fix, DEFAULT ON.
+    // The block outline's LINES pipeline writes depth (bytecode-pinned); its overhang past the
+    // block silhouette beats the portal plane, the stamp loses those pixels, and raw SOURCE
+    // terrain shows as a sliver hugging the outline. Fix = swap the main outline draw to
+    // linesTranslucent (identical pipeline, writeDepth=false; same iris program) — shaders-ON
+    // only, the closed stencil-path arc untouched. Disable = the sliver on command.
+    public static final boolean disableOutlineDepthWriteFix =
+        Boolean.getBoolean("seamlessportals.disableOutlineDepthWriteFix");
+
     // IS5-DEPTHFORK (2026-08-11) — the window depthtex1 fork, DEFAULT OFF (= PLANE, today's
     // behavior). Complementary reads depthtex1 for BOTH MB velocity (composite4:90 — the KEPT
     // cool plane-depth blur) and TAA reprojection (composite6:39 — the MB-off translation
