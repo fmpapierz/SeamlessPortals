@@ -137,23 +137,6 @@ public final class SeamParticleTeleport {
                     // so arrivals — age 2+ by their next pass — can never re-trigger it.
                     if (ie.portal_getAge() <= 1
                         && particleHalf != SeamOccupancy.halfOf(b.srcFacing())) {
-                        // ★ F1 (2026-08-11, user ruling): DESTROY-BURST CRUMBS ARE HALF-SCOPED,
-                        // NOT TELEPORTED. Each end of a broken pair now fires its own native
-                        // burst (SeamMirror's counterpart clear fires levelEvent 2001), so a
-                        // TerrainParticle born past the plane duplicates a crumb the far end
-                        // already emits — and mass birth-teleporting them was the user's "break
-                        // animation plays super fast and stops before completion" (43-99
-                        // crumbs/s left mid-burst). Born in the empty half = born in empty
-                        // space: consume at birth. Flame/smoke keep the r41 teleport — their
-                        // arc is closed and live-confirmed.
-                        if (particle instanceof net.minecraft.client.particle.TerrainParticle) {
-                            if (probe) {
-                                SeamParticleProbe.onConsumed(false);
-                                SeamParticleProbe.tickSummary();
-                            }
-                            particle.remove();
-                            return;
-                        }
                         binding = b;
                         break;
                     }
@@ -171,6 +154,24 @@ public final class SeamParticleTeleport {
                 SeamParticleProbe.onOpenNoCrossing();
                 SeamParticleProbe.tickSummary();
             }
+            return;
+        }
+        // ★ F1 round 2 (2026-08-11 live re-analysis): DESTROY-BURST CRUMBS NEVER TELEPORT — via
+        // ANY branch. Round 1 culled only open-cell BIRTH crossers, but the user's live probe
+        // showed the real drain was the OWNED-cell material-continuation branch (ownedCont=29-31
+        // teleports/s through the whole animation) — a burst around occupied seam cells feeds
+        // crumbs into owned crossing halves every tick. Each end of a broken pair fires its own
+        // native burst for its half (SeamMirror's levelEvent 2001), so any crumb this machinery
+        // would move is already represented at the far end: consume it, whatever branch selected
+        // the binding. Crumbs that stay in their own half are now never touched — the burst
+        // plays at full density for its half, at normal speed, to completion. Flame/smoke keep
+        // their teleports (closed, live-confirmed arc).
+        if (particle instanceof net.minecraft.client.particle.TerrainParticle) {
+            if (probe) {
+                SeamParticleProbe.onConsumed(false);
+                SeamParticleProbe.tickSummary();
+            }
+            particle.remove();
             return;
         }
         boolean openCell = !singleOwned;
