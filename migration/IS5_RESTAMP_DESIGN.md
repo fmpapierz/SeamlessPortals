@@ -227,6 +227,36 @@ mode token). Watch the raw `dBnd=` on new pack configs; the force levers are the
 runtime GL_TEXTURE_ALPHA_SIZE gate falls back POST (sgF, noted) on alpha-less formats
 (colortex0-class R11F_G11F_B10F is real in this pack family; the measured colortex3 is RGBA8).
 
+## §1.10 IS5-WASH — the gather-exclusion bracket (2026-08-11, the R12 fix, DEFAULT ON)
+
+R12 adjudicated by the user's two controls: the ambient view (same lava, same angle, standing
+at the dest) does NOT whitewash — so the dest-baked bloom is the correct glow and is
+exonerated; pack Bloom OFF vanishes the washout — bloom is the carrier. Remaining mechanism:
+the SOURCE chain's bloom gather harvests energy from the stamped window's bright content; its
+screen-space reach is fixed while the window footprint compresses with view angle — the angle
+signature. Fix: at the measured GATHERER pass (the pass that mipmap-regens colortex0 — the
+BLOOMMB discriminator, `mipmappedBuffers ∋ 0`, optional reflection field), SAVE c0's
+gather-read side to a pooled scratch and BLACK OUT the POST/SG entries' window footprints
+(mode 3, visibility-clipped — occluder pixels never blacked); at gatherIdx+1 (before
+bloom-apply reads c0) RESTORE the footprints from the scratch (mode 4, full texel). Same-dim
+PRE windows are NEVER blacked — the source gather is their only bloom source. The arm clears
+only when the restore half has run (a blacked-out c0 must never outlive its bracket); a
+scratch alloc/copy failure skips the bracket BEFORE any destructive draw (mutate-last); a
+restore-half GL error permanently disarms the wash (`washBroken`, WARN — under SG the window
+FACE stays correct via the inject regardless). Lever: `is5WindowBloomExclude` DEFAULT ON,
+`-PdisableWindowBloomExclude` = the washout on command. Meas line: `gath= wash= wB/R=`.
+**v1 GUARD (disclosed):** when the gatherer also writes c0 (pack MB ON — Complementary's
+composite4 becomes gatherer+MB in one pass; WORLD_BLUR's composite3 is another writes-c0
+shape), the bracket is SKIPPED (`wash=SKIP(gatherer-writes-c0)`): a blackout there would
+MB-smear black past the footprint and the restore could not heal the smear. The washout
+persists in that config; MB-on coverage is a named follow-up (needs a smear-safe shape).
+⟦J⟧ Post-land judge folds: breakMechanism performs a best-effort scratch copy-back when it
+fires between the blackout and the restore (a blacked c0 can never outlive its bracket, even
+on the catastrophic path); the meas token prints `SKIP(mode=…)` instead of a lying `ON` on
+modes that cannot arm the bracket (HEAD-CONTENT collapse/lever, PLANE lever) — on those
+configs the washout persists with no code path to fix it, disclosed; the wash measurement
+runs in its own try (a throw degrades to `SKIP(meas-threw)`, never to PLANE(meas-fail)).
+
 ## §1.8 Detector-reads-raw (one leg proves mechanism + fix)
 
 The MEASUREMENT runs regardless of all levers (even force-PLANE / force-CONTENT-HEAD). A 1Hz

@@ -111,6 +111,11 @@ public final class IrisStageConsistentComposite {
     /** IS5-RESTAMP/SG: {@code CompositeRenderer$Pass.drawBuffers} (int[]) — the anchor pass's
      *  image target ({@code drawBuffers[0]}) for the SG boundary capture/inject. */
     private static Field fPassDrawBuffers;
+    /** IS5-WASH (OPTIONAL — bound in its own try like the mask's): {@code
+     *  CompositeRenderer$Pass.mipmappedBuffers} (ImmutableSet&lt;Integer&gt;) — the bloom
+     *  GATHERER is the pass that mipmap-regens colortex0 (the BLOOMMB-proven discriminator).
+     *  null ⇒ the wash bracket is unavailable (meas line says so; washout persists, disclosed). */
+    private static Field fPassMipmapped;
     /** {@code SystemTimeUniforms$FrameCounter.count} (private int) — the §3.7 distant-offset
      *  counter bracket's write target. READ needs no reflection ({@code getAsInt()} is public). */
     private static Field fFrameCounterCount;
@@ -138,6 +143,12 @@ public final class IrisStageConsistentComposite {
             fPassProgram.setAccessible(true);
             fPassDrawBuffers = passClass.getDeclaredField("drawBuffers");
             fPassDrawBuffers.setAccessible(true);
+            try {
+                fPassMipmapped = passClass.getDeclaredField("mipmappedBuffers");
+                fPassMipmapped.setAccessible(true);
+            } catch (Throwable optional) {
+                fPassMipmapped = null; // IS5-WASH degrades to unavailable, never fatal
+            }
             fFrameCounterCount =
                 SystemTimeUniforms.COUNTER.getClass().getDeclaredField("count");
             fFrameCounterCount.setAccessible(true);
@@ -253,6 +264,8 @@ public final class IrisStageConsistentComposite {
             censusSgC = 0;
             censusSgI = 0;
             censusSgF = 0;
+            censusWashB = 0;
+            censusWashR = 0;
         }
         return true;
     }
@@ -889,6 +902,22 @@ public final class IrisStageConsistentComposite {
     private static void breakMechanism(String reason, Throwable t) {
         mechanismBroken = true;
         mechanismBreakReason = reason;
+        // IS5-WASH ⟦J⟧ B1: a break BETWEEN the blackout and the restore must not strand a
+        // blacked-out c0 into this frame's bloom-apply — best-effort full copy-back from the
+        // still-valid scratch (strictly stronger than the mesh restore; nothing else wrote c0
+        // between the save and any reachable failure point). Never throws out of here.
+        RestampArm strandedArm = restampArm;
+        if (strandedArm != null && strandedArm.washSaveDone && !strandedArm.washRestoreDone
+            && washScratchId != 0 && strandedArm.washTexId != 0) {
+            try {
+                GL43C.glCopyImageSubData(
+                    washScratchId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    strandedArm.washTexId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    strandedArm.w, strandedArm.h, 1);
+            } catch (Throwable ignored) {
+            }
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* best-effort, never poison */ }
+        }
         // IS5-RESTAMP ⟦J⟧: a broken frame must neither fire a stale boundary draw nor read as
         // a next-frame orphan; the measurement cache dies with the mechanism (weak keys already
         // cover pipeline death — this covers the mechanism's own death).
@@ -1663,6 +1692,20 @@ public final class IrisStageConsistentComposite {
                 ivec2 tc = ivec2(gl_FragCoord.xy);
                 if (texelFetch(u_stampedDepth0, tc, 0).r < planeZ - 6.0e-8) discard;
                 gl_FragDepth = max(texelFetch(u_captureDepth, tc, 0).r, planeZ);
+            } else if (u_depthMode == 3) {
+                // IS5-WASH blackout: zero the window footprint in c0 before the bloom gather
+                // (visibility-clipped — never blacks an occluder's pixels).
+                if (texelFetch(u_stampedDepth0, ivec2(gl_FragCoord.xy), 0).r
+                    < planeZ - 6.0e-8) discard;
+                fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                gl_FragDepth = planeZ;
+            } else if (u_depthMode == 4) {
+                // IS5-WASH restore: repaint the same footprint from the scratch copy before
+                // bloom-apply reads c0. Full texel (alpha included).
+                ivec2 tcw = ivec2(gl_FragCoord.xy);
+                if (texelFetch(u_stampedDepth0, tcw, 0).r < planeZ - 6.0e-8) discard;
+                fragColor = texelFetch(u_capture, tcw, 0);
+                gl_FragDepth = planeZ;
             } else if (u_depthMode == 2) {
                 // IS5-XDIM-SG inject (IS5_RESTAMP_DESIGN.md §2.2.3): mode-1's visibility
                 // discard against the HEAD-stamped depthtex0 (plane + occluders), colour =
@@ -1712,6 +1755,15 @@ public final class IrisStageConsistentComposite {
         int imageTarget = -1;
         boolean anchorReadsAlt = false;
         String mode = "PLANE(meas-fail)";
+        // IS5-WASH: the bloom GATHERER = the pass that mipmap-regens colortex0 (BLOOMMB
+        // discriminator). -1 = none found / field unavailable. gatherWritesC0 = the MB-on
+        // shape (gatherer also rewrites c0) — the v1 bracket GUARDS OFF there (a blackout
+        // would MB-smear black past the footprint); washout persists in that config,
+        // disclosed + meas-visible. gatherReadsAlt = c0's read side at the gatherer.
+        int gatherIdx = -1;
+        boolean gatherReadsAlt = false;
+        boolean gatherWritesC0 = false;
+        String washState = "SKIP(no-gatherer)";
     }
 
     /** Keyed on the CompositeRenderer OBJECT (identity equals — CompositeRenderer does not
@@ -1768,6 +1820,39 @@ public final class IrisStageConsistentComposite {
             m.d1Readers = d1.stream().mapToInt(Integer::intValue).toArray();
             m.histReaders = hist.stream().mapToInt(Integer::intValue).toArray();
             m.prevCamReaders = prevCam.stream().mapToInt(Integer::intValue).toArray();
+            // IS5-WASH gatherer measurement — its OWN try (⟦J⟧ note 2: an optional feature's
+            // measurement throw must degrade to SKIP, never demote the renderer to
+            // PLANE(meas-fail) and lose the C1 fix).
+            try {
+                if (fPassMipmapped == null) {
+                    m.washState = "SKIP(no-mipmap-field)";
+                } else {
+                    for (int i = 0; i < passes.size(); i++) {
+                        Object pass = passes.get(i);
+                        Object mip = fPassMipmapped.get(pass);
+                        if (mip instanceof Set<?> ms && ms.contains(0)) {
+                            m.gatherIdx = i;
+                            Object readsAlt = fPassReadsFromAlt.get(pass);
+                            m.gatherReadsAlt = readsAlt instanceof Set<?> rs && rs.contains(0);
+                            int[] db = (int[]) fPassDrawBuffers.get(pass);
+                            if (db != null) {
+                                for (int t : db) {
+                                    if (t == 0) m.gatherWritesC0 = true;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    // Token honesty (⟦J⟧ note 3): the writes-c0 skip names the SHAPE, not a
+                    // cause — MB-on is the common Complementary cause, WORLD_BLUR another.
+                    if (m.gatherIdx < 0) m.washState = "SKIP(no-gatherer)";
+                    else if (m.anchor < 0 || m.gatherIdx >= m.anchor) m.washState = "SKIP(gather>=anchor)";
+                    else if (m.gatherWritesC0) m.washState = "SKIP(gatherer-writes-c0)";
+                    else m.washState = "ON";
+                }
+            } catch (Throwable washMeasErr) {
+                m.washState = "SKIP(meas-threw)";
+            }
             if (m.anchor < 0) {
                 m.mode = "PLANE(no-anchor)";
             } else {
@@ -1817,6 +1902,15 @@ public final class IrisStageConsistentComposite {
         int depthBoundary;
         boolean depthDone;
         boolean injectDone;
+        // IS5-WASH: the gather-exclusion bracket. washNeeded iff meas.washState==ON, the
+        // lever allows, and at least one POST/SG entry exists (dest-baked bloom present —
+        // same-dim PRE windows are NEVER blacked out: the source gather is their only bloom
+        // source). Fires at gatherIdx (save c0 → scratch, blackout the eligible footprints)
+        // and gatherIdx+1 (restore the footprints from scratch, before bloom-apply reads c0).
+        boolean washNeeded;
+        boolean washSaveDone;
+        boolean washRestoreDone;
+        int washTexId; // c0's read side at the gatherer
     }
 
     private static RestampArm restampArm = null;
@@ -1865,13 +1959,31 @@ public final class IrisStageConsistentComposite {
             if (arm == null) return;
             if (compositeRenderer != arm.renderer) return;
             if (PortalRendering.isRendering()) return; // belt — main chain only
+            // IS5-WASH bracket halves fire strictly before/at the depth/inject indices
+            // (gatherIdx < anchor guaranteed by the eligibility rule; within one invocation
+            // the wash runs FIRST so a gatherIdx+1==anchor collision still restores before
+            // the inject reads/writes anything).
+            boolean doWashSave = arm.washNeeded && !arm.washSaveDone
+                && i == arm.meas.gatherIdx;
+            boolean doWashRestore = arm.washNeeded && arm.washSaveDone && !arm.washRestoreDone
+                && i == arm.meas.gatherIdx + 1;
             boolean doDepth = !arm.depthDone && i == arm.depthBoundary;
             boolean doInject = !arm.injectDone && i == arm.meas.anchor;
-            if (!doDepth && !doInject) return;
+            if (!doWashSave && !doWashRestore && !doDepth && !doInject) return;
+            if (doWashSave) arm.washSaveDone = true;
+            if (doWashRestore) arm.washRestoreDone = true;
             if (doDepth) arm.depthDone = true;
             if (doInject) arm.injectDone = true;
-            runRestampBoundaryDraws(arm, doDepth, doInject);
-            if (arm.depthDone && arm.injectDone) {
+            if (doWashSave || doWashRestore) {
+                runWashBracket(arm, doWashSave, doWashRestore);
+            }
+            if (doDepth || doInject) {
+                runRestampBoundaryDraws(arm, doDepth, doInject);
+            }
+            // A blacked-out-but-unrestored c0 must keep the arm alive to gatherIdx+1; a
+            // never-fired wash (nothing destructive) falls through to the orphan WARN.
+            if (arm.depthDone && arm.injectDone
+                && (!arm.washNeeded || arm.washRestoreDone)) {
                 restampArm = null;
             }
         } catch (Throwable t) {
@@ -1967,6 +2079,136 @@ public final class IrisStageConsistentComposite {
         } catch (Throwable t) {
             censusSgF++;
             noteAuxDropOnce("SG boundary capture threw: " + t + " — POST fallback");
+        }
+    }
+
+    // IS5-WASH state: one pooled scratch (size/format-keyed — the ensureSlotStorage idiom;
+    // holds a full c0 copy across the two bracket halves of ONE renderAll) + the permanent
+    // wash disarm (a restore failure after a blackout must not recur — the mask's `broken`
+    // idiom; the window face under SG is repainted by the inject regardless, POST-fallback
+    // frames would show the blackout otherwise).
+    private static int washScratchId = 0;
+    private static int washScratchW = -1, washScratchH = -1, washScratchFmt = 0;
+    private static boolean washBroken = false;
+    private static int censusWashB, censusWashR;
+
+    /**
+     * IS5-WASH §1.10 — the gather-exclusion bracket. Save half: copy c0's gather-read side to
+     * the scratch, then black out the POST/SG entries' window footprints (visibility-clipped,
+     * mode 3) so the source bloom gather harvests ZERO energy from dest-window content (the
+     * user-adjudicated lava/high-angle washout: ambient control clean + bloom-off vanishes it
+     * = the source gather is the carrier; dest-baked bloom in the capture is the correct glow
+     * and stays). Restore half (next boundary, before bloom-apply reads c0): repaint the same
+     * footprints from the scratch (mode 4). MUTATE-LAST: the scratch copy precedes the first
+     * destructive draw; a save-half failure skips the blackout entirely (washout persists one
+     * frame, census-visible); a restore failure permanently disarms the wash (never
+     * breakMechanism — the stamp semantics are intact).
+     */
+    private static void runWashBracket(RestampArm arm, boolean doSave, boolean doRestore) {
+        if (washBroken || arm.washTexId == 0) return;
+        if (!ensureStampProgram()) return;
+        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+        boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        boolean clampOn = false;
+        GlFramebuffer fbo = null;
+        try {
+            if (doSave) {
+                int fmt = GL45C.glGetTextureLevelParameteri(
+                    arm.washTexId, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                if (washScratchId == 0 || washScratchW != arm.w || washScratchH != arm.h
+                    || washScratchFmt != fmt) {
+                    if (washScratchId != 0) GL11.glDeleteTextures(washScratchId);
+                    washScratchId = 0;
+                    int t = GL45C.glCreateTextures(GL11.GL_TEXTURE_2D);
+                    GL45C.glTextureStorage2D(t, 1, fmt, arm.w, arm.h);
+                    if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                        GL11.glDeleteTextures(t);
+                        arm.washRestoreDone = true; // nothing blacked out, nothing to restore
+                        noteAuxDropOnce("IS5-WASH scratch alloc rejected — bracket skipped");
+                        return;
+                    }
+                    washScratchId = t;
+                    washScratchW = arm.w;
+                    washScratchH = arm.h;
+                    washScratchFmt = fmt;
+                }
+                GL43C.glCopyImageSubData(
+                    arm.washTexId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    washScratchId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, arm.w, arm.h, 1);
+                if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                    arm.washRestoreDone = true; // MUTATE-LAST: no blackout without the save
+                    noteAuxDropOnce("IS5-WASH scratch copy failed — bracket skipped");
+                    return;
+                }
+            }
+            fbo = new GlFramebuffer();
+            fbo.addColorAttachment(0, arm.washTexId);
+            fbo.drawBuffers(new int[]{0});
+            fbo.bind();
+            GlStateManager._viewport(0, 0, arm.w, arm.h);
+            GlStateManager._disableScissorTest();
+            GlStateManager._disableBlend(0);
+            GlStateManager._disableCull();
+            GlStateManager._colorMask(15);
+            GlStateManager._disableDepthTest(); // colour-only FBO; the discard is in-shader
+            if (!IPGlobal.debugNoStampDepthClamp) {
+                CHelper.enableDepthClamp(); // footprint parity with the stamp's rasterization
+                clampOn = true;
+            }
+            GlStateManager._glUseProgram(stampProgram);
+            GL20C.glUniform1i(locCapture, 0);
+            GL20C.glUniform1i(locStampedDepth0, 4);
+            GL20C.glUniform1f(locSolid, 0.0f);
+            GL20C.glUniform1f(locHavePrev, 0.0f);
+            GL20C.glUniform1f(locZeroAlpha, 0.0f); // asserted per site
+            GL20C.glUniform1i(locDepthMode, doSave ? 3 : 4);
+            matBuf.clear();
+            arm.combined.get(matBuf);
+            GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE4);
+            GlStateManager._bindTexture(arm.mainDepth0Id);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+            GlStateManager._bindTexture(washScratchId); // mode 4 samples it; mode 3 ignores
+            for (RestampEntry e : arm.entries) {
+                if (!e.slot.postFinalMode) continue; // PRE windows keep their source glow
+                ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                    .vertexArrayCache().bindVertexArray(
+                        new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                        new GpuBufferSlice[]{e.vertexSlice},
+                        null
+                    );
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, e.vertexCount);
+                if (doSave) censusWashB++; else censusWashR++;
+            }
+        } finally {
+            if (clampOn) {
+                CHelper.disableDepthClamp();
+            }
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._disableDepthTest();
+            FullScreenQuadRenderer.INSTANCE.bind();
+            if (cullWasEnabled) {
+                GlStateManager._enableCull();
+            }
+            if (fbo != null) {
+                try { fbo.destroy(); } catch (Throwable ignored) {}
+            }
+        }
+        int err = GL11.glGetError();
+        if (err != GL11.GL_NO_ERROR) {
+            if (doRestore) {
+                washBroken = true;
+                LOGGER.warn("[Seamless Portals] [IS5-WASH] restore half left GL error 0x{}"
+                    + " — the wash bracket is DISARMED for the session (washout returns;"
+                    + " window faces under SG stay correct via the inject)",
+                    Integer.toHexString(err));
+            } else {
+                // The blackout may have partially executed — the scratch save succeeded
+                // BEFORE any draw (mutate-last), so let the restore half run and self-heal;
+                // do NOT mark it done.
+                noteAuxDropOnce("IS5-WASH blackout half left GL error 0x"
+                    + Integer.toHexString(err) + " — restore half will repaint from scratch");
+            }
         }
     }
 
@@ -2349,6 +2591,15 @@ public final class IrisStageConsistentComposite {
                 }
             }
             arm.injectDone = arm.injectTexId == 0; // nothing to inject = that half is done
+            // IS5-WASH arm: eligibility decided per §1.10; washNeeded is finalized after the
+            // slot loop (it needs to know whether any POST/SG entry landed).
+            if (IPGlobal.is5WindowBloomExclude && meas.washState.equals("ON")) {
+                RenderTarget c0Rt = rts.get(0);
+                if (c0Rt != null) {
+                    arm.washTexId = meas.gatherReadsAlt
+                        ? c0Rt.getAltTexture() : c0Rt.getMainTexture();
+                }
+            }
             restampArm = arm; // entries appended per slot below; combined set with the matrices
         } else {
             restampArm = null;
@@ -2360,13 +2611,19 @@ public final class IrisStageConsistentComposite {
         if (measNow - lastRestampMeasLogMs >= 1000) {
             lastRestampMeasLogMs = measNow;
             LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} prevCam={}"
-                    + " anchor={} dBnd={} imgTgt={} mode={} rst={} rstOrph={}"
-                    + " sgC/I/F={}/{}/{}",
+                    + " anchor={} dBnd={} imgTgt={} mode={} gath={} wash={} wB/R={}/{}"
+                    + " rst={} rstOrph={} sgC/I/F={}/{}/{}",
                 meas.passCount, java.util.Arrays.toString(meas.d1Readers),
                 java.util.Arrays.toString(meas.histReaders),
                 java.util.Arrays.toString(meas.prevCamReaders), meas.anchor,
                 restampArm != null ? restampArm.depthBoundary : meas.anchor, meas.imageTarget,
-                effMode, censusRst, censusRstOrph,
+                effMode, meas.gatherIdx,
+                washBroken ? "BROKEN"
+                    : (!IPGlobal.is5WindowBloomExclude ? "OFF(lever)"
+                        // ⟦J⟧ B2: never print ON when the mode cannot arm the bracket.
+                        : (meas.washState.equals("ON") && !effMode.equals("RESTAMP")
+                            ? "SKIP(mode=" + effMode + ")" : meas.washState)),
+                censusWashB, censusWashR, censusRst, censusRstOrph,
                 censusSgC, censusSgI, censusSgF);
         }
 
@@ -2646,6 +2903,17 @@ public final class IrisStageConsistentComposite {
                         long rbNs = System.nanoTime() - rbT0;
                         stampReadbackNsThisPass += rbNs;
                         PerfTimers.add("is5.readbackDepthCenter", rbNs);
+                    }
+                }
+            }
+            // IS5-WASH: the bracket arms only when a POST/SG entry exists (dest-baked bloom
+            // in the capture). Same-dim PRE entries never black out — the source gather is
+            // their only bloom source and killing it would un-glow their windows.
+            if (restampArm != null && restampArm.washTexId != 0) {
+                for (RestampEntry e : restampArm.entries) {
+                    if (e.slot.postFinalMode) {
+                        restampArm.washNeeded = true;
+                        break;
                     }
                 }
             }
