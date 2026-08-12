@@ -649,11 +649,15 @@ loom {
             // everywhere (the ghost on command; byte-identical shipped PLANE) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableDepthRestamp=true
             if (project.findProperty('disableDepthRestamp') == 'true') { vmArg('-Dseamlessportals.disableDepthRestamp=true') }
-            // IS5-XDIM-SG single-grade dest capture (design Part 2; REQUIRES -PcrossDimDestChain
-            // + the restamp active), DEV DEFAULT OFF — the §2.3 R8 user residual gate holds the
-            // default flip; kill-checks 11-14 —
-            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PcrossDimDestChain=true -Pis5XdimSingleGrade=true
+            // IS5-XDIM-SG single-grade dest capture (design Part 2; layers on the dest chain +
+            // restamp). BOTH DEFAULT ON since 2026-08-11 (user residual gate passed). The
+            // disable rows are the escapes / on-command reproductions: no-dest-chain = fog and
+            // storm missing from cross-dim windows; no-SG = the double-grade dim window —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableCrossDimDestChain=true
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableXdimSingleGrade=true
             if (project.findProperty('is5XdimSingleGrade') == 'true') { vmArg('-Dseamlessportals.is5XdimSingleGrade=true') }
+            if (project.findProperty('disableCrossDimDestChain') == 'true') { vmArg('-Dseamlessportals.disableCrossDimDestChain=true') }
+            if (project.findProperty('disableXdimSingleGrade') == 'true') { vmArg('-Dseamlessportals.disableXdimSingleGrade=true') }
             // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
             // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
             // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
@@ -1073,6 +1077,8 @@ loom {
             if (project.findProperty('disableOutlineDepthWriteFix') == 'true') { vmArg('-Dseamlessportals.disableOutlineDepthWriteFix=true') }
             if (project.findProperty('disableDepthRestamp') == 'true') { vmArg('-Dseamlessportals.disableDepthRestamp=true') }
             if (project.findProperty('is5XdimSingleGrade') == 'true') { vmArg('-Dseamlessportals.is5XdimSingleGrade=true') }
+            if (project.findProperty('disableCrossDimDestChain') == 'true') { vmArg('-Dseamlessportals.disableCrossDimDestChain=true') }
+            if (project.findProperty('disableXdimSingleGrade') == 'true') { vmArg('-Dseamlessportals.disableXdimSingleGrade=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1174,6 +1180,8 @@ loom {
             if (project.findProperty('disableOutlineDepthWriteFix') == 'true') { vmArg('-Dseamlessportals.disableOutlineDepthWriteFix=true') }
             if (project.findProperty('disableDepthRestamp') == 'true') { vmArg('-Dseamlessportals.disableDepthRestamp=true') }
             if (project.findProperty('is5XdimSingleGrade') == 'true') { vmArg('-Dseamlessportals.is5XdimSingleGrade=true') }
+            if (project.findProperty('disableCrossDimDestChain') == 'true') { vmArg('-Dseamlessportals.disableCrossDimDestChain=true') }
+            if (project.findProperty('disableXdimSingleGrade') == 'true') { vmArg('-Dseamlessportals.disableXdimSingleGrade=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }

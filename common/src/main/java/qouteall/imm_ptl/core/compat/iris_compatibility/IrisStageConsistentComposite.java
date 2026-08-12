@@ -675,14 +675,10 @@ public final class IrisStageConsistentComposite {
             return;
         }
         runNestedStamp(child, parent);
-        // IS5-XDIM-SG ⟦J⟧ (engineering judge, blocking): the child's PRE-COMPOSITE pixels just
-        // landed in an SG parent capture AFTER its dest-boundary copy — the source-anchor
-        // inject would deliver them NEVER-GRADED (bypassing linearize/bloom-fog/tonemap
-        // entirely). Flag conservatively even on a silently-skipped nested stamp: the cost is
-        // one POST-look frame (sgF-visible), never garbage.
-        if (parent.sgCaptured) {
-            parent.sgNestedContent = true;
-        }
+        // IS5-XDIM-SG R11-MASK: when the parent is SG-captured, the nested stamp above wrote
+        // alpha 0 at the child's pixels (u_zeroAlpha) — the inject discards exactly there, so
+        // the child keeps its source-graded look and the parent face still gets the clean
+        // single-graded inject (the near-portal dim-window fix).
         child.pending = false;
         capturesPendingThisFrame--;
     }
@@ -746,6 +742,10 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1i(locCapture, 0);
             GL20C.glUniform1i(locCaptureAux, 1);
             GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
+            // R11-MASK: a nested stamp into an SG-captured parent writes alpha 0 at exactly
+            // its pixels; the SG inject discards there (source-graded child content survives —
+            // the near-portal dim-window fix). Asserted per site.
+            GL20C.glUniform1f(locZeroAlpha, parent.sgCaptured ? 1.0f : 0.0f);
             if (aux) {
                 GlStateManager._activeTexture(GL13.GL_TEXTURE1);
                 GlStateManager._bindTexture(child.auxTex[0]);
@@ -849,11 +849,11 @@ public final class IrisStageConsistentComposite {
         // TAIL then skips its mainRT copy and the source-anchor inject fires. Cleared at
         // beginFrame with pending.
         boolean sgCaptured = false;
-        // ⟦J⟧ (engineering judge, blocking): part4 stamped nested-child PRE content into this
-        // SG capture AFTER the boundary copy — the inject must SKIP (never deliver never-graded
-        // pixels); the slot renders as shipped POST for the frame, sgF-visible. The A→B→A
-        // corridor makes this the COMMON nested case (design §2.3 R11).
-        boolean sgNestedContent = false;
+        // ⟦J⟧ R11 lineage: a whole-slot sgNestedContent inject-skip lived here for one commit
+        // and WAS the user-reported near-portal dim window (nest>0 collapsed sgI in the census).
+        // Replaced by the per-pixel R11-MASK: capture alpha 1-initialized at SG capture, zeroed
+        // by nested stamps, discarded by the inject — child pixels keep their source-graded
+        // anchor-time content, the parent face gets the clean inject.
         Portal portal;
         Matrix4f modelView;
         Matrix4f projection;
@@ -1469,7 +1469,6 @@ public final class IrisStageConsistentComposite {
         for (CaptureSlot s : captureSlots) {
             s.pending = false;
             s.sgCaptured = false;
-            s.sgNestedContent = false;
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
@@ -1633,6 +1632,12 @@ public final class IrisStageConsistentComposite {
         uniform float u_solid;
         uniform float u_havePrev;
         uniform int u_depthMode;
+        // IS5-RESTAMP R11-MASK: 1.0 only during a nested stamp into an SG-captured parent —
+        // writes alpha 0 at exactly the child's pixels; the SG inject (mode 2) discards there,
+        // so the nested sub-window keeps its source-graded anchor-time content instead of the
+        // parent's dest-graded inject (the near-portal dim-window fix, log-adjudicated:
+        // nest>0 windows showed sgI collapsing while sgC held).
+        uniform float u_zeroAlpha;
         in vec4 vertexColor;
         layout(location = 0) out vec4 fragColor;
         layout(location = 1) out vec4 auxColor;
@@ -1640,6 +1645,7 @@ public final class IrisStageConsistentComposite {
         void main() {
             vec4 sampled = vec4(texelFetch(u_capture, ivec2(gl_FragCoord.xy), 0).rgb, 1.0);
             fragColor = mix(sampled * vertexColor, vertexColor, u_solid);
+            fragColor.a = 1.0 - u_zeroAlpha;
             auxColor = texelFetch(u_captureAux, ivec2(gl_FragCoord.xy), 0);
             histColor = mix(fragColor,
                 vec4(texelFetch(u_capturePrev, ivec2(gl_FragCoord.xy), 0).rgb, 1.0), u_havePrev);
@@ -1661,9 +1667,13 @@ public final class IrisStageConsistentComposite {
                 // IS5-XDIM-SG inject (IS5_RESTAMP_DESIGN.md §2.2.3): mode-1's visibility
                 // discard against the HEAD-stamped depthtex0 (plane + occluders), colour =
                 // the single-graded boundary capture (fragColor above already holds it). The
-                // inject FBO is colour-only — gl_FragDepth is inert here.
-                if (texelFetch(u_stampedDepth0, ivec2(gl_FragCoord.xy), 0).r
-                    < planeZ - 6.0e-8) discard;
+                // inject FBO is colour-only — gl_FragDepth is inert here. R11-MASK: capture
+                // alpha 0 marks nested-child pixels (alpha initialized to 1 at SG capture,
+                // zeroed by the nested stamp) — discard keeps the source-graded anchor-time
+                // content there.
+                ivec2 tc2 = ivec2(gl_FragCoord.xy);
+                if (texelFetch(u_stampedDepth0, tc2, 0).r < planeZ - 6.0e-8) discard;
+                if (texelFetch(u_capture, tc2, 0).a < 0.5) discard;
                 gl_FragDepth = planeZ;
             } else {
                 gl_FragDepth = planeZ;
@@ -1900,6 +1910,18 @@ public final class IrisStageConsistentComposite {
                 noteAuxDropOnce("SG boundary storage alloc rejected — POST fallback");
                 return;
             }
+            // ⟦J⟧ B1 (post-land judge, blocking): the R11-MASK sentinel rides the capture's
+            // ALPHA channel. On an alpha-less anchor image format (R11F_G11F_B10F-class —
+            // real in this pack family) the alpha clear no-ops silently, texelFetch(.a)
+            // returns the spec constant 1.0, and the inject would deliver NEVER-GRADED nested
+            // child pixels with zero census signal. Runtime-measured gate, no format list.
+            if (GL45C.glGetTextureLevelParameteri(
+                slot.colorTex, 0, GL11.GL_TEXTURE_ALPHA_SIZE) == 0) {
+                censusSgF++;
+                noteAuxDropOnce("SG capture format has no alpha channel — R11-MASK sentinel"
+                    + " unavailable, POST fallback");
+                return;
+            }
             while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the copy check */ }
             GL43C.glCopyImageSubData(
                 srcColor, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
@@ -1912,6 +1934,32 @@ public final class IrisStageConsistentComposite {
                 censusSgF++;
                 noteAuxDropOnce("SG boundary copy failed 0x" + Integer.toHexString(copyErr)
                     + " — POST fallback (TAIL re-allocs to its own format)");
+                return;
+            }
+            // R11-MASK alpha init: force capture alpha = 1 everywhere (the dest image's own
+            // alpha is pack-arbitrary; the inject's discard needs a clean sentinel). Channel
+            // bits javap-verified on the 26.2 jar: _colorMask int = R1|G2|B4|A8. The clear
+            // respects scissor — assert it off. Pass i re-establishes its own FBO/clearColor
+            // downstream (the boundary-seam contract); the FBO is transient, never cached.
+            GlFramebuffer alphaFbo = new GlFramebuffer();
+            try {
+                alphaFbo.addColorAttachment(0, slot.colorTex);
+                alphaFbo.drawBuffers(new int[]{0});
+                alphaFbo.bind();
+                GlStateManager._disableScissorTest();
+                GlStateManager._colorMask(8); // alpha only (javap: R1|G2|B4|A8)
+                // glClearBufferfv(GL_COLOR, 0, ...) — javap-pinned; respects the colour mask,
+                // touches no global clear-colour state.
+                GlStateManager._clearBuffer(0, new org.joml.Vector4f(0.0f, 0.0f, 0.0f, 1.0f));
+                GlStateManager._colorMask(15);
+            } finally {
+                try { alphaFbo.destroy(); } catch (Throwable ignored) {}
+            }
+            int alphaErr = GL11.glGetError();
+            if (alphaErr != GL11.GL_NO_ERROR) {
+                censusSgF++;
+                noteAuxDropOnce("SG alpha init failed 0x" + Integer.toHexString(alphaErr)
+                    + " — POST fallback");
                 return;
             }
             slot.sgCaptured = true;
@@ -1967,6 +2015,7 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1i(locStampedDepth0, 4);
             GL20C.glUniform1f(locSolid, IPGlobal.debugStampSolid ? 1.0f : 0.0f);
             GL20C.glUniform1f(locHavePrev, 0.0f);
+            GL20C.glUniform1f(locZeroAlpha, 0.0f); // asserted per site
             matBuf.clear();
             arm.combined.get(matBuf);
             GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
@@ -1994,7 +2043,10 @@ public final class IrisStageConsistentComposite {
             // --- mode 2: the SG inject into the source anchor's image READ side ---
             if (doInject) {
                 for (RestampEntry e : arm.entries) {
-                    if (!e.slot.sgCaptured || e.slot.sgNestedContent) continue;
+                    // R11-MASK: nested-child pixels are excluded per-PIXEL by the alpha
+                    // discard in the shader — no whole-slot skip (the skip was the
+                    // log-adjudicated near-portal dim-window: nest>0 collapsed sgI).
+                    if (!e.slot.sgCaptured) continue;
                     if (injFbo == null) {
                         injFbo = new GlFramebuffer();
                         injFbo.addColorAttachment(0, arm.injectTexId);
@@ -2070,6 +2122,7 @@ public final class IrisStageConsistentComposite {
     private static int locSolid = -1;
     private static int locHavePrev = -1;
     private static int locDepthMode = -1;
+    private static int locZeroAlpha = -1;
     private static final FloatBuffer matBuf = BufferUtils.createFloatBuffer(16);
 
     // IS5-HIST: per-portal PREVIOUS-frame capture store {texId, w, h, fmt}. STRONG keys with
@@ -2117,6 +2170,7 @@ public final class IrisStageConsistentComposite {
         locSolid = GL20C.glGetUniformLocation(prog, "u_solid");
         locHavePrev = GL20C.glGetUniformLocation(prog, "u_havePrev");
         locDepthMode = GL20C.glGetUniformLocation(prog, "u_depthMode");
+        locZeroAlpha = GL20C.glGetUniformLocation(prog, "u_zeroAlpha");
         return true;
     }
 
@@ -2282,17 +2336,16 @@ public final class IrisStageConsistentComposite {
                         ? imgRt.getAltTexture() : imgRt.getMainTexture();
                 }
             }
-            // §1.9 the cool-MB setting: OFF (default) moves the DEPTH boundary to the first
-            // prev-camera-consuming d1 reader (the MB pass sees CONTENT = ordinary blur); ON
-            // keeps it at the anchor (MB sees PLANE = the whip). The inject index is pinned to
-            // the anchor either way (post-tonemap).
+            // §1.9 (final form — the cool-MB setting was removed the same day it was added, on
+            // the user's word; the whip is future-polish material): the DEPTH boundary is
+            // ALWAYS min(anchor, first prev-camera-consuming d1 reader) — the MB-class pass
+            // sees CONTENT depth = ordinary content-correct blur; storm/reflection readers
+            // before it keep PLANE. The inject index stays pinned to the anchor (post-tonemap).
             arm.depthBoundary = meas.anchor;
-            if (!IPGlobal.coolPortalMotionBlur) {
-                for (int idx : meas.prevCamReaders) {
-                    if (idx < arm.depthBoundary) {
-                        arm.depthBoundary = idx;
-                        break; // ascending order — the first is the min
-                    }
+            for (int idx : meas.prevCamReaders) {
+                if (idx < arm.depthBoundary) {
+                    arm.depthBoundary = idx;
+                    break; // ascending order — the first is the min
                 }
             }
             arm.injectDone = arm.injectTexId == 0; // nothing to inject = that half is done
@@ -2307,13 +2360,13 @@ public final class IrisStageConsistentComposite {
         if (measNow - lastRestampMeasLogMs >= 1000) {
             lastRestampMeasLogMs = measNow;
             LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} prevCam={}"
-                    + " anchor={} dBnd={} imgTgt={} mode={} coolMb={} rst={} rstOrph={}"
+                    + " anchor={} dBnd={} imgTgt={} mode={} rst={} rstOrph={}"
                     + " sgC/I/F={}/{}/{}",
                 meas.passCount, java.util.Arrays.toString(meas.d1Readers),
                 java.util.Arrays.toString(meas.histReaders),
                 java.util.Arrays.toString(meas.prevCamReaders), meas.anchor,
                 restampArm != null ? restampArm.depthBoundary : meas.anchor, meas.imageTarget,
-                effMode, IPGlobal.coolPortalMotionBlur, censusRst, censusRstOrph,
+                effMode, censusRst, censusRstOrph,
                 censusSgC, censusSgI, censusSgF);
         }
 
@@ -2361,6 +2414,7 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1f(locSolid, solid ? 1.0f : 0.0f);
             // IS5-DEPTHFORK: mode 0 asserted explicitly per pass — never rely on defaults.
             GL20C.glUniform1i(locDepthMode, 0);
+            GL20C.glUniform1f(locZeroAlpha, 0.0f); // asserted per site (uniforms persist)
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
 
             // STAMP-TIME MATRICES (design §3.2 note): by renderAll HEAD, THIS frame's true
