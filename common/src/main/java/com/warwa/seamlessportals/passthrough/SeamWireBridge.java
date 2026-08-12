@@ -296,6 +296,245 @@ public final class SeamWireBridge {
         return server == null || !server.isSameThread();
     }
 
+    // =============================================================================================
+    // F4 — THE SECOND OBJECT PARTICIPATES (user ruling: "SA to DB should carry signal normally,
+    // and SB to DA ... at the same time even if they overlap each other on the seam"; live
+    // 2026-08-11: "if side a is already powered, the side b seam does not send power or get
+    // powered"). A side-table Secondary is invisible to vanilla redstone — it has no evaluator
+    // and nothing ever rewrote its state. This is its power lifecycle: evaluate the fragment
+    // from BOTH of its circuit's sides (its own-side local neighbours + the far continuation
+    // through its half-matched binding), store the result in the side table, sync the object's
+    // fragment at the counterpart cell, broadcast (the payload carries full state ids — powered
+    // fragments render lit), and fan neighbour updates so each side's circuit re-derives.
+    // Loop-safe by construction: setSecondary writes no chunk state (no driver re-entry), the
+    // fan-out only fires on a value CHANGE, and wire decay is strictly decreasing.
+    // =============================================================================================
+
+    /** Re-entrancy bound: a refresh's fan-out may poke back, but never deeper than this. */
+    private static int refreshDepth = 0;
+
+    /** Re-derive a cell's side-table fragment's power, if it is a redstone participant. */
+    public static void refreshSecondary(ServerLevel level, BlockPos pos) {
+        if (refreshDepth >= 4) {
+            return;
+        }
+        refreshDepth++;
+        try {
+            refreshSecondaryInner(level, pos);
+        }
+        finally {
+            refreshDepth--;
+        }
+    }
+
+    private static void refreshSecondaryInner(ServerLevel level, BlockPos pos) {
+        try {
+            if (AperturePassthroughLever.DISABLED
+                || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+                || AperturePassthroughLever.DISABLE_SEAM_WIRE
+                || AperturePassthroughLever.DISABLE_SEAM_HALF_SCOPE
+                || !SeamlessPortalsConfig.isEntityPortals()) {
+                return;
+            }
+            SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(level, pos);
+            if (sec == null) {
+                return;
+            }
+            boolean wire = sec.state().is(net.minecraft.world.level.block.Blocks.REDSTONE_WIRE);
+            boolean rail = sec.state().hasProperty(
+                net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED)
+                && sec.state().getBlock()
+                    instanceof net.minecraft.world.level.block.BaseRailBlock;
+            if (!wire && !rail) {
+                refreshProbe(level, pos, sec, "EXIT not-a-redstone-participant "
+                    + sec.state().getBlock());
+                return;
+            }
+            // The binding facing the fragment's matter names its axis and its far continuation.
+            SeamRegistry.SeamCell cell = SeamRegistry.lookup(level, pos);
+            if (cell == null) {
+                refreshProbe(level, pos, sec, "EXIT no-seam-cell");
+                return;
+            }
+            SeamRegistry.SeamBinding b = null;
+            for (SeamRegistry.SeamBinding cand : cell.bindings()) {
+                if (cand.isMirrorable() && cand.seamContinuous() && cand.cut() != null
+                    && SeamOccupancy.halfOf(cand.srcFacing()) == sec.half()) {
+                    b = cand;
+                    break;
+                }
+            }
+            if (b == null) {
+                refreshProbe(level, pos, sec, "EXIT no-half-matched-binding candidates="
+                    + describeBindings(cell));
+                return;
+            }
+            Direction.Axis axis = b.srcFacing().getAxis();
+            Direction secDir = Direction.get(
+                sec.half() == SeamOccupancy.HALF_POSITIVE
+                    ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                axis);
+            Direction primaryDir = secDir.getOpposite();
+            // Both of the fragment's circuit sides: own-side locals + the far continuation.
+            // Wire neighbours take the DECAY path, never the block-power path — a raw getSignal
+            // outside the shouldSignal latch answers a wire's FULL power (vanilla's latch exists
+            // exactly to exclude that; this scan replicates its effect by splitting on block).
+            // Conductor strong-power fan-in is a recorded v1 scope cut (direct sources only).
+            int block = 0;
+            int wireIn = 0;
+            for (Direction d : Direction.values()) {
+                if (d == primaryDir) {
+                    continue;
+                }
+                BlockPos nPos = pos.relative(d);
+                BlockState nState = level.getBlockState(nPos);
+                if (nState.is(net.minecraft.world.level.block.Blocks.REDSTONE_WIRE)) {
+                    wireIn = Math.max(wireIn, wireSignalOf(nState));
+                }
+                else {
+                    block = Math.max(block, nState.getSignal(level, nPos, d));
+                }
+            }
+            // The object's OTHER end: the counterpart cell's own-side neighbours, scanned with
+            // the same wire/block split. Both ends therefore evaluate over the IDENTICAL physical
+            // set — symmetric by construction, so the mutual sync below is idempotent and cannot
+            // fight. (The first build read one far continuation cell per end — different cells
+            // per end — and the two ends' unequal answers ping-ponged through the sync at tick
+            // speed: secondaryRefreshes=2M in one gate run before the ceiling caught it.)
+            MinecraftServer server = level.getServer();
+            ServerLevel far = server == null ? null : server.getLevel(b.destDim());
+            if (far != null && far.hasChunkAt(b.destPos())) {
+                // THE HALF FLIPS ACROSS THE SEAM: the counterpart fragment occupies the MIRRORED
+                // half of its cell, so the mapped secDir names the far PRIMARY side — the far
+                // fragment's own side is its opposite. The 2026-08-11 probe run caught the
+                // unflipped version: the far scan read the OTHER object's circuit, and the sync
+                // below stamped the counterpart onto the primary's claimed half, which the
+                // empty-side read then correctly ignored — behindNear stayed dark for 200 ticks.
+                Direction farPrimaryDir = SeamRegistry.mapDir(b, secDir);
+                for (Direction d : Direction.values()) {
+                    if (d == farPrimaryDir) {
+                        continue;
+                    }
+                    BlockPos nPos = b.destPos().relative(d);
+                    if (!far.isInsideBuildHeight(nPos) || !far.hasChunkAt(nPos)) {
+                        continue;
+                    }
+                    BlockState nState = far.getBlockState(nPos);
+                    if (nState.is(net.minecraft.world.level.block.Blocks.REDSTONE_WIRE)) {
+                        wireIn = Math.max(wireIn, wireSignalOf(nState));
+                    }
+                    else {
+                        block = Math.max(block, nState.getSignal(far, nPos, d));
+                    }
+                }
+            }
+            BlockState updated;
+            if (wire) {
+                int target = Math.max(block, Math.max(0, wireIn - 1));
+                var POWER = net.minecraft.world.level.block.state.properties
+                    .BlockStateProperties.POWER;
+                if (sec.state().getValue(POWER) == target) {
+                    refreshProbe(level, pos, sec, "EXIT no-change power=" + target
+                        + " (block=" + block + " wireIn=" + wireIn + ") via srcFacing="
+                        + b.srcFacing());
+                    return;
+                }
+                updated = sec.state().setValue(POWER, target);
+            }
+            else {
+                boolean target = block > 0 || wireIn > 0;
+                var POWERED = net.minecraft.world.level.block.state.properties
+                    .BlockStateProperties.POWERED;
+                if (sec.state().getValue(POWERED) == target) {
+                    refreshProbe(level, pos, sec, "EXIT no-change powered=" + target
+                        + " (block=" + block + " wireIn=" + wireIn + ") via srcFacing="
+                        + b.srcFacing());
+                    return;
+                }
+                updated = sec.state().setValue(POWERED, target);
+            }
+            refreshProbe(level, pos, sec, "WROTE " + updated + " (block=" + block
+                + " wireIn=" + wireIn + ") via srcFacing=" + b.srcFacing());
+            SeamOccupancy.setSecondary(level, pos, new SeamOccupancy.Secondary(updated, sec.half()));
+            SeamOccupancy.broadcast(level, pos);
+            secondaryRefreshes++;
+            // The object's fragment at the counterpart cell carries the same power (one stitched
+            // object, one value) — sync + broadcast + wake ITS side's neighbours.
+            if (far == null || !far.hasChunkAt(b.destPos())) {
+                refreshProbe(level, pos, sec, "SYNC-SKIP far unavailable dest=" + b.destPos());
+            }
+            if (far != null && far.hasChunkAt(b.destPos())) {
+                // Mirrored half, same flip as the far scan above.
+                byte farHalf = SeamOccupancy.halfOf(SeamRegistry.mapDir(b, secDir).getOpposite());
+                SeamOccupancy.Secondary farSec = SeamOccupancy.secondaryOf(far, b.destPos());
+                if (farSec == null || !farSec.state().is(sec.state().getBlock())) {
+                    refreshProbe(level, pos, sec, "SYNC-SKIP counterpart " + (farSec == null
+                        ? "absent" : "different-block " + farSec.state().getBlock())
+                        + " at " + b.destPos());
+                }
+                if (farSec != null && farSec.state().is(sec.state().getBlock())) {
+                    SeamOccupancy.setSecondary(far, b.destPos(), new SeamOccupancy.Secondary(
+                        updated.rotate(b.stateRotation()), farHalf));
+                    SeamOccupancy.broadcast(far, b.destPos());
+                    // Wake the far circuit. updateNeighborsAt(P) notifies the six cells AROUND P,
+                    // never P itself — so the cell's OWN entry is what wakes its face-adjacent
+                    // wires, and the relative shell covers the wire graph's diagonals (vanilla's
+                    // updatePowerStrength fans {pos} ∪ pos.relative(6); the first build dropped
+                    // the {pos} element and no face neighbour ever re-evaluated). The skip is the
+                    // far fragment's PRIMARY side (the mapped secDir — the seam-axis flip again).
+                    far.updateNeighborsAt(b.destPos(), updated.getBlock());
+                    for (Direction d : Direction.values()) {
+                        if (d == SeamRegistry.mapDir(b, secDir)) {
+                            continue;
+                        }
+                        far.updateNeighborsAt(b.destPos().relative(d), updated.getBlock());
+                    }
+                }
+            }
+            // Same shape as the far fan: the cell's own entry wakes face neighbours, the shell
+            // covers diagonals.
+            level.updateNeighborsAt(pos, updated.getBlock());
+            for (Direction d : Direction.values()) {
+                if (d == primaryDir) {
+                    continue;
+                }
+                level.updateNeighborsAt(pos.relative(d), updated.getBlock());
+            }
+        }
+        catch (Throwable t) {
+            fault(t);
+        }
+    }
+
+    private static long secondaryRefreshes;
+
+    /**
+     * F4 diagnosis channel, probe-only: names the branch a secondary refresh exited through.
+     * Volume-bounded by construction — it only fires for cells that HAVE a side-table fragment,
+     * and only under {@code -Dseamlessportals.seamSignalProbe=true}.
+     */
+    private static void refreshProbe(
+        ServerLevel level, BlockPos pos, SeamOccupancy.Secondary sec, String what
+    ) {
+        if (AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
+            LOGGER.info("[F4-REFRESH] {} in {} secHalf={} — {}",
+                pos, level.dimension().identifier(), sec.half(), what);
+        }
+    }
+
+    private static String describeBindings(SeamRegistry.SeamCell cell) {
+        StringBuilder sb = new StringBuilder();
+        for (SeamRegistry.SeamBinding cand : cell.bindings()) {
+            sb.append("[srcFacing=").append(cand.srcFacing())
+                .append(" halfOf=").append(SeamOccupancy.halfOf(cand.srcFacing()))
+                .append(" mirrorable=").append(cand.isMirrorable())
+                .append(" continuous=").append(cand.seamContinuous())
+                .append(" cut=").append(cand.cut() != null)
+                .append(" phase=").append(cand.phase()).append(']');
+        }
+        return sb.length() == 0 ? "NONE" : sb.toString();
+    }
+
     /** Read-path fault: never rethrow (spec F8 — an escape inside a wire bracket mutes all wire). */
     private static void fault(Throwable t) {
         if (!faultWarned) {
@@ -313,8 +552,13 @@ public final class SeamWireBridge {
         return connReads;
     }
 
+    public static long secondaryRefreshCount() {
+        return secondaryRefreshes;
+    }
+
     public static String counters() {
         return "decayReads=" + decayReads + " decayHits=" + decayHits
-            + " connReads=" + connReads + " connHits=" + connHits + " halfGated=" + halfGated;
+            + " connReads=" + connReads + " connHits=" + connHits + " halfGated=" + halfGated
+            + " secondaryRefreshes=" + secondaryRefreshes;
     }
 }

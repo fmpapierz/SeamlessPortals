@@ -94,7 +94,24 @@ public abstract class MixinRedStoneWireBlockSeamAuthority {
             com.warwa.seamlessportals.passthrough.SeamSignalContinuity
                 .onSeamCellChanged(serverLevel, pos, level.getBlockState(pos));
         }
+        // F4: the cancelled cell may host the OTHER object's side-table fragment — the poke is
+        // its only wake-up, so re-derive it here (loop-safe: side-table writes re-enter nothing).
+        if (level instanceof net.minecraft.server.level.ServerLevel sl) {
+            com.warwa.seamlessportals.passthrough.SeamWireBridge.refreshSecondary(sl, pos);
+        }
         ci.cancel();
+    }
+
+    // F4 — the unmarked path's fragment wake: any neighbour change at a two-object cell
+    // re-derives the side-table fragment's power (cheap: one map probe when no secondary).
+    @Inject(method = "neighborChanged", at = @At("TAIL"), require = 1)
+    private void seamlessportals$refreshSecondaryFragment(
+        BlockState state, Level level, BlockPos pos, Block block,
+        @Nullable Orientation orientation, boolean movedByPiston, CallbackInfo ci
+    ) {
+        if (level instanceof net.minecraft.server.level.ServerLevel sl) {
+            com.warwa.seamlessportals.passthrough.SeamWireBridge.refreshSecondary(sl, pos);
+        }
     }
 
     // The shape channel: updateShape re-derives connection state (and deletes unsupported wire via

@@ -121,7 +121,23 @@ public abstract class MixinBaseRailBlockMirrorAuthority {
                 com.warwa.seamlessportals.passthrough.SeamSignalContinuity
                     .onSeamCellChanged(serverLevel, pos, level.getBlockState(pos));
             }
+            // F4: the cancelled cell may host the OTHER object's side-table fragment (a second
+            // rail sharing the cell) — the poke is its only wake-up; re-derive it here.
+            if (level instanceof net.minecraft.server.level.ServerLevel sl) {
+                com.warwa.seamlessportals.passthrough.SeamWireBridge.refreshSecondary(sl, pos);
+            }
             ci.cancel();
+        }
+    }
+
+    // F4 — the unmarked path's fragment wake, the rail twin of the wire authority's TAIL hook.
+    @Inject(method = "neighborChanged", at = @At("TAIL"), require = 1)
+    private void seamlessportals$refreshSecondaryFragment(
+        BlockState state, Level level, BlockPos pos, Block block,
+        @Nullable Orientation orientation, boolean movedByPiston, CallbackInfo ci
+    ) {
+        if (level instanceof net.minecraft.server.level.ServerLevel sl) {
+            com.warwa.seamlessportals.passthrough.SeamWireBridge.refreshSecondary(sl, pos);
         }
     }
 }

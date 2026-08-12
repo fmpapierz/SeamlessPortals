@@ -2805,6 +2805,10 @@ public class CrossingSmoke implements FabricClientGameTest {
                     + " B2=" + far.getBlockState(contB2)
                     + " lamp=" + far.getBlockState(lampPos)
                     + " farPower=" + far.getBlockState(farPowerPos)
+                    + " | secS=" + com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(ow, cellSA)
+                    + " secS'=" + com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(far, destPos)
                     + " | S.marked=" + owH.seamlessportals$mirrorCreatedCells().contains(cellSA.asLong())
                     + " S'.marked=" + farH.seamlessportals$mirrorCreatedCells().contains(destPos.asLong())
                     + " | mirror{" + com.warwa.seamlessportals.passthrough.SeamMirror.counters() + "}"
@@ -3035,6 +3039,107 @@ public class CrossingSmoke implements FabricClientGameTest {
                 nether.setBlockAndUpdate(behindFar, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
             });
 
+            // ══ ARM T — F4 TWO-OBJECT PARTICIPATION (user ruling: "SA to DB should carry signal
+            // normally, and SB to DA should carry signal normally as well at the same time even
+            // if they overlap each other on the seam"; live 2026-08-11: side B's seam dust could
+            // neither send nor receive while side A was powered). Stages the SECOND object as a
+            // side-table fragment at both ends (the object model's own shape), then asserts the
+            // two circuits carry INDEPENDENTLY and SIMULTANEOUSLY. ══
+            final BlockPos bApproach = behindFar;                       // source-B side, beside S'
+            final BlockPos bPower = bApproach.relative(farStep.getOpposite());
+            final byte fragmentHalfAtA =
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.halfOf(crossDir);
+            final byte fragmentHalfAtB =
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.halfOf(farStep.getOpposite());
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var wireState = WIRE.defaultBlockState();
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellSA,
+                    new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(
+                        wireState, fragmentHalfAtA));
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(ow, cellSA);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(nether, destPos,
+                    new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(
+                        wireState, fragmentHalfAtB));
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(nether, destPos);
+                var stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+                nether.setBlockAndUpdate(bApproach.below(), stone);
+                nether.setBlockAndUpdate(bPower.below(), stone);
+                ow.setBlockAndUpdate(behindNear.below(), stone);
+                nether.setBlockAndUpdate(bApproach, wireState);
+                ow.setBlockAndUpdate(behindNear, wireState);
+            });
+            context.waitTicks(5);
+            // T-1: power the B circuit alone — SB→DA carries, A's primary circuit stays dark.
+            runOnServer(context, server -> server.getLevel(binding.destDim()).setBlockAndUpdate(
+                bPower, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5,
+                "RS-WIRE F4: the second object's circuit (SB→DA) never carried", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    var secB = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(nether, destPos);
+                    var secA = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(ow, cellSA);
+                    return secB != null && secB.state().getValue(POWER) > 0
+                        && secA != null && secA.state().getValue(POWER) > 0
+                        && ow.getBlockState(behindNear).getValue(POWER) > 0;
+                });
+            runOnServer(context, server -> {
+                int s = server.getLevel(Level.OVERWORLD).getBlockState(cellSA).getValue(POWER);
+                if (s != 0) {
+                    failure.set("F4 INDEPENDENCE BROKEN: powering the B object drove the A"
+                        + " object's primary to " + s + " (must stay 0)");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: " + failure.get());
+            }
+            // T-2: power A's circuit too — both live simultaneously, each on its own path.
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                powerPos, net.minecraft.world.level.block.Blocks.REDSTONE_BLOCK.defaultBlockState()));
+            pollOrDump(dump, context, 40, 5,
+                "RS-WIRE F4: the two circuits never carried SIMULTANEOUSLY", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    var secA = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(ow, cellSA);
+                    return ow.getBlockState(cellSA).getValue(POWER) > 0
+                        && nether.getBlockState(contB1).getValue(POWER) > 0
+                        && secA != null && secA.state().getValue(POWER) > 0
+                        && ow.getBlockState(behindNear).getValue(POWER) > 0;
+                });
+            // T-3: both sources off — everything dark, both objects.
+            runOnServer(context, server -> {
+                server.getLevel(Level.OVERWORLD).setBlockAndUpdate(
+                    powerPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                server.getLevel(binding.destDim()).setBlockAndUpdate(
+                    bPower, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            });
+            pollOrDump(dump, context, 40, 5, "RS-WIRE F4: circuits never powered OFF", server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                var secA = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(ow, cellSA);
+                var secB = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .secondaryOf(nether, destPos);
+                return ow.getBlockState(cellSA).getValue(POWER) == 0
+                    && (secA == null || secA.state().getValue(POWER) == 0)
+                    && (secB == null || secB.state().getValue(POWER) == 0)
+                    && ow.getBlockState(behindNear).getValue(POWER) == 0;
+            });
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellSA, null);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(nether, destPos, null);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(ow, cellSA);
+                com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(nether, destPos);
+                ow.setBlockAndUpdate(behindNear, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                nether.setBlockAndUpdate(bApproach, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            });
+
             // ── VOLUME CEILING. ──
             AtomicReference<Long> revertDelta = new AtomicReference<>(0L);
             runOnServer(context, server -> revertDelta.set(
@@ -3045,6 +3150,14 @@ public class CrossingSmoke implements FabricClientGameTest {
                     + revertDelta.get() + " across one leg (healthy ≤ 20; the 2026-08-10 loop"
                     + " produced thousands per tick). "
                     + com.warwa.seamlessportals.passthrough.SeamMirror.counters());
+            }
+            // F4's own runaway channel (proved live: 2M refreshes when the two ends' evaluations
+            // disagreed and fought through the sync): a healthy leg needs a few dozen.
+            if (com.warwa.seamlessportals.passthrough.SeamWireBridge.secondaryRefreshCount() > 5000) {
+                throw new AssertionError(LOG + "RS-WIRE FAILED: RUNAWAY — secondaryRefreshes="
+                    + com.warwa.seamlessportals.passthrough.SeamWireBridge.secondaryRefreshCount()
+                    + " across the run (healthy ≤ a few dozen per leg). "
+                    + com.warwa.seamlessportals.passthrough.SeamWireBridge.counters());
             }
             SeamlessPortalsConstants.LOGGER.info(LOG + "RS-WIRE PASS — dust carried signal across"
                 + " the obsidian seam both directions, decayed one per step, agreed across the"
