@@ -1287,6 +1287,21 @@ public class IPGlobal {
             || (IS5_XDIM_SINGLE_GRADE_DEFAULT
                 && !Boolean.getBoolean("seamlessportals.disableXdimSingleGrade"));
 
+    // IS5-WASH (2026-08-11, IS5_RESTAMP_DESIGN.md §1.10) — the lava/high-angle bloom-washout
+    // fix, DEFAULT ON. User-adjudicated mechanism: ambient control clean + pack-bloom-off
+    // vanishes it ⇒ the SOURCE chain's bloom gather harvesting energy from the stamped
+    // window (fixed screen-space reach vs the angle-compressed footprint = the angle
+    // signature); dest-baked bloom in the capture is the correct glow and stays. Fix: black
+    // out POST/SG window footprints in c0 across the measured gatherer pass, restore before
+    // bloom-apply. v1 GUARD: skipped when the gatherer also writes c0 (pack MB on — a
+    // blackout would MB-smear; washout persists there, meas-line-visible). Same-dim PRE
+    // windows are never blacked (source gather is their only bloom source).
+    public static final boolean IS5_WINDOW_BLOOM_EXCLUDE_DEFAULT = true;
+    public static final boolean is5WindowBloomExclude =
+        Boolean.getBoolean("seamlessportals.is5WindowBloomExclude")
+            || (IS5_WINDOW_BLOOM_EXCLUDE_DEFAULT
+                && !Boolean.getBoolean("seamlessportals.disableWindowBloomExclude"));
+
     // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
     // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
     // pixels — the ugly MB-off approach-blur (jitter=0 leg refuted jitter-alone; the blend's
