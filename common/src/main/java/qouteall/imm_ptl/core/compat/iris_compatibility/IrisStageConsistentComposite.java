@@ -104,6 +104,13 @@ public final class IrisStageConsistentComposite {
     /** {@code CompositeRenderer$Pass.stageReadsFromAlt} — pass-0 READ side = the stamp's WRITE
      *  side (judge: do NOT derive from flippedAfterTranslucent — composite_pre flips). */
     private static Field fPassReadsFromAlt;
+    /** IS5-RESTAMP: {@code CompositeRenderer$Pass.program} — the measurement's program-handle
+     *  source ({@code null} on a ComputeOnlyPass = the skip discriminator; the DestPrevCamera
+     *  recipe). {@code Program.getProgramId()} itself is public — no method reflection. */
+    private static Field fPassProgram;
+    /** IS5-RESTAMP/SG: {@code CompositeRenderer$Pass.drawBuffers} (int[]) — the anchor pass's
+     *  image target ({@code drawBuffers[0]}) for the SG boundary capture/inject. */
+    private static Field fPassDrawBuffers;
     /** {@code SystemTimeUniforms$FrameCounter.count} (private int) — the §3.7 distant-offset
      *  counter bracket's write target. READ needs no reflection ({@code getAsInt()} is public). */
     private static Field fFrameCounterCount;
@@ -127,6 +134,10 @@ public final class IrisStageConsistentComposite {
                 Class.forName("net.irisshaders.iris.pipeline.CompositeRenderer$Pass");
             fPassReadsFromAlt = passClass.getDeclaredField("stageReadsFromAlt");
             fPassReadsFromAlt.setAccessible(true);
+            fPassProgram = passClass.getDeclaredField("program");
+            fPassProgram.setAccessible(true);
+            fPassDrawBuffers = passClass.getDeclaredField("drawBuffers");
+            fPassDrawBuffers.setAccessible(true);
             fFrameCounterCount =
                 SystemTimeUniforms.COUNTER.getClass().getDeclaredField("count");
             fFrameCounterCount.setAccessible(true);
@@ -217,11 +228,13 @@ public final class IrisStageConsistentComposite {
         if (now - censusLastEmitMs >= 1000) {
             censusLastEmitMs = now;
             LOGGER.info("[Seamless Portals] [IS5-PRE] 1Hz: frames={} consumeT/F={}/{} specR/S={}/{}"
-                    + " armG/D={}/{} capt={} cPost={} stampPass={} views={} nest={} hys={}",
+                    + " armG/D={}/{} capt={} cPost={} stampPass={} views={} nest={} hys={}"
+                    + " rst={} rstOrph={} sgC/I/F={}/{}/{}",
                 censusArmedFrames, censusConsumeTrue, censusConsumeFalse,
                 censusSpecRendered, censusSpecSkipped, censusArmGranted, censusArmDenied,
                 censusCaptures, censusCapturesPost, censusStampPasses, censusStampedViews,
-                censusNestedStamps, censusHysteresisRenders);
+                censusNestedStamps, censusHysteresisRenders,
+                censusRst, censusRstOrph, censusSgC, censusSgI, censusSgF);
             censusArmedFrames = 0;
             censusConsumeTrue = 0;
             censusConsumeFalse = 0;
@@ -235,6 +248,11 @@ public final class IrisStageConsistentComposite {
             censusNestedStamps = 0;
             censusHysteresisRenders = 0;
             censusCapturesPost = 0;
+            censusRst = 0;
+            censusRstOrph = 0;
+            censusSgC = 0;
+            censusSgI = 0;
+            censusSgF = 0;
         }
         return true;
     }
@@ -657,6 +675,14 @@ public final class IrisStageConsistentComposite {
             return;
         }
         runNestedStamp(child, parent);
+        // IS5-XDIM-SG ⟦J⟧ (engineering judge, blocking): the child's PRE-COMPOSITE pixels just
+        // landed in an SG parent capture AFTER its dest-boundary copy — the source-anchor
+        // inject would deliver them NEVER-GRADED (bypassing linearize/bloom-fog/tonemap
+        // entirely). Flag conservatively even on a silently-skipped nested stamp: the cost is
+        // one POST-look frame (sgF-visible), never garbage.
+        if (parent.sgCaptured) {
+            parent.sgNestedContent = true;
+        }
         child.pending = false;
         capturesPendingThisFrame--;
     }
@@ -818,6 +844,16 @@ public final class IrisStageConsistentComposite {
         // the renderAll INVOKE. Decided at ARM time from mod-owned dims; PRE views are
         // byte-identical to the shipped path.
         boolean postFinalMode = false;
+        // IS5-XDIM-SG (IS5_RESTAMP_DESIGN.md §2.2): this frame's DEST-boundary capture landed —
+        // colorTex/depthTex hold the dest anchor-boundary image (single-graded, pre-AA); the
+        // TAIL then skips its mainRT copy and the source-anchor inject fires. Cleared at
+        // beginFrame with pending.
+        boolean sgCaptured = false;
+        // ⟦J⟧ (engineering judge, blocking): part4 stamped nested-child PRE content into this
+        // SG capture AFTER the boundary copy — the inject must SKIP (never deliver never-graded
+        // pixels); the slot renders as shipped POST for the frame, sgF-visible. The A→B→A
+        // corridor makes this the COMMON nested case (design §2.3 R11).
+        boolean sgNestedContent = false;
         Portal portal;
         Matrix4f modelView;
         Matrix4f projection;
@@ -853,6 +889,12 @@ public final class IrisStageConsistentComposite {
     private static void breakMechanism(String reason, Throwable t) {
         mechanismBroken = true;
         mechanismBreakReason = reason;
+        // IS5-RESTAMP ⟦J⟧: a broken frame must neither fire a stale boundary draw nor read as
+        // a next-frame orphan; the measurement cache dies with the mechanism (weak keys already
+        // cover pipeline death — this covers the mechanism's own death).
+        restampArm = null;
+        restampMeasCache.clear();
+        postPendingDestRenderer = null;
         LOGGER.warn("[Seamless Portals] [IS5-PRE] mechanism BROKEN — falling back to the old"
             + " path from the next frame on. Reason: {}", reason, t);
     }
@@ -924,6 +966,18 @@ public final class IrisStageConsistentComposite {
     private static final java.util.HashSet<Object> postDimsThisFrame = new java.util.HashSet<>();
     private static boolean postFinalSeamWitnessed = false;
     private static boolean xdimLiveNoted = false;
+    // IS5-XDIM-SG: the pend record's dest-side measurement (branch (a) of the boundary hook
+    // keys on THESE, never on restampArm — ⟦J⟧ both judges: the dest chain runs INSIDE the
+    // portal view render where isRendering=true and restampArm is structurally null). null
+    // destRenderer = SG not armed for this pend (lever off, dependency unmet, anchor missing).
+    private static Object postPendingDestRenderer = null;
+    private static int postPendingDestAnchor = -1;
+    private static int postPendingImgTgt = -1;
+    private static boolean postPendingImgReadsAlt = false;
+    /** The MAIN renderer's most recent effective restamp mode (set every runStampPass). The SG
+     *  dependency check reads it at pend time — the first armed SG frame finds null and falls
+     *  back POST silently (⟦J⟧ first-frame race: sgF++, no WARN). */
+    private static String lastMainRestampMode = null;
 
     /** True while the frame-start loop's current view is armed — the loop fork's discriminator
      *  for skipping old-path per-view work (bloom-mask arm, the post-pop stamp, old probes). */
@@ -957,6 +1011,7 @@ public final class IrisStageConsistentComposite {
                 + " between renderAll and TAIL?)", null);
             postPendingSlot = null;
             postPendingPipeline = null;
+            postPendingDestRenderer = null;
             return;
         }
         CaptureSlot slot = armedCapture;
@@ -970,6 +1025,36 @@ public final class IrisStageConsistentComposite {
         if (slot.postFinalMode) {
             postPendingSlot = slot;
             postPendingPipeline = irisRenderingPipeline;
+            // IS5-XDIM-SG (IS5_RESTAMP_DESIGN.md §2.2): resolve + measure the DEST chain's
+            // anchor NOW so boundary branch (a) can capture the single-graded image at
+            // i==destAnchor while the dest renderAll runs (it starts right after this return).
+            // Dependency: the SOURCE renderer's effective mode must be RESTAMP/HEAD-CONTENT
+            // (injected content + PLANE depth at TAA = re-ghosted window) — unknowable on the
+            // first armed frame (⟦J⟧): fall back POST silently, sgF-visible, no WARN. An
+            // anchor-missing dest chain (R6) falls back the same way.
+            postPendingDestRenderer = null;
+            if (IPGlobal.is5XdimSingleGrade) {
+                String mm = lastMainRestampMode;
+                if (mm == null || !(mm.equals("RESTAMP") || mm.startsWith("HEAD-CONTENT"))) {
+                    censusSgF++;
+                } else {
+                    try {
+                        Object destCr = fPipelineCompositeRenderer.get(irisRenderingPipeline);
+                        RestampMeasurement dm = destCr instanceof CompositeRenderer cr
+                            ? measureRestamp(cr) : null;
+                        if (dm != null && dm.anchor >= 0 && dm.imageTarget >= 0) {
+                            postPendingDestRenderer = destCr;
+                            postPendingDestAnchor = dm.anchor;
+                            postPendingImgTgt = dm.imageTarget;
+                            postPendingImgReadsAlt = dm.anchorReadsAlt;
+                        } else {
+                            censusSgF++;
+                        }
+                    } catch (Throwable sgMeasErr) {
+                        censusSgF++;
+                    }
+                }
+            }
             return; // no ci.cancel()
         }
         long captureT0 = System.nanoTime();
@@ -1135,6 +1220,7 @@ public final class IrisStageConsistentComposite {
         postPendingSlot = null;
         Object pendedPipeline = postPendingPipeline;
         postPendingPipeline = null;
+        postPendingDestRenderer = null; // SG branch (a) can no longer fire for this pend
         if (mechanismBroken) return;
         if (irisRenderingPipeline != pendedPipeline) {
             breakMechanism("post-final capture pipeline identity mismatch (pended vs TAIL)", null);
@@ -1142,45 +1228,57 @@ public final class IrisStageConsistentComposite {
         }
         long captureT0 = System.nanoTime();
         try {
-            com.mojang.blaze3d.pipeline.RenderTarget mainRT =
-                net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
-            if (mainRT == null || !(mainRT.getColorTexture() instanceof GlTexture mainColorGl)) {
-                breakMechanism("post-final capture: mainRT color is not a GlTexture", null);
-                return;
-            }
-            int srcColor = mainColorGl.glId();
-            int w = mainRT.width;
-            int h = mainRT.height;
-            int colorFmt = GL45C.glGetTextureLevelParameteri(
-                srcColor, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
             RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(irisRenderingPipeline);
-            GpuTexture depthGpu = rts.getDepthTexture();
-            if (!(depthGpu instanceof GlTexture depthGl)) {
-                breakMechanism("post-final capture: dest depthtex0 is not a GlTexture", null);
-                return;
-            }
-            int srcDepth = depthGl.glId();
-            int depthFmt = GL45C.glGetTextureLevelParameteri(
-                srcDepth, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
-            if (!ensureSlotStorage(slot, w, h, colorFmt, depthFmt)) {
-                breakMechanism("post-final capture storage alloc rejected (colorFmt=0x"
-                    + Integer.toHexString(colorFmt) + " depthFmt=0x"
-                    + Integer.toHexString(depthFmt) + ")", null);
-                return;
-            }
-            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the copy check */ }
-            GL43C.glCopyImageSubData(
-                srcColor, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
-                slot.colorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
-            GL43C.glCopyImageSubData(
-                srcDepth, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
-                slot.depthTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
-            int copyErr = GL11.glGetError();
-            if (copyErr != GL11.GL_NO_ERROR) {
-                breakMechanism("post-final capture glCopyImageSubData failed (0x"
-                    + Integer.toHexString(copyErr) + ", srcColor=" + srcColor
-                    + " srcDepth=" + srcDepth + " " + w + "x" + h + ")", null);
-                return;
+            int w;
+            int h;
+            if (slot.sgCaptured) {
+                // IS5-XDIM-SG: the boundary capture already holds the single-graded image
+                // (pre-AA) + dest depthtex0 — the mainRT copy is SKIPPED (it would overwrite
+                // the capture with the double-processed final image). All bookkeeping below
+                // (aux, pend/leak, pending=true) runs unchanged.
+                w = slot.w;
+                h = slot.h;
+            } else {
+                com.mojang.blaze3d.pipeline.RenderTarget mainRT =
+                    net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
+                if (mainRT == null
+                    || !(mainRT.getColorTexture() instanceof GlTexture mainColorGl)) {
+                    breakMechanism("post-final capture: mainRT color is not a GlTexture", null);
+                    return;
+                }
+                int srcColor = mainColorGl.glId();
+                w = mainRT.width;
+                h = mainRT.height;
+                int colorFmt = GL45C.glGetTextureLevelParameteri(
+                    srcColor, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                GpuTexture depthGpu = rts.getDepthTexture();
+                if (!(depthGpu instanceof GlTexture depthGl)) {
+                    breakMechanism("post-final capture: dest depthtex0 is not a GlTexture", null);
+                    return;
+                }
+                int srcDepth = depthGl.glId();
+                int depthFmt = GL45C.glGetTextureLevelParameteri(
+                    srcDepth, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                if (!ensureSlotStorage(slot, w, h, colorFmt, depthFmt)) {
+                    breakMechanism("post-final capture storage alloc rejected (colorFmt=0x"
+                        + Integer.toHexString(colorFmt) + " depthFmt=0x"
+                        + Integer.toHexString(depthFmt) + ")", null);
+                    return;
+                }
+                while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the copy check */ }
+                GL43C.glCopyImageSubData(
+                    srcColor, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    slot.colorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                GL43C.glCopyImageSubData(
+                    srcDepth, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    slot.depthTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                int copyErr = GL11.glGetError();
+                if (copyErr != GL11.GL_NO_ERROR) {
+                    breakMechanism("post-final capture glCopyImageSubData failed (0x"
+                        + Integer.toHexString(copyErr) + ", srcColor=" + srcColor
+                        + " srcDepth=" + srcDepth + " " + w + "x" + h + ")", null);
+                    return;
+                }
             }
             // Aux (design §2.9 caveat honored): the pass-0 flip-set read is valid ONLY under the
             // no-composite-writes-aux premise (measured true for Complementary c6). Enhancement-
@@ -1212,7 +1310,8 @@ public final class IrisStageConsistentComposite {
                     slot.auxValid[i] = true;
                 }
             }
-            noteCaptureGeometry("mainRT", w, h, colorFmt, depthFmt);
+            noteCaptureGeometry(slot.sgCaptured ? "sgBoundary" : "mainRT",
+                w, h, slot.colorFmt, slot.depthFmt);
             if (!xdimLiveNoted) {
                 xdimLiveNoted = true;
                 LOGGER.info("[Seamless Portals] [IS5-XDIM] cross-dim POST_FINAL capture LIVE"
@@ -1369,6 +1468,8 @@ public final class IrisStageConsistentComposite {
         }
         for (CaptureSlot s : captureSlots) {
             s.pending = false;
+            s.sgCaptured = false;
+            s.sgNestedContent = false;
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
@@ -1395,6 +1496,24 @@ public final class IrisStageConsistentComposite {
                 + " a new frame — recycled (finalize threw between renderAll and TAIL?)");
             postPendingSlot = null;
             postPendingPipeline = null;
+        }
+        postPendingDestRenderer = null;
+        // IS5-RESTAMP orphan check (⟦J⟧: keyed on !mechanismBroken — breakMechanism clears the
+        // arm itself, and a legit mid-frame break must not read as a dormant boundary mixin;
+        // 1Hz-limited so a genuinely dormant hook cannot flood the render-thread log).
+        if (restampArm != null) {
+            if (!mechanismBroken) {
+                censusRstOrph++;
+                long orphNow = System.currentTimeMillis();
+                if (orphNow - lastRestampOrphanWarnMs >= 1000) {
+                    lastRestampOrphanWarnMs = orphNow;
+                    LOGGER.warn("[Seamless Portals] [IS5-RESTAMP] armed at HEAD but the anchor"
+                        + " boundary was never reached — depthtex1 stayed PLANE that frame (the"
+                        + " boundary mixin dormant, or the renderer rebuilt mid-frame?)"
+                        + " rstOrph={}", censusRstOrph);
+                }
+            }
+            restampArm = null;
         }
         viewSlotStack.clear(); // PART4: a mid-loop throw must not poison the next frame's stack
         stampConsumedThisFrame = false;
@@ -1538,6 +1657,14 @@ public final class IrisStageConsistentComposite {
                 ivec2 tc = ivec2(gl_FragCoord.xy);
                 if (texelFetch(u_stampedDepth0, tc, 0).r < planeZ - 6.0e-8) discard;
                 gl_FragDepth = max(texelFetch(u_captureDepth, tc, 0).r, planeZ);
+            } else if (u_depthMode == 2) {
+                // IS5-XDIM-SG inject (IS5_RESTAMP_DESIGN.md §2.2.3): mode-1's visibility
+                // discard against the HEAD-stamped depthtex0 (plane + occluders), colour =
+                // the single-graded boundary capture (fragColor above already holds it). The
+                // inject FBO is colour-only — gl_FragDepth is inert here.
+                if (texelFetch(u_stampedDepth0, ivec2(gl_FragCoord.xy), 0).r
+                    < planeZ - 6.0e-8) discard;
+                gl_FragDepth = planeZ;
             } else {
                 gl_FragDepth = planeZ;
             }
@@ -1546,8 +1673,356 @@ public final class IrisStageConsistentComposite {
 
     /** The pack's TAA history colour target — MEASURED for Complementary r5.8.1: composite6
      *  `DRAWBUFFERS:32` writes history to colortex2 and NO earlier composite writes it (pass-0
-     *  parity therefore holds at the TAA pass). */
+     *  parity therefore holds at the TAA pass). IS5-RESTAMP ⟦J⟧ disclosed: the anchor rule
+     *  hard-depends on this constant (runtime-measured for PASS indices, NOT for the history
+     *  target index); a pack with a different history colortex misses the anchor and degrades
+     *  fail-safe to PLANE(no-anchor) — attributable via the meas line's hist=[]. */
     private static final int HISTORY_TARGET = 2;
+
+    // =============================================================================================
+    // IS5-RESTAMP (migration/IS5_RESTAMP_DESIGN.md §1.2-§1.6 + Part 2) — per-renderer reader
+    // measurement, the boundary arm, and the two-branch boundary handler.
+    // =============================================================================================
+
+    /** One renderer's measured depthtex1 topology. Holds NO GL ids — pure measured ints — so
+     *  weak cache keys are safe (⟦J⟧ the cache-outlives-subject rule; the mask's plan-cache
+     *  precedent). mode ∈ RESTAMP | HEAD-CONTENT(collapse) | PLANE(no-anchor) | PLANE(meas-fail). */
+    static final class RestampMeasurement {
+        int passCount = 0;
+        int[] d1Readers = new int[0];
+        int[] histReaders = new int[0];
+        int anchor = -1;
+        int imageTarget = -1;
+        boolean anchorReadsAlt = false;
+        String mode = "PLANE(meas-fail)";
+    }
+
+    /** Keyed on the CompositeRenderer OBJECT (identity equals — CompositeRenderer does not
+     *  override equals; never texture/program NAMES). A rebuilt pipeline mints a new renderer
+     *  instance → automatic re-measure; the dead pipeline's entry is GC'd with it. */
+    private static final java.util.WeakHashMap<Object, RestampMeasurement> restampMeasCache =
+        new java.util.WeakHashMap<>();
+
+    /**
+     * Measure which composite passes actively sample depthtex1 / the history colortex.
+     * glGetUniformLocation needs no bind; the GLSL linker strips unreferenced uniforms, which is
+     * exactly the wanted "actively samples" discriminator (⟦J⟧ O1: implementations MAY keep a
+     * declared-but-dead uniform active — kill-check 1 adjudicates the RAW sets against the pack
+     * walk, never the mode token alone). Failure caches PLANE(meas-fail) — once per renderer by
+     * construction — and the HEAD stamp stays shipped-correct.
+     */
+    private static RestampMeasurement measureRestamp(CompositeRenderer renderer) {
+        RestampMeasurement cached = restampMeasCache.get(renderer);
+        if (cached != null) return cached;
+        RestampMeasurement m = new RestampMeasurement();
+        try {
+            List<?> passes = (List<?>) fPasses.get(renderer);
+            java.util.ArrayList<Integer> d1 = new java.util.ArrayList<>();
+            java.util.ArrayList<Integer> hist = new java.util.ArrayList<>();
+            m.passCount = passes.size();
+            for (int i = 0; i < passes.size(); i++) {
+                Object pass = passes.get(i);
+                Object prog = fPassProgram.get(pass);
+                if (prog == null) continue; // ComputeOnlyPass
+                int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+                boolean readsD1 =
+                    GL20C.glGetUniformLocation(pid, "depthtex1") != -1;
+                boolean readsHist =
+                    GL20C.glGetUniformLocation(pid, "colortex" + HISTORY_TARGET) != -1;
+                if (readsD1) d1.add(i);
+                if (readsD1 && readsHist) {
+                    hist.add(i);
+                    if (m.anchor < 0) {
+                        m.anchor = i;
+                        int[] db = (int[]) fPassDrawBuffers.get(pass);
+                        m.imageTarget = (db != null && db.length > 0) ? db[0] : -1;
+                        Object readsAlt = fPassReadsFromAlt.get(pass);
+                        m.anchorReadsAlt = readsAlt instanceof Set<?> s
+                            && m.imageTarget >= 0 && s.contains(m.imageTarget);
+                    }
+                }
+            }
+            m.d1Readers = d1.stream().mapToInt(Integer::intValue).toArray();
+            m.histReaders = hist.stream().mapToInt(Integer::intValue).toArray();
+            if (m.anchor < 0) {
+                m.mode = "PLANE(no-anchor)";
+            } else {
+                boolean readerBeforeAnchor = false;
+                for (int idx : m.d1Readers) {
+                    if (idx < m.anchor) readerBeforeAnchor = true;
+                }
+                // No reader before the anchor ⇒ CONTENT at HEAD is byte-equivalent and strictly
+                // less machinery (the single-reader-pack answer, design §1.2).
+                m.mode = readerBeforeAnchor ? "RESTAMP" : "HEAD-CONTENT(collapse)";
+            }
+        } catch (Throwable t) {
+            m.mode = "PLANE(meas-fail)";
+            LOGGER.warn("[Seamless Portals] [IS5-RESTAMP] measurement failed for a composite"
+                + " renderer — restamp disabled there (mode=PLANE(meas-fail); HEAD semantics"
+                + " remain shipped)", t);
+        }
+        restampMeasCache.put(renderer, m);
+        return m;
+    }
+
+    /** One retained HEAD-replay entry: the slot + the EXACT vertex slice the HEAD stamp drew
+     *  (frame-transient GpuBuffer, drained at GameRenderer.render TAIL — alive through every
+     *  composite pass of this frame) ⇒ bit-identical rasterization at the boundary by
+     *  construction, no mesh rebuild, no matrix re-derivation. */
+    static final class RestampEntry {
+        CaptureSlot slot;
+        GpuBufferSlice vertexSlice;
+        int vertexCount;
+    }
+
+    /** The per-frame boundary arm (design §1.5). Built by runStampPass in RESTAMP mode; consumed
+     *  once at the anchor boundary; cleared at beginFrame (orphan WARN) and by breakMechanism. */
+    static final class RestampArm {
+        CompositeRenderer renderer;
+        RestampMeasurement meas;
+        final java.util.ArrayList<RestampEntry> entries = new java.util.ArrayList<>();
+        final Matrix4f combined = new Matrix4f(); // the exact HEAD-stamp P·MV (defensive copy)
+        int mainDepth0Id;   // visibility-discard reference — still HEAD-plane at the anchor
+        int depth1Id;       // depthtex1 (getDepthTextureNoTranslucents)
+        int injectTexId;    // SG: the source anchor's image READ side (0 = SG inert)
+        int w, h;
+    }
+
+    private static RestampArm restampArm = null;
+    private static boolean restampSeamWitnessed = false;
+    private static long lastRestampMeasLogMs = 0;
+    private static long lastRestampOrphanWarnMs = 0;
+    private static long lastBoundaryReadbackMs = 0;
+    private static int censusRst, censusRstOrph, censusSgC, censusSgI, censusSgF;
+
+    /**
+     * THE BOUNDARY HOOK HANDLER — fired by {@code MixinIrisCompositeRenderer_DepthRestamp} at
+     * the {@code Program.unbind()} seam once per pass iteration, BEFORE pass {@code i}'s mipmap
+     * regen / setupState / viewport / use / draw (the BloomApertureMask-verified ordering, so
+     * pass i re-establishes its own state and our draws need no FBO/viewport save).
+     *
+     * <p>⟦J⟧ TWO INDEPENDENT DISPATCH BRANCHES (both judges, blocking — a single gate list
+     * structurally kills the SG dest capture: the dest chain's renderAll runs INSIDE the portal
+     * view render, where {@code PortalRendering.isRendering()} is TRUE and {@code restampArm}
+     * is necessarily null):
+     * branch (a) = the SG DEST-CAPTURE, keyed ONLY on the pend record's renderer identity +
+     * dest anchor index, evaluated FIRST and expressly NOT gated on isRendering;
+     * branch (b) = the source restamp + SG inject, with the full gate list incl. the
+     * isRendering belt (valid there: the main chain never runs inside a view).
+     */
+    public static void onRestampBoundary(Object compositeRenderer, int i) {
+        if (!restampSeamWitnessed) {
+            restampSeamWitnessed = true;
+            LOGGER.info("[Seamless Portals] [IS5-RESTAMP] boundary seam WOVEN"
+                    + " (CompositeRenderer.renderAll pre-pass INVOKE) — restampDefault={} sg={}",
+                IPGlobal.is5DepthRestamp, IPGlobal.is5XdimSingleGrade);
+        }
+        if (!PATH_ACTIVE || mechanismBroken) return;
+        try {
+            // Branch (a) — SG dest-boundary capture (isRendering EXPECTED true here).
+            CaptureSlot pendSlot = postPendingSlot;
+            if (pendSlot != null && postPendingDestRenderer == compositeRenderer
+                && i == postPendingDestAnchor && !pendSlot.sgCaptured) {
+                runSgDestBoundaryCapture(pendSlot);
+                return;
+            }
+            // Branch (b) — the source restamp + inject.
+            RestampArm arm = restampArm;
+            if (arm == null) return;
+            if (compositeRenderer != arm.renderer) return;
+            if (i != arm.meas.anchor) return;
+            if (PortalRendering.isRendering()) return; // belt — main chain only
+            restampArm = null; // consume-once
+            runRestampBoundaryDraws(arm);
+        } catch (Throwable t) {
+            breakMechanism("restamp boundary threw", t);
+        }
+    }
+
+    /**
+     * SG branch (a): copy the dest chain's image (the anchor pass's READ side of the measured
+     * image target — post-tonemap, pre-AA: graded exactly once) + dest depthtex0 into the pended
+     * slot. Read-only copies — the dest chain never observes them. ⟦J⟧ EVERY failure here routes
+     * to the sgF POST fallback (census-visible), NEVER breakMechanism: the TAIL capture and the
+     * HEAD stamp semantics remain intact. ensureSlotStorage receives the MEASURED boundary
+     * format (⟦J⟧ format compatibility — colortex-class, not mainRT-class).
+     */
+    private static void runSgDestBoundaryCapture(CaptureSlot slot) {
+        try {
+            Object destPipeline = postPendingPipeline;
+            if (destPipeline == null) { censusSgF++; return; }
+            RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(destPipeline);
+            RenderTarget imgRt = rts.get(postPendingImgTgt);
+            if (imgRt == null) { censusSgF++; return; }
+            int srcColor = postPendingImgReadsAlt
+                ? imgRt.getAltTexture() : imgRt.getMainTexture();
+            int w = imgRt.getWidth();
+            int h = imgRt.getHeight();
+            int colorFmt = GL45C.glGetTextureLevelParameteri(
+                srcColor, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+            GpuTexture depthGpu = rts.getDepthTexture();
+            if (!(depthGpu instanceof GlTexture depthGl)) { censusSgF++; return; }
+            int srcDepth = depthGl.glId();
+            int depthFmt = GL45C.glGetTextureLevelParameteri(
+                srcDepth, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+            if (!ensureSlotStorage(slot, w, h, colorFmt, depthFmt)) {
+                censusSgF++;
+                noteAuxDropOnce("SG boundary storage alloc rejected — POST fallback");
+                return;
+            }
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the copy check */ }
+            GL43C.glCopyImageSubData(
+                srcColor, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                slot.colorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+            GL43C.glCopyImageSubData(
+                srcDepth, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                slot.depthTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+            int copyErr = GL11.glGetError();
+            if (copyErr != GL11.GL_NO_ERROR) {
+                censusSgF++;
+                noteAuxDropOnce("SG boundary copy failed 0x" + Integer.toHexString(copyErr)
+                    + " — POST fallback (TAIL re-allocs to its own format)");
+                return;
+            }
+            slot.sgCaptured = true;
+            censusSgC++;
+        } catch (Throwable t) {
+            censusSgF++;
+            noteAuxDropOnce("SG boundary capture threw: " + t + " — POST fallback");
+        }
+    }
+
+    /**
+     * Branch (b): the depthtex1 CONTENT restamp (mode 1, one depth-only draw per retained
+     * entry) + the SG inject (mode 2, colour-only, for sgCaptured non-nested slots). Failure ⇒
+     * breakMechanism — the HEAD PLANE stays = a shipped-safe degraded frame (design §1.6).
+     * Setup obligations ⟦J⟧: our draws assert their OWN viewport/scissor (pass i re-establishes
+     * its own AFTER us, but we inherit whatever pass i-1 left) and carry their OWN depth-clamp
+     * bracket (runStampPass's bracket is scoped to its try/finally).
+     */
+    private static void runRestampBoundaryDraws(RestampArm arm) {
+        if (arm.entries.isEmpty() || arm.depth1Id == 0) return;
+        if (!ensureStampProgram()) return;
+        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+        boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        boolean clampOn = false;
+        GlFramebuffer d1Fbo = null;
+        GlFramebuffer injFbo = null;
+        long t0 = System.nanoTime();
+        try {
+            d1Fbo = new GlFramebuffer();
+            d1Fbo.addDepthAttachmentBypass(arm.depth1Id);
+            d1Fbo.noDrawBuffers();
+            GlStateManager._viewport(0, 0, arm.w, arm.h);
+            GlStateManager._disableScissorTest();
+            GlStateManager._disableBlend(0);
+            GlStateManager._disableCull();
+            GlStateManager._colorMask(15);
+            GlStateManager._enableDepthTest();
+            GlStateManager._depthFunc(GL11.GL_ALWAYS); // the CONTENT replay's executed func
+            GlStateManager._depthMask(true);
+            if (!IPGlobal.debugNoStampDepthClamp) {
+                CHelper.enableDepthClamp();
+                clampOn = true;
+            }
+            GlStateManager._glUseProgram(stampProgram);
+            GL20C.glUniform1i(locCapture, 0);
+            GL20C.glUniform1i(locCaptureAux, 1);
+            GL20C.glUniform1i(locCapturePrev, 2);
+            GL20C.glUniform1i(locCaptureDepth, 3);
+            GL20C.glUniform1i(locStampedDepth0, 4);
+            GL20C.glUniform1f(locSolid, IPGlobal.debugStampSolid ? 1.0f : 0.0f);
+            GL20C.glUniform1f(locHavePrev, 0.0f);
+            matBuf.clear();
+            arm.combined.get(matBuf);
+            GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE4);
+            GlStateManager._bindTexture(arm.mainDepth0Id);
+            // --- mode 1: the CONTENT depth restamp into depthtex1, per entry ---
+            GL20C.glUniform1i(locDepthMode, 1);
+            d1Fbo.bind();
+            for (RestampEntry e : arm.entries) {
+                if (e.slot.depthTex == 0) continue;
+                GlStateManager._activeTexture(GL13.GL_TEXTURE3);
+                GlStateManager._bindTexture(e.slot.depthTex);
+                GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                    .vertexArrayCache().bindVertexArray(
+                        new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                        new GpuBufferSlice[]{e.vertexSlice},
+                        null
+                    );
+                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, e.vertexCount);
+                censusRst++;
+            }
+            // --- mode 2: the SG inject into the source anchor's image READ side ---
+            if (arm.injectTexId != 0) {
+                for (RestampEntry e : arm.entries) {
+                    if (!e.slot.sgCaptured || e.slot.sgNestedContent) continue;
+                    if (injFbo == null) {
+                        injFbo = new GlFramebuffer();
+                        injFbo.addColorAttachment(0, arm.injectTexId);
+                        injFbo.drawBuffers(new int[]{0});
+                        GL20C.glUniform1i(locDepthMode, 2);
+                        injFbo.bind();
+                    }
+                    GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                    GlStateManager._bindTexture(e.slot.colorTex);
+                    ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                        .vertexArrayCache().bindVertexArray(
+                            new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                            new GpuBufferSlice[]{e.vertexSlice},
+                            null
+                        );
+                    GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, e.vertexCount);
+                    censusSgI++;
+                }
+            }
+            // 1Hz post-restamp comparator (kill-check 6): centre texel of depthtex1 AFTER the
+            // boundary draw — DIFF vs plane expected against an open dest vista. Gated
+            // ATOMICALLY with its glGetError drain (the IPGlobal readback rule).
+            if (IPGlobal.is5LiveReadbacks && !arm.entries.isEmpty()) {
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastBoundaryReadbackMs >= 1000) {
+                    lastBoundaryReadbackMs = nowMs;
+                    try {
+                        java.nio.FloatBuffer d1px = BufferUtils.createFloatBuffer(1);
+                        GL45C.glGetTextureSubImage(
+                            arm.depth1Id, 0, arm.w / 2, arm.h / 2, 0, 1, 1, 1,
+                            GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, d1px);
+                        LOGGER.info("[Seamless Portals] [IS5-RESTAMP] boundary d1 center={}"
+                                + " (CONTENT semantics: DIFF vs plane expected at an open"
+                                + " window centre)",
+                            String.format("%.6f", d1px.get(0)));
+                    } catch (Throwable ignored) {
+                    }
+                    while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
+                }
+            }
+        } finally {
+            if (clampOn) {
+                CHelper.disableDepthClamp();
+            }
+            GlStateManager._depthFunc(GL11.GL_LEQUAL);
+            GlStateManager._disableDepthTest();
+            FullScreenQuadRenderer.INSTANCE.bind();
+            if (cullWasEnabled) {
+                GlStateManager._enableCull();
+            }
+            if (d1Fbo != null) {
+                try { d1Fbo.destroy(); } catch (Throwable ignored) {}
+            }
+            if (injFbo != null) {
+                try { injFbo.destroy(); } catch (Throwable ignored) {}
+            }
+            PerfTimers.add("is5.restampBoundary", System.nanoTime() - t0);
+        }
+        int err = GL11.glGetError();
+        if (err != GL11.GL_NO_ERROR) {
+            breakMechanism("restamp boundary draw left GL error 0x"
+                + Integer.toHexString(err), null);
+        }
+    }
 
     private static int stampProgram = 0;
     private static int locCombined = -1;
@@ -1742,6 +2217,52 @@ public final class IrisStageConsistentComposite {
             mainPipeline, targetColor, depthGl.glId(), mainAuxTex, histTex, depth1Id, depth2Id);
         GlFramebuffer fbo = stampFbo;
 
+        // IS5-RESTAMP mode decision (IS5_RESTAMP_DESIGN.md §1.2-§1.3). The MEASUREMENT runs
+        // regardless of all levers — detector-reads-raw, one leg proves mechanism + fix. Lever
+        // precedence: explicit CONTENT-HEAD > disable(PLANE) > the measured mode.
+        RestampMeasurement meas = measureRestamp(mainCompositeRenderer);
+        String effMode;
+        if (IPGlobal.is5WindowContentDepth) {
+            effMode = "HEAD-CONTENT(lever)";
+        } else if (!IPGlobal.is5DepthRestamp) {
+            effMode = "PLANE(lever)";
+        } else {
+            effMode = meas.mode;
+        }
+        lastMainRestampMode = effMode;
+        boolean headContent = effMode.startsWith("HEAD-CONTENT");
+        if (effMode.equals("RESTAMP")) {
+            RestampArm arm = new RestampArm();
+            arm.renderer = mainCompositeRenderer;
+            arm.meas = meas;
+            arm.mainDepth0Id = depthGl.glId();
+            arm.depth1Id = depth1Id;
+            arm.w = w;
+            arm.h = h;
+            if (IPGlobal.is5XdimSingleGrade && meas.imageTarget >= 0) {
+                RenderTarget imgRt = rts.get(meas.imageTarget);
+                if (imgRt != null) {
+                    arm.injectTexId = meas.anchorReadsAlt
+                        ? imgRt.getAltTexture() : imgRt.getMainTexture();
+                }
+            }
+            restampArm = arm; // entries appended per slot below; combined set with the matrices
+        } else {
+            restampArm = null;
+        }
+        // The 1Hz detector line (design §1.8): raw sets printed uninterpreted; the mode token
+        // states the decision. ⟦J⟧ legs adjudicate on the RAW sets vs the pack walk, never the
+        // token alone (a dead-code-active colortex sampler could move the anchor).
+        long measNow = System.currentTimeMillis();
+        if (measNow - lastRestampMeasLogMs >= 1000) {
+            lastRestampMeasLogMs = measNow;
+            LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} anchor={}"
+                    + " imgTgt={} mode={} rst={} rstOrph={} sgC/I/F={}/{}/{}",
+                meas.passCount, java.util.Arrays.toString(meas.d1Readers),
+                java.util.Arrays.toString(meas.histReaders), meas.anchor, meas.imageTarget,
+                effMode, censusRst, censusRstOrph, censusSgC, censusSgI, censusSgF);
+        }
+
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
         boolean solid = IPGlobal.debugStampSolid;
         boolean tint = IPGlobal.debugTintStamp;
@@ -1798,6 +2319,11 @@ public final class IrisStageConsistentComposite {
             if (mainMv == null || mainProj == null) {
                 breakMechanism("stamp-time matrices unavailable (renderer not live?)", null);
                 return;
+            }
+            if (restampArm != null) {
+                // The EXACT HEAD combined matrix (defensive copy) — same vertices + same
+                // matrix ⇒ bit-identical boundary rasterization by construction.
+                restampArm.combined.set(mainProj).mul(mainMv);
             }
             for (CaptureSlot slot : captureSlots) {
                 if (!slot.pending || slot.layer != 0) continue;
@@ -1897,8 +2423,7 @@ public final class IrisStageConsistentComposite {
                         // reads depthtex1 for BOTH MB velocity and TAA reprojection (measured:
                         // composite4:90 / composite6:39) — no clean split exists; the lever is
                         // the user's fork. depthtex0 + depthtex2 stay PLANE in both modes.
-                        boolean contentDepth = IPGlobal.is5WindowContentDepth
-                            && slot.depthTex != 0;
+                        boolean contentDepth = headContent && slot.depthTex != 0;
                         if (contentDepth) {
                             GlStateManager._activeTexture(GL13.GL_TEXTURE3);
                             GlStateManager._bindTexture(slot.depthTex);
@@ -1917,6 +2442,16 @@ public final class IrisStageConsistentComposite {
                     if (stampFboDepth2 != null) {
                         stampFboDepth2.bind();
                         GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    }
+                    // IS5-RESTAMP: retain this slot's EXACT vertex slice for the boundary draws
+                    // (frame-transient buffer — drained at GameRenderer.render TAIL, alive
+                    // through every composite pass of this frame).
+                    if (restampArm != null) {
+                        RestampEntry re = new RestampEntry();
+                        re.slot = slot;
+                        re.vertexSlice = vertexSlice;
+                        re.vertexCount = vertexCount;
+                        restampArm.entries.add(re);
                     }
                     // IS5-HIST prev-store update — AFTER the draw consumed the OLD prev: this
                     // frame's capture becomes next frame's history. Enhancement-grade: a failed
@@ -1991,9 +2526,12 @@ public final class IrisStageConsistentComposite {
                                     + " d0={} d1={} {} (mode={})",
                                 String.format("%.6f", d0), String.format("%.6f", d1),
                                 Math.abs(d0 - d1) < 1e-6 ? "EQUAL" : "DIFF",
-                                IPGlobal.is5WindowContentDepth
+                                headContent
                                     ? "CONTENT: DIFF expected at window pixels"
-                                    : "PLANE: EQUAL = stamp lands");
+                                    : (effMode.equals("RESTAMP")
+                                        ? "RESTAMP-HEAD: EQUAL = the PLANE head stamp lands"
+                                            + " (CONTENT arrives at the anchor)"
+                                        : "PLANE: EQUAL = stamp lands"));
                         } catch (Throwable ignored) {
                         }
                         while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }

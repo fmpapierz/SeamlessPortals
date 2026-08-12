@@ -34,7 +34,8 @@
     "iris.MixinIrisCompositeRenderer_CensusPostWrite",
     "iris.MixinIrisProgram_Census",
     "iris.MixinIrisRenderingPipeline_PreCompositeCapture",
-    "iris.MixinIrisCompositeRenderer_PreCompositeStamp"
+    "iris.MixinIrisCompositeRenderer_PreCompositeStamp",
+    "iris.MixinIrisCompositeRenderer_DepthRestamp"
   ],
   "injectors": {
     "defaultRequire": 1
