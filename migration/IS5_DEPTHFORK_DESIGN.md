@@ -71,7 +71,10 @@ key MB/TAA to the water surface; accepted.
 
 Mid-composite restamp (PLANE through composite4, CONTENT before composite6 — both looks at
 once): pack-coupled pass indices, violates no-hacks; the only both-ways road, rejected
-unless the user explicitly demands it. Content into depthtex0: wall-bleed catastrophe.
+unless the user explicitly demands it. **RE-OPENED 2026-08-11 on the user's explicit demand
+("Yes — re-open it") as the RUNTIME-MEASURED variant — every pass index measured per pipeline
+via program introspection, nothing hardcoded; the fork this doc's lever carried is DISSOLVED.
+See `migration/IS5_RESTAMP_DESIGN.md`.** Content into depthtex0: wall-bleed catastrophe.
 Hand-flag z≤0.56 stamping: ghosts on every pan — strictly worse.
 
 ## §5 KILL-CHECKS (the fork leg; lever ON)

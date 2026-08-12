@@ -1248,15 +1248,40 @@ public class IPGlobal {
     public static final boolean disableOutlineDepthWriteFix =
         Boolean.getBoolean("seamlessportals.disableOutlineDepthWriteFix");
 
-    // IS5-DEPTHFORK (2026-08-11) — the window depthtex1 fork, DEFAULT OFF (= PLANE, today's
-    // behavior). Complementary reads depthtex1 for BOTH MB velocity (composite4:90 — the KEPT
-    // cool plane-depth blur) and TAA reprojection (composite6:39 — the MB-off translation
-    // ghost): one texture, no clean split. -Pis5WindowContentDepth=true stamps the captured
-    // dest CONTENT depth into depthtex1 (identity remap — judge-proven: the capture's depth IS
-    // the main-view clip depth of the virtual content) — ghost dies, MB becomes
-    // ordinary-correct. The user picks the fork per their taste.
+    // IS5-DEPTHFORK (2026-08-11) → IS5-RESTAMP (2026-08-11, migration/IS5_RESTAMP_DESIGN.md):
+    // the PLANE-vs-CONTENT fork this lever carried is DISSOLVED — the restamp delivers both
+    // sides simultaneously (PLANE at HEAD for storm/MB/DOF, CONTENT at the measured
+    // reprojection-anchor boundary for TAA). This lever is KEPT as the force-CONTENT-at-HEAD
+    // escape: when set, the HEAD replay runs mode 1 (today's CONTENT semantics bit-for-bit) and
+    // the restamp DISARMS (precedence: explicit CONTENT-HEAD > restamp).
     public static final boolean is5WindowContentDepth =
         Boolean.getBoolean("seamlessportals.is5WindowContentDepth");
+
+    // IS5-RESTAMP (2026-08-11, migration/IS5_RESTAMP_DESIGN.md — the DEPTHFORK §4 rejected road
+    // RE-OPENED on the user's explicit demand, runtime-measured variant only). DEFAULT ON.
+    // depthtex1 gets PLANE at the main composite renderAll HEAD (kept cool MB at composite4,
+    // storm-stops-at-pane at composite1) and a depth-only CONTENT restamp immediately BEFORE the
+    // measured reprojection anchor (first pass actively sampling BOTH depthtex1 AND the history
+    // colortex — TAA; the MB-off translation ghost dies there). Reader sets are measured per
+    // CompositeRenderer via glGetUniformLocation on each pass's program — nothing hardcoded.
+    // Disable row = force-PLANE (byte-identical shipped PLANE everywhere, the ghost on command).
+    public static final boolean IS5_DEPTH_RESTAMP_DEFAULT = true;
+    public static final boolean is5DepthRestamp =
+        Boolean.getBoolean("seamlessportals.is5DepthRestamp")
+            || (IS5_DEPTH_RESTAMP_DEFAULT
+                && !Boolean.getBoolean("seamlessportals.disableDepthRestamp"));
+
+    // IS5-XDIM-SG (2026-08-11, migration/IS5_RESTAMP_DESIGN.md Part 2) — single-grade cross-dim
+    // capture, DEV DEFAULT OFF per the judged verdict (§2.3 R8: residuals R1-R3 exist, so
+    // "default ON" and "trade-off-free" cannot both be asserted before the user's live gate).
+    // Requires crossDimDestChain + a restamp mode of RESTAMP/HEAD-CONTENT on the source
+    // renderer. The dest chain's image is captured at the DEST pipeline's measured anchor
+    // boundary (post-tonemap, pre-AA — graded exactly ONCE by the dest chain; the tonemap
+    // curve is world-independent, so it matches the source surroundings) and INJECTED over the
+    // window pixels at the SOURCE anchor boundary — the double-grade tint dies. The flip to ON
+    // is the C4 delivery and gates on kill-checks 11-14 (the user's eye).
+    public static final boolean is5XdimSingleGrade =
+        Boolean.getBoolean("seamlessportals.is5XdimSingleGrade");
 
     // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
     // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
