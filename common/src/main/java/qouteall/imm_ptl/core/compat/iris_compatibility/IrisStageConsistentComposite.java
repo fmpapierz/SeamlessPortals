@@ -1691,6 +1691,13 @@ public final class IrisStageConsistentComposite {
         int passCount = 0;
         int[] d1Readers = new int[0];
         int[] histReaders = new int[0];
+        /** IS5-RESTAMP §1.9: d1 readers whose program also actively references
+         *  previousCameraPosition — the MB-velocity class (velocity needs prev-frame camera
+         *  state; measured active on Complementary composite4 by the DestPrevCamera arc).
+         *  The cool-MB-OFF depth boundary = min(anchor, first of these). Heuristic disclosed:
+         *  a pack with a prev-camera-consuming VL pass would move the boundary early there —
+         *  the setting itself (ON) is the escape. */
+        int[] prevCamReaders = new int[0];
         int anchor = -1;
         int imageTarget = -1;
         boolean anchorReadsAlt = false;
@@ -1719,6 +1726,7 @@ public final class IrisStageConsistentComposite {
             List<?> passes = (List<?>) fPasses.get(renderer);
             java.util.ArrayList<Integer> d1 = new java.util.ArrayList<>();
             java.util.ArrayList<Integer> hist = new java.util.ArrayList<>();
+            java.util.ArrayList<Integer> prevCam = new java.util.ArrayList<>();
             m.passCount = passes.size();
             for (int i = 0; i < passes.size(); i++) {
                 Object pass = passes.get(i);
@@ -1729,7 +1737,12 @@ public final class IrisStageConsistentComposite {
                     GL20C.glGetUniformLocation(pid, "depthtex1") != -1;
                 boolean readsHist =
                     GL20C.glGetUniformLocation(pid, "colortex" + HISTORY_TARGET) != -1;
-                if (readsD1) d1.add(i);
+                if (readsD1) {
+                    d1.add(i);
+                    if (GL20C.glGetUniformLocation(pid, "previousCameraPosition") != -1) {
+                        prevCam.add(i);
+                    }
+                }
                 if (readsD1 && readsHist) {
                     hist.add(i);
                     if (m.anchor < 0) {
@@ -1744,6 +1757,7 @@ public final class IrisStageConsistentComposite {
             }
             m.d1Readers = d1.stream().mapToInt(Integer::intValue).toArray();
             m.histReaders = hist.stream().mapToInt(Integer::intValue).toArray();
+            m.prevCamReaders = prevCam.stream().mapToInt(Integer::intValue).toArray();
             if (m.anchor < 0) {
                 m.mode = "PLANE(no-anchor)";
             } else {
@@ -1786,6 +1800,13 @@ public final class IrisStageConsistentComposite {
         int depth1Id;       // depthtex1 (getDepthTextureNoTranslucents)
         int injectTexId;    // SG: the source anchor's image READ side (0 = SG inert)
         int w, h;
+        /** IS5-RESTAMP §1.9: where the depth restamp fires. Cool-MB ON = the anchor (MB pass
+         *  sees PLANE = the whip); OFF (default) = min(anchor, first prev-camera d1 reader)
+         *  so the MB pass sees CONTENT. The SG inject ALWAYS fires at the anchor (it must stay
+         *  post-tonemap — an earlier inject would re-expose the source grade = double-grade). */
+        int depthBoundary;
+        boolean depthDone;
+        boolean injectDone;
     }
 
     private static RestampArm restampArm = null;
@@ -1826,14 +1847,23 @@ public final class IrisStageConsistentComposite {
                 runSgDestBoundaryCapture(pendSlot);
                 return;
             }
-            // Branch (b) — the source restamp + inject.
+            // Branch (b) — the source restamp + inject. §1.9: two independent firing indices —
+            // the depth restamp at arm.depthBoundary (== the anchor when cool-MB is ON or no
+            // prev-camera reader precedes it), the SG inject ALWAYS at the anchor. Each half
+            // consumes once; the arm clears when both are done.
             RestampArm arm = restampArm;
             if (arm == null) return;
             if (compositeRenderer != arm.renderer) return;
-            if (i != arm.meas.anchor) return;
             if (PortalRendering.isRendering()) return; // belt — main chain only
-            restampArm = null; // consume-once
-            runRestampBoundaryDraws(arm);
+            boolean doDepth = !arm.depthDone && i == arm.depthBoundary;
+            boolean doInject = !arm.injectDone && i == arm.meas.anchor;
+            if (!doDepth && !doInject) return;
+            if (doDepth) arm.depthDone = true;
+            if (doInject) arm.injectDone = true;
+            runRestampBoundaryDraws(arm, doDepth, doInject);
+            if (arm.depthDone && arm.injectDone) {
+                restampArm = null;
+            }
         } catch (Throwable t) {
             breakMechanism("restamp boundary threw", t);
         }
@@ -1900,8 +1930,10 @@ public final class IrisStageConsistentComposite {
      * its own AFTER us, but we inherit whatever pass i-1 left) and carry their OWN depth-clamp
      * bracket (runStampPass's bracket is scoped to its try/finally).
      */
-    private static void runRestampBoundaryDraws(RestampArm arm) {
-        if (arm.entries.isEmpty() || arm.depth1Id == 0) return;
+    private static void runRestampBoundaryDraws(RestampArm arm, boolean doDepth, boolean doInject) {
+        doDepth = doDepth && arm.depth1Id != 0;
+        doInject = doInject && arm.injectTexId != 0;
+        if (arm.entries.isEmpty() || (!doDepth && !doInject)) return;
         if (!ensureStampProgram()) return;
         while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
@@ -1910,9 +1942,11 @@ public final class IrisStageConsistentComposite {
         GlFramebuffer injFbo = null;
         long t0 = System.nanoTime();
         try {
-            d1Fbo = new GlFramebuffer();
-            d1Fbo.addDepthAttachmentBypass(arm.depth1Id);
-            d1Fbo.noDrawBuffers();
+            if (doDepth) {
+                d1Fbo = new GlFramebuffer();
+                d1Fbo.addDepthAttachmentBypass(arm.depth1Id);
+                d1Fbo.noDrawBuffers();
+            }
             GlStateManager._viewport(0, 0, arm.w, arm.h);
             GlStateManager._disableScissorTest();
             GlStateManager._disableBlend(0);
@@ -1939,24 +1973,26 @@ public final class IrisStageConsistentComposite {
             GlStateManager._activeTexture(GL13.GL_TEXTURE4);
             GlStateManager._bindTexture(arm.mainDepth0Id);
             // --- mode 1: the CONTENT depth restamp into depthtex1, per entry ---
-            GL20C.glUniform1i(locDepthMode, 1);
-            d1Fbo.bind();
-            for (RestampEntry e : arm.entries) {
-                if (e.slot.depthTex == 0) continue;
-                GlStateManager._activeTexture(GL13.GL_TEXTURE3);
-                GlStateManager._bindTexture(e.slot.depthTex);
-                GlStateManager._activeTexture(GL13.GL_TEXTURE0);
-                ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
-                    .vertexArrayCache().bindVertexArray(
-                        new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
-                        new GpuBufferSlice[]{e.vertexSlice},
-                        null
-                    );
-                GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, e.vertexCount);
-                censusRst++;
+            if (doDepth) {
+                GL20C.glUniform1i(locDepthMode, 1);
+                d1Fbo.bind();
+                for (RestampEntry e : arm.entries) {
+                    if (e.slot.depthTex == 0) continue;
+                    GlStateManager._activeTexture(GL13.GL_TEXTURE3);
+                    GlStateManager._bindTexture(e.slot.depthTex);
+                    GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                    ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                        .vertexArrayCache().bindVertexArray(
+                            new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                            new GpuBufferSlice[]{e.vertexSlice},
+                            null
+                        );
+                    GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, e.vertexCount);
+                    censusRst++;
+                }
             }
             // --- mode 2: the SG inject into the source anchor's image READ side ---
-            if (arm.injectTexId != 0) {
+            if (doInject) {
                 for (RestampEntry e : arm.entries) {
                     if (!e.slot.sgCaptured || e.slot.sgNestedContent) continue;
                     if (injFbo == null) {
@@ -1981,7 +2017,7 @@ public final class IrisStageConsistentComposite {
             // 1Hz post-restamp comparator (kill-check 6): centre texel of depthtex1 AFTER the
             // boundary draw — DIFF vs plane expected against an open dest vista. Gated
             // ATOMICALLY with its glGetError drain (the IPGlobal readback rule).
-            if (IPGlobal.is5LiveReadbacks && !arm.entries.isEmpty()) {
+            if (IPGlobal.is5LiveReadbacks && doDepth) {
                 long nowMs = System.currentTimeMillis();
                 if (nowMs - lastBoundaryReadbackMs >= 1000) {
                     lastBoundaryReadbackMs = nowMs;
@@ -2246,6 +2282,20 @@ public final class IrisStageConsistentComposite {
                         ? imgRt.getAltTexture() : imgRt.getMainTexture();
                 }
             }
+            // §1.9 the cool-MB setting: OFF (default) moves the DEPTH boundary to the first
+            // prev-camera-consuming d1 reader (the MB pass sees CONTENT = ordinary blur); ON
+            // keeps it at the anchor (MB sees PLANE = the whip). The inject index is pinned to
+            // the anchor either way (post-tonemap).
+            arm.depthBoundary = meas.anchor;
+            if (!IPGlobal.coolPortalMotionBlur) {
+                for (int idx : meas.prevCamReaders) {
+                    if (idx < arm.depthBoundary) {
+                        arm.depthBoundary = idx;
+                        break; // ascending order — the first is the min
+                    }
+                }
+            }
+            arm.injectDone = arm.injectTexId == 0; // nothing to inject = that half is done
             restampArm = arm; // entries appended per slot below; combined set with the matrices
         } else {
             restampArm = null;
@@ -2256,11 +2306,15 @@ public final class IrisStageConsistentComposite {
         long measNow = System.currentTimeMillis();
         if (measNow - lastRestampMeasLogMs >= 1000) {
             lastRestampMeasLogMs = measNow;
-            LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} anchor={}"
-                    + " imgTgt={} mode={} rst={} rstOrph={} sgC/I/F={}/{}/{}",
+            LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} prevCam={}"
+                    + " anchor={} dBnd={} imgTgt={} mode={} coolMb={} rst={} rstOrph={}"
+                    + " sgC/I/F={}/{}/{}",
                 meas.passCount, java.util.Arrays.toString(meas.d1Readers),
-                java.util.Arrays.toString(meas.histReaders), meas.anchor, meas.imageTarget,
-                effMode, censusRst, censusRstOrph, censusSgC, censusSgI, censusSgF);
+                java.util.Arrays.toString(meas.histReaders),
+                java.util.Arrays.toString(meas.prevCamReaders), meas.anchor,
+                restampArm != null ? restampArm.depthBoundary : meas.anchor, meas.imageTarget,
+                effMode, IPGlobal.coolPortalMotionBlur, censusRst, censusRstOrph,
+                censusSgC, censusSgI, censusSgF);
         }
 
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
