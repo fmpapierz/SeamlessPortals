@@ -194,6 +194,27 @@ PLANE remains = shipped-safe degraded frame).
   immaterial; recorded assumption — if a foreign pack collided them at one i, the mask's c0
   clear+repaint and the restamp's depthtex1/colortex writes touch disjoint targets either way.
 
+## §1.9 THE COOL-MB SETTING (2026-08-11, post-R1 user decision — AMENDS the kept-feature policy)
+
+After live-verifying R1 (all four checks good), the user decided: the cool plane-velocity MB
+look becomes a **Mod Menu setting, DEFAULT OFF** — "even with mb on there is no cool effect".
+This supersedes the 2026-08-04 "keep both as features" policy for the window-MB half (the
+crossing blur burst is ambient-wide and remains; watch it on the next MB-on leg).
+
+Mechanics: `IPConfig.coolPortalMotionBlur` (Cloth screen, client category, runtime-apply) →
+`IPGlobal.coolPortalMotionBlur` (mutable static, IS5-RC-reported). The measurement gains
+`prevCamReaders` = d1 readers whose program actively references `previousCameraPosition` (the
+MB-velocity class — velocity needs prev-frame camera state; measured active on Complementary
+composite4 by the DestPrevCamera arc, stripped with pack-MB off). The arm gains a
+`depthBoundary` decided per frame: cool ON = the anchor (MB sees PLANE = the whip); cool OFF =
+min(anchor, first prevCam reader) (MB sees CONTENT = ordinary blur; storm/reflection readers
+before it keep PLANE). **The SG inject index is PINNED to the anchor in both modes** — an
+earlier inject would sit before the source tonemap and re-expose the double-grade. Branch (b)
+therefore fires at up to TWO indices per frame (depth half, inject half), each consume-once;
+the arm clears when both halves are done. DISCLOSED HEURISTIC: a foreign pack whose VL pass
+consumes previousCameraPosition would move the cool-OFF boundary early there (VL marches to
+content in windows on that pack); the setting itself (ON) and the force levers are the escape.
+
 ## §1.8 Detector-reads-raw (one leg proves mechanism + fix)
 
 The MEASUREMENT runs regardless of all levers (even force-PLANE / force-CONTENT-HEAD). A 1Hz

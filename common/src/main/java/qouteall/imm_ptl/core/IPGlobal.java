@@ -447,6 +447,14 @@ public class IPGlobal {
      *  recursion. */
     public static boolean irisRecursionLagGuard = false;
 
+    /** IS5-RESTAMP §1.9 — the "cool" plane-velocity portal MB look, a Mod Menu setting
+     *  (IPConfig.coolPortalMotionBlur), DEFAULT OFF (user-decided 2026-08-11, amending the
+     *  2026-08-04 kept-feature policy). OFF: the depthtex1 CONTENT restamp boundary moves to
+     *  the first prev-camera-consuming depthtex1 reader (the MB-class pass) so pack MB blurs
+     *  windows content-correctly; ON: the boundary stays at the reprojection anchor and the MB
+     *  pass sees PLANE depth = the cool whip. Mutable (runtime config apply). */
+    public static boolean coolPortalMotionBlur = false;
+
     /**
      * How far from the player a portal still renders its WINDOW, in CHUNKS. {@code 0} = follow the
      * vanilla render distance (the default, and what the config's reset button restores). Clamped
