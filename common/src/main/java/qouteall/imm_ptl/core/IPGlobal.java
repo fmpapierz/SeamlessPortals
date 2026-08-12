@@ -447,14 +447,6 @@ public class IPGlobal {
      *  recursion. */
     public static boolean irisRecursionLagGuard = false;
 
-    /** IS5-RESTAMP §1.9 — the "cool" plane-velocity portal MB look, a Mod Menu setting
-     *  (IPConfig.coolPortalMotionBlur), DEFAULT OFF (user-decided 2026-08-11, amending the
-     *  2026-08-04 kept-feature policy). OFF: the depthtex1 CONTENT restamp boundary moves to
-     *  the first prev-camera-consuming depthtex1 reader (the MB-class pass) so pack MB blurs
-     *  windows content-correctly; ON: the boundary stays at the reprojection anchor and the MB
-     *  pass sees PLANE depth = the cool whip. Mutable (runtime config apply). */
-    public static boolean coolPortalMotionBlur = false;
-
     /**
      * How far from the player a portal still renders its WINDOW, in CHUNKS. {@code 0} = follow the
      * vanilla render distance (the default, and what the config's reset button restores). Clamped
@@ -1280,16 +1272,20 @@ public class IPGlobal {
                 && !Boolean.getBoolean("seamlessportals.disableDepthRestamp"));
 
     // IS5-XDIM-SG (2026-08-11, migration/IS5_RESTAMP_DESIGN.md Part 2) — single-grade cross-dim
-    // capture, DEV DEFAULT OFF per the judged verdict (§2.3 R8: residuals R1-R3 exist, so
-    // "default ON" and "trade-off-free" cannot both be asserted before the user's live gate).
-    // Requires crossDimDestChain + a restamp mode of RESTAMP/HEAD-CONTENT on the source
-    // renderer. The dest chain's image is captured at the DEST pipeline's measured anchor
-    // boundary (post-tonemap, pre-AA — graded exactly ONCE by the dest chain; the tonemap
-    // curve is world-independent, so it matches the source surroundings) and INJECTED over the
-    // window pixels at the SOURCE anchor boundary — the double-grade tint dies. The flip to ON
-    // is the C4 delivery and gates on kill-checks 11-14 (the user's eye).
+    // capture. Requires crossDimDestChain + a restamp mode of RESTAMP/HEAD-CONTENT on the
+    // source renderer. The dest chain's image is captured at the DEST pipeline's measured
+    // anchor boundary (post-tonemap, pre-AA — graded exactly ONCE; the tonemap curve is
+    // world-independent, so it matches the source surroundings) and INJECTED over the window
+    // pixels at the SOURCE anchor boundary — the double-grade tint dies. Nested-child pixels
+    // are excluded per-pixel via the R11-MASK alpha sentinel (the near-portal dim-window fix).
+    // DEFAULT FLIPPED ON 2026-08-11 — the user residual gate passed (kill-checks 11-14: red
+    // fog + storm ✓, double-grade gone ✓, fog-pop/storm-slab/nested acceptable; the
+    // lava/high-angle bloom washout ships DISCLOSED, fix arc next).
+    public static final boolean IS5_XDIM_SINGLE_GRADE_DEFAULT = true;
     public static final boolean is5XdimSingleGrade =
-        Boolean.getBoolean("seamlessportals.is5XdimSingleGrade");
+        Boolean.getBoolean("seamlessportals.is5XdimSingleGrade")
+            || (IS5_XDIM_SINGLE_GRADE_DEFAULT
+                && !Boolean.getBoolean("seamlessportals.disableXdimSingleGrade"));
 
     // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
     // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
@@ -1299,15 +1295,20 @@ public class IPGlobal {
     public static final boolean disableWindowHistoryPrev =
         Boolean.getBoolean("seamlessportals.disableWindowHistoryPrev");
 
-    // IS5-XDIM (2026-08-10, migration/IS5_XDIM_DESIGN.md) — cross-dim dest-chain restore,
-    // DEV DEFAULT OFF (-PcrossDimDestChain=true enables). Cross-dim portal views run their dest
-    // pipeline to COMPLETION (composites + final — the dimension's own pack look, e.g. the
-    // nether storm) and are captured from MC mainRT at the finalize TAIL; same-dim views keep
-    // the shipped pre-composite capture byte-identically. Judged trade: the window is the dest
-    // look re-graded once by the source chain (double-tonemap risk — the first leg's
-    // pre-registered gate; retreat = this lever). At most one POST view per dest dim per frame.
+    // IS5-XDIM (2026-08-10, migration/IS5_XDIM_DESIGN.md) — cross-dim dest-chain restore.
+    // Cross-dim portal views run their dest pipeline to COMPLETION (composites + final — the
+    // dimension's own pack look: the nether storm, the red bloom-fog) and are captured at the
+    // finalize TAIL (or, under SG below, at the dest anchor boundary); same-dim views keep the
+    // shipped pre-composite capture byte-identically. At most one POST view per dest dim/frame.
+    // DEFAULT FLIPPED ON 2026-08-11 with SG below (the user residual gate: red fog + storm
+    // delivered, double-grade gone; the lava/high-angle bloom washout ships DISCLOSED as the
+    // top open item). The formal GL_TIME_ELAPSED A/B was NOT run — disclosed; the ~26-min live
+    // SG session raised no fps complaint; the disable row is the escape.
+    public static final boolean CROSS_DIM_DEST_CHAIN_DEFAULT = true;
     public static final boolean crossDimDestChain =
-        Boolean.getBoolean("seamlessportals.crossDimDestChain");
+        Boolean.getBoolean("seamlessportals.crossDimDestChain")
+            || (CROSS_DIM_DEST_CHAIN_DEFAULT
+                && !Boolean.getBoolean("seamlessportals.disableCrossDimDestChain"));
 
     // IS5-ARRIVE (2026-08-10, migration/IS5_ARRIVE_DESIGN.md) — the sideways-arrival fix,
     // DEFAULT ON. On teleport frames a sideways-classified (|look·N| ≤ 0.2, near-plane) reverse

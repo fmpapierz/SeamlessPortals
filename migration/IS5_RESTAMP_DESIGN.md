@@ -194,26 +194,38 @@ PLANE remains = shipped-safe degraded frame).
   immaterial; recorded assumption — if a foreign pack collided them at one i, the mask's c0
   clear+repaint and the restamp's depthtex1/colortex writes touch disjoint targets either way.
 
-## §1.9 THE COOL-MB SETTING (2026-08-11, post-R1 user decision — AMENDS the kept-feature policy)
+## §1.9 THE MB BOUNDARY (final form 2026-08-11 — the cool look REMOVED, future-polish only)
 
-After live-verifying R1 (all four checks good), the user decided: the cool plane-velocity MB
-look becomes a **Mod Menu setting, DEFAULT OFF** — "even with mb on there is no cool effect".
-This supersedes the 2026-08-04 "keep both as features" policy for the window-MB half (the
-crossing blur burst is ambient-wide and remains; watch it on the next MB-on leg).
+History, same day: R1 verified all four checks good → the user demoted the cool
+plane-velocity whip to a Mod Menu setting default-OFF (`316196b`) → after the SG leg the user
+removed it entirely: "just remove the mb cool effect while avoiding ghost terrain and save
+cool effect for future polish". This AMENDS the 2026-08-04 kept-feature policy for the
+window-MB half (the crossing blur burst is ambient-wide and remains).
 
-Mechanics: `IPConfig.coolPortalMotionBlur` (Cloth screen, client category, runtime-apply) →
-`IPGlobal.coolPortalMotionBlur` (mutable static, IS5-RC-reported). The measurement gains
-`prevCamReaders` = d1 readers whose program actively references `previousCameraPosition` (the
-MB-velocity class — velocity needs prev-frame camera state; measured active on Complementary
-composite4 by the DestPrevCamera arc, stripped with pack-MB off). The arm gains a
-`depthBoundary` decided per frame: cool ON = the anchor (MB sees PLANE = the whip); cool OFF =
-min(anchor, first prevCam reader) (MB sees CONTENT = ordinary blur; storm/reflection readers
-before it keep PLANE). **The SG inject index is PINNED to the anchor in both modes** — an
-earlier inject would sit before the source tonemap and re-expose the double-grade. Branch (b)
-therefore fires at up to TWO indices per frame (depth half, inject half), each consume-once;
-the arm clears when both halves are done. DISCLOSED HEURISTIC: a foreign pack whose VL pass
-consumes previousCameraPosition would move the cool-OFF boundary early there (VL marches to
-content in windows on that pack); the setting itself (ON) and the force levers are the escape.
+Final mechanics: the measurement carries `prevCamReaders` = d1 readers whose program actively
+references `previousCameraPosition` (the MB-velocity class — velocity needs prev-frame camera
+state; measured active on Complementary composite4 by the DestPrevCamera arc, stripped with
+pack-MB off). The arm's `depthBoundary` is ALWAYS `min(anchor, first prevCam reader)` — the
+MB pass sees CONTENT depth (ordinary content-correct blur); storm/reflection readers before
+it keep PLANE. **The SG inject index is PINNED to the anchor** — an earlier inject would sit
+before the source tonemap and re-expose the double-grade. Branch (b) fires at up to TWO
+indices per frame (depth half, inject half), each consume-once; the arm clears when both are
+done. DISCLOSED HEURISTIC: a foreign pack whose VL pass consumes previousCameraPosition moves
+the boundary early there; the force levers are the escape.
+**FUTURE POLISH (the user's parked wish):** the whip returns by setting `depthBoundary =
+anchor` (one line) behind whatever surface is wanted then.
+
+⟦J⟧ Post-land judge corrections (2026-08-11): (a) `prevCamReaders` is NEVER empty on this
+pack — taa.glsl and fxaa.glsl reference previousCameraPosition unconditionally, so the anchor
+pass is always in the set and MB-off boundaries equal the anchor by **min-saturation**, not
+emptiness; adjudicate legs on the raw `prevCam=[...]` set. (b) WATCH ITEM: Complementary's
+composite.glsl (pass 0, a d1 reader) references previousCameraPosition in its temporal
+reflection block — a settings permutation keeping that uniform linker-active would collapse
+`dBnd=` to 0 and hand the STORM pass CONTENT depth (a C3-class regression wearing a green
+mode token). Watch the raw `dBnd=` on new pack configs; the force levers are the escape.
+(c) The R11-MASK sentinel requires an alpha channel in the measured capture format — the
+runtime GL_TEXTURE_ALPHA_SIZE gate falls back POST (sgF, noted) on alpha-less formats
+(colortex0-class R11F_G11F_B10F is real in this pack family; the measured colortex3 is RGBA8).
 
 ## §1.8 Detector-reads-raw (one leg proves mechanism + fix)
 
@@ -305,14 +317,19 @@ Flow (all pass indices runtime-measured, §1.3 machinery reused):
    otherwise skip inject → full shipped-POST behavior for that slot (`sgF++`).
    Ordering: the hook precedes pass i's mipmap regen, so if the anchor pass mipmaps the image
    target our write is regenerated over — correct by construction.
-   ⟦J⟧ Nested-content exclusion (engineering judge, blocking): part4's capture-to-capture
-   nested stamp (fork (c), post-pop — which completes BEFORE main renderAll HEAD) can stamp a
-   same-dim PRE child's PRE-COMPOSITE scene-referred pixels into an SG parent's capture AFTER
-   the dest-anchor copy; the source inject would then deliver pixels that bypass
-   linearize/bloom-fog/tonemap ENTIRELY (never graded — worse than POST's once-graded). The
-   standard A→B→A corridor ALWAYS produces this case. Rule: runNestedStamp sets a per-slot
-   `sgNestedContent` flag when the parent slot is SG-captured; the inject is SKIPPED for that
-   slot+frame (POST-fallback look, `sgF++`, census-visible). Residual R11.
+   ⟦J⟧ Nested-content exclusion — SUPERSEDED SAME-DAY by the R11-MASK (the judge's original
+   whole-slot inject-skip WAS the user-reported near-portal dim window: census windows with
+   nest>0 showed sgI collapsing while sgC held — the skipped slots rendered POST double-graded
+   exactly when a nested window was visible). Final rule, per-PIXEL: the SG boundary capture
+   force-initializes slot.colorTex ALPHA to 1.0 (transient FBO + `_colorMask(8)` +
+   `_clearBuffer(0, (0,0,0,1))` — channel bits and glClearBufferfv javap-pinned on the 26.2
+   jar); runNestedStamp sets the stamp shader's `u_zeroAlpha=1` when the parent is
+   SG-captured, writing alpha 0 at exactly the child's pixels; the mode-2 inject discards
+   where capture alpha < 0.5. Result: the parent face gets the clean single-graded inject,
+   the nested child keeps its source-graded anchor-time content (the PRE-class correct look) —
+   no dim frames, no never-graded pixels. u_zeroAlpha is asserted at every stamp-program draw
+   site (a stale 1 would punch discard-holes into the next HEAD stamp). Residual R11 rewritten
+   below.
 4. TAIL handler: when `sgCapture` set, skip the mainRT color copy; keep the pend/leak/
    pending=true bookkeeping, orphan WARNs, identity re-checks unchanged.
 
@@ -356,10 +373,22 @@ R9. Dependency residual: SG without the Part-1 restamp active would re-ghost the
     enforced at arm time, POST fallback otherwise.
 R10. GPU cost: zero dest-pass savings vs POST; net = POST + two boundary copies + one inject
     draw; gated by FPS/GL_TIME_ELAPSED A/B.
-⟦J⟧ R11. Nested layers in SG parents: slot-frames carrying part4 nested-child content skip the
-    inject (§2.2.3) — those frames render as shipped POST (double-graded), `sgF=`-visible. The
-    A→B→A corridor makes this the COMMON nested case; the alternative (injecting never-graded
-    child pixels) is strictly worse and prohibited.
+⟦J⟧ R11 (final form — the R11-MASK): nested children in SG parents are excluded per-PIXEL via
+    the capture-alpha sentinel; the parent face injects clean, the child keeps its
+    source-graded look. Remaining residual: a GRADE SEAM at the nested boundary (parent face
+    dest-graded vs child source-graded — the known nested-rim class), plus the child face
+    lacks dest-chain effects (storm) exactly as PRE children always have. The original
+    whole-slot skip (one commit) was the user-reported near-portal dim window and is gone.
+R12 (user-reported on the SG leg, SHIPS DISCLOSED — the flip decision "Ship + fix next"):
+    lava/high-angle bloom washout — with pack bloom on and bright dest content (lava) near
+    the portal, viewing from a steep angle above intensifies the whitewash and washes the
+    dest render out with angle. Mechanism hypothesis (unverified — next session's arc): the
+    R1/R7 double-bloom class — dest bloom baked in the capture + source bloom re-gathered
+    from the stamped window; at steep angles the window's screen footprint compresses while
+    bloom's pixel reach stays fixed, so spill dominates a growing fraction. Candidate roads:
+    the BloomApertureMask machinery masking the window footprint from the source gather, or
+    a capture-side bloom attenuation. Verify the mechanism first (A/B: pack bloom off; the
+    mask lever; angle sweep).
 
 ## §2.4 What SG fixes vs shipped POST
 
@@ -376,8 +405,8 @@ world-identical curve.
 |---|---|---|
 | `seamlessportals.is5DepthRestamp` (+ disable row `seamlessportals.disableDepthRestamp`) | **ON** | The Part-1 machinery: measure, then RESTAMP / HEAD-CONTENT-collapse / PLANE per §1.2. Disable row = force-PLANE escape (byte-identical shipped PLANE everywhere). |
 | `seamlessportals.is5WindowContentDepth` | OFF (kept) | **Migration story:** the fork lever is NOT removed. It becomes the force-CONTENT-at-HEAD escape: when set, the HEAD replay runs mode 1 and the restamp disarms (precedence: explicit CONTENT-HEAD > restamp). Shipped semantics preserved bit-for-bit; existing BG rows untouched; IS5-RC auto-reports it as before. The PLANE-vs-CONTENT fork it carried is DISSOLVED — restamp-ON delivers both sides simultaneously. |
-| `seamlessportals.is5XdimSingleGrade` | **OFF (dev)** — per verdict + §2.3 R8 | Requires `crossDimDestChain` + restamp mode RESTAMP/HEAD-CONTENT. Flip to ON only after the user residual gate (kill-checks 11-14) — that flip is the C4 delivery. |
-| `seamlessportals.crossDimDestChain` | OFF (dev, unchanged) | XDIM POST as shipped; SG layers on it. |
+| `seamlessportals.is5XdimSingleGrade` (+ disable row `seamlessportals.disableXdimSingleGrade`) | **ON since 2026-08-11** — the user residual gate PASSED (kill-checks 11-14; the C4 delivery) | Requires `crossDimDestChain` + restamp mode RESTAMP/HEAD-CONTENT. Disable = the double-grade dim window on command. R12 (lava/high-angle bloom washout) ships DISCLOSED, fix arc next. |
+| `seamlessportals.crossDimDestChain` (+ disable row `seamlessportals.disableCrossDimDestChain`) | **ON since 2026-08-11** | Disable = fog/storm missing from cross-dim windows on command. The formal GL_TIME_ELAPSED A/B was NOT run (disclosed): the ~26-min live SG session raised no fps complaint; the disable row is the escape. |
 
 Idiom: static-final + Boolean.getBoolean per the existing IPGlobal block. BG rows added to all
 three run blocks (clientSodium, crossingGametest, is5RegressionGametest). IS5-RC self-reports
@@ -426,8 +455,11 @@ FPS A/B or GL_TIME_ELAPSED — never is5.* CPU timers (C6).
 13. SG + MB on: confirm and show the user R3 (window loses the extra-blur feature under SG) —
     their call per the kept-feature policy.
 14. SG fallback: dest chain with anchor forced absent (pack TAA off) — sgF= increments, window
-    renders as shipped POST, no crash, no mechanismBroken. ⟦J⟧ Plus the R11 corridor: A→B→A
-    nested scene — nested slot-frames skip the inject (sgF= increments), no never-graded pixels.
+    renders as shipped POST, no crash, no mechanismBroken. ⟦J⟧ R11-MASK form (supersedes the
+    original skip wording): A→B→A nested scene — nested frames now INJECT with the per-pixel
+    alpha discard (expected census: sgI>0 with nest>0, sgF stays 0); the parent face is
+    single-graded (no dim window), the child keeps its source-graded look, no never-graded
+    pixels. On an alpha-less capture format the B1 gate falls back POST (sgF++, noted once).
 15. Suites: is5RegressionGametest + crossingGametest green with the new BG rows present in all
     three run blocks; IS5-RC block prints both new levers ([1/3] ground-truth + [2/3]
     reflection).

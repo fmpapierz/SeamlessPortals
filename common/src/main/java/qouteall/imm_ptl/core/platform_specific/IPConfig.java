@@ -67,19 +67,11 @@ public class IPConfig implements ConfigData {
     @ConfigEntry.Gui.Tooltip
     public boolean irisRecursionLagGuard = false;
 
-    /**
-     * IS5-RESTAMP §1.9 (2026-08-11) — the "cool" portal motion-blur look (shaders-ON, pack
-     * Motion Blur enabled): window pixels blur by their distance to the portal PLANE instead of
-     * the destination content's own motion — a strong stylized whip. OFF (the default —
-     * user-decided 2026-08-11, amending the earlier kept-feature policy): windows get ordinary
-     * content-correct motion blur. Mechanically this moves the depthtex1 CONTENT restamp
-     * boundary to the first prev-camera-consuming depthtex1 reader (the MB-class pass,
-     * runtime-measured via previousCameraPosition activity) instead of the reprojection anchor.
-     * Runtime-toggleable; only matters while the pack's own Motion Blur option is on.
-     */
-    @ConfigEntry.Category("client")
-    @ConfigEntry.Gui.Tooltip
-    public boolean coolPortalMotionBlur = false;
+    // IS5-RESTAMP §1.9: a coolPortalMotionBlur setting lived here for one commit (316196b) and
+    // was REMOVED the same day on the user's word ("just remove the mb cool effect ... save
+    // cool effect for future polish") — the plane-velocity whip is future-polish material only
+    // (the restamp architecture re-enables it by moving the depth boundary back to the anchor;
+    // see IS5_RESTAMP_DESIGN.md §1.9).
 
     /**
      * How far from the player a portal will still render its WINDOW, in chunks. {@code 0} = follow
@@ -332,7 +324,6 @@ public class IPConfig implements ConfigData {
                 Math.max(1, Math.min(IPGlobal.IRIS_RECURSION_DEPTH_CEILING, irisRecursionDepth));
         }
         IPGlobal.irisRecursionLagGuard = irisRecursionLagGuard;
-        IPGlobal.coolPortalMotionBlur = coolPortalMotionBlur;
         // Clamp on APPLY rather than in the GUI: leaving the field unbounded is what makes Cloth
         // render a typed box instead of a slider, so the clamp has to live here. 0 = follow the
         // vanilla render distance (the shipped default, and what the reset button restores).
