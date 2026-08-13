@@ -2076,9 +2076,64 @@ public final class IrisStageConsistentComposite {
             }
             slot.sgCaptured = true;
             censusSgC++;
+            // IS5-WASHPROBE dest half: read the DEST bloom-apply pass's executed uniforms
+            // (c5 = destGather+1) right after it ran; paired with the main half at the next
+            // meas emit.
+            if (IPGlobal.washProbe && postPendingDestRenderer instanceof CompositeRenderer dcr) {
+                long wpNow = System.currentTimeMillis();
+                if (wpNow - lastWashProbeMs >= 1000) {
+                    // (the 1Hz latch advances on the MAIN half so both lines pair per window)
+                    RestampMeasurement dm = measureRestamp(dcr);
+                    washProbeDestLine = washProbeReadPass(dcr, dm.gatherIdx + 1, "destC5");
+                }
+            }
         } catch (Throwable t) {
             censusSgF++;
             noteAuxDropOnce("SG boundary capture threw: " + t + " — POST fallback");
+        }
+    }
+
+    // IS5-WASHPROBE (lever -PwashProbe, log-only): dest-vs-main bloom-apply uniform diff.
+    // Reads the EXECUTED uniform state off the pass program (the measure-at-the-draw rule);
+    // loc -1 prints a LOUD n/a, never a tabulatable zero (the sentinel discipline).
+    private static long lastWashProbeMs = 0;
+    private static String washProbeDestLine = null;
+
+    private static String washProbeReadPass(Object renderer, int passIdx, String tag) {
+        try {
+            List<?> passes = (List<?>) fPasses.get(renderer);
+            if (passIdx < 0 || passIdx >= passes.size()) return tag + ": pass-oob(" + passIdx + ")";
+            Object prog = fPassProgram.get(passes.get(passIdx));
+            if (prog == null) return tag + ": compute-only";
+            int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+            StringBuilder s = new StringBuilder(tag).append('[').append(passIdx).append("]:");
+            int locRd = GL20C.glGetUniformLocation(pid, "renderDistance");
+            if (locRd >= 0) {
+                float[] rd = new float[1];
+                GL20C.glGetUniformfv(pid, locRd, rd);
+                s.append(" rd=").append(String.format("%.1f", rd[0]));
+            } else s.append(" rd=n/a(loc-1)");
+            int locFar = GL20C.glGetUniformLocation(pid, "far");
+            if (locFar >= 0) {
+                float[] fr = new float[1];
+                GL20C.glGetUniformfv(pid, locFar, fr);
+                s.append(" far=").append(String.format("%.1f", fr[0]));
+            } else s.append(" far=n/a(loc-1)");
+            int locEye = GL20C.glGetUniformLocation(pid, "isEyeInWater");
+            if (locEye >= 0) {
+                int[] eye = new int[1];
+                GL20C.glGetUniformiv(pid, locEye, eye);
+                s.append(" eye=").append(eye[0]);
+            } else s.append(" eye=n/a(loc-1)");
+            int locCam = GL20C.glGetUniformLocation(pid, "cameraPosition");
+            if (locCam >= 0) {
+                float[] cam = new float[3];
+                GL20C.glGetUniformfv(pid, locCam, cam);
+                s.append(String.format(" cam=(%.1f,%.1f,%.1f)", cam[0], cam[1], cam[2]));
+            } else s.append(" cam=n/a(loc-1)");
+            return s.toString();
+        } catch (Throwable t) {
+            return tag + ": read-failed(" + t + ")";
         }
     }
 
@@ -2625,6 +2680,17 @@ public final class IrisStageConsistentComposite {
                             ? "SKIP(mode=" + effMode + ")" : meas.washState)),
                 censusWashB, censusWashR, censusRst, censusRstOrph,
                 censusSgC, censusSgI, censusSgF);
+            // IS5-WASHPROBE main half + the paired emit (dest line captured at the SG
+            // boundary this window; main read here at the same 1Hz cadence).
+            if (IPGlobal.washProbe) {
+                lastWashProbeMs = measNow;
+                String mainLine = washProbeReadPass(
+                    mainCompositeRenderer, meas.gatherIdx + 1, "mainC5");
+                LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] {} || {}",
+                    mainLine, washProbeDestLine == null ? "destC5: <no SG capture yet>"
+                        : washProbeDestLine);
+                washProbeDestLine = null;
+            }
         }
 
         boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);

@@ -1302,6 +1302,15 @@ public class IPGlobal {
             || (IS5_WINDOW_BLOOM_EXCLUDE_DEFAULT
                 && !Boolean.getBoolean("seamlessportals.disableWindowBloomExclude"));
 
+    // IS5-WASHPROBE (2026-08-12, log-only, DEFAULT OFF) — the R12 washout's uniform
+    // ground-truth: 1Hz dest-vs-main read of the bloom-apply pass's ACTUAL renderDistance /
+    // isEyeInWater / cameraPosition uniform values (glGetUniform on the pass program — reads
+    // executed state, not any mod-side mirror). Built after the matched-height ambient control
+    // refuted the pack's-own-distance-glow story: a capture-vs-ambient uniform delta exists;
+    // this names it. The nether GetBloomFog is (lViewPos/clamp(min(renderDistance, LIMIT),
+    // 96, 512))^3 — a dest renderDistance 4x smaller than ambient = 64x the fog term.
+    public static final boolean washProbe = Boolean.getBoolean("seamlessportals.washProbe");
+
     // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
     // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
     // pixels — the ugly MB-off approach-blur (jitter=0 leg refuted jitter-alone; the blend's
