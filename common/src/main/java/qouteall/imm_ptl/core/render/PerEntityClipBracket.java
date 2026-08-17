@@ -221,11 +221,13 @@ public class PerEntityClipBracket {
     public static void submitProjectedEntityClipped(
         EntityRenderDispatcher dispatcher, EntityRenderState state,
         CameraRenderState cam, Vec3 newCameraPos,
-        PoseStack poseStack, SubmitNodeStorage storage, @Nullable Plane innerClipPlane
+        PoseStack poseStack, SubmitNodeStorage storage, @Nullable Plane innerClipPlane,
+        boolean seamBand
     ) {
         Snapshot innerPlane = innerClipPlane == null
             ? null
-            : FrontClipping.captureInnerClipping(innerClipPlane, cam.viewRotationMatrix);
+            : FrontClipping.captureInnerClipping(
+                innerClipPlane, cam.viewRotationMatrix, seamBand);
         if (innerPlane == null) {
             // No inner plane (isRendering branch always; else branch when getInnerClipping()/useFrontClipping
             // yields none): IP draws the projection UNCLIPPED (CrossPortalEntityRenderer :101 disableClipping,

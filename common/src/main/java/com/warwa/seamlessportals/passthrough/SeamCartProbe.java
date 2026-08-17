@@ -84,10 +84,53 @@ public final class SeamCartProbe {
         if (!AperturePassthroughLever.SEAM_CART_PROBE) {
             return false;
         }
-        if (!(entity instanceof AbstractMinecart)) {
+        // 2026-08-16 instrument round: the RIDER FAMILY joined the watch. Every prior log scan
+        // was structurally blind to the cow — a minecart-only filter cannot see the crossing's
+        // second actor (its RPC arrival, its position, its ride link), and an ORPHANED rider is
+        // not even a passenger any more, so the cow class itself is watched.
+        boolean family = entity instanceof AbstractMinecart
+            || (!(entity instanceof net.minecraft.world.entity.player.Player)
+                && (entity.isPassenger()
+                    || entity instanceof net.minecraft.world.entity.animal.cow.AbstractCow));
+        if (!family) {
             return false;
         }
         return WATCHED.isEmpty() || WATCHED.contains(entity.getId());
+    }
+
+    /**
+     * Ride-link symmetry stamp for every EVT line: a passenger whose vehicle does NOT list it
+     * back ({@code vehHasMe=false}) is the one-way-link orphan the 2026-08-16 ghost hunt is
+     * looking for — such an entity says {@code isPassenger()} but is never ticked or positioned
+     * by its vehicle.
+     */
+    private static String rideInfo(Entity entity) {
+        StringBuilder sb = new StringBuilder();
+        Entity veh = entity.getVehicle();
+        if (veh != null) {
+            sb.append(" ride[veh=").append(veh.getId())
+                .append(" vehHasMe=").append(veh.getPassengers().contains(entity)).append(']');
+        }
+        if (!entity.getPassengers().isEmpty()) {
+            sb.append(" carrying=[");
+            for (Entity p : entity.getPassengers()) {
+                sb.append(p.getId()).append(' ');
+            }
+            sb.append(']');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Lever-gated but UNFILTERED line — RPC plumbing must be attributable for EVERY entity id
+     * (the cow's updateEntityPos arrival was invisible to all prior rounds; absence-of-line must
+     * mean absence-of-call, not filter).
+     */
+    public static void rpc(String msg) {
+        if (!AperturePassthroughLever.SEAM_CART_PROBE) {
+            return;
+        }
+        LOGGER.info(TAG + "RPC {}", msg);
     }
 
     /** Called from {@code MixinAbstractMinecartSeamCart} at {@code comeOffTrack} HEAD. */
@@ -118,10 +161,10 @@ public final class SeamCartProbe {
         if (!isWatched(entity)) {
             return;
         }
-        LOGGER.info(TAG + "t={} EVT {} id={} dim={} pos={} vel={}",
+        LOGGER.info(TAG + "t={} EVT {} id={} dim={} pos={} vel={}{}",
             entity.level().getGameTime(), msg, entity.getId(),
             entity.level().dimension().identifier(),
-            fmt(entity.position()), fmt(entity.getDeltaMovement()));
+            fmt(entity.position()), fmt(entity.getDeltaMovement()), rideInfo(entity));
     }
 
     /**

@@ -309,6 +309,22 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
             ip_portalCollisionHandler = new PortalCollisionHandler();
         }
 
+        // F5/F6 BEHIND-REFUSAL (live round 2026-08-17 #2): a portal is entered from its FRONT
+        // — a seam face never accepts an entity wholly behind its plane. This is what keeps
+        // the co-located TWIN unbooked during a mere approach: its CASE-2 projection's clip
+        // keeps exactly the un-poked half-space, so a booked twin painted the WHOLE
+        // approaching cart at the far station for the last blocks of every approach (the
+        // couple-seconds ghost's residual window). The arrival SEED bypasses this gate
+        // deliberately — the rebased trail body is legitimately wholly behind the arrival
+        // face (SeamStraddleBracket.beginSeed/endSeed).
+        if (!com.warwa.seamlessportals.passthrough.SeamStraddleBracket.inSeed()
+            && com.warwa.seamlessportals.passthrough.SeamCartContinuity
+                .isSeamContinuous((Portal) portal)
+            && com.warwa.seamlessportals.passthrough.SeamStraddleBracket
+                .whollyBehind(this_, (Portal) portal)) {
+            return;
+        }
+
         // F6 STRADDLE PIN, register side: while a seam face is straddled and booked, its
         // co-located opposite twin may not register — last-entry-wins would flip the render
         // bracket to the eye's side mid-crossing.
@@ -318,6 +334,21 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
         }
 
         ip_portalCollisionHandler.notifyCollidingWithPortal(this_, ((Portal) portal));
+
+        // F5/F6 RIDER REGISTRATION FAN (live round 2026-08-17, log-nailed: "MAIN
+        // vanilla-unclipped (not in collidedEntities)" for the cow while its cart was clipped
+        // and projecting): registration happens on the Entity.move collision path, which
+        // PASSENGERS never run — so a rider had no entry until the arrival seed. Its
+        // through-portal image was missing from the whole emergence (the cowless ghost cart
+        // sliding out of the seam = the "couple-seconds sighting"; the cow "disappearing from
+        // the minecart" every return crossing) and its straddling body drew unclipped (the
+        // split-second bleed). The vehicle's registration now fans to its passengers — each
+        // through its own duck call, so the per-rider refuses-gate runs and stacked riders fan
+        // naturally. Their entries then live and prune through the existing per-tick passenger
+        // hooks, exactly like the vehicle's.
+        for (Entity rider : this_.getPassengers()) {
+            ((IEEntity) rider).ip_notifyCollidingWithPortal(portal);
+        }
     }
 
     @Override

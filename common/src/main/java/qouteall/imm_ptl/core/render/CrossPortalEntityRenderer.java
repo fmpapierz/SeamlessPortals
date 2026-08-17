@@ -249,7 +249,8 @@ public class CrossPortalEntityRenderer {
             return;
         }
         if (!(entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart
-            || (entity.isPassenger() && !(entity instanceof Player)))) {
+            || (entity.isPassenger() && !(entity instanceof Player))
+            || entity instanceof net.minecraft.world.entity.animal.cow.AbstractCow)) {
             return;
         }
         com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity, "[DRAW] " + what);
@@ -362,8 +363,27 @@ public class CrossPortalEntityRenderer {
             //use some rough check to work around
 
             if (renderingPortal instanceof Portal) {
-                if (!Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal)
-                    && !Portal.isReversePortal(((Portal) renderingPortal), collidingPortal)
+                // F6 SEAM SAME-PLANE EXCEPTION (live round 2026-08-17 #6, log-nailed: rendering
+                // portal 26 vs colliding face 27 — the renderer may draw a window through EITHER
+                // co-located face, and when it picks the TWIN the flipped-check below silently
+                // skipped the straddler's back-image, cutting the un-emerged half out of the
+                // window for the whole straddle). At a seam, the flipped twin's projection IS
+                // the window's legitimate back-image: treat it exactly like the
+                // renderingPortal == collidingPortal case (the isHidden stand-in is bypassed
+                // too — the threaded seam clip does the real cutting). Non-seam portals keep
+                // IP's flipped/reverse skips verbatim.
+                boolean seamSamePlane = com.warwa.seamlessportals.passthrough
+                    .SeamCartContinuity.isSeamContinuous(collidingPortal)
+                    && Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal);
+                if (!seamSamePlane
+                    && (Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal)
+                        || Portal.isReversePortal(((Portal) renderingPortal), collidingPortal))) {
+                    frameProbe(entity, "PROJ inpass-skip flipped/reverse via face "
+                        + collidingPortal.getId() + " in pass " + renderingPortal.getId());
+                }
+                if (seamSamePlane
+                    || (!Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal)
+                        && !Portal.isReversePortal(((Portal) renderingPortal), collidingPortal))
                 ) {
                     Vec3 cameraPos = client.gameRenderer.mainCamera().position();
 
@@ -371,6 +391,16 @@ public class CrossPortalEntityRenderer {
 
                     boolean isHidden = innerClipping != null &&
                         !innerClipping.isPointOnPositiveSide(cameraPos);
+                    // Round 17: seamSamePlane no longer bypasses isHidden — the blanket bypass
+                    // (round 16) let the twin's back-image draw for cameras on the WRONG side
+                    // of the face ("cart leaks into source side a while crossing at the far
+                    // station"). The skip below now logs its verdict, so if isHidden ever eats
+                    // a legitimate back-image the lap's log will name it directly.
+                    if (renderingPortal != collidingPortal && isHidden) {
+                        frameProbe(entity, "PROJ inpass-hidden via face " + collidingPortal.getId()
+                            + " in pass " + renderingPortal.getId()
+                            + (seamSamePlane ? " (seam same-plane)" : ""));
+                    }
                     if (renderingPortal == collidingPortal || !isHidden) {
                         //IP draws these projections UNCLIPPED: onEndRenderingEntitiesAndBlockEntities
                         //disabled the CASE-3 clip (IP :101) and this isRendering branch (IP :184-204) sets
@@ -399,6 +429,24 @@ public class CrossPortalEntityRenderer {
             }
         }
         else {
+            // F5/F6 CROSSING-WINDOW GATE (live round 2026-08-17, the couple-seconds ghost's
+            // true root): IP gates CASE-2 on the body actually intersecting the plane
+            // (hasIntersection — defined above but dropped from this branch in the port). At a
+            // seam, proximity registration books BOTH co-located faces during a mere APPROACH,
+            // and the TWIN face's inner clip keeps exactly the un-poked half-space — so the
+            // WHOLE approaching cart painted at the far station for the length of the approach
+            // segment (~2 s per loop; cowless before the rider fixes, which is why the cow
+            // "disappeared from the minecart"). Gate on the pin window: pre-crossing, the
+            // legitimate face's image is fully clipped anyway (nothing has poked through), so
+            // this is pixel-identical for every legitimate phase and kills the twin ghost.
+            if (com.warwa.seamlessportals.passthrough.SeamCartContinuity
+                    .isSeamContinuous(collidingPortal)
+                && !com.warwa.seamlessportals.passthrough.SeamStraddleBracket
+                    .pinned(entity, collidingPortal)) {
+                frameProbe(entity, "PROJ gated (not crossing face "
+                    + collidingPortal.getId() + ")");
+                return;
+            }
             // F6 APERTURE MASK (video 2026-08-12, frame-by-frame): the main-pass counterpart
             // used to draw whenever the entity had an entry — including from camera angles
             // where the window is edge-on or behind, pasting a floating image onto the near
@@ -522,7 +570,8 @@ public class CrossPortalEntityRenderer {
             EntityRenderState projectionState =
                 dispatcher.extractEntity(entity, RenderStates.getPartialTick());
             PerEntityClipBracket.submitProjectedEntityClipped(
-                dispatcher, projectionState, cam, newCameraPos, matrixStack, storage, innerClipPlane
+                dispatcher, projectionState, cam, newCameraPos, matrixStack, storage,
+                innerClipPlane, false
             );
         }
         finally {
@@ -612,13 +661,36 @@ public class CrossPortalEntityRenderer {
                     if (com.warwa.seamlessportals.passthrough.SeamCartContinuity
                             .isSeamContinuous(collidingPortal)
                         && com.warwa.seamlessportals.passthrough.SeamStraddleBracket
-                            .pinned(entity, collidingPortal)
-                        && collidingPortal.getNormal()
-                            .dot(((Portal) renderingPortal).getContentDirection()) <= 0) {
-                        frameProbe(entity, "VIS seam-side culled in portal-pass "
-                            + renderingPortal.getId() + " (pass shows the far side of straddled face "
+                            .pinned(entity, collidingPortal)) {
+                        // Side test against the pass's INNER CLIP normal, not contentDirection
+                        // (live round 2026-08-17 #4, the away-crossing hole): the renderer may
+                        // draw a window through EITHER co-located face, so contentDirection
+                        // flips meaning per orientation — the toward-crossing was culled
+                        // correctly by luck, the away-crossing lost its emerged part in the
+                        // window (nothing else paints the straddler there). The pass's inner
+                        // clip normal always points INTO the pass's actual content.
+                        qouteall.q_misc_util.my_util.Plane passClip =
+                            ((Portal) renderingPortal).getInnerClipping();
+                        Vec3 passKeptDir = passClip != null
+                            ? passClip.normal()
+                            : ((Portal) renderingPortal).getContentDirection();
+                        if (collidingPortal.getNormal().dot(passKeptDir) <= 0) {
+                            frameProbe(entity, "VIS seam-side culled in portal-pass "
+                                + renderingPortal.getId()
+                                + " (pass shows the far side of straddled face "
+                                + collidingPortal.getId() + ")");
+                            return false;
+                        }
+                        // KEEP case bypasses the remaining gates (live round 2026-08-17 #5):
+                        // the binary eye-side onDestSide test below culled the straddler for
+                        // the first ticks of the straddle — until its CENTER crossed — so the
+                        // poked front was missing from the window ("the front in dest gets cut
+                        // off"). The pass's ambient clip already cuts plane-exactly; a pinned
+                        // straddler on the pass's own side needs no whole-entity test.
+                        frameProbe(entity, "VIS seam-side kept in portal-pass "
+                            + renderingPortal.getId() + " (straddling face "
                             + collidingPortal.getId() + ")");
-                        return false;
+                        return true;
                     }
                     if (!Portal.isReversePortal(collidingPortal, ((Portal) renderingPortal))) {
                         Vec3 cameraPos = PortalRenderer.client.gameRenderer.mainCamera().position();

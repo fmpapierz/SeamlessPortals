@@ -336,6 +336,14 @@ public class FrontClipping {
         // primary RETREATS by ADJUSTMENT and the projection EXTENDS by it (captureInnerClipping
         // below), so the later-drawn projection owns the band consistently. Render-capture path
         // only — collision consumers of the same planes are untouched.
+        //
+        // (Band rounds v1 = round 12 and v2 = round 18 both REVERTED after live rounds. v2's
+        // failure is the decisive evidence: the window pass OVERDRAWS main-pass content inside
+        // the aperture, so the main body cannot own the plane band there no matter how the
+        // clips are arranged — the projections' extension is REQUIRED inside the window, and
+        // its two ~1cm costs (past-plane micro-bleed, stencil-confined tail sliver) are
+        // inherent to that ownership. A real fix needs a dedicated post-pass band painter —
+        // see the handoff known-opens. Keep the unconditional retreat.)
         clipEquationOuter[3] -= ADJUSTMENT;
         return toViewSpaceSnapshot(clipEquationOuter, viewRotation);
     }
@@ -351,6 +359,19 @@ public class FrontClipping {
      */
     public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureInnerClipping(
         @Nullable Plane clipping, Matrix4f viewRotation
+    ) {
+        return captureInnerClipping(clipping, viewRotation, false);
+    }
+
+    /**
+     * {@code seamBand=true} — the projection belongs to a SEAM face: it always RETREATS, because
+     * at seams the MAIN body owns the plane band (captureOuterClipping extends there; live round
+     * 2026-08-17 #3, the trailing-edge slit — a projection is stencil-confined to its window's
+     * screen area, so a band it owned could fall outside the window by parallax exactly as the
+     * tail exits). {@code seamBand=false} keeps the earlier per-case logic for non-seam portals.
+     */
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureInnerClipping(
+        @Nullable Plane clipping, Matrix4f viewRotation, boolean seamBand
     ) {
         if (!IPCGlobal.useFrontClipping) {
             return null;
@@ -371,10 +392,28 @@ public class FrontClipping {
         // is on the kept side; RETREAT otherwise, so the band hides exactly behind the plane.
         // getClipEquationInner reads the live camera, so this stays correct inside portal
         // passes (mainCamera IS the pass camera there).
-        boolean cameraOnKeptSide = CHelper.getCurrentCameraPos()
-            .subtract(clipping.pos()).dot(clipping.normal()) > 0;
-        double[] clipEquationInner = getClipEquationInner(
-            clipping.pos(), clipping.normal(), cameraOnKeptSide ? -ADJUSTMENT : ADJUSTMENT);
+        // F6 PASS-CONTENT EXCEPTION (live round 2026-08-16 #5 — the transparent slit): inside
+        // a portal pass the projection IS window content, and its boundary must COVER the main
+        // pass's retreated outer cut (the pass-level terrain re-arm extends for the same
+        // reason) — so in-pass it always EXTENDS. The pass camera sits on the empty side of
+        // the window plane by construction, so the camera-side test below would retreat BOTH
+        // draws of a straddling entity, opening a see-through ~2·ADJUSTMENT slit across the
+        // model exactly at the seam (the user's cow/cart screenshot). The naked-sliver case
+        // the camera-side rule guards against is main-pass-only.
+        double correction;
+        if (seamBand) {
+            correction = ADJUSTMENT;
+        }
+        else if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+            correction = -ADJUSTMENT;
+        }
+        else {
+            boolean cameraOnKeptSide = CHelper.getCurrentCameraPos()
+                .subtract(clipping.pos()).dot(clipping.normal()) > 0;
+            correction = cameraOnKeptSide ? -ADJUSTMENT : ADJUSTMENT;
+        }
+        double[] clipEquationInner =
+            getClipEquationInner(clipping.pos(), clipping.normal(), correction);
         return toViewSpaceSnapshot(clipEquationInner, viewRotation);
     }
 

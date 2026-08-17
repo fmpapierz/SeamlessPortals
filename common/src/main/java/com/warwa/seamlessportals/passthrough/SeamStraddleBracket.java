@@ -88,6 +88,32 @@ public final class SeamStraddleBracket {
         return spanMin(box, n, o) < -EPS && spanMax(box, n, o) > -MAX_TRAIL;
     }
 
+    /** Is the entity's box WHOLLY on the face's behind side (nothing poked past the plane)? */
+    public static boolean whollyBehind(Entity entity, Portal face) {
+        AABB box = entity.getBoundingBox();
+        return spanMax(box, face.getNormal(), face.getOriginPos()) < EPS;
+    }
+
+    /**
+     * Seed bypass for the BEHIND-REFUSAL registration gate: the arrival-face seed is the
+     * crossing's own authoritative notify, and the rebased trail body is LEGITIMATELY wholly
+     * behind the arrival face — the gate must not eat it. Thread-local because registration
+     * runs on both sides while seeding is client-thread-only.
+     */
+    private static final ThreadLocal<Boolean> SEEDING = ThreadLocal.withInitial(() -> false);
+
+    public static void beginSeed() {
+        SEEDING.set(true);
+    }
+
+    public static void endSeed() {
+        SEEDING.set(false);
+    }
+
+    public static boolean inSeed() {
+        return SEEDING.get();
+    }
+
     /**
      * The PRUNE gate: keep this entry (bypassing the eye-side, staleness, and box-proximity
      * reasons — the caller consults this BEFORE its own box gate) while the entity's crossing

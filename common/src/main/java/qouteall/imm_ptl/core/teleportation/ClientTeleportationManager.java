@@ -866,6 +866,14 @@ public class ClientTeleportationManager {
 
             Entity entity = world.getEntity(entityId);
 
+            // UNFILTERED arrival line (2026-08-16 instrument round): the rider's RPC was
+            // invisible to every prior scan — from here on, absence-of-line means the packet
+            // never came, not that a filter dropped it.
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.rpc(
+                "updateEntityPos id=" + entityId + " dim=" + dim.identifier()
+                    + " pos=" + pos + " portalId=" + portalId
+                    + " entityFound=" + (entity != null));
+
             if (entity == null) {
                 Helper.err("cannot find entity to update position");
                 return;
@@ -888,21 +896,19 @@ public class ClientTeleportationManager {
                     && portalWorld.getEntity(portalId)
                         instanceof qouteall.imm_ptl.core.portal.Portal p) {
                     crossingPortal = p;
-                    Vec3 newCur = p.transformPoint(entity.position());
-                    Vec3 newLast = p.transformPoint(McHelper.lastTickPosOf(entity));
-                    McHelper.setPosAndLastTickPos(entity, newCur, newLast);
-                    McHelper.updateBoundingBox(entity);
-                    McHelper.setWorldVelocity(
-                        entity, p.transformLocalVec(McHelper.getWorldVelocity(entity)));
-                    InterpolationHandler interp = entity.getInterpolation();
-                    if (interp != null && interp.hasActiveInterpolation()) {
-                        interp.interpolateTo(
-                            p.transformPoint(interp.position()), interp.yRot(), interp.xRot());
-                    }
+                    applyRebaseVisual(entity, p, pos, portalId);
                     entity.getPositionCodec().setBase(pos);
-                    com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
-                        "REBASE via portal " + portalId + " visual=" + newCur
-                            + " server=" + pos);
+                    // ATOMIC RIDER CARRY (live round 2026-08-16 #6): the vehicle and its riders
+                    // arrive in SEPARATE RPC packets and 26.2 renders frames MID-PACKET — a
+                    // frame landing in the gap drew the not-yet-rebased rider unclipped (the
+                    // split-second cow fragment), and a positionRider drag winning the race
+                    // left the rider's own RPC to double-transform an already-carried visual
+                    // (the couple-seconds standing ghost; the 686.7-offset garbage rebases).
+                    // Carrying every rider inside the vehicle's rebase closes the frame gap;
+                    // the rider's own RPC then hits the idempotency guard and skips.
+                    for (Entity rider : entity.getPassengers()) {
+                        applyRebaseVisual(rider, p, pos, portalId);
+                    }
                     rebased = true;
                 }
             }
@@ -928,15 +934,17 @@ public class ClientTeleportationManager {
                     qouteall.imm_ptl.core.portal.PortalManipulation
                         .findArrivalFacingPortal(crossingPortal);
                 if (arrivalFace != null) {
-                    ((qouteall.imm_ptl.core.ducks.IEEntity) entity).ip_clearCollidingPortal();
-                    ((qouteall.imm_ptl.core.ducks.IEEntity) entity)
-                        .ip_notifyCollidingWithPortal(arrivalFace);
+                    seedArrivalFace(entity, arrivalFace);
+                    // ATOMIC RIDER CARRY, seed half: a rider must be render-bracketed on the
+                    // same frame as its vehicle — an unseeded rider in the frame gap drew
+                    // unclipped, cut only by the window stencil (the split-second fragment).
+                    for (Entity rider : entity.getPassengers()) {
+                        seedArrivalFace(rider, arrivalFace);
+                    }
                     // The straddle pin (SeamStraddleBracket, consulted by the prune and the
                     // register gates) now keeps this entry authoritative for exactly as long
                     // as the box straddles the plane — no grace timer needed.
                     seeded = true;
-                    com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
-                        "SNAP-SEED arrival-face=" + arrivalFace.getId());
                 }
             }
             if (!seeded) {
@@ -949,6 +957,67 @@ public class ClientTeleportationManager {
                             .ip_isCollidingWithPortal());
             }
             qouteall.imm_ptl.core.render.CrossPortalEntityRenderer.onEntityTickClient(entity);
+        }
+
+        /**
+         * The REBASE with the IDEMPOTENCY GUARD (live round 2026-08-16 #6, log-caught): map the
+         * stored visual state through the portal transform ONLY if the visual is still on the
+         * departure side. The visual may ALREADY be at the arrival — a cross-dim client entity
+         * spawns there (the RPC then re-transformed it: {@code visual=(715.67,173,-128.49)
+         * server=(34.67,118,-59.49)}, the constant one-portal-offset garbage family), and a
+         * same-dim rider gets dragged there by {@code positionRider} when the drag wins the
+         * packet race (the flung rider then STOOD at a station for seconds — the
+         * "couple-seconds sighting"). The guard: whichever of {current, transformed} lands
+         * nearer the server's authoritative position is the truth; a second transform can never
+         * win that comparison, so double-application is structurally impossible.
+         */
+        private static void applyRebaseVisual(
+            Entity e, qouteall.imm_ptl.core.portal.Portal p, Vec3 serverPos, int portalId
+        ) {
+            Vec3 cur = e.position();
+            Vec3 mapped = p.transformPoint(cur);
+            if (cur.distanceToSqr(serverPos) <= mapped.distanceToSqr(serverPos)) {
+                // Already carried. Kill any cross-station lerp streak the drag left behind;
+                // otherwise leave the visual exactly where it is.
+                if (McHelper.lastTickPosOf(e).distanceToSqr(cur) > 64) {
+                    McHelper.setPosAndLastTickPos(e, cur, cur);
+                    McHelper.updateBoundingBox(e);
+                }
+                com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
+                    "REBASE-SKIP (already carried) via portal " + portalId
+                        + " visual=" + cur + " server=" + serverPos);
+                return;
+            }
+            Vec3 newLast = p.transformPoint(McHelper.lastTickPosOf(e));
+            McHelper.setPosAndLastTickPos(e, mapped, newLast);
+            McHelper.updateBoundingBox(e);
+            McHelper.setWorldVelocity(e, p.transformLocalVec(McHelper.getWorldVelocity(e)));
+            InterpolationHandler interp = e.getInterpolation();
+            if (interp != null && interp.hasActiveInterpolation()) {
+                interp.interpolateTo(
+                    p.transformPoint(interp.position()), interp.yRot(), interp.xRot());
+            }
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
+                "REBASE via portal " + portalId + " visual=" + mapped + " server=" + serverPos);
+        }
+
+        private static void seedArrivalFace(
+            Entity e, qouteall.imm_ptl.core.portal.Portal arrivalFace
+        ) {
+            ((qouteall.imm_ptl.core.ducks.IEEntity) e).ip_clearCollidingPortal();
+            // The seed is the crossing's own authoritative notify — the trail body is
+            // legitimately wholly behind the arrival face, so bypass the BEHIND-REFUSAL
+            // registration gate for exactly this call.
+            com.warwa.seamlessportals.passthrough.SeamStraddleBracket.beginSeed();
+            try {
+                ((qouteall.imm_ptl.core.ducks.IEEntity) e)
+                    .ip_notifyCollidingWithPortal(arrivalFace);
+            }
+            finally {
+                com.warwa.seamlessportals.passthrough.SeamStraddleBracket.endSeed();
+            }
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
+                "SNAP-SEED arrival-face=" + arrivalFace.getId());
         }
     }
 }

@@ -54,6 +54,27 @@ public class PortalCollisionHandler {
                 return false;
             }
 
+            // F5/F6 RIDER BRACKET MIRROR (live round 2026-08-17, log-nailed: the vehicle's
+            // per-move registration fan re-added the rider's entry every tick and the rider's
+            // OWN prune — whose box/eye gates are tuned for self-moving entities — deleted it
+            // again before any frame rendered, so the rider stayed un-bracketed through the
+            // whole approach: the cowless emerging cart). A passenger's entry lives exactly as
+            // long as its VEHICLE holds the same face: the rider is part of the crossing unit
+            // and the vehicle's entry lifecycle is the unit's source of truth.
+            Entity vehicle = entity.getVehicle();
+            if (vehicle != null) {
+                PortalCollisionHandler vehicleHandler =
+                    ((IEEntity) vehicle).ip_getPortalCollisionHandler();
+                if (vehicleHandler != null) {
+                    for (PortalCollisionEntry vehicleEntry : vehicleHandler.portalCollisions) {
+                        if (vehicleEntry.portal == p.portal) {
+                            p.activeTime = getTiming(entity);
+                            return false;
+                        }
+                    }
+                }
+            }
+
             AABB stretchedBoundingBox = CollisionHelper.getStretchedBoundingBox(entity);
             if (!stretchedBoundingBox.inflate(0.5).intersects(p.portal.getBoundingBox())) {
                 return true;
