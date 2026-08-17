@@ -1311,6 +1311,36 @@ public class IPGlobal {
     // 96, 512))^3 — a dest renderDistance 4x smaller than ambient = 64x the fog term.
     public static final boolean washProbe = Boolean.getBoolean("seamlessportals.washProbe");
 
+    // IS5-FARFADE (2026-08-16, IS5_FARFADE_DESIGN.md, DEFAULT ON) — the far-window washout
+    // fix, user-decided ("far handover to pre with no pop in, storm always present"): the
+    // convicted defect is the dest chain's own atmospherics integrated over the VIRTUAL
+    // camera distance (every delivery stage measured clean). Cross-dim SG windows crossfade
+    // with camera-to-nearest-portal-point distance toward a pend-time PRE capture that the
+    // SOURCE chain fogs at pane depth (the physically correct eye-to-pane medium); the SG
+    // weight floors at farFadeWMin so the storm never fully vanishes. disableFarFade = w≡1 =
+    // the shipped byte path (zero new GL commands).
+    public static final boolean disableFarFade =
+        Boolean.getBoolean("seamlessportals.disableFarFade");
+    public static final double farFadeD0 =
+        parseDoubleLever("seamlessportals.farFadeD0", 8.0, 0.0, 256.0);
+    public static final double farFadeD1 =
+        parseDoubleLever("seamlessportals.farFadeD1", 24.0, 0.5, 512.0);
+    public static final double farFadeWMin =
+        parseDoubleLever("seamlessportals.farFadeWMin", 0.15, 0.0, 1.0);
+
+    private static double parseDoubleLever(String prop, double def, double min, double max) {
+        String raw = System.getProperty(prop);
+        if (raw == null) return def;
+        try {
+            double v = Double.parseDouble(raw.trim());
+            if (v >= min && v <= max) return v;
+        } catch (NumberFormatException ignored) {
+        }
+        // Must not throw (static initializer); an out-of-range lever falls back loudly-ish
+        // via the RC block printing the EFFECTIVE value.
+        return def;
+    }
+
     // IS5-HIST (2026-08-10) — the window history stamp writes the PREVIOUS frame's capture,
     // DEFAULT ON. history=current left TAA's reprojected history read one frame WRONG at window
     // pixels — the ugly MB-off approach-blur (jitter=0 leg refuted jitter-alone; the blend's
