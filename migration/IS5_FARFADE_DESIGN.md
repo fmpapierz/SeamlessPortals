@@ -176,3 +176,31 @@ F13 **Disclosures carried to the user gate** (eng N1/N3, arc N8): wash=SKIP conf
    (§1.9b watch) re-acquire virtual-distance fog in the fade band — walk-out leg adjudicates
    raw dBnd ≥ the c1 index. N2 expectation: wMin=0.15 of a near-white wash may read milky —
    plan a wMin/D1 retune round with the user.
+
+F14 **Steep-angle driver amendment** (2026-08-17, POST-GATE — the user's live hold at the
+   "near portal, extreme angle from above" worst case printed fw=0.79 with the wash visible
+   and window-confined, SG capture 2-3.5x the graded-PRE at the same pixel, wB/R=0/0, no
+   spill): the pane distance UNDER-MEASURES the haze at extreme incidence — the sight line
+   through the pane travels ~1/|look·n| times the pane distance through DEST space. The
+   fade driver becomes d_eff = d_nearestPoint / max(|look·portalNormal|, farFadeCosFloor)
+   (lever, default 0.2 = ≤5x amplification; 1.0 disables). Head-on unchanged; crossing
+   frames inert (d≈0). Disclosed: edge-on walks past a portal now fade its window (grazing
+   views barely show the window; acceptable). Self-judged as a driver refinement inside F1's
+   machinery (all other folds carry unchanged); flag to the next panel if the family
+   reopens. The principled successor if uniform fade reads wrong on mixed-depth windows:
+   per-pixel w from the captured dest depth (u_captureDepth) — noted, not built.
+
+F15 **Per-pixel content-distance fade** (2026-08-17, POST-GATE round 2 — user: "good from
+   far away, gradually comes back when very close"): every pane-distance driver goes to 0
+   as the player approaches the pane while the CONTENT haze does not (point-blank steep
+   view still looks at lava 10+ blocks into the dest). The fade weight moves INTO the
+   mode-2 shader, per pixel, from the captured dest depth (slot.depthTex = dest depthtex0
+   at the anchor): |viewZ| = m32/(2d-1+m22) (JOML z-row constants of the slot projection;
+   clipDepthMode NEGATIVE_ONE_TO_ONE measured), wpx = wMin+(1-wMin)*(1-smoothstep(D0,D1,
+   dist)) — D0/D1 REINTERPRETED as CONTENT-distance thresholds (8/24; storm is zero below
+   one 8-block march step, so sub-8 content has no storm to lose). The arm gate stays
+   pane-side (d_eff with cosFloor, default lowered 0.2→0.05: honest slant amplification —
+   over-arming costs only the copy since near-content pixels fade w=1 anyway) and a slot
+   RAMP smoothstep(D0, D0+3, d_eff) scales the per-pixel fade so the D0 gate crossing can
+   never pop (ramp=0 at the edge). Near-content pixels stay sharp at EVERY player position;
+   sky (d=1) reads far and fades to the source-processed look (F12c disclosure applies).

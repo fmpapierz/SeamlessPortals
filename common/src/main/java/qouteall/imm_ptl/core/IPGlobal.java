@@ -1327,6 +1327,16 @@ public class IPGlobal {
         parseDoubleLever("seamlessportals.farFadeD1", 24.0, 0.5, 512.0);
     public static final double farFadeWMin =
         parseDoubleLever("seamlessportals.farFadeWMin", 0.15, 0.0, 1.0);
+    // IS5-FARFADE F14 (2026-08-17, the steep-angle amendment — user hold at fw=0.79 proved
+    // the pane distance under-measures the haze at extreme incidence: the sight line through
+    // the pane travels far through dest space even when the pane is close): the fade driver
+    // becomes d_eff = d / max(|look·portalNormal|, cosFloor). Head-on views unchanged
+    // (dot≈1); steep/grazing views amplify toward the user-approved far look. 1.0 = pure
+    // distance (disables the amplification).
+    // F15 lowered the default 0.2 -> 0.05 (the arm gate wants the honest slant factor; the
+    // per-pixel content fade bounds what actually fades, so over-arming costs only the copy).
+    public static final double farFadeCosFloor =
+        parseDoubleLever("seamlessportals.farFadeCosFloor", 0.05, 0.05, 1.0);
 
     private static double parseDoubleLever(String prop, double def, double min, double max) {
         String raw = System.getProperty(prop);

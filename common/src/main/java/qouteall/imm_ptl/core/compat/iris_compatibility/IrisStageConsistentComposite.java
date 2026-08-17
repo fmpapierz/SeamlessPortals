@@ -890,6 +890,10 @@ public final class IrisStageConsistentComposite {
         boolean preCaptured = false;
         int preColorTex = 0;
         int preW = -1, preH = -1, preFmt = 0;
+        // F15: the slot RAMP — 0 at the arm gate edge (no visible fade: gate crossings can
+        // never pop) rising to 1 over ~3 blocks of d_eff; the shader then fades PER PIXEL by
+        // content distance, scaled by this ramp.
+        float slotRamp = 0f;
         // IS5-XDIM-SG (IS5_RESTAMP_DESIGN.md §2.2): this frame's DEST-boundary capture landed —
         // colorTex/depthTex hold the dest anchor-boundary image (single-graded, pre-AA); the
         // TAIL then skips its mainRT copy and the source-anchor inject fires. Cleared at
@@ -1021,12 +1025,28 @@ public final class IrisStageConsistentComposite {
         if (slot.postFinalMode && !IPGlobal.disableFarFade) {
             try {
                 double d = portal.getDistanceToNearestPointInPortal(slot.cameraPos);
+                // F14 (steep-angle amendment): amplify by view incidence — at extreme angles
+                // the ray through the pane travels ~1/|look·n| times farther through DEST
+                // space than the pane distance suggests (the user's worst case held at
+                // fw=0.79: pane ~13 blocks, content haze like 30+). Head-on: dot≈1, d_eff=d.
+                // Crossing frames stay inert (d≈0 divided by anything stays ≈0).
+                var player = net.minecraft.client.Minecraft.getInstance().player;
+                if (player != null && IPGlobal.farFadeCosFloor < 1.0) {
+                    Vec3 look = player.getViewVector(slot.partialTick);
+                    double cos = Math.abs(look.dot(portal.getNormal()));
+                    d = d / Math.max(cos, IPGlobal.farFadeCosFloor);
+                }
                 double d0 = IPGlobal.farFadeD0;
                 double d1 = Math.max(IPGlobal.farFadeD1, d0 + 0.001); // D1>D0 or a step pops
                 double t = Math.min(1.0, Math.max(0.0, (d - d0) / (d1 - d0)));
                 t = t * t * (3.0 - 2.0 * t); // smoothstep — continuous in d (C-F1)
                 slot.fadeW = (float) (IPGlobal.farFadeWMin
                     + (1.0 - IPGlobal.farFadeWMin) * (1.0 - t));
+                // F15: the slot ramp rises over D0..D0+3 of d_eff — 0 at the gate edge so
+                // arming can never pop; the actual fade amount is PER PIXEL in the shader
+                // (content distance from the captured dest depth), scaled by this ramp.
+                double tr = Math.min(1.0, Math.max(0.0, (d - d0) / 3.0));
+                slot.slotRamp = (float) (tr * tr * (3.0 - 2.0 * tr));
             } catch (Throwable ignored) {
                 slot.fadeW = 1f;
             }
@@ -1621,6 +1641,7 @@ public final class IrisStageConsistentComposite {
             // are reused across portals (the cache-lives-on-the-subject rule).
             s.preCaptured = false;
             s.fadeW = 1f;
+            s.slotRamp = 0f;
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
@@ -1796,6 +1817,16 @@ public final class IrisStageConsistentComposite {
         // on unit 5) toward the SG capture. Asserted at every stamp-program draw site.
         uniform sampler2D u_prevGraded;
         uniform float u_fadeW;
+        // F15 per-pixel content-distance fade: u_projA/B = the dest projection's z-row
+        // constants (JOML m22/m32 — |viewZ| = B/(2d-1+A)); u_cd0/u_cd1 = the CONTENT-distance
+        // fade band (blocks); u_wMin = the storm floor; u_slotRamp scales the whole effect
+        // (0 at the arm-gate edge = pop-proof arming).
+        uniform float u_projA;
+        uniform float u_projB;
+        uniform float u_cd0;
+        uniform float u_cd1;
+        uniform float u_wMin;
+        uniform float u_slotRamp;
         in vec4 vertexColor;
         layout(location = 0) out vec4 fragColor;
         layout(location = 1) out vec4 auxColor;
@@ -1849,9 +1880,19 @@ public final class IrisStageConsistentComposite {
                 // IS5-FARFADE blend (§5 F6: the discard above keys EXCLUSIVELY on the SG
                 // capture's alpha — u_prevGraded/preColorTex alpha is NEVER read; a c0-class
                 // alpha-less format reads a constant 1.0 and would kill the R11 discard).
+                // F15: the fade weight is PER PIXEL from the captured dest depth — the true
+                // haze driver is the CONTENT's distance from the virtual camera, not the
+                // pane's (a point-blank steep view still looks at far lava). Near-content
+                // pixels stay sharp at every player position; sky (d=1) reads far.
                 if (u_fadeW < 1.0) {
+                    float dz = texelFetch(u_captureDepth, tc2, 0).r;
+                    float ndc = dz * 2.0 - 1.0;
+                    float dist = abs(u_projB / min(ndc + u_projA, -1.0e-6));
+                    float wpx = u_wMin + (1.0 - u_wMin)
+                        * (1.0 - smoothstep(u_cd0, u_cd1, dist));
+                    float w = mix(1.0, wpx, u_slotRamp);
                     fragColor = vec4(mix(
-                        texelFetch(u_prevGraded, tc2, 0).rgb, fragColor.rgb, u_fadeW), 1.0);
+                        texelFetch(u_prevGraded, tc2, 0).rgb, fragColor.rgb, w), 1.0);
                 }
                 gl_FragDepth = planeZ;
             } else {
@@ -2321,6 +2362,7 @@ public final class IrisStageConsistentComposite {
                     }
                     washProbeDestLine = washProbeReadPass(dcr, dm.gatherIdx + 1, "destC5")
                         + " | " + washProbeCamScan(dcr, "dest") + " vs " + camRef
+                        + " | " + washProbeCtxScan(dcr, "dest")
                         + " | " + washProbeRdScan(dcr, "dest")
                         + " | " + washProbeResProj(dcr, "dest");
                 }
@@ -2382,6 +2424,54 @@ public final class IrisStageConsistentComposite {
     /** v3: per-pass renderDistance/far sweep — the (lViewPos/clamp(min(renderDistance,LIMIT),
      *  96,512))^3 multiply lives in composite1; a shrunken dest renderDistance there is a
      *  64x-class over-multiply nothing downstream cancels. '-' = inactive (stripped). */
+    /** WASHPROBE v4 — the VIEWER-STATE-uniform comparator (the exact-match contract leg,
+     *  2026-08-17): the pack derives its nether look from fogColor / eyeBrightness / the
+     *  smoothed biome uniforms (inNetherWastes -> netherColor); if the DEST chain executes
+     *  with the VIEWER's values (OW biome smoothies = 0, OW fogColor), the window's nether
+     *  is OW-tinted and lifted — the close-range wash. First ACTIVE location per uniform. */
+    private static String washProbeCtxScan(Object renderer, String tag) {
+        try {
+            List<?> passes = (List<?>) fPasses.get(renderer);
+            String fog = null, eyeB = null, biome = null;
+            for (int i = 0; i < passes.size(); i++) {
+                Object prog = fPassProgram.get(passes.get(i));
+                if (prog == null) continue;
+                int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+                if (fog == null) {
+                    int l = GL20C.glGetUniformLocation(pid, "fogColor");
+                    if (l >= 0) {
+                        float[] v = new float[3];
+                        GL20C.glGetUniformfv(pid, l, v);
+                        fog = String.format("fog=(%.3f,%.3f,%.3f)@P%d", v[0], v[1], v[2], i);
+                    }
+                }
+                if (eyeB == null) {
+                    int l = GL20C.glGetUniformLocation(pid, "eyeBrightness");
+                    if (l >= 0) {
+                        int[] v = new int[2];
+                        GL20C.glGetUniformiv(pid, l, v);
+                        eyeB = String.format("eyeB=(%d,%d)@P%d", v[0], v[1], i);
+                    }
+                }
+                if (biome == null) {
+                    int l = GL20C.glGetUniformLocation(pid, "inNetherWastes");
+                    if (l < 0) l = GL20C.glGetUniformLocation(pid, "inSoulValley");
+                    if (l >= 0) {
+                        float[] v = new float[1];
+                        GL20C.glGetUniformfv(pid, l, v);
+                        biome = String.format("netherBiome=%.2f@P%d", v[0], i);
+                    }
+                }
+                if (fog != null && eyeB != null && biome != null) break;
+            }
+            return tag + " ctx: " + (fog == null ? "fog=n/a" : fog)
+                + " " + (eyeB == null ? "eyeB=n/a" : eyeB)
+                + " " + (biome == null ? "netherBiome=n/a" : biome);
+        } catch (Throwable t) {
+            return tag + " ctx=read-failed(" + t + ")";
+        }
+    }
+
     private static String washProbeRdScan(Object renderer, String tag) {
         try {
             List<?> passes = (List<?>) fPasses.get(renderer);
@@ -2749,6 +2839,19 @@ public final class IrisStageConsistentComposite {
                     if (fw < 1f) {
                         GlStateManager._activeTexture(GL13.GL_TEXTURE5);
                         GlStateManager._bindTexture(blendScratchId);
+                        // F15: per-pixel content-distance fade inputs — the captured dest
+                        // depth (unit 3) + the dest projection's z-row constants (JOML
+                        // m22/m32) + the content-distance band and floors. slotRamp scales
+                        // the whole effect (0 at the arm-gate edge = pop-proof).
+                        GlStateManager._activeTexture(GL13.GL_TEXTURE3);
+                        GlStateManager._bindTexture(e.slot.depthTex);
+                        GL20C.glUniform1i(locCaptureDepth, 3);
+                        GL20C.glUniform1f(locProjA, e.slot.projection.m22());
+                        GL20C.glUniform1f(locProjB, e.slot.projection.m32());
+                        GL20C.glUniform1f(locCd0, (float) IPGlobal.farFadeD0);
+                        GL20C.glUniform1f(locCd1, (float) IPGlobal.farFadeD1);
+                        GL20C.glUniform1f(locWMin, (float) IPGlobal.farFadeWMin);
+                        GL20C.glUniform1f(locSlotRamp, e.slot.slotRamp);
                         censusFwB++;
                     }
                     GlStateManager._activeTexture(GL13.GL_TEXTURE0);
@@ -2874,6 +2977,8 @@ public final class IrisStageConsistentComposite {
     // fwMin/MaxSeen = the meas line's fw= range, reset at each 1Hz emit).
     private static int locPrevGraded = -1;
     private static int locFadeW = -1;
+    private static int locProjA = -1, locProjB = -1;
+    private static int locCd0 = -1, locCd1 = -1, locWMin = -1, locSlotRamp = -1;
     private static int blendScratchId = 0;
     private static int blendScratchW = -1, blendScratchH = -1, blendScratchFmt = 0;
     private static int censusFwB = 0, censusFwF = 0;
@@ -2961,6 +3066,12 @@ public final class IrisStageConsistentComposite {
         locZeroAlpha = GL20C.glGetUniformLocation(prog, "u_zeroAlpha");
         locPrevGraded = GL20C.glGetUniformLocation(prog, "u_prevGraded");
         locFadeW = GL20C.glGetUniformLocation(prog, "u_fadeW");
+        locProjA = GL20C.glGetUniformLocation(prog, "u_projA");
+        locProjB = GL20C.glGetUniformLocation(prog, "u_projB");
+        locCd0 = GL20C.glGetUniformLocation(prog, "u_cd0");
+        locCd1 = GL20C.glGetUniformLocation(prog, "u_cd1");
+        locWMin = GL20C.glGetUniformLocation(prog, "u_wMin");
+        locSlotRamp = GL20C.glGetUniformLocation(prog, "u_slotRamp");
         return true;
     }
 
@@ -3197,6 +3308,7 @@ public final class IrisStageConsistentComposite {
                 lastWashProbeMs = measNow;
                 String mainLine = washProbeReadPass(
                     mainCompositeRenderer, meas.gatherIdx + 1, "mainC5")
+                    + " | " + washProbeCtxScan(mainCompositeRenderer, "main")
                     + " | " + washProbeRdScan(mainCompositeRenderer, "main")
                     + " | " + washProbeResProj(mainCompositeRenderer, "main");
                 LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] {} || {}",
