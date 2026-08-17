@@ -396,6 +396,19 @@ public class ClientTeleportationManager {
 
         McHelper.adjustVehicle(player);
 
+        if (vehicle != null) {
+            // F5: the carry moved the cart whole — flip its collision bookkeeping WITH it.
+            // The player got its refresh just above, but the cart kept the SOURCE portal's
+            // stale entry (garbage clip + counterpart for 1-3 rendered frames) and gained
+            // the dest-side entry only at the next POST_CLIENT_TICK sweep — the ridden
+            // flavour of the live "back half of the cart" pop.
+            PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                vehicle, McHelper.getEyePos(vehicle), McHelper.getEyePos(vehicle),
+                RenderStates.getPartialTick()
+            );
+            qouteall.imm_ptl.core.render.CrossPortalEntityRenderer.onEntityTickClient(vehicle);
+        }
+
         // (e) instrument: the CLIENT's post-crossing ride state, read after adjustVehicle — the
         // last thing the client mutates on this path. On the SAME-DIM path this is the ONLY
         // vehicle handling there is (no dismount, no recreate, no re-mount), so if the link is
@@ -845,24 +858,97 @@ public class ClientTeleportationManager {
         public static void updateEntityPos(
             ResourceKey<Level> dim,
             int entityId,
-            Vec3 pos
+            Vec3 pos,
+            ResourceKey<Level> portalDim,
+            int portalId
         ) {
             ClientLevel world = ClientWorldLoader.getWorld(dim);
-            
+
             Entity entity = world.getEntity(entityId);
-            
+
             if (entity == null) {
                 Helper.err("cannot find entity to update position");
                 return;
             }
-            
-            // both of them are important for Minecart
-            entity.getPositionCodec().setBase(pos);
-            entity.snapTo(pos, entity.getYRot(), entity.getXRot());
-            InterpolationHandler interpolation = entity.getInterpolation();
-            if (interpolation != null) {
-                interpolation.cancel();
+
+            // F6 — REBASE, not snap, at a seam crossing (portalId != -1 iff the server took the
+            // conserved-arrival path). The old snap+cancel froze the cart for a tick and dropped
+            // the client's interpolation lag on the floor — the residual hiccup after F5. The
+            // rebase maps EVERY piece of stored visual state (position, last-tick position, the
+            // pending interpolation target, velocity) through the portal transform, so every
+            // frame-to-frame delta is preserved exactly and the on-screen path is continuous
+            // through the flip — the render-side analogue of the rs(e) VecDeltaCodec rebase
+            // rule. The codec base still takes the server's authoritative position: subsequent
+            // move deltas must decode against what the server actually uses.
+            boolean rebased = false;
+            qouteall.imm_ptl.core.portal.Portal crossingPortal = null;
+            if (portalId != -1) {
+                ClientLevel portalWorld = ClientWorldLoader.getWorld(portalDim);
+                if (portalWorld != null
+                    && portalWorld.getEntity(portalId)
+                        instanceof qouteall.imm_ptl.core.portal.Portal p) {
+                    crossingPortal = p;
+                    Vec3 newCur = p.transformPoint(entity.position());
+                    Vec3 newLast = p.transformPoint(McHelper.lastTickPosOf(entity));
+                    McHelper.setPosAndLastTickPos(entity, newCur, newLast);
+                    McHelper.updateBoundingBox(entity);
+                    McHelper.setWorldVelocity(
+                        entity, p.transformLocalVec(McHelper.getWorldVelocity(entity)));
+                    InterpolationHandler interp = entity.getInterpolation();
+                    if (interp != null && interp.hasActiveInterpolation()) {
+                        interp.interpolateTo(
+                            p.transformPoint(interp.position()), interp.yRot(), interp.xRot());
+                    }
+                    entity.getPositionCodec().setBase(pos);
+                    com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
+                        "REBASE via portal " + portalId + " visual=" + newCur
+                            + " server=" + pos);
+                    rebased = true;
+                }
             }
+            if (!rebased) {
+                // both of them are important for Minecart
+                entity.getPositionCodec().setBase(pos);
+                entity.snapTo(pos, entity.getYRot(), entity.getXRot());
+                InterpolationHandler interpolation = entity.getInterpolation();
+                if (interpolation != null) {
+                    interpolation.cancel();
+                }
+            }
+            // F5/F6 (the live "back half of the cart" pop + the flip blink): the arrived
+            // entity's render bracket must exist on its FIRST rendered frame, and it must be
+            // the ARRIVAL-FACING face chosen by the CROSSING — the eye-side geometric sweep
+            // picks the wrong co-located face (or none) while the rebased visual hasn't
+            // emerged yet, which drew the whole object on the wrong side of the portal and
+            // blanked it in portal views (2026-08-11 live). The grace registry keeps the
+            // entry alive across the eye-side prune until the visual catches up.
+            boolean seeded = false;
+            if (rebased && crossingPortal != null) {
+                qouteall.imm_ptl.core.portal.Portal arrivalFace =
+                    qouteall.imm_ptl.core.portal.PortalManipulation
+                        .findArrivalFacingPortal(crossingPortal);
+                if (arrivalFace != null) {
+                    ((qouteall.imm_ptl.core.ducks.IEEntity) entity).ip_clearCollidingPortal();
+                    ((qouteall.imm_ptl.core.ducks.IEEntity) entity)
+                        .ip_notifyCollidingWithPortal(arrivalFace);
+                    // The straddle pin (SeamStraddleBracket, consulted by the prune and the
+                    // register gates) now keeps this entry authoritative for exactly as long
+                    // as the box straddles the plane — no grace timer needed.
+                    seeded = true;
+                    com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
+                        "SNAP-SEED arrival-face=" + arrivalFace.getId());
+                }
+            }
+            if (!seeded) {
+                PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                    entity, McHelper.getEyePos(entity), McHelper.getEyePos(entity), 1
+                );
+                com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
+                    "SNAP-SEED sweep colliding="
+                        + ((qouteall.imm_ptl.core.ducks.IEEntity) entity)
+                            .ip_isCollidingWithPortal());
+            }
+            qouteall.imm_ptl.core.render.CrossPortalEntityRenderer.onEntityTickClient(entity);
         }
     }
 }

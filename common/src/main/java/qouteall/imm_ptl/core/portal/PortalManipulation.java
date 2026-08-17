@@ -462,6 +462,27 @@ public class PortalManipulation {
         ));
     }
     
+    /**
+     * F6 (seam crossings) — the ARRIVAL-FACING face at a crossing portal's destination: the
+     * co-located face whose FRONT contains the emerged side (normal along the crossing's content
+     * direction), i.e. {@code flipped(reverse(portal))} found in one geometric scan. This is the
+     * face an arrived, still-straddling entity must be render-bracketed against — chosen by the
+     * CROSSING, never by the entity's current eye side, which lags during the flip.
+     */
+    @Nullable
+    public static Portal findArrivalFacingPortal(Portal portal) {
+        return Helper.getFirstNullable(McHelper.findEntitiesRough(
+            Portal.class,
+            portal.getDestinationWorld(),
+            portal.getDestPos(),
+            0,
+            p1 -> p1.getOriginPos().subtract(portal.getDestPos()).lengthSqr() < 0.01 &&
+                p1.getNormal().dot(portal.getContentDirection()) > 0.9 &&
+                !(p1 instanceof Mirror) &&
+                p1 != portal
+        ));
+    }
+
     @Nullable
     public static Portal findFlippedPortal(Portal portal) {
         return Helper.getFirstNullable(McHelper.findEntitiesRough(

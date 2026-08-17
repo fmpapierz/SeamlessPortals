@@ -195,6 +195,21 @@ public abstract class MixinClientLevel implements IEClientWorld {
         ((IEEntity) entity).ip_tickCollidingPortal();
     }
 
+    // F5 rider fix, part 3 (live 2026-08-11: the permanent floating-rider ghost): PASSENGERS
+    // are ticked through this private method, never tickNonPassenger — so a rider's collision
+    // bookkeeping had NO per-tick lifecycle: entries were never pruned (a portal entry seeded
+    // or swept once stayed pinned forever, projecting a counterpart ghost through that portal
+    // for the rest of the ride and hiding the real rider in portal views) and the rider never
+    // enrolled in the render set by itself. Same call, same HEAD timing as the vehicle's hook.
+    @Inject(
+        method = "tickPassenger",
+        at = @At("HEAD"),
+        require = 1
+    )
+    private void onTickPassenger(Entity vehicle, Entity passenger, CallbackInfo ci) {
+        ((IEEntity) passenger).ip_tickCollidingPortal();
+    }
+
     @Override
     public void ip_resetWorldRendererRef() {
         levelExtractor = null; // 26.2: null the renamed render back-ref (was `levelRenderer`)

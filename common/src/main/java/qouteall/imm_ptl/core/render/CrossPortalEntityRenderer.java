@@ -199,18 +199,23 @@ public class CrossPortalEntityRenderer {
         Entity entity
     ) {
         if (!isCrossPortalRenderingEnabled()) {
+            frameProbe(entity, "MAIN vanilla-unclipped (cross-portal rendering disabled)");
             return false;
         }
         if (PortalRendering.isRendering()) {
+            frameProbe(entity, "MAIN vanilla-unclipped (portal-view pass "
+                + PortalRendering.getRenderingPortal().getId() + ")");
             return false;
         }
         if (!collidedEntities.containsKey(entity)) {
+            frameProbe(entity, "MAIN vanilla-unclipped (not in collidedEntities)");
             return false;
         }
 
         PortalCollisionHandler collisionHandler = ((IEEntity) entity).ip_getPortalCollisionHandler();
 
         if (collisionHandler == null) {
+            frameProbe(entity, "MAIN vanilla-unclipped (null handler)");
             return false;
         }
 
@@ -223,13 +228,85 @@ public class CrossPortalEntityRenderer {
         }
 
         if (collidingPortal == null) {
+            frameProbe(entity, "MAIN vanilla-unclipped (empty entries)");
             return false;
         }
 
+        frameProbe(entity, "MAIN clipped by face " + collidingPortal.getId()
+            + " normal=" + collidingPortal.getNormal()
+            + " entries=" + describeEntries(collisionHandler));
         PerEntityClipBracket.submitMainPassEntityClipped(
             dispatcher, state, cam, camX, camY, camZ, poseStack, storage, collidingPortal
         );
         return true;
+    }
+
+    // ═════════ F6 RENDER-PATH INSTRUMENT (probe-gated; the signature the arc was missing) ═════════
+
+    /** Per-frame draw-decision record for carts + their riders, under -PseamCartProbe only. */
+    private static void frameProbe(Entity entity, String what) {
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE) {
+            return;
+        }
+        if (!(entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart
+            || (entity.isPassenger() && !(entity instanceof Player)))) {
+            return;
+        }
+        com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity, "[DRAW] " + what);
+    }
+
+    /**
+     * F6: is the entity's through-portal image actually visible to the camera THROUGH the
+     * portal's destination-side aperture? The visible (inner-clipped) image hugs the window
+     * mouth, so the test is: the image's plane-projection lies within the aperture rectangle
+     * (with a size margin), and the camera is on the opposite side of that plane from the
+     * un-clipped image body (i.e., genuinely looking through). Errs toward drawing on any
+     * geometric degeneracy — masking must never hide a legitimate image.
+     */
+    private static boolean isProjectionVisibleThroughAperture(Entity entity, Portal portal) {
+        try {
+            Vec3 cameraPos = client.gameRenderer.mainCamera().position();
+            Vec3 entityInstantPos = McHelper.lastTickPosOf(entity)
+                .lerp(entity.position(), RenderStates.getPartialTick());
+            Vec3 imagePos = portal.transformPoint(entityInstantPos);
+            var dest = portal.getOtherSideState();
+            Vec3 camLocal = dest.transformGlobalToLocal(cameraPos);
+            Vec3 imgLocal = dest.transformGlobalToLocal(imagePos);
+            double margin = Math.max(entity.getBbWidth(), entity.getBbHeight()) + 0.4;
+            // Two cases (the first shipped build collapsed these into a useless pair of
+            // always-true checks — 857 draws, 0 masks, ghost intact):
+            // SAME side: the inner-clipped image is emerged matter on the camera's side of the
+            // window — a direct, legitimate view. Always draw.
+            if (camLocal.z() * imgLocal.z() > 0) {
+                return true;
+            }
+            // OPPOSITE sides: the camera claims to see the image THROUGH the window — require
+            // the sight line to actually cross the plane inside the aperture rectangle. A
+            // camera beside or behind the mouth fails this and the pasted ghost is masked.
+            double dz = camLocal.z() - imgLocal.z();
+            if (Math.abs(dz) < 1.0e-6) {
+                return false;
+            }
+            double t = camLocal.z() / dz;
+            double x = camLocal.x() + (imgLocal.x() - camLocal.x()) * t;
+            double y = camLocal.y() + (imgLocal.y() - camLocal.y()) * t;
+            return Math.abs(x) <= dest.width() / 2 + margin
+                && Math.abs(y) <= dest.height() / 2 + margin;
+        }
+        catch (Throwable t) {
+            return true;
+        }
+    }
+
+    private static String describeEntries(@Nullable PortalCollisionHandler h) {
+        if (h == null || h.portalCollisions.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder("[");
+        for (PortalCollisionEntry e : h.portalCollisions) {
+            sb.append(e.portal.getId()).append('@').append(e.portal.getNormal()).append(' ');
+        }
+        return sb.append(']').toString();
     }
 
     //if an entity is in overworld but halfway through a nether portal
@@ -301,12 +378,37 @@ public class CrossPortalEntityRenderer {
                         //culling plane (IP :186-187). null → the seam registers an EXPLICITLY DISABLED
                         //snapshot (NOT the ambient dest inner clip), so the projection draws unclipped,
                         //matching IP (PerEntityClipBracket.submitProjectedEntityClipped; Verifier-1 P1).
-                        renderEntity(entity, collidingPortal, dispatcher, cam, matrixStack, storage, null);
+                        //
+                        // F6 SEAM EXCEPTION (live round 2026-08-16; the `PROJ clip=DISABLED
+                        // in-portal-pass` ghost, 1,485 probe lines): IP's stand-in gates assume a
+                        // framed portal whose un-poked image body hides behind the frame — a seam
+                        // is a co-planar window in open air, so the unclipped image pasted the
+                        // WHOLE cart into the window view (approach phase: pure ghost on the far
+                        // side; straddle phase: the already-emerged half double-drawn). Thread the
+                        // real inner clip for seam faces; the per-entity bracket scopes the plane
+                        // to this projection's own draws, leaving the pass's re-armed clip
+                        // untouched. Non-seam portals keep IP's null verbatim.
+                        Plane seamInPassClip = com.warwa.seamlessportals.passthrough
+                            .SeamCartContinuity.isSeamContinuous(collidingPortal)
+                            ? innerClipping
+                            : null;
+                        renderEntity(entity, collidingPortal, dispatcher, cam, matrixStack, storage,
+                            seamInPassClip);
                     }
                 }
             }
         }
         else {
+            // F6 APERTURE MASK (video 2026-08-12, frame-by-frame): the main-pass counterpart
+            // used to draw whenever the entity had an entry — including from camera angles
+            // where the window is edge-on or behind, pasting a floating image onto the near
+            // scene ("renders on source side A for a second"). Only draw it where the camera
+            // can actually see it THROUGH the aperture.
+            if (!isProjectionVisibleThroughAperture(entity, collidingPortal)) {
+                frameProbe(entity, "PROJ masked (not through aperture of face "
+                    + collidingPortal.getId() + ")");
+                return;
+            }
             //IP :206-214: disableClipping + endBatch + setupInnerClipping(inner) collapse into the seam
             //bracket — the inner clip plane becomes the ARGUMENT threaded to the projection submit.
             renderEntity(
@@ -346,9 +448,17 @@ public class CrossPortalEntityRenderer {
             boolean intersects = PortalManipulation.isOtherSideBoxInside(transformedBoundingBox, renderingPortal);
 
             if (!intersects) {
+                frameProbe(entity, "PROJ skipped (outside rendering portal "
+                    + renderingPortal.getId() + ")");
                 return;
             }
         }
+
+        frameProbe(entity, "PROJ via face " + transformingPortal.getId()
+            + " clip=" + (innerClipPlane == null ? "DISABLED"
+                : innerClipPlane.pos() + "/" + innerClipPlane.normal())
+            + (PortalRendering.isRendering()
+                ? " in-portal-pass " + PortalRendering.getRenderingPortal().getId() : " main-pass"));
 
         if (entity instanceof LocalPlayer) {
             if (!IPGlobal.renderYourselfInPortal) {
@@ -490,21 +600,49 @@ public class CrossPortalEntityRenderer {
             // client colliding portal update is not immediate
             if (collidingPortal != null && !(entity instanceof LocalPlayer)) {
                 if (renderingPortal instanceof Portal) {
+                    // F6 SEAM STRADDLE-SIDE GATE (live round 2026-08-16 #2, log-nailed): while a
+                    // seam crossing is in progress, the REAL entity may draw only in passes whose
+                    // view side matches the side its colliding face fronts (pre-teleport: the
+                    // departure side where the body still is; post-teleport: the arrival side it
+                    // emerges into) — the other side's image is the PROJ path's job. Without this,
+                    // the isReversePortal carve-out below skipped isHidden for the opposite-side
+                    // pass and the binary eye-side test drew the whole rebased-trail cart
+                    // vanilla-unclipped INTO that window for ~2 frames ("MAIN vanilla-unclipped
+                    // (portal-view pass 5)" at the teleport tick — the user's window flash).
+                    if (com.warwa.seamlessportals.passthrough.SeamCartContinuity
+                            .isSeamContinuous(collidingPortal)
+                        && com.warwa.seamlessportals.passthrough.SeamStraddleBracket
+                            .pinned(entity, collidingPortal)
+                        && collidingPortal.getNormal()
+                            .dot(((Portal) renderingPortal).getContentDirection()) <= 0) {
+                        frameProbe(entity, "VIS seam-side culled in portal-pass "
+                            + renderingPortal.getId() + " (pass shows the far side of straddled face "
+                            + collidingPortal.getId() + ")");
+                        return false;
+                    }
                     if (!Portal.isReversePortal(collidingPortal, ((Portal) renderingPortal))) {
                         Vec3 cameraPos = PortalRenderer.client.gameRenderer.mainCamera().position();
 
                         boolean isHidden = cameraPos.subtract(collidingPortal.getOriginPos())
                             .dot(collidingPortal.getNormal()) < 0;
                         if (isHidden) {
+                            frameProbe(entity, "VIS hidden in portal-pass "
+                                + renderingPortal.getId() + " (camera behind colliding face "
+                                + collidingPortal.getId() + ")");
                             return false;
                         }
                     }
                 }
             }
 
-            return renderingPortal.isOnDestinationSide(
+            boolean onDestSide = renderingPortal.isOnDestinationSide(
                 getRenderingCameraPos(entity), -0.01
             );
+            if (!onDestSide) {
+                frameProbe(entity, "VIS culled in portal-pass " + renderingPortal.getId()
+                    + " (not on destination side)");
+            }
+            return onDestSide;
         }
         return true;
     }

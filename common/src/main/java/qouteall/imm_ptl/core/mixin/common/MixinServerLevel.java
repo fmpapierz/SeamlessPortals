@@ -76,6 +76,19 @@ public abstract class MixinServerLevel implements IEServerWorld {
         ((IEEntity) entity).ip_tickCollidingPortal();
     }
 
+    // F5 rider fix, part 3: passengers tick through this private method, never
+    // tickNonPassenger — without this hook a rider's portal-collision entries had no
+    // per-tick pruning on the server either (stale cross-portal collision). Mirror of
+    // the client hook in MixinClientLevel.
+    @Inject(
+        method = "tickPassenger",
+        at = @At("HEAD"),
+        require = 1
+    )
+    private void onTickPassenger(Entity vehicle, Entity passenger, CallbackInfo ci) {
+        ((IEEntity) passenger).ip_tickCollidingPortal();
+    }
+
     @Override
     public PersistentEntitySectionManager<Entity> ip_getEntityManager() {
         return entityManager;

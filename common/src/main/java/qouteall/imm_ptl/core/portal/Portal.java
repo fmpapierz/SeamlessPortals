@@ -1142,7 +1142,12 @@ public class Portal extends Entity implements
         }
         
         // avoid cannot push minecart out of nether portal
-        if (entity instanceof AbstractMinecart && result.lengthSqr() < 0.5) {
+        // F6 (user-authorised 2026-08-11): EXEMPT SEAMS — a seam's far side is continuous rail,
+        // so there is no frame interior to push out of, and the doubling is a visible velocity
+        // lurch at slow rail speeds (0.4 max always qualifies for the < 0.5 test). Non-seam
+        // portals keep the kludge; its purpose (nether-portal push-out) is untouched.
+        if (entity instanceof AbstractMinecart && result.lengthSqr() < 0.5
+            && !com.warwa.seamlessportals.passthrough.SeamCartContinuity.isSeamContinuous(this)) {
             result = result.scale(2);
         }
         

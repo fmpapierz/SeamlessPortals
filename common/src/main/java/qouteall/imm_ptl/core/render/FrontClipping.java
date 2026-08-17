@@ -329,6 +329,14 @@ public class FrontClipping {
         if (clipEquationOuter == null) {
             return null;
         }
+        // F6 (user-confirmed contract 6a): the primary and its counterpart projection used to
+        // keep two >=0 half-spaces of the SAME plane — the shared boundary band was drawn by
+        // both (same geometry through different float-rounding paths), and the per-fragment
+        // fight was the thin line "washing over" a crossing entity. Partition instead: the
+        // primary RETREATS by ADJUSTMENT and the projection EXTENDS by it (captureInnerClipping
+        // below), so the later-drawn projection owns the band consistently. Render-capture path
+        // only — collision consumers of the same planes are untouched.
+        clipEquationOuter[3] -= ADJUSTMENT;
         return toViewSpaceSnapshot(clipEquationOuter, viewRotation);
     }
 
@@ -350,7 +358,23 @@ public class FrontClipping {
         if (clipping == null) {
             return null;
         }
-        double[] clipEquationInner = getClipEquationInner(clipping.pos(), clipping.normal(), 0);
+        // F6 6a: EXTEND by ADJUSTMENT (negative correction moves the plane against its normal,
+        // growing the kept region) — the other half of the partition described in
+        // captureOuterClipping. Was correction 0 (exact shared plane; boundary-band fight).
+        //
+        // F6 CAMERA-SIDE SCOPE (live round 2026-08-16 #3 — the "tiny sliver right at the
+        // seam"): the extension pairs the projection against the RETREATED outer-clipped main
+        // body — a pairing the camera only sees from the plane's KEPT side. From the far side
+        // the main body is invisible and the extended band is a naked ADJUSTMENT-thick
+        // cross-section of the image poking through the seam plane (the hollow cart-hull
+        // outline and cow hairlines in the user's screenshots). Extend only when the camera
+        // is on the kept side; RETREAT otherwise, so the band hides exactly behind the plane.
+        // getClipEquationInner reads the live camera, so this stays correct inside portal
+        // passes (mainCamera IS the pass camera there).
+        boolean cameraOnKeptSide = CHelper.getCurrentCameraPos()
+            .subtract(clipping.pos()).dot(clipping.normal()) > 0;
+        double[] clipEquationInner = getClipEquationInner(
+            clipping.pos(), clipping.normal(), cameraOnKeptSide ? -ADJUSTMENT : ADJUSTMENT);
         return toViewSpaceSnapshot(clipEquationInner, viewRotation);
     }
 

@@ -197,6 +197,41 @@ public final class SeamCartContinuity {
     }
 
     /**
+     * F6 — is this portal one face of a SEAM (stitched, mirrored continuation on the far side)?
+     * Decides whether a crossing may CONSERVE the through-transform (position and interpolation
+     * continue exactly; safe only because a seam's far side is continuous terrain by contract)
+     * versus IP's native plane-rewind arrival, which stays for every non-seam portal (a nether
+     * portal has no rail or floor continuation behind its plane).
+     *
+     * <p>Resolution: the SAME cell {@code bind} indexes — {@code seamCell(onPlane(origin))}, the
+     * aperture cell one STEP along the portal's own normal — matched by portal UUID. NOT
+     * {@code containing(getOriginPos())}: the origin lies ON the plane, so for a negative-axis
+     * normal the containing cell is the far-side cell and the UUID match silently fails for that
+     * whole crossing direction (the same off-by-one family SeamRegistry's unbind saga records).
+     * A miss answers false — the conservative fallback is always IP's own behaviour.
+     */
+    public static boolean isSeamContinuous(qouteall.imm_ptl.core.portal.Portal portal) {
+        try {
+            SeamRegistry.SeamCell cell = SeamRegistry.lookup(
+                portal.level(),
+                SeamMap.seamCell(portal, SeamMap.onPlane(portal, portal.getOriginPos())));
+            if (cell == null) {
+                return false;
+            }
+            for (SeamRegistry.SeamBinding b : cell.bindings()) {
+                if (b.portalUuid().equals(portal.getUUID())
+                    && b.isMirrorable() && b.seamContinuous()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * The one entry point (both mixins). Returns {@code local} unchanged unless the seam bridge
      * has a rail to offer at {@code pos}.
      *

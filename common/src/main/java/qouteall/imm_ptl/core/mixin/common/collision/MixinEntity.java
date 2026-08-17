@@ -309,6 +309,14 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
             ip_portalCollisionHandler = new PortalCollisionHandler();
         }
 
+        // F6 STRADDLE PIN, register side: while a seam face is straddled and booked, its
+        // co-located opposite twin may not register — last-entry-wins would flip the render
+        // bracket to the eye's side mid-crossing.
+        if (com.warwa.seamlessportals.passthrough.SeamStraddleBracket.refuses(
+            this_, ip_portalCollisionHandler, (Portal) portal)) {
+            return;
+        }
+
         ip_portalCollisionHandler.notifyCollidingWithPortal(this_, ((Portal) portal));
     }
 

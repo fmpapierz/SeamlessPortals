@@ -42,12 +42,23 @@ public class PortalCollisionHandler {
             if (p.portal.level() != entity.level()) {
                 return true;
             }
-            
+
+            // F6 STRADDLE PIN (user-confirmed contract): while the entity's crossing of this
+            // SEAM face is in progress, the entry persists and stays fresh — consulted BEFORE
+            // the box-proximity gate below, because a rebased arrival visual can trail more
+            // than its 0.5 stretch margin behind the plane; the eye-side reasons would then
+            // delete the crossing face's bracket mid-crossing and hand the clip to its
+            // co-located twin (the "renders on the wrong side for a second" defect).
+            if (com.warwa.seamlessportals.passthrough.SeamStraddleBracket.keeps(entity, p.portal)) {
+                p.activeTime = getTiming(entity);
+                return false;
+            }
+
             AABB stretchedBoundingBox = CollisionHelper.getStretchedBoundingBox(entity);
             if (!stretchedBoundingBox.inflate(0.5).intersects(p.portal.getBoundingBox())) {
                 return true;
             }
-            
+
             if (Math.abs(getTiming(entity) - p.activeTime) >= 3) {
                 return true;
             }

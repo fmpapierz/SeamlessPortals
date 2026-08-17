@@ -430,7 +430,17 @@ public class ServerTeleportationManager {
         PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
             player, newEyePos, newEyePos, 1
         );
-        
+
+        if (player.getVehicle() != null) {
+            // F5: the carried vehicle needs the same immediate refresh the player just got —
+            // its straddling arrival relies on cross-portal collision (the not-yet-crossed
+            // half rides the far side's rail), and the END_SERVER_TICK sweep is a tick late.
+            Entity vehicle = player.getVehicle();
+            PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                vehicle, McHelper.getEyePos(vehicle), McHelper.getEyePos(vehicle), 1
+            );
+        }
+
         Profiler.get().pop();
     }
     
@@ -650,7 +660,19 @@ public class ServerTeleportationManager {
 
         List<Entity> passengerList = entity.getPassengers();
 
-        Vec3 newEyePos = getRegularEntityTeleportedEyePos(entity, portal);
+        // F6 — CONSERVE THE CROSSING AT SEAMS. IP's arrival rewinds the overshoot to
+        // plane-hit + 0.05, which at rail speeds yanks the cart up to ~2 blocks BACKWARD at the
+        // flip (the live hiccup). A seam's far side is continuous terrain by contract, so the
+        // through-transform of the ACTUAL position is always a valid arrival — position, and
+        // with it the whole visual path, continues exactly. Non-seam portals keep IP's rewind
+        // (their far side is a portal frame, not a continuation). Guard: the eye must actually
+        // be past the plane — a queued-but-not-crossed edge case falls back to the rewind.
+        boolean seamConserve = com.warwa.seamlessportals.passthrough.SeamCartContinuity
+            .isSeamContinuous(portal)
+            && !portal.isInFrontOfPortal(McHelper.getEyePos(entity));
+        Vec3 newEyePos = seamConserve
+            ? portal.transformPoint(McHelper.getEyePos(entity))
+            : getRegularEntityTeleportedEyePos(entity, portal);
 
         cartProbe(entity, "TELEPORT-RUN-BEGIN (pre-transform)");
 
@@ -660,35 +682,87 @@ public class ServerTeleportationManager {
         
         if (portal.getDestDim() != entity.level().dimension()) {
             entity = changeEntityDimension(entity, portal.getDestDim(), newEyePos, true);
-            
+
             Entity newEntity = entity;
-            
+
             passengerList.stream().map(
                 e -> changeEntityDimension(e, portal.getDestDim(), newEyePos, true)
             ).collect(Collectors.toList()).forEach(e -> {
                 e.startRiding(newEntity, true, false);
             });
         }
-        
+        else {
+            // F5 rider fix (live 2026-08-11: "entities riding still clip"): the same-dim branch
+            // never moved the PASSENGERS — passengerList is only consumed by the cross-dim
+            // recreate above, so a mob rider stayed at the source for a whole tick (dragged over
+            // by positionRider only on the vehicle's next tick) and its client lerped the jump
+            // with no collision bookkeeping. Carry each rider through the portal transform in
+            // the same tick as its vehicle; positionRider exacts the attachment next tick.
+            for (Entity p : passengerList) {
+                Vec3 pNewEye = portal.transformPoint(McHelper.getEyePos(p));
+                McHelper.setEyePos(p, pNewEye, pNewEye);
+                McHelper.updateBoundingBox(p);
+                cartProbe(p, "RIDER-CARRIED same-dim (transform applied)");
+            }
+        }
+
         McHelper.setEyePos(entity, newEyePos, newEyePos);
         McHelper.updateBoundingBox(entity);
         
         // living entities do position interpolation
         // it may interpolate into unloaded chunks and stuck
         // avoid position interpolation
+        // F6: at a seam (conserved arrival) the RPC also carries the portal, so the client can
+        // REBASE its visual state through the transform instead of snap+cancel — a non-seam
+        // crossing sends the -1 sentinel and keeps the snap.
         McHelper.sendToTrackers(
             entity,
             McRemoteProcedureCall.createPacketToSendToClient(
                 "qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.RemoteCallables.updateEntityPos",
                 entity.level().dimension(),
                 entity.getId(),
-                entity.position()
+                entity.position(),
+                portal.level().dimension(),
+                seamConserve ? portal.getId() : -1
             )
         );
-        
+
+        // F5 rider fix, part 2: each rider gets the same snap the vehicle gets — the client
+        // RPC kills its interpolation AND refreshes its collision bookkeeping (the seed inside
+        // updateEntityPos is entity-generic), so the rider is clipped and counterparted from
+        // its first arrived frame exactly like the cart. getPassengers() here holds the
+        // post-teleport objects on both branches (same-dim: the originals; cross-dim: the
+        // recreated, remounted ones).
+        cartProbe(entity, "RIDER-RPC fan: passengers=" + entity.getPassengers().size());
+        for (Entity p : entity.getPassengers()) {
+            cartProbe(p, "RIDER-RPC sent (5-arg updateEntityPos)");
+            McHelper.sendToTrackers(
+                p,
+                McRemoteProcedureCall.createPacketToSendToClient(
+                    "qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.RemoteCallables.updateEntityPos",
+                    p.level().dimension(),
+                    p.getId(),
+                    p.position(),
+                    portal.level().dimension(),
+                    seamConserve ? portal.getId() : -1
+                )
+            );
+            PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                p, McHelper.getEyePos(p), McHelper.getEyePos(p), 1
+            );
+        }
+
         portal.onEntityTeleportedOnServer(entity);
 
         ScaleUtils.onServerEntityTeleported(entity, portal);
+
+        // F5: refresh the arrived entity's portal-collision bookkeeping NOW instead of at the
+        // next END_SERVER_TICK sweep — the player paths do exactly this, regular entities never
+        // did. The arrival straddles the dest-side portal (eye + 0.05 past the plane), so for
+        // one tick its not-yet-crossed half depended on entries that didn't exist.
+        PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+            entity, McHelper.getEyePos(entity), McHelper.getEyePos(entity), 1
+        );
 
         // a new entity may be created
         this.lastTeleportGameTime.put(entity, currGameTime);
