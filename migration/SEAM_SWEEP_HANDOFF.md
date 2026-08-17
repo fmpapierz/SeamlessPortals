@@ -11,15 +11,36 @@ closure) and `migration/PARTICLE_SEAM_HANDOFF.md` (the saga). Do not re-derive t
 
 ## 0. THE ONE THING TO READ FIRST
 
-**All seven sweep fixes are LANDED and suite-green** (`ALL LEGS PASS`, run of 2026-08-11 20:16).
-The working tree is clean (only the untracked build scaffolding remains, as always). ARM T's red
+**F5+F6 (the cart crossing arc) LANDED at `02fd8de`** (2026-08-16), suite green (`ALL LEGS
+PASS`, 22:31 run), live-verified over five user rounds. The full mechanism ledger is in that
+commit's message: riders (3 parts), conserved arrival + client REBASE, the straddle pin
+(`SeamStraddleBracket`), the cell-lookup disarm (`isSeamContinuous` must resolve
+`seamCell(onPlane(origin))`, NEVER `containing(origin)`), the in-pass projection clip (seam
+faces thread the real plane; IP's null stays for framed portals), the straddle-side pass gate,
+and the camera-side-scoped ADJUSTMENT. The 2026-08-12 "per-entity clip dead on GPU" suspicion
+was REFUTED by a 5-agent static verify (workflow `wf_516e0df3-e27`): the chain is alive on the
+vanilla pipeline (dead under Iris shaders-ON by design — known-open).
+
+**Same-dim crossing contract is user-clean**: direction asymmetry gone, window flash gone,
+sliver bleed gone, riders solid. OPEN: (a) the "cart visible a couple seconds in source side a"
+sighting — every seam-owned draw path exhaustively exonerated by log scans; on 2026-08-16 it was
+observed on the CROSS-DIM rig only (the round-4 log has no same-dim crossings); user owes the
+answer whether it ever occurs same-dim (time marker: type anything in chat — wall-clock
+timestamps land in the log); (b) **CROSS-DIM arc, user-deferred**: smoking gun already captured
+— `REBASE via portal 1999 visual=(716.28, 173.06, -127.5) server=(35.28, 118.06, -58.5)`
+(round-4 log, 22:20:20, id=3712) — the rebase transform applied in the wrong frame writes
+garbage client visuals; likely also the couple-seconds ghost there. Start the cross-dim session
+at `ClientTeleportationManager.RemoteCallables.updateEntityPos`'s rebase branch.
+
+All seven earlier sweep fixes remain landed and suite-green (2026-08-11 20:16 run). ARM T's red
 was resolved evidence-first — the full story is §4, kept as a post-mortem because it earned two
 new machine-wide lessons (the seam-axis half FLIP, and `updateNeighborsAt` semantics).
 
 **NOT yet live-verified: F1 (both rounds) and F4** — each landing is owed its one live-verify
 round (F1: break a seam block from both sides, watch the burst play to completion at both ends;
-F4: stage a two-object cell, power each circuit separately and together). Next in queue after
-that: F5+F6 (§5), whose first step is a user-driven cart-probe retest.
+F4: stage a two-object cell, power each circuit separately and together). The 2026-08-11 live
+round also flagged seam-block breaking + redstone power + rail signal for contract-first
+focused runs (see the memory entry "Seam regression sweep 2026-08-10").
 
 ---
 
