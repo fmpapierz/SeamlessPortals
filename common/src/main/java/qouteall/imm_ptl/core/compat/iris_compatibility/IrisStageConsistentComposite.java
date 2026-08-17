@@ -266,6 +266,8 @@ public final class IrisStageConsistentComposite {
             censusSgF = 0;
             censusWashB = 0;
             censusWashR = 0;
+            censusFwB = 0;
+            censusFwF = 0;
         }
         return true;
     }
@@ -759,6 +761,8 @@ public final class IrisStageConsistentComposite {
             // its pixels; the SG inject discards there (source-graded child content survives —
             // the near-portal dim-window fix). Asserted per site.
             GL20C.glUniform1f(locZeroAlpha, parent.sgCaptured ? 1.0f : 0.0f);
+            GL20C.glUniform1f(locFadeW, 1.0f); // FARFADE F10: asserted per site
+            GL20C.glUniform1i(locPrevGraded, 5);
             if (aux) {
                 GlStateManager._activeTexture(GL13.GL_TEXTURE1);
                 GlStateManager._bindTexture(child.auxTex[0]);
@@ -794,6 +798,26 @@ public final class IrisStageConsistentComposite {
                 new Matrix4f(child.projection).mul(child.modelView).get(matBuf);
                 GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
                 GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                // IS5-FARFADE (§5 F7): a PRE-captured parent needs the child in preColorTex
+                // too, or an A-B-A corridor at d>D0 loses the sub-window (the blend keeps
+                // the graded parent BACKDROP at discarded pixels — an R11-class regression).
+                // Same VAO/uniforms/depth semantics, color-only re-attach. Disclosed: a
+                // cross-dim child stamps SG-class content into the scene-referred PRE tex
+                // (the inverse nested-rim class). u_zeroAlpha's write is inert on an
+                // alpha-less PRE format and never read from it (§5 F6).
+                if (parent.preCaptured && parent.preColorTex != 0
+                    && parent.preW == parent.w && parent.preH == parent.h) {
+                    GlFramebuffer preFbo = new GlFramebuffer();
+                    preFbo.addColorAttachment(0, parent.preColorTex);
+                    preFbo.addDepthAttachmentBypass(parent.depthTex);
+                    preFbo.drawBuffers(new int[]{0});
+                    try {
+                        preFbo.bind();
+                        GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    } finally {
+                        try { preFbo.destroy(); } catch (Throwable ignored) {}
+                    }
+                }
             }
         } finally {
             if (!IPGlobal.debugNoStampDepthClamp) {
@@ -857,6 +881,15 @@ public final class IrisStageConsistentComposite {
         // the renderAll INVOKE. Decided at ARM time from mod-owned dims; PRE views are
         // byte-identical to the shipped path.
         boolean postFinalMode = false;
+        // IS5-FARFADE (IS5_FARFADE_DESIGN.md §5 F4/F5): fade weight computed at arm time
+        // (1 = pure SG = the shipped byte path; <1 engages the PRE copy + anchor blend).
+        // preColorTex = the pend-time dest colortex0 copy (PRE class), pooled color-only,
+        // allocated only when fadeW < 1; preCaptured marks THIS frame's copy and clears with
+        // the pending lifecycle.
+        float fadeW = 1f;
+        boolean preCaptured = false;
+        int preColorTex = 0;
+        int preW = -1, preH = -1, preFmt = 0;
         // IS5-XDIM-SG (IS5_RESTAMP_DESIGN.md §2.2): this frame's DEST-boundary capture landed —
         // colorTex/depthTex hold the dest anchor-boundary image (single-graded, pre-AA); the
         // TAIL then skips its mainRT copy and the source-anchor inject fires. Cleared at
@@ -980,6 +1013,24 @@ public final class IrisStageConsistentComposite {
                 slot.postFinalMode = true;
             }
         }
+        // IS5-FARFADE (§5 F1/F4): fade weight from the camera↔NEAREST-POINT-in-portal
+        // distance (never origin — a wide portal would fade at point-blank range). Only
+        // POST/SG views fade; same-dim PRE stays 1. Any failure ⇒ 1 = the shipped path.
+        slot.fadeW = 1f;
+        slot.preCaptured = false;
+        if (slot.postFinalMode && !IPGlobal.disableFarFade) {
+            try {
+                double d = portal.getDistanceToNearestPointInPortal(slot.cameraPos);
+                double d0 = IPGlobal.farFadeD0;
+                double d1 = Math.max(IPGlobal.farFadeD1, d0 + 0.001); // D1>D0 or a step pops
+                double t = Math.min(1.0, Math.max(0.0, (d - d0) / (d1 - d0)));
+                t = t * t * (3.0 - 2.0 * t); // smoothstep — continuous in d (C-F1)
+                slot.fadeW = (float) (IPGlobal.farFadeWMin
+                    + (1.0 - IPGlobal.farFadeWMin) * (1.0 - t));
+            } catch (Throwable ignored) {
+                slot.fadeW = 1f;
+            }
+        }
         armedCapture = slot;
         viewSlotStack.addLast(slot); // popped by completeArmedView at fork (c)
         censusArmGranted++;
@@ -1082,6 +1133,50 @@ public final class IrisStageConsistentComposite {
                     } catch (Throwable sgMeasErr) {
                         censusSgF++;
                     }
+                }
+            }
+            // IS5-FARFADE (§5 F2/F4/F5): pend-time PRE copy — the dest colortex0 pass-0
+            // READ side (byte-identical to the pass-0 boundary; NO second dispatch index,
+            // which would collide on destAnchor==0 packs). Gated on the SG arm existing AND
+            // w<1: at w==1 this issues ZERO GL commands. EVERY failure collapses THIS slot
+            // to w=1 (the shipped SG path), fwF-census-visible, never breakMechanism.
+            if (postPendingDestRenderer != null && slot.fadeW < 1f) {
+                try {
+                    Set<?> preFlip = resolvePassZeroFlipSet(
+                        (List<?>) fPasses.get(postPendingDestRenderer));
+                    RenderTargets preRts =
+                        (RenderTargets) fPipelineRenderTargets.get(irisRenderingPipeline);
+                    RenderTarget preC0 = preRts == null ? null : preRts.get(0);
+                    if (preFlip == null || preC0 == null) {
+                        slot.fadeW = 1f;
+                        censusFwF++;
+                    } else {
+                        int preSrc = preFlip.contains(0)
+                            ? preC0.getAltTexture() : preC0.getMainTexture();
+                        int pw = preC0.getWidth();
+                        int ph = preC0.getHeight();
+                        int pFmt = GL45C.glGetTextureLevelParameteri(
+                            preSrc, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                        if (!ensurePreStorage(slot, pw, ph, pFmt)) {
+                            slot.fadeW = 1f;
+                            censusFwF++;
+                        } else {
+                            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+                            GL43C.glCopyImageSubData(
+                                preSrc, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                                slot.preColorTex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                                pw, ph, 1);
+                            if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                                slot.fadeW = 1f;
+                                censusFwF++;
+                            } else {
+                                slot.preCaptured = true;
+                            }
+                        }
+                    }
+                } catch (Throwable preErr) {
+                    slot.fadeW = 1f;
+                    censusFwF++;
                 }
             }
             return; // no ci.cancel()
@@ -1410,6 +1505,30 @@ public final class IrisStageConsistentComposite {
         return true;
     }
 
+    /** IS5-FARFADE (§5 F2/F5-vi): pooled color-only storage for the pend-time PRE copy —
+     *  the ensureSlotStorage idiom (size+format keyed, recycle-on-mismatch). */
+    private static boolean ensurePreStorage(CaptureSlot slot, int w, int h, int fmt) {
+        if (slot.preColorTex != 0 && slot.preW == w && slot.preH == h && slot.preFmt == fmt) {
+            return true;
+        }
+        if (slot.preColorTex != 0) {
+            GL11.glDeleteTextures(slot.preColorTex);
+            slot.preColorTex = 0;
+        }
+        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate for the alloc check */ }
+        int t = GL45C.glCreateTextures(GL11.GL_TEXTURE_2D);
+        GL45C.glTextureStorage2D(t, 1, fmt, w, h);
+        if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+            GL11.glDeleteTextures(t);
+            return false;
+        }
+        slot.preColorTex = t;
+        slot.preW = w;
+        slot.preH = h;
+        slot.preFmt = fmt;
+        return true;
+    }
+
     private static String lastCaptureGeometry = null;
     private static long lastCaptureReadbackMs = 0;
     private static long lastDepthReadbackMs = 0;
@@ -1498,6 +1617,10 @@ public final class IrisStageConsistentComposite {
         for (CaptureSlot s : captureSlots) {
             s.pending = false;
             s.sgCaptured = false;
+            // IS5-FARFADE (§5 F5-vi): fade state clears with the pending lifecycle — slots
+            // are reused across portals (the cache-lives-on-the-subject rule).
+            s.preCaptured = false;
+            s.fadeW = 1f;
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
@@ -1667,6 +1790,12 @@ public final class IrisStageConsistentComposite {
         // parent's dest-graded inject (the near-portal dim-window fix, log-adjudicated:
         // nest>0 windows showed sgI collapsing while sgC held).
         uniform float u_zeroAlpha;
+        // IS5-FARFADE (IS5_FARFADE_DESIGN.md §1.4 + §5 F10): the anchor BLEND — u_fadeW=1
+        // is byte-identical to the pure inject (the branch below never samples u_prevGraded
+        // then); <1 mixes the pre-inject anchor image (the source-graded PRE face, snapshot
+        // on unit 5) toward the SG capture. Asserted at every stamp-program draw site.
+        uniform sampler2D u_prevGraded;
+        uniform float u_fadeW;
         in vec4 vertexColor;
         layout(location = 0) out vec4 fragColor;
         layout(location = 1) out vec4 auxColor;
@@ -1717,6 +1846,13 @@ public final class IrisStageConsistentComposite {
                 ivec2 tc2 = ivec2(gl_FragCoord.xy);
                 if (texelFetch(u_stampedDepth0, tc2, 0).r < planeZ - 6.0e-8) discard;
                 if (texelFetch(u_capture, tc2, 0).a < 0.5) discard;
+                // IS5-FARFADE blend (§5 F6: the discard above keys EXCLUSIVELY on the SG
+                // capture's alpha — u_prevGraded/preColorTex alpha is NEVER read; a c0-class
+                // alpha-less format reads a constant 1.0 and would kill the R11 discard).
+                if (u_fadeW < 1.0) {
+                    fragColor = vec4(mix(
+                        texelFetch(u_prevGraded, tc2, 0).rgb, fragColor.rgb, u_fadeW), 1.0);
+                }
                 gl_FragDepth = planeZ;
             } else {
                 gl_FragDepth = planeZ;
@@ -1763,6 +1899,9 @@ public final class IrisStageConsistentComposite {
         int gatherIdx = -1;
         boolean gatherReadsAlt = false;
         boolean gatherWritesC0 = false;
+        // IS5-WASHPROBE v3: the gatherer's drawBuffers[0] = where the bloom tiles land
+        // (colortex3 on this pack). Measured, never hard-coded; -1 = unavailable.
+        int gatherWriteTgt = -1;
         String washState = "SKIP(no-gatherer)";
     }
 
@@ -1839,6 +1978,7 @@ public final class IrisStageConsistentComposite {
                                 for (int t : db) {
                                     if (t == 0) m.gatherWritesC0 = true;
                                 }
+                                if (db.length > 0) m.gatherWriteTgt = db[0];
                             }
                             break;
                         }
@@ -1882,6 +2022,10 @@ public final class IrisStageConsistentComposite {
         CaptureSlot slot;
         GpuBufferSlice vertexSlice;
         int vertexCount;
+        // IS5-FARFADE (§5 F8): the HEAD stamp's source side THIS frame. PRE-stamped entries
+        // are NEVER wash-blacked (§1.10's rule verbatim: the source gather is a PRE stamp's
+        // only bloom source) and take the anchor BLEND instead of the pure inject.
+        boolean stampedPre;
     }
 
     /** The per-frame boundary arm (design §1.5). Built by runStampPass in RESTAMP mode; consumed
@@ -1911,6 +2055,10 @@ public final class IrisStageConsistentComposite {
         boolean washSaveDone;
         boolean washRestoreDone;
         int washTexId; // c0's read side at the gatherer
+        // IS5-WASHPROBE v3 (probe-only, populated iff -PwashProbe): BOTH physical sides of c0
+        // and of the gatherer's tile target, so the bracket-adjudicator readback can prove
+        // which side the blackout landed on and whether window energy entered the tiles.
+        int wpC0MainId, wpC0AltId, wpTileMainId, wpTileAltId;
     }
 
     private static RestampArm restampArm = null;
@@ -1974,6 +2122,51 @@ public final class IrisStageConsistentComposite {
             if (doWashRestore) arm.washRestoreDone = true;
             if (doDepth) arm.depthDone = true;
             if (doInject) arm.injectDone = true;
+            // IS5-WASHPROBE v3 — the bracket-adjudicator (1Hz, probe-only). Fires at the
+            // restore boundary AFTER the gather pass consumed c0 and BEFORE the restore
+            // repaints: reads screen-centre from BOTH physical c0 sides plus the lod-2 bloom
+            // tile of screen-centre ((w/8, h/8); rescale=(1,1) below 1920x1080) from BOTH tile
+            // sides. Tile encoding: linear = raw^4 * 128. Adjudication (aim: lava-red window
+            // at the crosshair): blackedSide~0 + otherSide bright + tiles hot => the gather
+            // read the UN-blacked side (flip-parity defect); blackedSide~0 + tiles dark =>
+            // bracket effective, the wash rides the face/capture; blackedSide bright =>
+            // the blackout footprint missed.
+            if (doWashRestore && IPGlobal.washProbe && IPGlobal.is5LiveReadbacks
+                && arm.wpC0MainId != 0 && arm.wpC0AltId != 0
+                && System.currentTimeMillis() - lastWashAdjudicatorMs >= 1000) {
+                lastWashAdjudicatorMs = System.currentTimeMillis();
+                try {
+                    java.nio.FloatBuffer m0 = BufferUtils.createFloatBuffer(4);
+                    java.nio.FloatBuffer a0 = BufferUtils.createFloatBuffer(4);
+                    GL45C.glGetTextureSubImage(arm.wpC0MainId, 0, arm.w / 2, arm.h / 2, 0,
+                        1, 1, 1, GL11.GL_RGBA, GL11.GL_FLOAT, m0);
+                    GL45C.glGetTextureSubImage(arm.wpC0AltId, 0, arm.w / 2, arm.h / 2, 0,
+                        1, 1, 1, GL11.GL_RGBA, GL11.GL_FLOAT, a0);
+                    String tiles = "tile2=n/a";
+                    if (arm.wpTileMainId != 0 && arm.wpTileAltId != 0) {
+                        java.nio.FloatBuffer tm = BufferUtils.createFloatBuffer(4);
+                        java.nio.FloatBuffer ta = BufferUtils.createFloatBuffer(4);
+                        GL45C.glGetTextureSubImage(arm.wpTileMainId, 0, arm.w / 8, arm.h / 8,
+                            0, 1, 1, 1, GL11.GL_RGBA, GL11.GL_FLOAT, tm);
+                        GL45C.glGetTextureSubImage(arm.wpTileAltId, 0, arm.w / 8, arm.h / 8,
+                            0, 1, 1, 1, GL11.GL_RGBA, GL11.GL_FLOAT, ta);
+                        tiles = String.format(
+                            "tile2main=(%.4f, %.4f, %.4f) tile2alt=(%.4f, %.4f, %.4f)",
+                            tm.get(0), tm.get(1), tm.get(2), ta.get(0), ta.get(1), ta.get(2));
+                    }
+                    LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] bracket-adjudicator"
+                            + " @gather+1 pre-restore: blackedSide={} c0main=({}, {}, {})"
+                            + " c0alt=({}, {}, {}) {} (tile lin=raw^4*128; adjudicate only"
+                            + " with a lava-red window at centre)",
+                        arm.washTexId == arm.wpC0AltId ? "alt" : "main",
+                        String.format("%.4f", m0.get(0)), String.format("%.4f", m0.get(1)),
+                        String.format("%.4f", m0.get(2)),
+                        String.format("%.4f", a0.get(0)), String.format("%.4f", a0.get(1)),
+                        String.format("%.4f", a0.get(2)), tiles);
+                } catch (Throwable ignored) {
+                }
+                while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
+            }
             if (doWashSave || doWashRestore) {
                 runWashBracket(arm, doWashSave, doWashRestore);
             }
@@ -2076,6 +2269,28 @@ public final class IrisStageConsistentComposite {
             }
             slot.sgCaptured = true;
             censusSgC++;
+            // IS5-WASHPROBE: the SG capture's OWN center-pixel readback (the PRE-path readback
+            // never fires for POST/SG views — an aim gap that would let a same-dim window's
+            // number masquerade as the washout window's). 1Hz, atomic drain, probe-lever only.
+            if (IPGlobal.washProbe && IPGlobal.is5LiveReadbacks) {
+                long sgRbNow = System.currentTimeMillis();
+                if (sgRbNow - lastSgCaptureReadbackMs >= 1000) {
+                    lastSgCaptureReadbackMs = sgRbNow;
+                    try {
+                        java.nio.FloatBuffer px = BufferUtils.createFloatBuffer(3);
+                        GL45C.glGetTextureSubImage(
+                            slot.colorTex, 0, w / 2, h / 2, 0, 1, 1, 1,
+                            GL11.GL_RGB, GL11.GL_FLOAT, px);
+                        LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] SG capture center px"
+                                + " rgb=({}, {}, {}) (the washout window's OWN capture,"
+                                + " post-dest-c5 pre-AA)",
+                            String.format("%.4f", px.get(0)), String.format("%.4f", px.get(1)),
+                            String.format("%.4f", px.get(2)));
+                    } catch (Throwable ignored) {
+                    }
+                    while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
+                }
+            }
             // IS5-WASHPROBE dest half: read the DEST bloom-apply pass's executed uniforms
             // (c5 = destGather+1) right after it ran; paired with the main half at the next
             // meas emit.
@@ -2084,7 +2299,30 @@ public final class IrisStageConsistentComposite {
                 if (wpNow - lastWashProbeMs >= 1000) {
                     // (the 1Hz latch advances on the MAIN half so both lines pair per window)
                     RestampMeasurement dm = measureRestamp(dcr);
-                    washProbeDestLine = washProbeReadPass(dcr, dm.gatherIdx + 1, "destC5");
+                    // v3 (the v2 comparator was INVERTED and burned a session: slot.cameraPos
+                    // is the arm-time MAIN camera by construction — aperture-mesh registration
+                    // — so "camP1 != vcam" was the HEALTHY state. Adjudicated 2026-08-16:
+                    // destP1 - armCam == the portal offset bit-exactly, camera path CLEAN.)
+                    // The honest reference is the portal-TRANSFORMED arm camera: camPN should
+                    // EQUAL xform; equalling armCam instead would be the wrong-camera defect.
+                    String camRef;
+                    if (slot.cameraPos == null) {
+                        camRef = "armCam=? xform=?";
+                    } else if (slot.portal != null) {
+                        net.minecraft.world.phys.Vec3 xf =
+                            slot.portal.transformPoint(slot.cameraPos);
+                        camRef = String.format(
+                            "armCam=(%.1f,%.1f,%.1f) xform=(%.1f,%.1f,%.1f)",
+                            slot.cameraPos.x, slot.cameraPos.y, slot.cameraPos.z,
+                            xf.x, xf.y, xf.z);
+                    } else {
+                        camRef = String.format("armCam=(%.1f,%.1f,%.1f) xform=?",
+                            slot.cameraPos.x, slot.cameraPos.y, slot.cameraPos.z);
+                    }
+                    washProbeDestLine = washProbeReadPass(dcr, dm.gatherIdx + 1, "destC5")
+                        + " | " + washProbeCamScan(dcr, "dest") + " vs " + camRef
+                        + " | " + washProbeRdScan(dcr, "dest")
+                        + " | " + washProbeResProj(dcr, "dest");
                 }
             }
         } catch (Throwable t) {
@@ -2097,6 +2335,10 @@ public final class IrisStageConsistentComposite {
     // Reads the EXECUTED uniform state off the pass program (the measure-at-the-draw rule);
     // loc -1 prints a LOUD n/a, never a tabulatable zero (the sentinel discipline).
     private static long lastWashProbeMs = 0;
+    private static long lastSgCaptureReadbackMs = 0;
+    private static long lastInjectReadbackMs = 0;
+    private static long lastWashAdjudicatorMs = 0;
+    private static long lastMainPreInjectMs = 0;
     private static String washProbeDestLine = null;
 
     private static String washProbeReadPass(Object renderer, int passIdx, String tag) {
@@ -2134,6 +2376,107 @@ public final class IrisStageConsistentComposite {
             return s.toString();
         } catch (Throwable t) {
             return tag + ": read-failed(" + t + ")";
+        }
+    }
+
+    /** v3: per-pass renderDistance/far sweep — the (lViewPos/clamp(min(renderDistance,LIMIT),
+     *  96,512))^3 multiply lives in composite1; a shrunken dest renderDistance there is a
+     *  64x-class over-multiply nothing downstream cancels. '-' = inactive (stripped). */
+    private static String washProbeRdScan(Object renderer, String tag) {
+        try {
+            List<?> passes = (List<?>) fPasses.get(renderer);
+            StringBuilder s = new StringBuilder(tag).append(" rdScan:");
+            for (int i = 0; i < passes.size(); i++) {
+                Object prog = fPassProgram.get(passes.get(i));
+                if (prog == null) {
+                    s.append(" P").append(i).append("=comp");
+                    continue;
+                }
+                int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+                int locRd = GL20C.glGetUniformLocation(pid, "renderDistance");
+                int locFar = GL20C.glGetUniformLocation(pid, "far");
+                s.append(" P").append(i).append('=');
+                if (locRd >= 0) {
+                    float[] v = new float[1];
+                    GL20C.glGetUniformfv(pid, locRd, v);
+                    s.append("rd").append(String.format("%.0f", v[0]));
+                } else s.append('-');
+                s.append('/');
+                if (locFar >= 0) {
+                    float[] v = new float[1];
+                    GL20C.glGetUniformfv(pid, locFar, v);
+                    s.append("far").append(String.format("%.0f", v[0]));
+                } else s.append('-');
+            }
+            return s.toString();
+        } catch (Throwable t) {
+            return tag + " rdScan=read-failed(" + t + ")";
+        }
+    }
+
+    /** v3b: resolution + projection fingerprint from the first pass holding each —
+     *  viewWidth/viewHeight scale the bloom tile coordinates (a mismatch mis-samples the
+     *  pyramid); projInv[0][0]/[1][1] are the FOV terms driving every depth→distance
+     *  reconstruction. */
+    private static String washProbeResProj(Object renderer, String tag) {
+        try {
+            List<?> passes = (List<?>) fPasses.get(renderer);
+            String res = null;
+            String proj = null;
+            for (int i = 0; i < passes.size() && (res == null || proj == null); i++) {
+                Object prog = fPassProgram.get(passes.get(i));
+                if (prog == null) continue;
+                int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+                if (res == null) {
+                    int locW = GL20C.glGetUniformLocation(pid, "viewWidth");
+                    int locH = GL20C.glGetUniformLocation(pid, "viewHeight");
+                    if (locW >= 0 && locH >= 0) {
+                        float[] w = new float[1];
+                        float[] h = new float[1];
+                        GL20C.glGetUniformfv(pid, locW, w);
+                        GL20C.glGetUniformfv(pid, locH, h);
+                        res = String.format("view%d=%.0fx%.0f", i, w[0], h[0]);
+                    }
+                }
+                if (proj == null) {
+                    int locPi = GL20C.glGetUniformLocation(pid, "gbufferProjectionInverse");
+                    if (locPi >= 0) {
+                        float[] m = new float[16];
+                        GL20C.glGetUniformfv(pid, locPi, m);
+                        proj = String.format("projInv%d=[%.4f,%.4f]", i, m[0], m[5]);
+                    }
+                }
+            }
+            return tag + " " + (res == null ? "view=NOWHERE" : res)
+                + " " + (proj == null ? "projInv=NOWHERE" : proj);
+        } catch (Throwable t) {
+            return tag + " resProj=read-failed(" + t + ")";
+        }
+    }
+
+    /** v3: scan ALL passes for the first ACTIVE cameraPosition and report it with its pass
+     *  index — c5 strips it on both chains; the storm/multiply pass (c1) is the expected
+     *  holder. The caller pairs it with "armCam" (slot.cameraPos = the arm-time MAIN camera,
+     *  aperture-mesh registration) AND "xform" (the portal-transformed arm camera): the dest
+     *  chain is HEALTHY when camPN ≈ xform, and wrong-camera-defective when camPN ≈ armCam.
+     *  (The v2 comment had this inverted — it called slot.cameraPos "the KNOWN virtual
+     *  camera" and read a mismatch as the culprit; adjudicated clean 2026-08-16.) */
+    private static String washProbeCamScan(Object renderer, String tag) {
+        try {
+            List<?> passes = (List<?>) fPasses.get(renderer);
+            for (int i = 0; i < passes.size(); i++) {
+                Object prog = fPassProgram.get(passes.get(i));
+                if (prog == null) continue;
+                int pid = ((net.irisshaders.iris.gl.program.Program) prog).getProgramId();
+                int locCam = GL20C.glGetUniformLocation(pid, "cameraPosition");
+                if (locCam < 0) continue;
+                float[] cam = new float[3];
+                GL20C.glGetUniformfv(pid, locCam, cam);
+                return String.format("%s camP%d=(%.1f,%.1f,%.1f)", tag, i, cam[0], cam[1], cam[2]);
+            }
+            return tag + " cam=NOWHERE-ACTIVE";
+        } catch (Throwable t) {
+            return tag + " cam=read-failed(" + t + ")";
         }
     }
 
@@ -2216,6 +2559,8 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1f(locSolid, 0.0f);
             GL20C.glUniform1f(locHavePrev, 0.0f);
             GL20C.glUniform1f(locZeroAlpha, 0.0f); // asserted per site
+            GL20C.glUniform1f(locFadeW, 1.0f); // FARFADE F10: asserted per site
+            GL20C.glUniform1i(locPrevGraded, 5);
             GL20C.glUniform1i(locDepthMode, doSave ? 3 : 4);
             matBuf.clear();
             arm.combined.get(matBuf);
@@ -2226,6 +2571,7 @@ public final class IrisStageConsistentComposite {
             GlStateManager._bindTexture(washScratchId); // mode 4 samples it; mode 3 ignores
             for (RestampEntry e : arm.entries) {
                 if (!e.slot.postFinalMode) continue; // PRE windows keep their source glow
+                if (e.stampedPre) continue; // §5 F8: PRE-stamped this frame = same rule
                 ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
                     .vertexArrayCache().bindVertexArray(
                         new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
@@ -2313,6 +2659,8 @@ public final class IrisStageConsistentComposite {
             GL20C.glUniform1f(locSolid, IPGlobal.debugStampSolid ? 1.0f : 0.0f);
             GL20C.glUniform1f(locHavePrev, 0.0f);
             GL20C.glUniform1f(locZeroAlpha, 0.0f); // asserted per site
+            GL20C.glUniform1f(locFadeW, 1.0f); // FARFADE F10: asserted per site
+            GL20C.glUniform1i(locPrevGraded, 5);
             matBuf.clear();
             arm.combined.get(matBuf);
             GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
@@ -2339,6 +2687,34 @@ public final class IrisStageConsistentComposite {
             }
             // --- mode 2: the SG inject into the source anchor's image READ side ---
             if (doInject) {
+                // IS5-WASHPROBE v3 — capture-vs-main comparator, the MAIN half: the anchor
+                // image's centre pixel BEFORE any inject draw = the main chain's own post-c5
+                // display-referred value (same processing stage as the SG capture). With the
+                // player IN the dest dim aiming at the lava directly (no window at centre),
+                // this is the ground-truth main render of the exact content the capture shows
+                // from the other side. Compare vs "SG capture center px" at the mirrored aim
+                // across a crossing: capture >> main at matched aim = the capture itself is
+                // over-bright (the post-bracket-exoneration standing suspect).
+                if (IPGlobal.washProbe && IPGlobal.is5LiveReadbacks && arm.injectTexId != 0
+                    && System.currentTimeMillis() - lastMainPreInjectMs >= 1000) {
+                    lastMainPreInjectMs = System.currentTimeMillis();
+                    try {
+                        java.nio.FloatBuffer mp = BufferUtils.createFloatBuffer(4);
+                        GL45C.glGetTextureSubImage(
+                            arm.injectTexId, 0, arm.w / 2, arm.h / 2, 0, 1, 1, 1,
+                            GL11.GL_RGBA, GL11.GL_FLOAT, mp);
+                        LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] main-preinject center"
+                                + " px rgb=({}, {}, {}) (main post-c5 display-referred, BEFORE"
+                                + " the inject — pair with 'SG capture center px' at the"
+                                + " mirrored aim across the crossing)",
+                            String.format("%.4f", mp.get(0)), String.format("%.4f", mp.get(1)),
+                            String.format("%.4f", mp.get(2)));
+                    } catch (Throwable ignored) {
+                    }
+                    while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
+                }
+                boolean blendSnapDone = false;
+                boolean blendSnapOk = false;
                 for (RestampEntry e : arm.entries) {
                     // R11-MASK: nested-child pixels are excluded per-PIXEL by the alpha
                     // discard in the shader — no whole-slot skip (the skip was the
@@ -2351,6 +2727,30 @@ public final class IrisStageConsistentComposite {
                         GL20C.glUniform1i(locDepthMode, 2);
                         injFbo.bind();
                     }
+                    // IS5-FARFADE (§5 F3/F5-v/F10): PRE-stamped entries take the BLEND —
+                    // one anchor-image snapshot per invocation into the blend's own scratch
+                    // (taken lazily before the FIRST blended entry: the pre-inject state is
+                    // identical for all entries — windows are per-pixel disjoint under the
+                    // visibility discard). Snapshot failure ⇒ pure inject for this frame
+                    // (shipped SG face, mutate-last), fwF-visible. u_fadeW is set PER ENTRY
+                    // (mixed near/far frames — two portals at different distances).
+                    float fw = 1f;
+                    if (e.stampedPre) {
+                        if (!blendSnapDone) {
+                            blendSnapDone = true;
+                            blendSnapOk = snapshotAnchorForBlend(arm);
+                            if (!blendSnapOk) censusFwF++;
+                        }
+                        if (blendSnapOk) {
+                            fw = e.slot.fadeW;
+                        }
+                    }
+                    GL20C.glUniform1f(locFadeW, fw);
+                    if (fw < 1f) {
+                        GlStateManager._activeTexture(GL13.GL_TEXTURE5);
+                        GlStateManager._bindTexture(blendScratchId);
+                        censusFwB++;
+                    }
                     GlStateManager._activeTexture(GL13.GL_TEXTURE0);
                     GlStateManager._bindTexture(e.slot.colorTex);
                     ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
@@ -2361,6 +2761,53 @@ public final class IrisStageConsistentComposite {
                         );
                     GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, e.vertexCount);
                     censusSgI++;
+                    // IS5-WASHPROBE inject-landing comparator (declared-vs-executed): the
+                    // TARGET's centre pixel right after EACH entry's draw vs THAT entry's
+                    // capture — per-entry with the portal id (the first-entry-only version
+                    // silently read a DIFFERENT portal's grey capture — the aim lesson again).
+                    // A DIFF on a lava-red capture = the inject silently failing at centre; a
+                    // DIFF on a non-window centre pixel proves nothing (the mesh only covers
+                    // window pixels). 1Hz per entry, probe-only.
+                    if (IPGlobal.washProbe && IPGlobal.is5LiveReadbacks
+                        && System.currentTimeMillis() - lastInjectReadbackMs >= 1000) {
+                        lastInjectReadbackMs = System.currentTimeMillis(); // the dropped latch
+                        try {
+                            java.nio.FloatBuffer tp = BufferUtils.createFloatBuffer(4);
+                            java.nio.FloatBuffer cp = BufferUtils.createFloatBuffer(4);
+                            GL45C.glGetTextureSubImage(
+                                arm.injectTexId, 0, arm.w / 2, arm.h / 2, 0, 1, 1, 1,
+                                GL11.GL_RGBA, GL11.GL_FLOAT, tp);
+                            GL45C.glGetTextureSubImage(
+                                e.slot.colorTex, 0, arm.w / 2, arm.h / 2, 0, 1, 1, 1,
+                                GL11.GL_RGBA, GL11.GL_FLOAT, cp);
+                            boolean match = Math.abs(tp.get(0) - cp.get(0)) < 0.02f
+                                && Math.abs(tp.get(1) - cp.get(1)) < 0.02f
+                                && Math.abs(tp.get(2) - cp.get(2)) < 0.02f;
+                            // capA is THE adjudicator: 0 = the R11-MASK nested footprint at
+                            // centre (the inject DISCARDS there by design — if DIFF frames all
+                            // show capA=0, the veil IS the mask's discard region); 1 = the
+                            // discard is innocent and a DIFF is a true landing failure.
+                            // FARFADE F11 (instrument honesty): fw printed; adjudicate MATCH
+                            // only at fw=1.00 — a w<1 target!=capture is the BLEND working.
+                            LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] inject-landing"
+                                    + " P{}: target=({}, {}, {}) capture=({}, {}, {})"
+                                    + " capA={} fw={} => {}",
+                                e.slot.portal == null ? 0
+                                    : (System.identityHashCode(e.slot.portal) % 1000),
+                                String.format("%.4f", tp.get(0)),
+                                String.format("%.4f", tp.get(1)),
+                                String.format("%.4f", tp.get(2)),
+                                String.format("%.4f", cp.get(0)),
+                                String.format("%.4f", cp.get(1)),
+                                String.format("%.4f", cp.get(2)),
+                                String.format("%.2f", cp.get(3)),
+                                String.format("%.2f", fw),
+                                match ? "MATCH (inject lands)"
+                                    : "DIFF (not landing OR centre not this window OR blended)");
+                        } catch (Throwable ignored) {
+                        }
+                        while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison */ }
+                    }
                 }
             }
             // 1Hz post-restamp comparator (kill-check 6): centre texel of depthtex1 AFTER the
@@ -2420,7 +2867,51 @@ public final class IrisStageConsistentComposite {
     private static int locHavePrev = -1;
     private static int locDepthMode = -1;
     private static int locZeroAlpha = -1;
+    // IS5-FARFADE (§5 F3/F10/F11): the blend uniforms, the blend's OWN pooled snapshot
+    // scratch (keyed to the measured anchor-image format — NEVER washScratch: format thrash
+    // on mixed frames + a shared scratch between wash-save and wash-restore would destroy
+    // the saved c0), and the fw census (fwB = blend draws, fwF = per-slot w:=1 collapses;
+    // fwMin/MaxSeen = the meas line's fw= range, reset at each 1Hz emit).
+    private static int locPrevGraded = -1;
+    private static int locFadeW = -1;
+    private static int blendScratchId = 0;
+    private static int blendScratchW = -1, blendScratchH = -1, blendScratchFmt = 0;
+    private static int censusFwB = 0, censusFwF = 0;
+    private static float fwMinSeen = 2f, fwMaxSeen = -1f;
     private static final FloatBuffer matBuf = BufferUtils.createFloatBuffer(16);
+
+    /** IS5-FARFADE (§5 F3/F5-v): one anchor-image snapshot per boundary invocation, into the
+     *  blend's own pooled scratch. Any failure ⇒ false ⇒ the caller falls back to the pure
+     *  inject for this invocation (mutate-last: nothing destructive happened). */
+    private static boolean snapshotAnchorForBlend(RestampArm arm) {
+        try {
+            int fmt = GL45C.glGetTextureLevelParameteri(
+                arm.injectTexId, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+            if (blendScratchId == 0 || blendScratchW != arm.w || blendScratchH != arm.h
+                || blendScratchFmt != fmt) {
+                if (blendScratchId != 0) GL11.glDeleteTextures(blendScratchId);
+                blendScratchId = 0;
+                while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+                int t = GL45C.glCreateTextures(GL11.GL_TEXTURE_2D);
+                GL45C.glTextureStorage2D(t, 1, fmt, arm.w, arm.h);
+                if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                    GL11.glDeleteTextures(t);
+                    return false;
+                }
+                blendScratchId = t;
+                blendScratchW = arm.w;
+                blendScratchH = arm.h;
+                blendScratchFmt = fmt;
+            }
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+            GL43C.glCopyImageSubData(
+                arm.injectTexId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                blendScratchId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, arm.w, arm.h, 1);
+            return GL11.glGetError() == GL11.GL_NO_ERROR;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
 
     // IS5-HIST: per-portal PREVIOUS-frame capture store {texId, w, h, fmt}. STRONG keys with
     // explicit eviction (a WeakHashMap would GC entries silently and LEAK the GL textures —
@@ -2468,6 +2959,8 @@ public final class IrisStageConsistentComposite {
         locHavePrev = GL20C.glGetUniformLocation(prog, "u_havePrev");
         locDepthMode = GL20C.glGetUniformLocation(prog, "u_depthMode");
         locZeroAlpha = GL20C.glGetUniformLocation(prog, "u_zeroAlpha");
+        locPrevGraded = GL20C.glGetUniformLocation(prog, "u_prevGraded");
+        locFadeW = GL20C.glGetUniformLocation(prog, "u_fadeW");
         return true;
     }
 
@@ -2653,6 +3146,18 @@ public final class IrisStageConsistentComposite {
                 if (c0Rt != null) {
                     arm.washTexId = meas.gatherReadsAlt
                         ? c0Rt.getAltTexture() : c0Rt.getMainTexture();
+                    // IS5-WASHPROBE v3: both physical sides for the bracket-adjudicator.
+                    if (IPGlobal.washProbe) {
+                        arm.wpC0MainId = c0Rt.getMainTexture();
+                        arm.wpC0AltId = c0Rt.getAltTexture();
+                        if (meas.gatherWriteTgt >= 0) {
+                            RenderTarget tileRt = rts.get(meas.gatherWriteTgt);
+                            if (tileRt != null) {
+                                arm.wpTileMainId = tileRt.getMainTexture();
+                                arm.wpTileAltId = tileRt.getAltTexture();
+                            }
+                        }
+                    }
                 }
             }
             restampArm = arm; // entries appended per slot below; combined set with the matrices
@@ -2667,7 +3172,7 @@ public final class IrisStageConsistentComposite {
             lastRestampMeasLogMs = measNow;
             LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} prevCam={}"
                     + " anchor={} dBnd={} imgTgt={} mode={} gath={} wash={} wB/R={}/{}"
-                    + " rst={} rstOrph={} sgC/I/F={}/{}/{}",
+                    + " rst={} rstOrph={} sgC/I/F={}/{}/{} fw={} fwB/F={}/{}",
                 meas.passCount, java.util.Arrays.toString(meas.d1Readers),
                 java.util.Arrays.toString(meas.histReaders),
                 java.util.Arrays.toString(meas.prevCamReaders), meas.anchor,
@@ -2679,13 +3184,21 @@ public final class IrisStageConsistentComposite {
                         : (meas.washState.equals("ON") && !effMode.equals("RESTAMP")
                             ? "SKIP(mode=" + effMode + ")" : meas.washState)),
                 censusWashB, censusWashR, censusRst, censusRstOrph,
-                censusSgC, censusSgI, censusSgF);
+                censusSgC, censusSgI, censusSgF,
+                // FARFADE F11: the last window's PRE-stamped fw range (- = no fading slot).
+                fwMaxSeen < 0f ? "-"
+                    : String.format("%.2f/%.2f", fwMinSeen, fwMaxSeen),
+                censusFwB, censusFwF);
+            fwMinSeen = 2f;
+            fwMaxSeen = -1f;
             // IS5-WASHPROBE main half + the paired emit (dest line captured at the SG
             // boundary this window; main read here at the same 1Hz cadence).
             if (IPGlobal.washProbe) {
                 lastWashProbeMs = measNow;
                 String mainLine = washProbeReadPass(
-                    mainCompositeRenderer, meas.gatherIdx + 1, "mainC5");
+                    mainCompositeRenderer, meas.gatherIdx + 1, "mainC5")
+                    + " | " + washProbeRdScan(mainCompositeRenderer, "main")
+                    + " | " + washProbeResProj(mainCompositeRenderer, "main");
                 LOGGER.info("[Seamless Portals] [IS5-WASHPROBE] {} || {}",
                     mainLine, washProbeDestLine == null ? "destC5: <no SG capture yet>"
                         : washProbeDestLine);
@@ -2738,6 +3251,8 @@ public final class IrisStageConsistentComposite {
             // IS5-DEPTHFORK: mode 0 asserted explicitly per pass — never rely on defaults.
             GL20C.glUniform1i(locDepthMode, 0);
             GL20C.glUniform1f(locZeroAlpha, 0.0f); // asserted per site (uniforms persist)
+            GL20C.glUniform1f(locFadeW, 1.0f); // FARFADE F10: asserted per site
+            GL20C.glUniform1i(locPrevGraded, 5);
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
 
             // STAMP-TIME MATRICES (design §3.2 note): by renderAll HEAD, THIS frame's true
@@ -2827,7 +3342,19 @@ public final class IrisStageConsistentComposite {
                         GlStateManager._activeTexture(GL13.GL_TEXTURE0);
                     }
                     GL20C.glUniform1f(locHavePrev, havePrev ? 1.0f : 0.0f);
-                    GlStateManager._bindTexture(slot.colorTex);
+                    // IS5-FARFADE (§5 F5): the stamp-time gate — PRE source iff the WHOLE
+                    // w<1 chain is intact (all flags final by HEAD time: pend copy landed,
+                    // SG capture landed, the anchor inject exists). Anything missing ⇒
+                    // slot.colorTex = today's exact fallback ladder (an sgF frame must
+                    // never HEAD-stamp PRE with no blend coming — a 100% storm-less face).
+                    boolean stampPre = slot.fadeW < 1f && slot.preCaptured && slot.sgCaptured
+                        && restampArm != null && restampArm.injectTexId != 0
+                        && slot.preW == w && slot.preH == h;
+                    if (stampPre) {
+                        fwMinSeen = Math.min(fwMinSeen, slot.fadeW);
+                        fwMaxSeen = Math.max(fwMaxSeen, slot.fadeW);
+                    }
+                    GlStateManager._bindTexture(stampPre ? slot.preColorTex : slot.colorTex);
                     ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
                         .vertexArrayCache().bindVertexArray(
                             new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
@@ -2882,6 +3409,7 @@ public final class IrisStageConsistentComposite {
                         re.slot = slot;
                         re.vertexSlice = vertexSlice;
                         re.vertexCount = vertexCount;
+                        re.stampedPre = stampPre;
                         restampArm.entries.add(re);
                     }
                     // IS5-HIST prev-store update — AFTER the draw consumed the OLD prev: this
@@ -2977,7 +3505,9 @@ public final class IrisStageConsistentComposite {
             // their only bloom source and killing it would un-glow their windows.
             if (restampArm != null && restampArm.washTexId != 0) {
                 for (RestampEntry e : restampArm.entries) {
-                    if (e.slot.postFinalMode) {
+                    // IS5-FARFADE (§5 F8): only SG-STAMPED entries carry dest-baked bloom
+                    // in c0 — a PRE-stamped entry's only bloom source IS the gather.
+                    if (e.slot.postFinalMode && !e.stampedPre) {
                         restampArm.washNeeded = true;
                         break;
                     }
