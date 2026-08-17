@@ -219,13 +219,10 @@ public class CrossPortalEntityRenderer {
             return false;
         }
 
-        Portal collidingPortal = null;
-        for (PortalCollisionEntry e : collisionHandler.portalCollisions) {
-            //IP re-set the outer clip per colliding portal with an endBatch flush between (IP :119-126);
-            //the net effect is the LAST portal's plane clips the entity's single draw. Registration
-            //overwrites → same last-wins semantics.
-            collidingPortal = e.portal;
-        }
+        // Stage 0 (engine design §1.3): selection delegated to the module — IP's last-wins
+        // semantics hosted there verbatim; stage 2a makes it anchor-authoritative.
+        Portal collidingPortal = com.warwa.seamlessportals.passthrough.SeamCrossingRule
+            .resolveCrossingFace(entity, collisionHandler);
 
         if (collidingPortal == null) {
             frameProbe(entity, "MAIN vanilla-unclipped (empty entries)");
@@ -363,18 +360,14 @@ public class CrossPortalEntityRenderer {
             //use some rough check to work around
 
             if (renderingPortal instanceof Portal) {
-                // F6 SEAM SAME-PLANE EXCEPTION (live round 2026-08-17 #6, log-nailed: rendering
-                // portal 26 vs colliding face 27 — the renderer may draw a window through EITHER
-                // co-located face, and when it picks the TWIN the flipped-check below silently
-                // skipped the straddler's back-image, cutting the un-emerged half out of the
-                // window for the whole straddle). At a seam, the flipped twin's projection IS
-                // the window's legitimate back-image: treat it exactly like the
-                // renderingPortal == collidingPortal case (the isHidden stand-in is bypassed
-                // too — the threaded seam clip does the real cutting). Non-seam portals keep
-                // IP's flipped/reverse skips verbatim.
-                boolean seamSamePlane = com.warwa.seamlessportals.passthrough
-                    .SeamCartContinuity.isSeamContinuous(collidingPortal)
-                    && Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal);
+                // Stage 0 (engine design §1.3): the seam same-plane exception lives in the
+                // module — the renderer may draw a window through EITHER co-located face, and
+                // when it picks the TWIN, IP's flipped-skip would drop the straddler's
+                // back-image (the window's only painter of the un-emerged half). The isHidden
+                // camera guard is NOT bypassed (round 17). Non-seam portals keep IP's
+                // flipped/reverse skips verbatim.
+                boolean seamSamePlane = com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                    .inPassSamePlaneException(((Portal) renderingPortal), collidingPortal);
                 if (!seamSamePlane
                     && (Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal)
                         || Portal.isReversePortal(((Portal) renderingPortal), collidingPortal))) {
@@ -409,19 +402,12 @@ public class CrossPortalEntityRenderer {
                         //snapshot (NOT the ambient dest inner clip), so the projection draws unclipped,
                         //matching IP (PerEntityClipBracket.submitProjectedEntityClipped; Verifier-1 P1).
                         //
-                        // F6 SEAM EXCEPTION (live round 2026-08-16; the `PROJ clip=DISABLED
-                        // in-portal-pass` ghost, 1,485 probe lines): IP's stand-in gates assume a
-                        // framed portal whose un-poked image body hides behind the frame — a seam
-                        // is a co-planar window in open air, so the unclipped image pasted the
-                        // WHOLE cart into the window view (approach phase: pure ghost on the far
-                        // side; straddle phase: the already-emerged half double-drawn). Thread the
-                        // real inner clip for seam faces; the per-entity bracket scopes the plane
-                        // to this projection's own draws, leaving the pass's re-armed clip
-                        // untouched. Non-seam portals keep IP's null verbatim.
+                        // Stage 0 (engine design §1.3): the in-pass projection clip verdict
+                        // lives in the module — seam faces always carry their real inner clip
+                        // (the round-2 `clip=DISABLED` window-ghost fix); non-seam portals keep
+                        // IP's null verbatim.
                         Plane seamInPassClip = com.warwa.seamlessportals.passthrough
-                            .SeamCartContinuity.isSeamContinuous(collidingPortal)
-                            ? innerClipping
-                            : null;
+                            .SeamCrossingRule.inPassProjectionClip(collidingPortal, innerClipping);
                         renderEntity(entity, collidingPortal, dispatcher, cam, matrixStack, storage,
                             seamInPassClip);
                     }
@@ -429,20 +415,13 @@ public class CrossPortalEntityRenderer {
             }
         }
         else {
-            // F5/F6 CROSSING-WINDOW GATE (live round 2026-08-17, the couple-seconds ghost's
-            // true root): IP gates CASE-2 on the body actually intersecting the plane
-            // (hasIntersection — defined above but dropped from this branch in the port). At a
-            // seam, proximity registration books BOTH co-located faces during a mere APPROACH,
-            // and the TWIN face's inner clip keeps exactly the un-poked half-space — so the
-            // WHOLE approaching cart painted at the far station for the length of the approach
-            // segment (~2 s per loop; cowless before the rider fixes, which is why the cow
-            // "disappeared from the minecart"). Gate on the pin window: pre-crossing, the
-            // legitimate face's image is fully clipped anyway (nothing has poked through), so
-            // this is pixel-identical for every legitimate phase and kills the twin ghost.
-            if (com.warwa.seamlessportals.passthrough.SeamCartContinuity
-                    .isSeamContinuous(collidingPortal)
-                && !com.warwa.seamlessportals.passthrough.SeamStraddleBracket
-                    .pinned(entity, collidingPortal)) {
+            // Stage 0 (engine design §1.3): the crossing-window projection gate lives in the
+            // module (IP's dropped hasIntersection, restored seam-correctly): a seam face
+            // projects an entity only during its crossing window — pixel-identical for every
+            // legitimate phase, and the co-located twin's whole-body approach ghost (the
+            // "couple-seconds sighting") is impossible.
+            if (!com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                    .mainPassProjectionAdmitted(entity, collidingPortal)) {
                 frameProbe(entity, "PROJ gated (not crossing face "
                     + collidingPortal.getId() + ")");
                 return;
@@ -658,39 +637,28 @@ public class CrossPortalEntityRenderer {
                     // pass and the binary eye-side test drew the whole rebased-trail cart
                     // vanilla-unclipped INTO that window for ~2 frames ("MAIN vanilla-unclipped
                     // (portal-view pass 5)" at the teleport tick — the user's window flash).
-                    if (com.warwa.seamlessportals.passthrough.SeamCartContinuity
-                            .isSeamContinuous(collidingPortal)
-                        && com.warwa.seamlessportals.passthrough.SeamStraddleBracket
-                            .pinned(entity, collidingPortal)) {
-                        // Side test against the pass's INNER CLIP normal, not contentDirection
-                        // (live round 2026-08-17 #4, the away-crossing hole): the renderer may
-                        // draw a window through EITHER co-located face, so contentDirection
-                        // flips meaning per orientation — the toward-crossing was culled
-                        // correctly by luck, the away-crossing lost its emerged part in the
-                        // window (nothing else paints the straddler there). The pass's inner
-                        // clip normal always points INTO the pass's actual content.
-                        qouteall.q_misc_util.my_util.Plane passClip =
-                            ((Portal) renderingPortal).getInnerClipping();
-                        Vec3 passKeptDir = passClip != null
-                            ? passClip.normal()
-                            : ((Portal) renderingPortal).getContentDirection();
-                        if (collidingPortal.getNormal().dot(passKeptDir) <= 0) {
+                    // Stage 0 (engine design §1.3): the straddle-side verdict lives in the
+                    // module — side test against the pass's ARMED INNER CLIP normal (never
+                    // contentDirection: it flips meaning with the renderer's co-located face
+                    // pick), and the KEEP verdict is FINAL (no binary center-side test; the
+                    // pass's plane-exact ambient clip cuts pixels).
+                    switch (com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                        .inPassRealBodyVerdict(entity, collidingPortal, (Portal) renderingPortal)) {
+                        case CULL -> {
                             frameProbe(entity, "VIS seam-side culled in portal-pass "
                                 + renderingPortal.getId()
                                 + " (pass shows the far side of straddled face "
                                 + collidingPortal.getId() + ")");
                             return false;
                         }
-                        // KEEP case bypasses the remaining gates (live round 2026-08-17 #5):
-                        // the binary eye-side onDestSide test below culled the straddler for
-                        // the first ticks of the straddle — until its CENTER crossed — so the
-                        // poked front was missing from the window ("the front in dest gets cut
-                        // off"). The pass's ambient clip already cuts plane-exactly; a pinned
-                        // straddler on the pass's own side needs no whole-entity test.
-                        frameProbe(entity, "VIS seam-side kept in portal-pass "
-                            + renderingPortal.getId() + " (straddling face "
-                            + collidingPortal.getId() + ")");
-                        return true;
+                        case KEEP -> {
+                            frameProbe(entity, "VIS seam-side kept in portal-pass "
+                                + renderingPortal.getId() + " (straddling face "
+                                + collidingPortal.getId() + ")");
+                            return true;
+                        }
+                        case NOT_ENGAGED -> {
+                        }
                     }
                     if (!Portal.isReversePortal(collidingPortal, ((Portal) renderingPortal))) {
                         Vec3 cameraPos = PortalRenderer.client.gameRenderer.mainCamera().position();

@@ -43,36 +43,13 @@ public class PortalCollisionHandler {
                 return true;
             }
 
-            // F6 STRADDLE PIN (user-confirmed contract): while the entity's crossing of this
-            // SEAM face is in progress, the entry persists and stays fresh — consulted BEFORE
-            // the box-proximity gate below, because a rebased arrival visual can trail more
-            // than its 0.5 stretch margin behind the plane; the eye-side reasons would then
-            // delete the crossing face's bracket mid-crossing and hand the clip to its
-            // co-located twin (the "renders on the wrong side for a second" defect).
-            if (com.warwa.seamlessportals.passthrough.SeamStraddleBracket.keeps(entity, p.portal)) {
+            // Stage 0 (engine design §1.3): the straddle pin + rider bracket mirror live in
+            // the module as mustKeep — consulted BEFORE the box/staleness/eye gates below
+            // (a rebased arrival visual can trail more than the 0.5 stretch margin; a rider's
+            // own gates would delete the fanned entry every tick before a frame renders).
+            if (com.warwa.seamlessportals.passthrough.SeamCrossingRule.mustKeep(entity, p)) {
                 p.activeTime = getTiming(entity);
                 return false;
-            }
-
-            // F5/F6 RIDER BRACKET MIRROR (live round 2026-08-17, log-nailed: the vehicle's
-            // per-move registration fan re-added the rider's entry every tick and the rider's
-            // OWN prune — whose box/eye gates are tuned for self-moving entities — deleted it
-            // again before any frame rendered, so the rider stayed un-bracketed through the
-            // whole approach: the cowless emerging cart). A passenger's entry lives exactly as
-            // long as its VEHICLE holds the same face: the rider is part of the crossing unit
-            // and the vehicle's entry lifecycle is the unit's source of truth.
-            Entity vehicle = entity.getVehicle();
-            if (vehicle != null) {
-                PortalCollisionHandler vehicleHandler =
-                    ((IEEntity) vehicle).ip_getPortalCollisionHandler();
-                if (vehicleHandler != null) {
-                    for (PortalCollisionEntry vehicleEntry : vehicleHandler.portalCollisions) {
-                        if (vehicleEntry.portal == p.portal) {
-                            p.activeTime = getTiming(entity);
-                            return false;
-                        }
-                    }
-                }
             }
 
             AABB stretchedBoundingBox = CollisionHelper.getStretchedBoundingBox(entity);

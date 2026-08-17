@@ -309,26 +309,12 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
             ip_portalCollisionHandler = new PortalCollisionHandler();
         }
 
-        // F5/F6 BEHIND-REFUSAL (live round 2026-08-17 #2): a portal is entered from its FRONT
-        // — a seam face never accepts an entity wholly behind its plane. This is what keeps
-        // the co-located TWIN unbooked during a mere approach: its CASE-2 projection's clip
-        // keeps exactly the un-poked half-space, so a booked twin painted the WHOLE
-        // approaching cart at the far station for the last blocks of every approach (the
-        // couple-seconds ghost's residual window). The arrival SEED bypasses this gate
-        // deliberately — the rebased trail body is legitimately wholly behind the arrival
-        // face (SeamStraddleBracket.beginSeed/endSeed).
-        if (!com.warwa.seamlessportals.passthrough.SeamStraddleBracket.inSeed()
-            && com.warwa.seamlessportals.passthrough.SeamCartContinuity
-                .isSeamContinuous((Portal) portal)
-            && com.warwa.seamlessportals.passthrough.SeamStraddleBracket
-                .whollyBehind(this_, (Portal) portal)) {
-            return;
-        }
-
-        // F6 STRADDLE PIN, register side: while a seam face is straddled and booked, its
-        // co-located opposite twin may not register — last-entry-wins would flip the render
-        // bracket to the eye's side mid-crossing.
-        if (com.warwa.seamlessportals.passthrough.SeamStraddleBracket.refuses(
+        // Stage 0 (engine design §1.3): the behind-refusal + twin-refusal register gates live
+        // in the module as mayBook (a portal is entered from its FRONT; a booked face's
+        // co-located twin may not register mid-crossing; the arrival seed bypasses the
+        // behind-refusal — the rebased trail body is legitimately wholly behind the arrival
+        // face). Stage 2a replaces the seed ThreadLocal with anchor-authorized booking.
+        if (!com.warwa.seamlessportals.passthrough.SeamCrossingRule.mayBook(
             this_, ip_portalCollisionHandler, (Portal) portal)) {
             return;
         }
