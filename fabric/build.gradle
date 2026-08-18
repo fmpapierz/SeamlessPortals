@@ -190,6 +190,8 @@ loom {
             if (project.findProperty('disableSeamVehicleAttach') == 'true') { vmArg('-Dseamlessportals.disableSeamVehicleAttach=true') }
             // RS (d) PROBE LEVER — DEFAULT-OFF. The minecart-crossing instrument (recon §5.5).
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
+            // ENGINE STAGE 1 — shadow resolver (SEAM_ENTITY_ENGINE_DESIGN par.6): new-form verdicts computed alongside legacy, divergences logged.
+            if (project.findProperty('seamResolver') != null) { vmArg('-Dseamlessportals.seamResolver=' + project.findProperty('seamResolver')) }
             // RS (e) DEFECT A — restores the WRAP-AROUND section lookup on the dest-pass entity
             // visibility gate (the same-dim window loses its entities at any real distance).
             if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
@@ -400,6 +402,8 @@ loom {
             // RS (d) PROBE LEVER — DEFAULT-OFF. Arms the minecart-crossing instrument's extra
             // logging (SAMPLE/EVT/COME-OFF-TRACK/bridge-hit lines) in the RS-CART gates.
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
+            // ENGINE STAGE 1 — shadow resolver (SEAM_ENTITY_ENGINE_DESIGN par.6): new-form verdicts computed alongside legacy, divergences logged.
+            if (project.findProperty('seamResolver') != null) { vmArg('-Dseamlessportals.seamResolver=' + project.findProperty('seamResolver')) }
             // RS (e) DEFECT A inversion lever + the two (e) probe levers.
             // ⚠ NO GATE LEG CONSUMES disableDestEntitySectionExact. Defect A is covered by LIVE
             // evidence only (2026-08-01: user-confirmed, with a zombie-in-a-minecart control that

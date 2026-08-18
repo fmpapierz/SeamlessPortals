@@ -95,24 +95,19 @@ public final class SeamStraddleBracket {
     }
 
     /**
-     * Seed bypass for the BEHIND-REFUSAL registration gate: the arrival-face seed is the
-     * crossing's own authoritative notify, and the rebased trail body is LEGITIMATELY wholly
-     * behind the arrival face — the gate must not eat it. Thread-local because registration
-     * runs on both sides while seeding is client-thread-only.
+     * Does the entity's BACK PIECE exist against this face's plane (part of the box on the
+     * {@code −n} side)? The engine's projection-existence primitive (design §0: a face projects
+     * an entity iff the back piece exists — the piece the projection displays).
      */
-    private static final ThreadLocal<Boolean> SEEDING = ThreadLocal.withInitial(() -> false);
-
-    public static void beginSeed() {
-        SEEDING.set(true);
+    public static boolean backPieceExists(Entity entity, Portal face) {
+        AABB box = entity.getBoundingBox();
+        return spanMin(box, face.getNormal(), face.getOriginPos()) < -EPS;
     }
 
-    public static void endSeed() {
-        SEEDING.set(false);
-    }
-
-    public static boolean inSeed() {
-        return SEEDING.get();
-    }
+    // (The seed ThreadLocal bracket — beginSeed/endSeed/inSeed — was retired at engine stage
+    // 2a: the arrival seed is now ANCHOR-AUTHORIZED (SeamCrossingRule.mayBook clause (a)).
+    // Design §1.2: the ThreadLocal was one of the three costumes of the crossing's single
+    // irreducible history bit; the SeamCrossing anchor is that bit in one costume.)
 
     /**
      * The PRUNE gate: keep this entry (bypassing the eye-side, staleness, and box-proximity

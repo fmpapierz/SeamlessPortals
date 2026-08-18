@@ -373,6 +373,9 @@ public class CrossPortalEntityRenderer {
                         || Portal.isReversePortal(((Portal) renderingPortal), collidingPortal))) {
                     frameProbe(entity, "PROJ inpass-skip flipped/reverse via face "
                         + collidingPortal.getId() + " in pass " + renderingPortal.getId());
+                    com.warwa.seamlessportals.passthrough.SeamCrossingRule.shadowInPassProjection(
+                        ((Portal) renderingPortal), collidingPortal,
+                        collidingPortal.getInnerClipping(), false, "flipped-skip");
                 }
                 if (seamSamePlane
                     || (!Portal.isFlippedPortal(((Portal) renderingPortal), collidingPortal)
@@ -393,8 +396,14 @@ public class CrossPortalEntityRenderer {
                         frameProbe(entity, "PROJ inpass-hidden via face " + collidingPortal.getId()
                             + " in pass " + renderingPortal.getId()
                             + (seamSamePlane ? " (seam same-plane)" : ""));
+                        com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                            .shadowInPassProjection(((Portal) renderingPortal), collidingPortal,
+                                innerClipping, false, "isHidden");
                     }
                     if (renderingPortal == collidingPortal || !isHidden) {
+                        com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                            .shadowInPassProjection(((Portal) renderingPortal), collidingPortal,
+                                innerClipping, true, "drawn");
                         //IP draws these projections UNCLIPPED: onEndRenderingEntitiesAndBlockEntities
                         //disabled the CASE-3 clip (IP :101) and this isRendering branch (IP :184-204) sets
                         //NO clip — the rough flipped/reverse/isHidden checks above stand in for a second

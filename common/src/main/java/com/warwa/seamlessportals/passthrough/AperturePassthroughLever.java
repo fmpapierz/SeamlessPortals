@@ -609,6 +609,15 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_CART_PROBE =
         Boolean.getBoolean("seamlessportals.seamCartProbe");
 
+    /**
+     * ENGINE STAGE 1 (SEAM_ENTITY_ENGINE_DESIGN §6): {@code -DseamResolver=shadow} computes the
+     * engine's new-form verdicts alongside the legacy gates inside {@link SeamCrossingRule},
+     * logging every divergence (volume-capped). A zero-divergence live lap gates each verdict
+     * flip. Off = stage-0 behavior exactly.
+     */
+    public static final boolean SEAM_RESOLVER_SHADOW =
+        "shadow".equals(System.getProperty("seamlessportals.seamResolver"));
+
     // ============================================================================================
     // STEP (e) — THE TWO 2026-07-28 CART DEFECTS: same-dim window rendering + cross-dim riding.
     // ============================================================================================

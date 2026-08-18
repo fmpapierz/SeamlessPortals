@@ -889,6 +889,7 @@ public class ClientTeleportationManager {
             // rule. The codec base still takes the server's authoritative position: subsequent
             // move deltas must decode against what the server actually uses.
             boolean rebased = false;
+            boolean flipHandled = false;
             qouteall.imm_ptl.core.portal.Portal crossingPortal = null;
             if (portalId != -1) {
                 ClientLevel portalWorld = ClientWorldLoader.getWorld(portalDim);
@@ -896,19 +897,43 @@ public class ClientTeleportationManager {
                     && portalWorld.getEntity(portalId)
                         instanceof qouteall.imm_ptl.core.portal.Portal p) {
                     crossingPortal = p;
-                    applyRebaseVisual(entity, p, pos, portalId);
-                    entity.getPositionCodec().setBase(pos);
-                    // ATOMIC RIDER CARRY (live round 2026-08-16 #6): the vehicle and its riders
-                    // arrive in SEPARATE RPC packets and 26.2 renders frames MID-PACKET — a
-                    // frame landing in the gap drew the not-yet-rebased rider unclipped (the
-                    // split-second cow fragment), and a positionRider drag winning the race
-                    // left the rider's own RPC to double-transform an already-carried visual
-                    // (the couple-seconds standing ghost; the 686.7-offset garbage rebases).
-                    // Carrying every rider inside the vehicle's rebase closes the frame gap;
-                    // the rider's own RPC then hits the idempotency guard and skips.
-                    for (Entity rider : entity.getPassengers()) {
-                        applyRebaseVisual(rider, p, pos, portalId);
+                    qouteall.imm_ptl.core.portal.Portal arrivalFace =
+                        qouteall.imm_ptl.core.portal.PortalManipulation
+                            .findArrivalFacingPortal(p);
+                    // ENGINE STAGE 2a — THE EPOCH-GUARDED UNIT-ATOMIC FLIP (design §3.2/3.3):
+                    // if the unit is already anchored at this crossing's arrival face, this RPC
+                    // is a duplicate / late / rider-echo application — the entire transition
+                    // no-ops structurally (only the codec base is taken). Otherwise the whole
+                    // unit flips in this one handler call: every member's visual rebased
+                    // (ATOMIC RIDER CARRY — 26.2 renders mid-packet; a frame in the vehicle↔
+                    // rider RPC gap drew the unbracket-ed rider, and a positionRider drag
+                    // winning the race let the rider's RPC double-transform an already-carried
+                    // visual, the 686.7-offset family), the anchor re-set, every member's
+                    // bracket re-seeded anchor-authorized.
+                    if (arrivalFace != null
+                        && com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                            .isAnchoredAt(entity, arrivalFace)) {
+                        com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
+                            "FLIP-NOOP (already anchored at " + arrivalFace.getId() + ")");
+                        flipHandled = true;
                     }
+                    else {
+                        applyRebaseVisual(entity, p, pos, portalId);
+                        for (Entity rider : entity.getPassengers()) {
+                            applyRebaseVisual(rider, p, pos, portalId);
+                        }
+                        if (arrivalFace != null) {
+                            // Anchor first: the seeds below are anchor-authorized (mayBook (a)).
+                            com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                                .flip(entity, arrivalFace);
+                            seedArrivalFace(entity, arrivalFace);
+                            for (Entity rider : entity.getPassengers()) {
+                                seedArrivalFace(rider, arrivalFace);
+                            }
+                            flipHandled = true;
+                        }
+                    }
+                    entity.getPositionCodec().setBase(pos);
                     rebased = true;
                 }
             }
@@ -928,25 +953,9 @@ public class ClientTeleportationManager {
             // emerged yet, which drew the whole object on the wrong side of the portal and
             // blanked it in portal views (2026-08-11 live). The grace registry keeps the
             // entry alive across the eye-side prune until the visual catches up.
-            boolean seeded = false;
-            if (rebased && crossingPortal != null) {
-                qouteall.imm_ptl.core.portal.Portal arrivalFace =
-                    qouteall.imm_ptl.core.portal.PortalManipulation
-                        .findArrivalFacingPortal(crossingPortal);
-                if (arrivalFace != null) {
-                    seedArrivalFace(entity, arrivalFace);
-                    // ATOMIC RIDER CARRY, seed half: a rider must be render-bracketed on the
-                    // same frame as its vehicle — an unseeded rider in the frame gap drew
-                    // unclipped, cut only by the window stencil (the split-second fragment).
-                    for (Entity rider : entity.getPassengers()) {
-                        seedArrivalFace(rider, arrivalFace);
-                    }
-                    // The straddle pin (SeamStraddleBracket, consulted by the prune and the
-                    // register gates) now keeps this entry authoritative for exactly as long
-                    // as the box straddles the plane — no grace timer needed.
-                    seeded = true;
-                }
-            }
+            // Seeding is part of the FLIP above (anchor-first, unit-atomic); the sweep below
+            // remains the fallback for non-seam snaps and unresolvable arrival faces.
+            boolean seeded = flipHandled;
             if (!seeded) {
                 PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
                     entity, McHelper.getEyePos(entity), McHelper.getEyePos(entity), 1
@@ -1005,17 +1014,10 @@ public class ClientTeleportationManager {
             Entity e, qouteall.imm_ptl.core.portal.Portal arrivalFace
         ) {
             ((qouteall.imm_ptl.core.ducks.IEEntity) e).ip_clearCollidingPortal();
-            // The seed is the crossing's own authoritative notify — the trail body is
-            // legitimately wholly behind the arrival face, so bypass the BEHIND-REFUSAL
-            // registration gate for exactly this call.
-            com.warwa.seamlessportals.passthrough.SeamStraddleBracket.beginSeed();
-            try {
-                ((qouteall.imm_ptl.core.ducks.IEEntity) e)
-                    .ip_notifyCollidingWithPortal(arrivalFace);
-            }
-            finally {
-                com.warwa.seamlessportals.passthrough.SeamStraddleBracket.endSeed();
-            }
+            // Stage 2a: the seed is ANCHOR-AUTHORIZED (the caller flips the anchor first;
+            // mayBook clause (a) admits the anchor face even wholly behind) — the ThreadLocal
+            // seed bracket is retired.
+            ((qouteall.imm_ptl.core.ducks.IEEntity) e).ip_notifyCollidingWithPortal(arrivalFace);
             com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
                 "SNAP-SEED arrival-face=" + arrivalFace.getId());
         }

@@ -32,6 +32,132 @@ public final class SeamCrossingRule {
 
     private SeamCrossingRule() {}
 
+    private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+    // STAGE 1 SHADOW MODE (design §6 stage 1): under -DseamResolver=shadow the new-form verdicts
+    // run alongside the legacy ones; every divergence logs (volume-capped per the
+    // scoped-suppression lesson). A zero-divergence live lap gates each flip.
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+
+    private static int shadowLines = 0;
+    private static final int SHADOW_LINE_CAP = 300;
+
+    private static void shadowDiverge(String delta, String detail) {
+        if (!AperturePassthroughLever.SEAM_RESOLVER_SHADOW) {
+            return;
+        }
+        if (shadowLines >= SHADOW_LINE_CAP) {
+            return;
+        }
+        shadowLines++;
+        LOGGER.info("[SEAM-RULE] SHADOW-DIVERGE {} {}{}", delta, detail,
+            shadowLines == SHADOW_LINE_CAP ? " (cap reached; further divergences suppressed)" : "");
+    }
+
+    /**
+     * Delta (b)+(c) shadow: the design's in-pass projection admission — locality is checked
+     * downstream (E9); here the SIDE AGREEMENT half: {@code n_innerImage · passKeptNormal > 0}
+     * (the projection clip's kept normal at the image's station vs the pass's armed clip
+     * normal). Called from renderProjectedEntity's in-pass branch at each legacy decision
+     * point with the legacy outcome; logs when the new form disagrees.
+     */
+    public static void shadowInPassProjection(
+        Portal renderingPortal, Portal collidingPortal,
+        @Nullable Plane imageInnerClip, boolean legacyDrawn, String legacyReason
+    ) {
+        if (!AperturePassthroughLever.SEAM_RESOLVER_SHADOW) {
+            return;
+        }
+        if (!SeamCartContinuity.isSeamContinuous(collidingPortal)) {
+            return;
+        }
+        Plane passClip = renderingPortal.getInnerClipping();
+        boolean newDrawn = imageInnerClip != null && passClip != null
+            && imageInnerClip.normal().dot(passClip.normal()) > 0;
+        if (newDrawn != legacyDrawn) {
+            shadowDiverge("b/c-inpass-projection",
+                "face=" + collidingPortal.getId() + " pass=" + renderingPortal.getId()
+                    + " legacy=" + legacyDrawn + "(" + legacyReason + ") new=" + newDrawn);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+    // STAGE 2a — THE ANCHOR LAYER (design §3): the crossing's one irreducible history bit,
+    // stored on the entity (SeamCrossingHolder), epoch-guarded, rider-inherited per tick.
+    // ═════════════════════════════════════════════════════════════════════════════════════════
+
+    @Nullable
+    public static Portal anchorOf(Entity entity) {
+        return SeamCrossingHolder.of(entity).seamlessportals$getAnchorFace();
+    }
+
+    /** Is this face the entity's (or its unit root's) live anchor? */
+    public static boolean isAnchoredAt(Entity entity, Portal face) {
+        if (anchorOf(entity) == face) {
+            return true;
+        }
+        Entity root = entity.getRootVehicle();
+        return root != entity && anchorOf(root) == face;
+    }
+
+    /**
+     * The FLIP (design §3.2): re-anchor the unit to the arrival face, unit-atomically — the
+     * root and every (recursive) rider change in one call, so no frame can observe a partial
+     * unit. Epoch increments once per real flip; the caller epoch-guards via
+     * {@link #isAnchoredAt} so duplicate/late/rider-echo RPC applications are structural
+     * no-ops (the double-transform family dies here).
+     */
+    public static void flip(Entity unitMember, Portal arrivalFace) {
+        Entity root = unitMember.getRootVehicle();
+        SeamCrossingHolder rootHolder = SeamCrossingHolder.of(root);
+        rootHolder.seamlessportals$setAnchorFace(arrivalFace);
+        int epoch = rootHolder.seamlessportals$getAnchorEpoch() + 1;
+        rootHolder.seamlessportals$setAnchorEpoch(epoch);
+        for (Entity rider : root.getIndirectPassengers()) {
+            SeamCrossingHolder riderHolder = SeamCrossingHolder.of(rider);
+            riderHolder.seamlessportals$setAnchorFace(arrivalFace);
+            riderHolder.seamlessportals$setAnchorEpoch(epoch);
+        }
+        SeamCartProbe.event(root, "ANCHOR-FLIP face=" + arrivalFace.getId() + " epoch=" + epoch);
+    }
+
+    /**
+     * Per-tick anchor maintenance, called from {@code ip_tickCollidingPortal} for every entity
+     * BEFORE the prune consults {@link #mustKeep}:
+     * <ul>
+     *   <li><b>Rider inheritance</b> (design §3.2): a rider continuously mirrors its unit
+     *   root's anchor, so a mid-crossing dismount orphan keeps its crossing with no dismount
+     *   event needed — never a geometric re-derivation (which anchors a majority-crossed
+     *   orphan to the wrong face).</li>
+     *   <li><b>CLOSE</b>: the anchor releases when the face is removed, the level mismatches,
+     *   or the crossing is no longer in progress ({@code !pinned}) — full front emergence and
+     *   lateral pin-column exit both land here. Anchor and bracket die together.</li>
+     * </ul>
+     */
+    public static void tickAnchor(Entity entity) {
+        SeamCrossingHolder holder = SeamCrossingHolder.of(entity);
+        Entity root = entity.getRootVehicle();
+        if (root != entity) {
+            Portal rootAnchor = anchorOf(root);
+            holder.seamlessportals$setAnchorFace(rootAnchor);
+            if (rootAnchor != null) {
+                holder.seamlessportals$setAnchorEpoch(
+                    SeamCrossingHolder.of(root).seamlessportals$getAnchorEpoch());
+            }
+            return;
+        }
+        Portal anchor = holder.seamlessportals$getAnchorFace();
+        if (anchor == null) {
+            return;
+        }
+        if (anchor.isRemoved() || anchor.level() != entity.level()
+            || !SeamStraddleBracket.pinned(entity, anchor)) {
+            holder.seamlessportals$setAnchorFace(null);
+            SeamCartProbe.event(entity, "ANCHOR-CLOSE face=" + anchor.getId());
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════════════════════
     // RESOLUTION
     // ═════════════════════════════════════════════════════════════════════════════════════════
@@ -51,11 +177,28 @@ public final class SeamCrossingRule {
         if (handler == null) {
             return null;
         }
-        Portal collidingPortal = null;
+        Portal lastWins = null;
+        boolean anchorHasEntry = false;
+        Portal anchor = anchorOf(entity);
         for (PortalCollisionEntry e : handler.portalCollisions) {
-            collidingPortal = e.portal;
+            lastWins = e.portal;
+            if (e.portal == anchor) {
+                anchorHasEntry = true;
+            }
         }
-        return collidingPortal;
+        // Stage 2a, delta (d): anchor-authoritative resolution — the crossing's stored history
+        // bit outranks entry ORDER (a forbidden input; last-wins was invertible by any
+        // clear-and-resweep whose iteration visited the twin first). Divergences logged; the
+        // per-member entry fallback survives unit destruction.
+        if (anchor != null && anchorHasEntry) {
+            if (lastWins != anchor) {
+                shadowDiverge("d-resolution",
+                    "id=" + entity.getId() + " anchor=" + anchor.getId()
+                        + " lastWins=" + (lastWins == null ? "null" : lastWins.getId()));
+            }
+            return anchor;
+        }
+        return lastWins;
     }
 
     // ═════════════════════════════════════════════════════════════════════════════════════════
@@ -95,10 +238,17 @@ public final class SeamCrossingRule {
             return InPassBodyVerdict.NOT_ENGAGED;
         }
         Plane passClip = renderingPortal.getInnerClipping();
-        Vec3 passKeptDir = passClip != null
-            ? passClip.normal()
-            : renderingPortal.getContentDirection();
-        if (collidingPortal.getNormal().dot(passKeptDir) <= 0) {
+        if (passClip == null) {
+            // Delta (a) FLIPPED (zero shadow occurrences over a 34-crossing lap): the
+            // contentDirection fallback is deleted — a pass without an armed clip cannot be
+            // characterized by the seam rule, so the IP baseline decides (constitution:
+            // contentDirection is a forbidden input; it flips meaning with the renderer's
+            // co-located face pick).
+            shadowDiverge("a-null-passClip-not-engaged",
+                "pass=" + renderingPortal.getId() + " face=" + collidingPortal.getId());
+            return InPassBodyVerdict.NOT_ENGAGED;
+        }
+        if (collidingPortal.getNormal().dot(passClip.normal()) <= 0) {
             return InPassBodyVerdict.CULL;
         }
         return InPassBodyVerdict.KEEP;
@@ -123,7 +273,18 @@ public final class SeamCrossingRule {
         if (!SeamCartContinuity.isSeamContinuous(collidingPortal)) {
             return true;
         }
-        return SeamStraddleBracket.pinned(entity, collidingPortal);
+        // Delta (e) FLIPPED (zero shadow divergences over a 34-crossing lap): projection
+        // existence IS back-piece existence — a face projects an entity iff part of the box is
+        // past its plane (the piece the projection displays). The reversed shadow comparator
+        // stays as cheap insurance.
+        boolean newForm = SeamStraddleBracket.backPieceExists(entity, collidingPortal);
+        if (AperturePassthroughLever.SEAM_RESOLVER_SHADOW
+            && newForm != SeamStraddleBracket.pinned(entity, collidingPortal)) {
+            shadowDiverge("e-projection-existence",
+                "face=" + collidingPortal.getId() + " id=" + entity.getId()
+                    + " active(backPiece)=" + newForm + " legacy(pinned)=" + !newForm);
+        }
+        return newForm;
     }
 
     /**
@@ -175,8 +336,14 @@ public final class SeamCrossingRule {
     public static boolean mayBook(
         Entity entity, @Nullable PortalCollisionHandler handler, Portal face
     ) {
-        if (!SeamStraddleBracket.inSeed()
-            && SeamCartContinuity.isSeamContinuous(face)
+        // Stage 2a: ANCHOR-AUTHORIZED booking (design §3.2 clause (a)) — the arrival face is
+        // bookable while the body is wholly behind it BECAUSE the anchor says a crossing to it
+        // is live, not because a thread-local seed bracket happens to be open. This retires
+        // the beginSeed/endSeed ThreadLocal costume.
+        if (isAnchoredAt(entity, face)) {
+            return true;
+        }
+        if (SeamCartContinuity.isSeamContinuous(face)
             && SeamStraddleBracket.whollyBehind(entity, face)) {
             return false;
         }
@@ -201,6 +368,12 @@ public final class SeamCrossingRule {
      * </ul>
      */
     public static boolean mustKeep(Entity entity, PortalCollisionEntry entry) {
+        // Stage 2a: the unit's live anchor face keeps its entry unconditionally — the anchor
+        // IS the crossing; tickAnchor's CLOSE (which runs before the prune) is the single
+        // release point, so anchor and bracket die together.
+        if (isAnchoredAt(entity, entry.portal)) {
+            return true;
+        }
         if (SeamStraddleBracket.keeps(entity, entry.portal)) {
             return true;
         }

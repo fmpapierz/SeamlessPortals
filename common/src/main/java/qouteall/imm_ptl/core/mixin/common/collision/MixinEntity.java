@@ -36,11 +36,42 @@ import qouteall.q_misc_util.Helper;
 import qouteall.q_misc_util.my_util.CountDownInt;
 
 @Mixin(Entity.class)
-public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
+public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension,
+    com.warwa.seamlessportals.passthrough.SeamCrossingHolder {
 
     @Nullable
     @Unique
     private PortalCollisionHandler ip_portalCollisionHandler;
+
+    // ENGINE STAGE 2a: the crossing anchor (SeamCrossingHolder). Plain defaults only —
+    // @Unique initializers run in the target ctor; cross-class static calls there deadlock
+    // class-init (the standing mixin rule).
+    @Nullable
+    @Unique
+    private Portal seamlessportals$anchorFace;
+
+    @Unique
+    private int seamlessportals$anchorEpoch;
+
+    @Override
+    public @Nullable Portal seamlessportals$getAnchorFace() {
+        return seamlessportals$anchorFace;
+    }
+
+    @Override
+    public void seamlessportals$setAnchorFace(@Nullable Portal face) {
+        seamlessportals$anchorFace = face;
+    }
+
+    @Override
+    public int seamlessportals$getAnchorEpoch() {
+        return seamlessportals$anchorEpoch;
+    }
+
+    @Override
+    public void seamlessportals$setAnchorEpoch(int epoch) {
+        seamlessportals$anchorEpoch = epoch;
+    }
 
     @Shadow
     private Level level;
@@ -289,6 +320,10 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
     @Override
     public void ip_tickCollidingPortal() {
         Entity this_ = (Entity) (Object) this;
+
+        // ENGINE STAGE 2a: anchor maintenance BEFORE the prune — rider inheritance mirrors the
+        // unit root's anchor; CLOSE releases it; the prune's mustKeep then reads settled state.
+        com.warwa.seamlessportals.passthrough.SeamCrossingRule.tickAnchor(this_);
 
         if (ip_portalCollisionHandler != null) {
             ip_portalCollisionHandler.update(this_);
