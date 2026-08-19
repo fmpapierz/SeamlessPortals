@@ -1338,6 +1338,15 @@ public class IPGlobal {
     public static final double farFadeCosFloor =
         parseDoubleLever("seamlessportals.farFadeCosFloor", 0.05, 0.05, 1.0);
 
+    // IS5-DESTCTX (2026-08-17, IS5_DESTCTX_DESIGN.md, DEFAULT ON) — the exact-match
+    // contract's fix: while a CROSS-DIM (vs the real player's dim) nested dest render
+    // runs, iris's biome-family player reads resolve to the DEST level at the VIRTUAL
+    // camera's block pos, so the dest pipeline's own smoothed custom uniforms
+    // (inNetherWastes -> netherColor etc.) converge to the dest world's values instead of
+    // decaying toward the viewer's. Kill switch = the shipped (decaying) behavior.
+    public static final boolean disableDestCtx =
+        Boolean.getBoolean("seamlessportals.disableDestCtx");
+
     private static double parseDoubleLever(String prop, double def, double min, double max) {
         String raw = System.getProperty(prop);
         if (raw == null) return def;
