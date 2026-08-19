@@ -108,3 +108,47 @@ Q5. Does anything else sample player position per-frame in the custom-uniform in
     (playerPos-class uniforms) that would now go dest-side and break a pack formula that
     WANTS the real viewer (e.g. player-motion-driven effects)? Enumerate the full
     playerI/playerF registration list and rule per uniform.
+
+## §6 ⟦J⟧ PANEL FOLDS (BINDING — wf_ed89a27c-2de, 2026-08-17; both judges APPROVE_WITH_CHANGES)
+
+FB1 **Redirect targets corrected (BYTECODE)**: getBiome lives in `lambda$addBiomeUniforms$0..$4`
+    (five per-uniform statics), NOT the playerI/playerF wrappers (§3.2 as drafted would have
+    silently no-oped). IMPLEMENTED as the panel's preferred variant: @Redirect
+    `LocalPlayer.level()` + `LocalPlayer.blockPosition()` across the five bodies — also
+    dest-ifies $2's getPrecipitationAt(pos, seaLevel) tail. irisdump SHA-verified byte-identical
+    to the runtime jar; re-javap on any iris bump.
+FB2 **The cross-dim gate premise was FALSE**: the shell bracket runs for SAME-DIM views and
+    NESTS. IMPLEMENTED: per-invocation push/pop (push after ip_setCamera(newCamera), pop in
+    the finally after ip_setCamera(oldCamera), BOTH shell twins); ACTIVE iff
+    `newDimension != RenderStates.originalPlayerDimension && client.player != null`.
+    Same-dim byte-identical; A→B→A depth-2 pushes INACTIVE (overwrites B's ctx); A→B→C
+    carries C. The MAIN pipeline's update() moments are structurally outside every bracket.
+FB3 **Two windows, one dest dim**: sticky per-(frame, destDim) pos — first bracket captures,
+    later ones reuse; cleared at the IS5 frame hook. Symmetry by construction (the
+    2M-refresh lesson), never arbitration.
+FB4 **Mixin config**: @Pseudo + remap=false + require=0/expect=0 (the json's defaultRequire=1
+    would hard-crash on drift) + the liveness watchdog (ACTIVE pushes with zero redirect hits
+    → one-shot loud WARN; degrades to the shipped decay, never crashes).
+FB5 **Q2 ruled**: isEyeInWater — NO WORK (reads the swapped mainCamera, already dest-correct).
+    eyeBrightness — LEAVE in v1: mixed-context today (dest level at source coords), but the
+    contract case (OW→nether) is position-insensitive (nether sky=0 everywhere) so
+    eyeBrightnessM/isEyeInCave converge correct; the nether→OW direction is a DISCLOSED
+    residual (extend the holder into getEyeBrightness if the A/B shows it).
+FB6 **Q4 corrected**: prewarm creates pipelines OUTSIDE brackets, but smoothies seed at the
+    FIRST customUniforms.update() = first beginLevelRendering = inside the window ⇒ seeds
+    correct for never-visited dims; a previously-mained dim converges from its stale values
+    (disclosed §3.5). Unloaded-chunk seed: getBiome falls back to plains until dest chunks
+    arrive — a brief climb, not the decay defect (probe-reading note).
+FB7 **Closed arcs verified untouched**: IrisDestPrevCamera (push@431 uploads CACHED values;
+    S1@447 ordering unchanged; keys on built-in cameraPosition — never touched);
+    RESTAMP/SG/wash-bracket (location-based introspection, per-entry stampedPre — no
+    uniform-value contact); crossing frames (bracket never spans the S14 pump; cross-view
+    frames have no main-chain update). FARFADE COMPOSES (orthogonal defects) — but
+    post-DESTCTX the blend endpoints diverge more (SG gains the corrected tint, gradedPRE
+    stays source-processed): NAMED RE-GATE legs = fade-band walk-out re-run + the wMin/D1
+    retune round + "window-2 PRE delta grew" adjudication note. Part of the historical
+    far-wash report may have been THIS tint defect — expect retune, don't re-litigate.
+FB8 **Pairing contract**: the SET/CLEAR pair is a new sanctioned full-pipeline delta —
+    recorded here for the MyGameRenderer pairing-contract lens. Ledger: remap=false MC-name
+    targets inside iris classes are dev-runtime-correct; an intermediary-mapped release
+    would silently no-op (require=0) — same latent property as the shipped DestPrev family.

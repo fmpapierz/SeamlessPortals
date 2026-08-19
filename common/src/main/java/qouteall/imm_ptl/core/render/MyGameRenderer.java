@@ -325,6 +325,18 @@ public class MyGameRenderer {
         }
         ieGameRenderer.ip_setCamera(newCamera);
 
+        // IS5-DESTCTX (design §3 + panel folds B2/B3/Q3): present the virtual camera's
+        // dest-world context to iris's biome-family player reads for the nested render.
+        // ⟦J⟧ B2: ACTIVE iff the dest dim differs from the REAL player's dim (this bracket
+        // also runs for same-dim views and nests — A→B→A depth-2 renders the player's own
+        // dim and pushes INACTIVE, overwriting B's context; A→B→C carries C). Push returns
+        // the outer state; the finally pops it (per-invocation stack semantics).
+        Object[] ip_prevDestCtx = qouteall.imm_ptl.core.compat.iris_compatibility
+            .IrisDestContext.push(
+                newWorld, newDimension, newCamera.position(),
+                client.player != null
+                    && newDimension != RenderStates.originalPlayerDimension);
+
         RenderBuffers newRenderBuffers = null;
         if (IPGlobal.useSecondaryEntityVertexConsumer) {
             newRenderBuffers = acquireRenderBuffersObject();
@@ -462,6 +474,8 @@ public class MyGameRenderer {
             ((IEParticleManager) client.particleEngine).ip_setWorld(oldWorld);
             client.hitResult = oldCrosshairTarget;
             ieGameRenderer.ip_setCamera(oldCamera);
+            // IS5-DESTCTX restore half (paired with the push after ip_setCamera(newCamera)).
+            qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestContext.pop(ip_prevDestCtx);
 
             FogRendererContext.swappingManager.popSwapping();
 
@@ -627,6 +641,18 @@ public class MyGameRenderer {
         }
         ieGameRenderer.ip_setCamera(newCamera);
 
+        // IS5-DESTCTX (design §3 + panel folds B2/B3/Q3): present the virtual camera's
+        // dest-world context to iris's biome-family player reads for the nested render.
+        // ⟦J⟧ B2: ACTIVE iff the dest dim differs from the REAL player's dim (this bracket
+        // also runs for same-dim views and nests — A→B→A depth-2 renders the player's own
+        // dim and pushes INACTIVE, overwriting B's context; A→B→C carries C). Push returns
+        // the outer state; the finally pops it (per-invocation stack semantics).
+        Object[] ip_prevDestCtx = qouteall.imm_ptl.core.compat.iris_compatibility
+            .IrisDestContext.push(
+                newWorld, newDimension, newCamera.position(),
+                client.player != null
+                    && newDimension != RenderStates.originalPlayerDimension);
+
         RenderBuffers newRenderBuffers = null;
         if (IPGlobal.useSecondaryEntityVertexConsumer) {
             newRenderBuffers = acquireRenderBuffersObject();
@@ -708,6 +734,8 @@ public class MyGameRenderer {
             ((IEParticleManager) client.particleEngine).ip_setWorld(oldWorld);
             client.hitResult = oldCrosshairTarget;
             ieGameRenderer.ip_setCamera(oldCamera);
+            // IS5-DESTCTX restore half (paired with the push after ip_setCamera(newCamera)).
+            qouteall.imm_ptl.core.compat.iris_compatibility.IrisDestContext.pop(ip_prevDestCtx);
 
             FogRendererContext.swappingManager.popSwapping();
 

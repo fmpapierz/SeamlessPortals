@@ -1645,6 +1645,8 @@ public final class IrisStageConsistentComposite {
         }
         capturesPendingThisFrame = 0;
         armedCapture = null;
+        // IS5-DESTCTX fold B3: the per-(frame, destDim) sticky context clears with the frame.
+        IrisDestContext.beginFrame();
         // IS5-HIST eviction (render thread, GL current): removed portals' prev-capture textures
         // are deleted explicitly (strong keys — a silent WeakHashMap GC would leak the GL ids);
         // the map is bounded at 16, eldest first.
