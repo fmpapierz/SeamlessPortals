@@ -673,6 +673,8 @@ loom {
             if (project.findProperty('farFadeWMin') != null) { vmArg('-Dseamlessportals.farFadeWMin=' + project.findProperty('farFadeWMin')) }
             if (project.findProperty('farFadeCosFloor') != null) { vmArg('-Dseamlessportals.farFadeCosFloor=' + project.findProperty('farFadeCosFloor')) }
             if (project.findProperty('disableDestCtx') == 'true') { vmArg('-Dseamlessportals.disableDestCtx=true') }
+            if (project.findProperty('sealWindowGlow') == 'true') { vmArg('-Dseamlessportals.sealWindowGlow=true') }
+            if (project.findProperty('disableDestApertureBloom') == 'true') { vmArg('-Dseamlessportals.disableDestApertureBloom=true') }
             // IS5-ACT dest-volume seeding GATE PROBE (2026-07-25) — LOG-ONLY, default OFF.
             // Legs [1]-[3] are pure reads (zero GL); leg [4] issues one 1Hz DSA readback +
             // memory barrier (a visible ~1Hz hitch — never leave it on for gameplay) —
@@ -1104,6 +1106,8 @@ loom {
             if (project.findProperty('farFadeWMin') != null) { vmArg('-Dseamlessportals.farFadeWMin=' + project.findProperty('farFadeWMin')) }
             if (project.findProperty('farFadeCosFloor') != null) { vmArg('-Dseamlessportals.farFadeCosFloor=' + project.findProperty('farFadeCosFloor')) }
             if (project.findProperty('disableDestCtx') == 'true') { vmArg('-Dseamlessportals.disableDestCtx=true') }
+            if (project.findProperty('sealWindowGlow') == 'true') { vmArg('-Dseamlessportals.sealWindowGlow=true') }
+            if (project.findProperty('disableDestApertureBloom') == 'true') { vmArg('-Dseamlessportals.disableDestApertureBloom=true') }
             // IS5-ACT gate probe (2026-07-25; the suite runs iris-ABSENT => ensureReflection hits
             // ClassNotFoundException and the probe disarms quietly — structurally inert; rows kept
             // for lever-row parity) —
@@ -1217,6 +1221,8 @@ loom {
             if (project.findProperty('farFadeWMin') != null) { vmArg('-Dseamlessportals.farFadeWMin=' + project.findProperty('farFadeWMin')) }
             if (project.findProperty('farFadeCosFloor') != null) { vmArg('-Dseamlessportals.farFadeCosFloor=' + project.findProperty('farFadeCosFloor')) }
             if (project.findProperty('disableDestCtx') == 'true') { vmArg('-Dseamlessportals.disableDestCtx=true') }
+            if (project.findProperty('sealWindowGlow') == 'true') { vmArg('-Dseamlessportals.sealWindowGlow=true') }
+            if (project.findProperty('disableDestApertureBloom') == 'true') { vmArg('-Dseamlessportals.disableDestApertureBloom=true') }
             // The StampCoverageProbe classifier levers, identical on both paths.
             if (project.findProperty('debugStampSolid') == 'true') { vmArg('-Dseamlessportals.debugStampSolid=true') }
             if (project.findProperty('debugTintStamp') == 'true') { vmArg('-Dseamlessportals.debugTintStamp=true') }

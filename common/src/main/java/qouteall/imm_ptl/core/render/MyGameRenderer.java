@@ -331,11 +331,17 @@ public class MyGameRenderer {
         // also runs for same-dim views and nests — A→B→A depth-2 renders the player's own
         // dim and pushes INACTIVE, overwriting B's context; A→B→C carries C). Push returns
         // the outer state; the finally pops it (per-invocation stack semantics).
+        // ⟦J⟧ B2 gate, HARDENED 2026-08-19 (same-dim rain/darkness regression hunt): compare
+        // against the LIVE player level, not the frame-start snapshot — a stale or
+        // camera-derived snapshot would arm the override on a SAME-DIM window and poison the
+        // MAIN pipeline's shared smoothies (inRainy/inDry, netherColor) exactly as reported.
+        // equals(), never ==: a non-interned ResourceKey would silently read "different dim".
         Object[] ip_prevDestCtx = qouteall.imm_ptl.core.compat.iris_compatibility
             .IrisDestContext.push(
                 newWorld, newDimension, newCamera.position(),
                 client.player != null
-                    && newDimension != RenderStates.originalPlayerDimension);
+                    && !newDimension.equals(client.player.level().dimension()),
+                client.player == null ? null : client.player.level().dimension());
 
         RenderBuffers newRenderBuffers = null;
         if (IPGlobal.useSecondaryEntityVertexConsumer) {
@@ -647,11 +653,17 @@ public class MyGameRenderer {
         // also runs for same-dim views and nests — A→B→A depth-2 renders the player's own
         // dim and pushes INACTIVE, overwriting B's context; A→B→C carries C). Push returns
         // the outer state; the finally pops it (per-invocation stack semantics).
+        // ⟦J⟧ B2 gate, HARDENED 2026-08-19 (same-dim rain/darkness regression hunt): compare
+        // against the LIVE player level, not the frame-start snapshot — a stale or
+        // camera-derived snapshot would arm the override on a SAME-DIM window and poison the
+        // MAIN pipeline's shared smoothies (inRainy/inDry, netherColor) exactly as reported.
+        // equals(), never ==: a non-interned ResourceKey would silently read "different dim".
         Object[] ip_prevDestCtx = qouteall.imm_ptl.core.compat.iris_compatibility
             .IrisDestContext.push(
                 newWorld, newDimension, newCamera.position(),
                 client.player != null
-                    && newDimension != RenderStates.originalPlayerDimension);
+                    && !newDimension.equals(client.player.level().dimension()),
+                client.player == null ? null : client.player.level().dimension());
 
         RenderBuffers newRenderBuffers = null;
         if (IPGlobal.useSecondaryEntityVertexConsumer) {
