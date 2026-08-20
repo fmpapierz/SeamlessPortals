@@ -1347,6 +1347,26 @@ public class IPGlobal {
     public static final boolean disableDestCtx =
         Boolean.getBoolean("seamlessportals.disableDestCtx");
 
+    // IS5-BANDSEAL (2026-08-19, user-decided: "remove that band") — cross-dim windows are
+    // blacked from the bloom gather at EVERY fade weight (the FARFADE F8 exemption removed
+    // by default): kills the night edge band (window glow blooming onto surroundings at
+    // w<1). Cost: far cross-dim windows have no outward glow. This lever restores F8.
+    // 2026-08-19 REVERTED TO DEFAULT-OFF: the seal did NOT remove the band (user leg: still
+    // present on pan-down and at distance = exactly the w<1 regime) and it costs the
+    // window's outward glow. Kept as an opt-in lever; the band's real carrier is under test.
+    public static final boolean keepWindowGlow =
+        !Boolean.getBoolean("seamlessportals.sealWindowGlow");
+
+    // IS5-APERTURE-BLOOM (2026-08-19, DEFAULT ON) — the window-edge band's convicted fix:
+    // the DEST chain renders and blooms a FULL screen from the virtual camera while only
+    // the aperture footprint is injected, so edge pixels carried glow from dest content the
+    // portal frame occludes (worse as the window shrinks on screen = the pan-down/far
+    // signature). Mask everything outside the aperture before the DEST gatherer, restore
+    // before its bloom-apply. Convicted by elimination: bloom-off kills the band, and the
+    // SOURCE-side blackout ran live (wash=ON, wB/R nonzero) with the band surviving.
+    public static final boolean disableDestApertureBloom =
+        Boolean.getBoolean("seamlessportals.disableDestApertureBloom");
+
     private static double parseDoubleLever(String prop, double def, double min, double max) {
         String raw = System.getProperty(prop);
         if (raw == null) return def;

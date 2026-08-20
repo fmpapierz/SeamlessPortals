@@ -265,6 +265,8 @@ public final class IrisStageConsistentComposite {
             censusSgI = 0;
             censusSgF = 0;
             censusWashB = 0;
+            censusApB = 0;
+            censusApR = 0;
             censusWashR = 0;
             censusFwB = 0;
             censusFwF = 0;
@@ -1072,6 +1074,22 @@ public final class IrisStageConsistentComposite {
     // destRenderer = SG not armed for this pend (lever off, dependency unmet, anchor missing).
     private static Object postPendingDestRenderer = null;
     private static int postPendingDestAnchor = -1;
+    // IS5-APERTURE-BLOOM (2026-08-19): the DEST chain's gatherer + the per-pend bracket
+    // flags. The dest chain renders a FULL screen from the virtual camera and blooms all of
+    // it, but only the aperture footprint is injected — so window-edge pixels carry glow
+    // harvested from dest content the portal frame occludes (the band; worse as the window
+    // shrinks on screen, which is exactly the user's pan-down/far signature). Convicted by
+    // elimination 2026-08-19: bloom-off kills the band, and the SOURCE gather blackout ran
+    // live (wash=ON wB/R=5/5..9/9) with the band surviving.
+    private static int postPendingDestGather = -1;
+    private static boolean postPendingDestGatherAlt = false;
+    private static boolean postPendingDestGatherWritesC0 = false;
+    private static boolean destMaskSaved = false;
+    private static boolean destMaskRestored = false;
+    private static boolean destMaskBroken = false;
+    private static int destMaskScratchId = 0;
+    private static int destMaskScratchW = -1, destMaskScratchH = -1, destMaskScratchFmt = 0;
+    private static int censusApB = 0, censusApR = 0;
     private static int postPendingImgTgt = -1;
     private static boolean postPendingImgReadsAlt = false;
     /** The MAIN renderer's most recent effective restamp mode (set every runStampPass). The SG
@@ -1147,6 +1165,13 @@ public final class IrisStageConsistentComposite {
                             postPendingDestAnchor = dm.anchor;
                             postPendingImgTgt = dm.imageTarget;
                             postPendingImgReadsAlt = dm.anchorReadsAlt;
+                            // IS5-APERTURE-BLOOM: the DEST chain's own gatherer (its bloom
+                            // is baked into the capture — the band's convicted carrier).
+                            postPendingDestGather = dm.gatherIdx;
+                            postPendingDestGatherAlt = dm.gatherReadsAlt;
+                            postPendingDestGatherWritesC0 = dm.gatherWritesC0;
+                            destMaskSaved = false;
+                            destMaskRestored = false;
                         } else {
                             censusSgF++;
                         }
@@ -1868,6 +1893,13 @@ public final class IrisStageConsistentComposite {
                 if (texelFetch(u_stampedDepth0, tcw, 0).r < planeZ - 6.0e-8) discard;
                 fragColor = texelFetch(u_capture, tcw, 0);
                 gl_FragDepth = planeZ;
+            } else if (u_depthMode == 5) {
+                // IS5-APERTURE-BLOOM: repaint the aperture footprint from the scratch with
+                // NO visibility discard — this runs INSIDE the dest chain, where the main
+                // view's stamped depth does not exist yet (binding it would test against
+                // last frame's main depth). Colour-only; the caller disables depth test.
+                fragColor = texelFetch(u_capture, ivec2(gl_FragCoord.xy), 0);
+                gl_FragDepth = planeZ;
             } else if (u_depthMode == 2) {
                 // IS5-XDIM-SG inject (IS5_RESTAMP_DESIGN.md §2.2.3): mode-1's visibility
                 // discard against the HEAD-stamped depthtex0 (plane + occluders), colour =
@@ -2137,9 +2169,32 @@ public final class IrisStageConsistentComposite {
         try {
             // Branch (a) — SG dest-boundary capture (isRendering EXPECTED true here).
             CaptureSlot pendSlot = postPendingSlot;
-            if (pendSlot != null && postPendingDestRenderer == compositeRenderer
-                && i == postPendingDestAnchor && !pendSlot.sgCaptured) {
-                runSgDestBoundaryCapture(pendSlot);
+            if (pendSlot != null && postPendingDestRenderer == compositeRenderer) {
+                // IS5-APERTURE-BLOOM: black everything OUTSIDE the aperture before the DEST
+                // gatherer, restore right after it — so the dest bloom baked into the
+                // capture harvests only what is actually visible through the window.
+                // Skipped when the dest gatherer also writes c0 (the MB shape: a blackout
+                // would smear), when the indices are degenerate, or once broken. Every
+                // failure disarms this feature only; the capture path is untouched.
+                if (!IPGlobal.disableDestApertureBloom && !destMaskBroken
+                    && !postPendingDestGatherWritesC0
+                    && postPendingDestGather >= 0
+                    && postPendingDestGather < postPendingDestAnchor) {
+                    if (i == postPendingDestGather && !destMaskSaved) {
+                        destMaskSaved = true;
+                        runDestApertureBloomMask(pendSlot, true);
+                    }
+                    else if (i == postPendingDestGather + 1 && destMaskSaved
+                        && !destMaskRestored) {
+                        destMaskRestored = true;
+                        runDestApertureBloomMask(pendSlot, false);
+                    }
+                }
+                // The anchor capture is INDEPENDENT of the mask halves (an index collision
+                // must never starve it — the ⟦J⟧ dispatch lesson).
+                if (i == postPendingDestAnchor && !pendSlot.sgCaptured) {
+                    runSgDestBoundaryCapture(pendSlot);
+                }
                 return;
             }
             // Branch (b) — the source restamp + inject. §1.9: two independent firing indices —
@@ -2583,6 +2638,150 @@ public final class IrisStageConsistentComposite {
     private static int censusWashB, censusWashR;
 
     /**
+     * IS5-APERTURE-BLOOM (2026-08-19) — the DEST-side aperture mask, the mirror of the WASH
+     * bracket on the correct chain. Save half (at the dest gatherer): full-copy dest c0 to a
+     * pooled scratch, clear c0 to black, then repaint ONLY the aperture footprint from the
+     * scratch (stamp mode 5, no visibility discard — the main view's stamped depth does not
+     * exist during the dest render). The dest bloom then harvests aperture content only.
+     * Restore half (the next boundary, before the dest bloom-apply reads c0 as its base):
+     * full-copy the scratch back. MUTATE-LAST: the save copy precedes the clear, so a
+     * failure leaves the image intact; any failure disarms the feature for the session
+     * (the capture and every other mechanism keep working — this is bloom polish, never
+     * the window).
+     *
+     * <p>The aperture footprint is built from the SLOT's own arm-time main matrices: the
+     * dest image is 1:1 screen-aligned with the main view (the design's texelFetch
+     * invariant), so the portal's screen footprint is identical in both.
+     */
+    private static void runDestApertureBloomMask(CaptureSlot slot, boolean save) {
+        if (!ensureStampProgram()) return;
+        GlFramebuffer fbo = null;
+        boolean cullWasEnabled = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        try {
+            RenderTargets rts = (RenderTargets) fPipelineRenderTargets.get(postPendingPipeline);
+            RenderTarget c0 = rts == null ? null : rts.get(0);
+            if (c0 == null) {
+                destMaskBroken = true;
+                return;
+            }
+            int tex = postPendingDestGatherAlt ? c0.getAltTexture() : c0.getMainTexture();
+            int w = c0.getWidth();
+            int h = c0.getHeight();
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* clear slate */ }
+            if (save) {
+                int fmt = GL45C.glGetTextureLevelParameteri(
+                    tex, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+                if (destMaskScratchId == 0 || destMaskScratchW != w || destMaskScratchH != h
+                    || destMaskScratchFmt != fmt) {
+                    if (destMaskScratchId != 0) GL11.glDeleteTextures(destMaskScratchId);
+                    destMaskScratchId = 0;
+                    int t = GL45C.glCreateTextures(GL11.GL_TEXTURE_2D);
+                    GL45C.glTextureStorage2D(t, 1, fmt, w, h);
+                    if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                        GL11.glDeleteTextures(t);
+                        destMaskBroken = true;
+                        noteAuxDropOnce("IS5-APERTURE-BLOOM scratch alloc rejected");
+                        return;
+                    }
+                    destMaskScratchId = t;
+                    destMaskScratchW = w;
+                    destMaskScratchH = h;
+                    destMaskScratchFmt = fmt;
+                }
+                GL43C.glCopyImageSubData(
+                    tex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    destMaskScratchId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                if (GL11.glGetError() != GL11.GL_NO_ERROR) {
+                    destMaskRestored = true; // MUTATE-LAST: nothing was cleared
+                    destMaskBroken = true;
+                    noteAuxDropOnce("IS5-APERTURE-BLOOM scratch copy failed");
+                    return;
+                }
+                // Build the aperture mesh from the slot's arm-time MAIN matrices.
+                Matrix4f combined = new Matrix4f(slot.projection).mul(slot.modelView);
+                fbo = new GlFramebuffer();
+                fbo.addColorAttachment(0, tex);
+                fbo.drawBuffers(new int[]{0});
+                fbo.bind();
+                GlStateManager._viewport(0, 0, w, h);
+                GlStateManager._disableScissorTest();
+                GlStateManager._disableBlend(0);
+                GlStateManager._disableCull();
+                GlStateManager._colorMask(15);
+                GlStateManager._disableDepthTest();
+                // The javap-pinned clear idiom used by the R11 alpha-init (respects the
+                // colour mask; no _clearColor on this GlStateManager).
+                GlStateManager._clearBuffer(0, new org.joml.Vector4f(0.0f, 0.0f, 0.0f, 1.0f));
+                GlStateManager._glUseProgram(stampProgram);
+                GL20C.glUniform1i(locCapture, 0);
+                GL20C.glUniform1f(locSolid, 0.0f);
+                GL20C.glUniform1f(locHavePrev, 0.0f);
+                GL20C.glUniform1f(locZeroAlpha, 0.0f);
+                GL20C.glUniform1f(locFadeW, 1.0f);
+                GL20C.glUniform1i(locPrevGraded, 5);
+                GL20C.glUniform1i(locDepthMode, 5);
+                matBuf.clear();
+                combined.get(matBuf);
+                GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
+                GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+                GlStateManager._bindTexture(destMaskScratchId);
+                try (ByteBufferBuilder bb = new ByteBufferBuilder(
+                    256 * DefaultVertexFormat.POSITION_COLOR.getVertexSize()
+                )) {
+                    MeshData mesh = ViewAreaRenderer.buildPortalViewAreaMesh(
+                        new Vec3(1.0, 1.0, 1.0), slot.portal, slot.cameraPos,
+                        slot.partialTick, slot.modelView, bb
+                    );
+                    if (mesh == null) {
+                        // Fully near-plane-clipped: restore immediately, mask nothing.
+                        GL43C.glCopyImageSubData(
+                            destMaskScratchId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                            tex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                        destMaskRestored = true;
+                        return;
+                    }
+                    int vertexCount;
+                    GpuBufferSlice slice;
+                    try (mesh) {
+                        vertexCount = mesh.drawState().vertexCount();
+                        slice = SecondaryWorldRenderCore.registerFrameTransientUbo(
+                            RenderSystem.getDevice().createBuffer(
+                                () -> "seamlessportals_is5_aperture_bloom_mesh",
+                                GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer()
+                            )
+                        );
+                    }
+                    ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
+                        .vertexArrayCache().bindVertexArray(
+                            new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
+                            new GpuBufferSlice[]{slice},
+                            null
+                        );
+                    GlStateManager._drawArrays(GL11.GL_TRIANGLES, 0, vertexCount);
+                    censusApB++;
+                }
+            } else {
+                GL43C.glCopyImageSubData(
+                    destMaskScratchId, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    tex, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, w, h, 1);
+                censusApR++;
+            }
+        } catch (Throwable t) {
+            destMaskBroken = true;
+            noteAuxDropOnce("IS5-APERTURE-BLOOM threw: " + t + " — feature disarmed");
+        } finally {
+            if (fbo != null) {
+                try { fbo.destroy(); } catch (Throwable ignored) {}
+            }
+            if (cullWasEnabled) {
+                GlStateManager._enableCull();
+            }
+            FullScreenQuadRenderer.INSTANCE.bind();
+            while (GL11.glGetError() != GL11.GL_NO_ERROR) { /* never poison the chain */ }
+        }
+    }
+
+    /**
      * IS5-WASH §1.10 — the gather-exclusion bracket. Save half: copy c0's gather-read side to
      * the scratch, then black out the POST/SG entries' window footprints (visibility-clipped,
      * mode 3) so the source bloom gather harvests ZERO energy from dest-window content (the
@@ -2662,8 +2861,13 @@ public final class IrisStageConsistentComposite {
             GlStateManager._activeTexture(GL13.GL_TEXTURE0);
             GlStateManager._bindTexture(washScratchId); // mode 4 samples it; mode 3 ignores
             for (RestampEntry e : arm.entries) {
-                if (!e.slot.postFinalMode) continue; // PRE windows keep their source glow
-                if (e.stampedPre) continue; // §5 F8: PRE-stamped this frame = same rule
+                if (!e.slot.postFinalMode) continue; // same-dim PRE windows keep their glow
+                // IS5-BANDSEAL (2026-08-19, user-decided): the F8 exemption is REMOVED by
+                // default — cross-dim windows are blacked from the gather at EVERY fade
+                // weight, killing the night edge band (window glow blooming onto the
+                // surroundings at w<1). Cost, disclosed: far cross-dim windows lose their
+                // outward glow entirely. -PkeepWindowGlow restores the F8 behavior.
+                if (e.stampedPre && IPGlobal.keepWindowGlow) continue;
                 ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
                     .vertexArrayCache().bindVertexArray(
                         new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
@@ -3285,7 +3489,7 @@ public final class IrisStageConsistentComposite {
             lastRestampMeasLogMs = measNow;
             LOGGER.info("[Seamless Portals] IS5-RESTAMP meas: passes={} d1={} hist={} prevCam={}"
                     + " anchor={} dBnd={} imgTgt={} mode={} gath={} wash={} wB/R={}/{}"
-                    + " rst={} rstOrph={} sgC/I/F={}/{}/{} fw={} fwB/F={}/{}",
+                    + " rst={} rstOrph={} sgC/I/F={}/{}/{} fw={} fwB/F={}/{} apB/R={}/{}",
                 meas.passCount, java.util.Arrays.toString(meas.d1Readers),
                 java.util.Arrays.toString(meas.histReaders),
                 java.util.Arrays.toString(meas.prevCamReaders), meas.anchor,
@@ -3301,7 +3505,12 @@ public final class IrisStageConsistentComposite {
                 // FARFADE F11: the last window's PRE-stamped fw range (- = no fading slot).
                 fwMaxSeen < 0f ? "-"
                     : String.format("%.2f/%.2f", fwMinSeen, fwMaxSeen),
-                censusFwB, censusFwF);
+                censusFwB, censusFwF,
+                // IS5-APERTURE-BLOOM liveness: nonzero = the dest-side mask ACTUALLY ran
+                // (0/0 with cross-dim windows on screen = the fix is inert, e.g. the
+                // dest gatherer writes c0 — the MB shape). Never adjudicate the band fix
+                // without reading these (the vacuous-leg lesson, paid for twice).
+                censusApB, censusApR);
             fwMinSeen = 2f;
             fwMaxSeen = -1f;
             // IS5-WASHPROBE main half + the paired emit (dest line captured at the SG
@@ -3619,9 +3828,10 @@ public final class IrisStageConsistentComposite {
             // their only bloom source and killing it would un-glow their windows.
             if (restampArm != null && restampArm.washTexId != 0) {
                 for (RestampEntry e : restampArm.entries) {
-                    // IS5-FARFADE (§5 F8): only SG-STAMPED entries carry dest-baked bloom
-                    // in c0 — a PRE-stamped entry's only bloom source IS the gather.
-                    if (e.slot.postFinalMode && !e.stampedPre) {
+                    // IS5-BANDSEAL: every cross-dim entry arms the bracket (the F8
+                    // SG-stamped-only rule applies only under -PkeepWindowGlow).
+                    if (e.slot.postFinalMode
+                        && (!e.stampedPre || !IPGlobal.keepWindowGlow)) {
                         restampArm.washNeeded = true;
                         break;
                     }

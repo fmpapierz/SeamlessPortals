@@ -52,6 +52,8 @@ public final class IrisDestContext {
     private static long redirectHits = 0;
     private static long activePushes = 0;
     private static long inactivePushes = 0;
+    private static long sameDimActivePushes = 0;
+    private static ResourceKey<Level> lastSrcDim = null;
     private static long lastHitsAtWarnCheck = 0;
     private static long activeSinceLastHit = 0;
     private static boolean deadWarned = false;
@@ -72,9 +74,17 @@ public final class IrisDestContext {
      * B's context) and the pop restores the outer state.
      */
     public static Object[] push(
-        Level destLevel, ResourceKey<Level> destDim, Vec3 cameraPos, boolean active
+        Level destLevel, ResourceKey<Level> destDim, Vec3 cameraPos, boolean active,
+        ResourceKey<Level> srcDim
     ) {
         Object[] prev = {level, pos};
+        // The same-dim witness (2026-08-19): an ACTIVE push whose src == dst would be the
+        // main-pipeline poisoning (rain/darkness regression). Counted separately so one
+        // leg's log settles it — the raw counter, never an interpretation.
+        if (active && srcDim != null && srcDim.equals(destDim)) {
+            sameDimActivePushes++;
+        }
+        lastSrcDim = srcDim;
         if (active && !IPGlobal.disableDestCtx
             && destLevel != null && destDim != null && cameraPos != null) {
             BlockPos p = frameSticky.computeIfAbsent(
@@ -91,9 +101,10 @@ public final class IrisDestContext {
         long now = System.currentTimeMillis();
         if (now - lastMeasMs >= 1000) {
             lastMeasMs = now;
-            LOGGER.info("[Seamless Portals] [IS5-DESTCTX] 1Hz: pushA/I={}/{} hits={} ctx={}"
-                    + " sticky={}",
-                activePushes, inactivePushes, redirectHits,
+            LOGGER.info("[Seamless Portals] [IS5-DESTCTX] 1Hz: pushA/I={}/{} SAMEDIM-ACTIVE={}"
+                    + " hits={} src={} ctx={} sticky={}",
+                activePushes, inactivePushes, sameDimActivePushes, redirectHits,
+                lastSrcDim == null ? "?" : lastSrcDim.identifier().getPath(),
                 level == null ? "-" : (destDim == null ? "?" : destDim.identifier().getPath())
                     + "@" + pos,
                 frameSticky.keySet().size());
