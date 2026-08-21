@@ -95,6 +95,17 @@ public class CrossPortalEntityRenderer {
     //there is no weak hash set
     private static final WeakHashMap<Entity, Object> collidedEntities = new WeakHashMap<>();
 
+    /** ENGINE STAGE 2b: read-only view for the band painter's straddler enumeration. */
+    public static java.util.Set<Entity> collidedEntitiesView() {
+        return collidedEntities.keySet();
+    }
+
+    /** ENGINE STAGE 2b: the aperture-mask admissibility, shared with the band painter's piece 2
+     *  (design §2.5: never wider than what the main-pass projection drew this frame). */
+    public static boolean projectionVisibleThroughAperture(Entity entity, Portal portal) {
+        return isProjectionVisibleThroughAperture(entity, portal);
+    }
+
     public static boolean isRenderingEntityNormally = false;
 
     public static boolean isRenderingEntityProjection = false;
@@ -385,6 +396,30 @@ public class CrossPortalEntityRenderer {
 
                     Plane innerClipping = collidingPortal.getInnerClipping();
 
+                    // ★ ROUND 29 — ENGINE §1.3 (b) SIDE AGREEMENT. The fix for the one artifact
+                    // that survived the 2026-08-19 tint laps: the BLUE cross-twin bleed, both
+                    // directions (away = 81% of the body, toward = a 7cm leading-edge slab —
+                    // both derived, both matching the user's reports). A pass shows the half its
+                    // ARMED clip keeps; this projection carries its OWN clip as the single
+                    // hardware plane of its draw, REPLACING the pass's ambient plane rather than
+                    // intersecting it. So when the kept normals oppose — identically so for a
+                    // co-located twin, whose clip is the SAME plane with the OPPOSITE normal —
+                    // it paints exactly the half-space the pass's ambient clip deletes for every
+                    // other object in the frame. Measured lap 2: face41→pass40 9156 and
+                    // face40→pass41 58 of 9278 in-pass seam projections were this pair; the two
+                    // AGREEING pairs (28, 36) each equal the real body's CULL count in the same
+                    // pass and are preserved untouched. Added CONJUNCT below, never a
+                    // replacement — restrictive-only by construction.
+                    Plane passKeptPlane = PortalRendering.getActiveClippingPlane();
+                    boolean sideAgrees = com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                        .inPassProjectionSideAgrees(collidingPortal, innerClipping, passKeptPlane);
+                    if (!sideAgrees) {
+                        frameProbe(entity, "PROJ inpass-sidecull via face " + collidingPortal.getId()
+                            + " in pass " + renderingPortal.getId()
+                            + " n_img=" + innerClipping.normal()
+                            + " n_pass=" + (passKeptPlane == null ? "null" : passKeptPlane.normal()));
+                    }
+
                     boolean isHidden = innerClipping != null &&
                         !innerClipping.isPointOnPositiveSide(cameraPos);
                     // Round 17: seamSamePlane no longer bypasses isHidden — the blanket bypass
@@ -400,7 +435,7 @@ public class CrossPortalEntityRenderer {
                             .shadowInPassProjection(((Portal) renderingPortal), collidingPortal,
                                 innerClipping, false, "isHidden");
                     }
-                    if (renderingPortal == collidingPortal || !isHidden) {
+                    if (sideAgrees && (renderingPortal == collidingPortal || !isHidden)) {
                         com.warwa.seamlessportals.passthrough.SeamCrossingRule
                             .shadowInPassProjection(((Portal) renderingPortal), collidingPortal,
                                 innerClipping, true, "drawn");

@@ -302,6 +302,75 @@ public final class SeamCrossingRule {
     }
 
     /**
+     * ENGINE §1.3 verdict (b) — SIDE AGREEMENT for in-pass (window) projections: the
+     * orientation-safe {@code isHidden} derived from the PASS CLIP that round 17 specified.
+     *
+     * <p><b>Why it is correct (the round-29 derivation).</b> A window pass shows exactly one
+     * half-space: the one its ARMED inner clip keeps ({@code SecondaryWorldRenderCore:1096-1101}
+     * feeds {@code PortalRendering.getActiveClippingPlane()} into {@code setupInnerClipping(…,
+     * -ADJUSTMENT)}; re-armed {@code :2169-2172} / {@code :2504-2507}). A projection carries its
+     * OWN inner clip as the single hardware plane of its draw
+     * ({@code PerEntityClipBracket.submitProjectedEntityClipped} → {@code GlCommandEncoderClipMixin})
+     * — that plane REPLACES the pass's ambient plane, it does not intersect it. So a projection
+     * whose kept normal OPPOSES the pass's kept normal paints, by construction, into the exact
+     * half-space the pass's ambient clip deletes for its own terrain, block entities and
+     * particles. If those pixels were legitimate window content, the window's own terrain would
+     * be wrong in the same region. For a co-located flipped twin the two clips are the SAME
+     * PLANE with OPPOSITE normals, so the opposition holds in every frame.
+     *
+     * <p><b>Verdict:</b> {@code n_innerImage · passKeptNormal > 0}.
+     *
+     * <p><b>Measured evidence (2026-08-19 tint lap 2).</b> Of 9278 in-pass seam projections,
+     * {@code face41→pass40} = 9156 and {@code face40→pass41} = 58 were this opposing pair — the
+     * BLUE bleed the tint attributed in both crossing directions. The two AGREEING pairs (28 and
+     * 36) each equal the real body's CULL count in the same pass and are preserved untouched.
+     * Derived sizes match the user's two reports exactly: away = 81% of the body ("half model"),
+     * toward = a 7cm slab at the plane ("cow's face + minecart tip").
+     *
+     * <p><b>SCOPE (identity-free, §2.4's normative form — PLANES, never objects):</b> engaged
+     * only when the two clips ARE THE SAME PLANE ({@code |n1·n2| > 0.999} AND separation
+     * {@code < 1e-3} — deliberately tighter than {@code FrontClipping.ADJUSTMENT} so a
+     * one-epsilon offset can never read as co-planar). That set is exactly {the pass's own face:
+     * alignment +1} ∪ {its co-located twins: alignment −1}. A face on any other plane is not
+     * characterized by this pass's clip, so the legacy flipped/reverse/isHidden/locality gates
+     * keep deciding it, byte-identically. Applied as an ADDED CONJUNCT, never a replacement, so
+     * the verdict is restrictive-only and the permissive direction is unreachable.
+     *
+     * <p><b>ARITHMETIC RULE recorded here (round 29):</b> never negate a finished clip equation
+     * to flip a kept side. {@code getClipEquationInner} ({@code FrontClipping.java:247-266})
+     * yields kept {@code {n·(x−p) > corr}}; negating {@code (n,c)} in place turns a −ADJ EXTEND
+     * into a +ADJ RETREAT — an error of {@code 2·corr} = 2cm, the round-18/19 wash-slit
+     * signature. Re-derive through {@code getClipEquationInner} instead.
+     */
+    public static boolean inPassProjectionSideAgrees(
+        Portal collidingPortal,
+        @Nullable Plane imageInnerClip,
+        @Nullable Plane passKeptPlane
+    ) {
+        if (AperturePassthroughLever.DISABLE_SEAM_INPASS_SIDE_AGREEMENT) {
+            return true;
+        }
+        if (!SeamCartContinuity.isSeamContinuous(collidingPortal)) {
+            // §1.1 clause 7: non-seam ⇒ the untouched IP path.
+            return true;
+        }
+        if (imageInnerClip == null || passKeptPlane == null) {
+            // A pass or face without a plane cannot be characterized — the delta-(a) rule.
+            return true;
+        }
+        double alignment = imageInnerClip.normal().dot(passKeptPlane.normal());
+        if (Math.abs(alignment) <= 0.999) {
+            // Not parallel: out of scope, legacy gates decide.
+            return true;
+        }
+        if (Math.abs(passKeptPlane.getDistanceTo(imageInnerClip.pos())) >= 1.0e-3) {
+            // Parallel but offset: a different plane, out of scope.
+            return true;
+        }
+        return alignment > 0;
+    }
+
+    /**
      * The clip plane a seam projection must carry in-pass. Moved verbatim from round 2's fix
      * (the {@code PROJ clip=DISABLED in-portal-pass} ghost, 1,485 probe lines): IP draws
      * in-pass projections UNCLIPPED, relying on framed-portal stand-in gates that do nothing at

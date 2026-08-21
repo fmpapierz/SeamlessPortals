@@ -39,6 +39,15 @@ public final class ShaderCodeTransformation {
 
     /** Uniform added to every patched vertex shader. */
     public static final String UNIFORM_NAME = "seamlessportals_ClipPlane";
+
+    /**
+     * TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): uniform added to every patched FRAGMENT
+     * shader while {@code -PseamPainterTint} is armed. Uploaded per draw by
+     * {@code GlCommandEncoderClipMixin} from the live store's tint fields; GLSL guarantees
+     * un-uploaded uniforms read as zero, so unpainted programs are no-ops by construction.
+     */
+    public static final String TINT_UNIFORM_NAME = "seamlessportals_DebugTint";
+    private static final String TINT_INJECTED_MARKER = "// SEAMLESSPORTALS_TINT_INJECTED";
     /**
      * Uniform + explicit {@code gl_ClipDistance[1]} redeclaration.
      *
@@ -117,6 +126,53 @@ public final class ShaderCodeTransformation {
                 "[SEAMLESS SLICE] transformed vertex shader (+{} bytes)",
                 out.length() - source.length());
         }
+        return out.toString();
+    }
+
+    /**
+     * TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): transform a FRAGMENT shader source, wrapping
+     * its {@code main()} so a debug tint uniform can be mixed over the final colour.
+     *
+     * <p>ANCHOR DERIVATION (the verdict's correction — the once-claimed {@code vertexColor}
+     * anchor does NOT exist): the 26.2 fragment sources (e.g. {@code entity.fsh}, extracted
+     * from the loom 26.2 client jar) are heavy with {@code #ifdef} variants
+     * (PER_FACE_LIGHTING/EMISSIVE/NO_OVERLAY/DISSOLVE) and contain {@code discard} paths, so no
+     * single interior statement is a safe anchor. The two facts that ARE stable across every
+     * vanilla fragment shader: the out variable is declared exactly {@code out vec4 fragColor;}
+     * and there is exactly one {@code void main(}. So: rename the real main to
+     * {@code seamlessportals_tintRealMain} and append a wrapper {@code main()} that calls it,
+     * then mixes the tint in — correct under every define-variant, every {@code discard}
+     * (a discarded fragment never reaches the wrapper's mix), and any early {@code return}
+     * (control returns to the wrapper, which still applies the tint).
+     *
+     * @return transformed source, or the original when the shader doesn't match (no
+     *         {@code fragColor} out, zero or multiple mains) — those draw untinted, which is
+     *         itself attribution data. Idempotent via the marker.
+     */
+    public static String transformFragment(String source) {
+        if (source == null || source.isEmpty()) return source;
+        if (source.contains(TINT_INJECTED_MARKER)) return source;
+        if (!source.contains("out vec4 fragColor;")) return source;
+
+        int mainIdx = source.indexOf("void main(");
+        if (mainIdx < 0) return source;
+        if (source.indexOf("void main(", mainIdx + 1) >= 0) return source;
+
+        StringBuilder out = new StringBuilder(source.length() + 320);
+        out.append(source, 0, mainIdx);
+        out.append("void seamlessportals_tintRealMain(");
+        out.append(source, mainIdx + "void main(".length(), source.length());
+        out.append('\n')
+            .append(TINT_INJECTED_MARKER).append('\n')
+            .append("uniform vec4 ").append(TINT_UNIFORM_NAME).append(";\n")
+            .append("void main() {\n")
+            .append("    seamlessportals_tintRealMain();\n")
+            .append("    if (").append(TINT_UNIFORM_NAME).append(".a > 0.001) {\n")
+            .append("        fragColor = vec4(mix(fragColor.rgb, ")
+            .append(TINT_UNIFORM_NAME).append(".rgb, ")
+            .append(TINT_UNIFORM_NAME).append(".a), fragColor.a);\n")
+            .append("    }\n")
+            .append("}\n");
         return out.toString();
     }
 

@@ -715,10 +715,20 @@ public final class SeamClipRenderer {
                 }
             }
 
-            FrontClipping.Snapshot prev = plane != null ? FrontClipping.capture() : null;
-            if (plane != null) {
-                FrontClipping.restore(plane);
-                if (destPass) {
+            // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): the seam-cell redraw is a first-class
+            // candidate for the wrong-side bleed (§5 painter inventory) — under the lever EVERY
+            // cell draw paints YELLOW, whether it brackets its own plane or draws under the
+            // pass's ambient state (the tinted copy of the live capture preserves that state's
+            // plane exactly). Lever off ⇒ armedPlane == plane, byte-identical behaviour.
+            FrontClipping.Snapshot armedPlane = plane;
+            if (com.warwa.seamlessportals.render.SeamTint.ENABLED) {
+                armedPlane = com.warwa.seamlessportals.render.SeamTint.seamCell(
+                    plane != null ? plane : FrontClipping.capture());
+            }
+            FrontClipping.Snapshot prev = armedPlane != null ? FrontClipping.capture() : null;
+            if (armedPlane != null) {
+                FrontClipping.restore(armedPlane);
+                if (plane != null && destPass) {
                     ownPlaneDraws++;
                 }
             }

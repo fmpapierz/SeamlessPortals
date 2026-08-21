@@ -158,6 +158,31 @@ public abstract class GlCommandEncoderClipMixin {
             GL11.glDisable(GL30.GL_CLIP_DISTANCE0);
         }
 
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic, default-off): upload the per-painter debug
+        // tint beside the clip plane, from the same live store the painters' Snapshot brackets
+        // feed. Same chokepoint, same location-cache discipline (id-reuse invalidation via
+        // ClipUniformLocationCache.clear()), zero cost when the lever is off (one static read).
+        if (com.warwa.seamlessportals.render.SeamTint.ENABLED) {
+            Integer tintCached = ClipUniformLocationCache.getTint(programId);
+            int tintLoc;
+            if (tintCached == null) {
+                tintLoc = GlStateManager._glGetUniformLocation(
+                    programId, ShaderCodeTransformation.TINT_UNIFORM_NAME);
+                ClipUniformLocationCache.putTint(programId, tintLoc);
+            } else {
+                tintLoc = tintCached;
+            }
+            if (tintLoc >= 0) {
+                GL20.glUniform4f(
+                    tintLoc,
+                    FrontClipping.getTintR(),
+                    FrontClipping.getTintG(),
+                    FrontClipping.getTintB(),
+                    FrontClipping.getTintA()
+                );
+            }
+        }
+
         // §4.7 discriminators 1+2: lever-gated (-Dseamlessportals.clipProbe), 1Hz-latched,
         // one-shot-per-pass diagnose-first evidence. Byte-inert at the default (ENABLED short-
         // circuits before any work). Records program / loc / enable-decision for the first N draws

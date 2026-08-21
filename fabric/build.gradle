@@ -192,6 +192,16 @@ loom {
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
             // ENGINE STAGE 1 — shadow resolver (SEAM_ENTITY_ENGINE_DESIGN par.6): new-form verdicts computed alongside legacy, divergences logged.
             if (project.findProperty('seamResolver') != null) { vmArg('-Dseamlessportals.seamResolver=' + project.findProperty('seamResolver')) }
+            // ENGINE STAGE 2b - band painter rollback lever (SEAM_ENTITY_ENGINE_DESIGN par.2.5).
+            if (project.findProperty('enableSeamBandPainter') == 'true') { vmArg('-Dseamlessportals.enableSeamBandPainter=true') }
+            // DIAGNOSTIC - the band painter landing beacon (verdict wf_8a9d68af-951 Part 4.1).
+            if (project.findProperty('seamBandBeacon') == 'true') { vmArg('-Dseamlessportals.seamBandBeacon=true') }
+            // DIAGNOSTIC - per-painter tint (SEAM_BAND_HANDOFF par.4.1): pixel attribution by colour.
+            if (project.findProperty('seamPainterTint') == 'true') { vmArg('-Dseamlessportals.seamPainterTint=true') }
+            // DIAGNOSTIC - the band painter's depth-bias ladder (SEAM_BAND_HANDOFF par.4.3), default 1e-5.
+            if (project.findProperty('seamBandBias') != null) { vmArg('-Dseamlessportals.seamBandBias=' + project.findProperty('seamBandBias')) }
+            // ENGINE par.1.3 (b) - in-pass projection SIDE AGREEMENT rollback lever (round 29).
+            if (project.findProperty('disableSeamInPassSideAgreement') == 'true') { vmArg('-Dseamlessportals.disableSeamInPassSideAgreement=true') }
             // RS (e) DEFECT A — restores the WRAP-AROUND section lookup on the dest-pass entity
             // visibility gate (the same-dim window loses its entities at any real distance).
             if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
@@ -404,6 +414,16 @@ loom {
             if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
             // ENGINE STAGE 1 — shadow resolver (SEAM_ENTITY_ENGINE_DESIGN par.6): new-form verdicts computed alongside legacy, divergences logged.
             if (project.findProperty('seamResolver') != null) { vmArg('-Dseamlessportals.seamResolver=' + project.findProperty('seamResolver')) }
+            // ENGINE STAGE 2b - band painter rollback lever (SEAM_ENTITY_ENGINE_DESIGN par.2.5).
+            if (project.findProperty('enableSeamBandPainter') == 'true') { vmArg('-Dseamlessportals.enableSeamBandPainter=true') }
+            // DIAGNOSTIC - the band painter landing beacon (verdict wf_8a9d68af-951 Part 4.1).
+            if (project.findProperty('seamBandBeacon') == 'true') { vmArg('-Dseamlessportals.seamBandBeacon=true') }
+            // DIAGNOSTIC - per-painter tint (SEAM_BAND_HANDOFF par.4.1): pixel attribution by colour.
+            if (project.findProperty('seamPainterTint') == 'true') { vmArg('-Dseamlessportals.seamPainterTint=true') }
+            // DIAGNOSTIC - the band painter's depth-bias ladder (SEAM_BAND_HANDOFF par.4.3), default 1e-5.
+            if (project.findProperty('seamBandBias') != null) { vmArg('-Dseamlessportals.seamBandBias=' + project.findProperty('seamBandBias')) }
+            // ENGINE par.1.3 (b) - in-pass projection SIDE AGREEMENT rollback lever (round 29).
+            if (project.findProperty('disableSeamInPassSideAgreement') == 'true') { vmArg('-Dseamlessportals.disableSeamInPassSideAgreement=true') }
             // RS (e) DEFECT A inversion lever + the two (e) probe levers.
             // ⚠ NO GATE LEG CONSUMES disableDestEntitySectionExact. Defect A is covered by LIVE
             // evidence only (2026-08-01: user-confirmed, with a zombie-in-a-minecart control that

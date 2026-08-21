@@ -104,6 +104,12 @@ public final class SeamStraddleBracket {
         return spanMin(box, face.getNormal(), face.getOriginPos()) < -EPS;
     }
 
+    /** Does the entity's FRONT piece exist against this face's plane ({@code +n} side)? */
+    public static boolean frontPieceExists(Entity entity, Portal face) {
+        AABB box = entity.getBoundingBox();
+        return spanMax(box, face.getNormal(), face.getOriginPos()) > EPS;
+    }
+
     // (The seed ThreadLocal bracket — beginSeed/endSeed/inSeed — was retired at engine stage
     // 2a: the arrival seed is now ANCHOR-AUTHORIZED (SeamCrossingRule.mayBook clause (a)).
     // Design §1.2: the ThreadLocal was one of the three costumes of the crossing's single

@@ -168,11 +168,21 @@ public class FrontClipping {
             return;
         }
         Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, modelView);
-        com.warwa.seamlessportals.render.FrontClipping.restore(
+        com.warwa.seamlessportals.render.FrontClipping.Snapshot fed =
             new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
                 nView.x, nView.y, nView.z, (float) beforeModelView[3], true
-            )
-        );
+            );
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): a live-store arm during a portal pass IS
+        // the pass's ambient state — everything the pass draws under it through the vanilla
+        // per-draw chokepoint (in-pass vanilla body, block entities, particles) is "in-pass
+        // ambient content", painted GREEN. Cleared by the pass disarm (disableClipping →
+        // com.warwa disable() zeroes the tint), so it cannot outlive the pass. Main-pass arms
+        // (isRendering()==false) stay untinted.
+        if (com.warwa.seamlessportals.render.SeamTint.ENABLED
+            && PortalRendering.isRendering()) {
+            fed = com.warwa.seamlessportals.render.SeamTint.inPassAmbient(fed);
+        }
+        com.warwa.seamlessportals.render.FrontClipping.restore(fed);
         isClippingEnabled = true;
     }
 
@@ -361,6 +371,21 @@ public class FrontClipping {
         @Nullable Plane clipping, Matrix4f viewRotation
     ) {
         return captureInnerClipping(clipping, viewRotation, false);
+    }
+
+    /**
+     * ENGINE STAGE 2b: EXACT plane→view-space snapshot (correction 0, no epsilon policy) — the
+     * band painter's slab faces are the policy; this is just the converter.
+     */
+    @Nullable
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureExactPlane(
+        Plane plane, Matrix4f viewRotation
+    ) {
+        if (!IPCGlobal.useFrontClipping) {
+            return null;
+        }
+        double[] eq = getClipEquationInner(plane.pos(), plane.normal(), 0);
+        return toViewSpaceSnapshot(eq, viewRotation);
     }
 
     /**

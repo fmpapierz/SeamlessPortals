@@ -196,6 +196,9 @@ public class PerEntityClipBracket {
     ) {
         // IP's setupOuterClipping math via the S11-B bridge, WITHOUT touching the live store (design §1.2.2).
         Snapshot outerPlane = FrontClipping.captureOuterClipping(collidingPortal, cam.viewRotationMatrix);
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): the CASE-1 main-pass real body paints RED.
+        // Null-safe (a null outer plane stays null → unclipped, untinted — non-seam shapes only).
+        outerPlane = com.warwa.seamlessportals.render.SeamTint.mainBody(outerPlane);
 
         if (getMechanism() == Mechanism.ISOLATED_STORAGE_BRACKET) {
             deferIsolatedBracket(storage, dispatcher, state, cam, camX, camY, camZ, poseStack, outerPlane);
@@ -236,6 +239,15 @@ public class PerEntityClipBracket {
             // (Verifier-1 P1). Fed to Mechanism B's bracket below for the same reason.
             innerPlane = DISABLED_CLIP;
         }
+
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): CASE-2 projections paint ORANGE in the
+        // main pass, BLUE inside a portal pass. The colour is baked into the snapshot at SUBMIT
+        // time — the painter's identity, immune to the submit-vs-draw Ctx timing (design §1.3's
+        // latent trap). DISABLED_CLIP is shared and never mutated: the helper returns a tinted
+        // COPY (enabled=false preserved, so unclipped projections still attribute).
+        innerPlane = qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()
+            ? com.warwa.seamlessportals.render.SeamTint.inPassProjection(innerPlane)
+            : com.warwa.seamlessportals.render.SeamTint.mainPassProjection(innerPlane);
 
         double x = state.x - newCameraPos.x;
         double y = state.y - newCameraPos.y;
@@ -429,6 +441,40 @@ public class PerEntityClipBracket {
             // Drop strands regardless of outcome (the S15 discipline) — a half-drawn list must
             // not be re-attempted by a later pass under a different camera.
             st.deferredBrackets.clear();
+        }
+    }
+
+    /**
+     * ENGINE STAGE 2b: immediate bracketed draw of ONE prepared scratch storage through the own
+     * dispatcher (the band painter's draw primitive). Same throw fence, same plane-store
+     * discipline as {@link #drawBracketedEntitiesIfAny}; the caller owns all raw GL state
+     * (stencil/color-mask) around this call.
+     */
+    public static boolean drawImmediateClipped(SubmitNodeStorage scratch, Snapshot plane) {
+        if (bracketThrowCount >= 3) {
+            return false;
+        }
+        try {
+            FeatureRenderDispatcher dispatcher = getOrCreateOwnDispatcher();
+            Snapshot prev = com.warwa.seamlessportals.render.FrontClipping.capture();
+            try {
+                com.warwa.seamlessportals.render.FrontClipping.restore(plane);
+                dispatcher.renderAllFeatures(scratch);
+            } finally {
+                com.warwa.seamlessportals.render.FrontClipping.restore(prev);
+            }
+            return true;
+        } catch (Throwable t) {
+            bracketThrowCount++;
+            ownDispatcher = null;
+            if (!bracketThrowLogged) {
+                bracketThrowLogged = true;
+                qouteall.q_misc_util.Helper.err(
+                    "[PerEntityClipBracket] immediate bracket draw swallowed (strike "
+                        + bracketThrowCount + "/3): " + t);
+                t.printStackTrace();
+            }
+            return false;
         }
     }
 

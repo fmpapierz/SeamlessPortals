@@ -618,6 +618,109 @@ public final class AperturePassthroughLever {
     public static final boolean SEAM_RESOLVER_SHADOW =
         "shadow".equals(System.getProperty("seamlessportals.seamResolver"));
 
+    /**
+     * ENGINE STAGE 2b (SEAM_ENTITY_ENGINE_DESIGN §2.5): the post-pass band painter.
+     *
+     * <p><b>★ DEFAULT-OFF SINCE ROUND 29 — THE POLARITY IS DELIBERATE AND EVIDENCE-BACKED.</b>
+     * This lever was born as {@code disableSeamBandPainter} (default-ON, per the house rule that
+     * every fix is default-ON behind a disable flag). The 2026-08-19/20 tint laps proved the
+     * painter is not a fix but a net REGRESSION, so the polarity is inverted: it now runs only
+     * when explicitly asked for.
+     *
+     * <p><b>The evidence (all user-confirmed live):</b> the painter authored THREE of the four
+     * standing artifacts — the thin sliver at the plane (piece 1), the toward-crossing sliver
+     * (piece 2), and the first-person own-head obstruction (piece 1 submits the real body with
+     * {@code offset=ZERO} translated by {@code pos − camPos}; in first person {@code camPos} IS
+     * the eye, so the model lands mathematically inside the player's head — and it bypasses BOTH
+     * own-player guards, because vanilla's is an EXTRACTION gate while
+     * {@code SeamBandPainter.drawPiece} calls {@code extractEntity} directly, and IP's
+     * {@code shouldRenderEntityNow} never runs on the painter's own dispatcher). Disabling it
+     * removed all three; the surviving BLUE bleed was then fixed properly by
+     * {@link SeamCrossingRule#inPassProjectionSideAgrees}.
+     *
+     * <p><b>And what shipped was never §2.5's painter.</b> §2.5 specifies an exact slab,
+     * stencil-intersected, with a mark pass and depth writes OFF, and explicitly marks the
+     * half-space whole-piece redraw <b>[PROHIBITED]</b>. The implementation is precisely that
+     * prohibited variant — unstenciled, depth-writes ON, no mark pass (its own probe line:
+     * {@code BAND-GL depthFunc=0x206 depthMask=true stencil=false}). So §2.5's
+     * "identical repaint ⇒ invisible by construction" claim was never falsified; it was never
+     * the thing that ran. The painter is retained in-tree for that redesign, not for use.
+     *
+     * <p>Enable with {@code -PenableSeamBandPainter=true} (write {@code =true} explicitly — the
+     * gradle rows compare against the string, so a BARE {@code -P} flag sets "" and does not
+     * fire; here that fails SAFE).
+     */
+    public static final boolean ENABLE_SEAM_BAND_PAINTER =
+        Boolean.getBoolean("seamlessportals.enableSeamBandPainter");
+
+    /**
+     * DIAGNOSTIC (verdict wf_8a9d68af-951 Part 4.1): the band painter's LANDING BEACON — pieces
+     * drawn +2Y with clipping DISABLED and the gate widened to the whole crossing, so their
+     * landing is visually undeniable. Beacon visible = the own-dispatcher immediate path paints
+     * pixels (the zero-change cause is gating/coverage); beacon absent while the outcome probes
+     * fire = fragment-level failure. One variable per lap: never read clip or gating conclusions
+     * from a beacon lap.
+     */
+    public static final boolean SEAM_BAND_BEACON =
+        Boolean.getBoolean("seamlessportals.seamBandBeacon");
+
+    /**
+     * DIAGNOSTIC (SEAM_BAND_HANDOFF §4.1 — the missing pixel-attribution instrument): PER-PAINTER
+     * TINT ({@code -Dseamlessportals.seamPainterTint=true}, DEFAULT-OFF). Every vanilla fragment
+     * shader gains a debug uniform through the SAME load-time injection triple as the clip plane
+     * (ShaderCodeTransformation / ShaderManagerCompilationCacheMixin / GlCommandEncoderClipMixin),
+     * and every seam painter bakes a distinct colour into the clip {@code Snapshot} that already
+     * travels with its draws: main body RED, main-pass projection ORANGE, in-pass projection BLUE,
+     * in-pass ambient content GREEN, band P1 MAGENTA, band P2 CYAN, seam-cell block redraw YELLOW.
+     * One lap attributes every artifact pixel to its painter by colour — or, if an artifact pixel
+     * carries NO tint, proves it is painted by none of them (portal quad / sodium terrain /
+     * particles — the §5 painter-inventory discriminator). With the lever off the shader sources
+     * are byte-identical and every tint field is inert. See
+     * {@link com.warwa.seamlessportals.render.SeamTint}.
+     */
+    public static final boolean SEAM_PAINTER_TINT =
+        Boolean.getBoolean("seamlessportals.seamPainterTint");
+
+    /**
+     * ENGINE §1.3 verdict (b) — rollback lever for the in-pass projection SIDE AGREEMENT gate
+     * ({@code -Dseamlessportals.disableSeamInPassSideAgreement=true}), round 29's fix for the
+     * one artifact that survived the 2026-08-19 tint laps: the BLUE cross-twin bleed in both
+     * crossing directions. With the fix ON (default), an in-pass seam projection whose clip
+     * keeps the half-space OPPOSITE to the one the pass's armed clip shows is culled — it could
+     * only ever paint into the region the pass deletes for its own terrain. With it OFF, the
+     * measured pre-round-29 behavior returns exactly: 9214 of 9278 in-pass seam projections
+     * threading one co-located twin's clip into the other twin's pass.
+     *
+     * <p>See {@link SeamCrossingRule#inPassProjectionSideAgrees} for the derivation, the
+     * identity-free co-planarity scope, and the measured evidence.
+     */
+    public static final boolean DISABLE_SEAM_INPASS_SIDE_AGREEMENT =
+        Boolean.getBoolean("seamlessportals.disableSeamInPassSideAgreement");
+
+    /**
+     * DIAGNOSTIC (SEAM_BAND_HANDOFF §4.3 — the bias LADDER): the band painter's glDepthRange
+     * forward bias, {@code -Dseamlessportals.seamBandBias=<double>}. DEFAULT 1e-5 = the round-26
+     * tie-break value (round 27 proved it does NOT close the artifacts — kept as the incumbent so
+     * an unset lever changes nothing). Ladder rungs 1e-3 / 1e-2 are DIAGNOSTIC ONLY, never
+     * shippable (a large bias visibly pulls band fragments in front of genuinely nearer
+     * occluders); if the tail sliver closes at some rung, the artifact pixels' stored-depth
+     * deficit is bounded and the angle-scaled-geometry mechanism is confirmed in one lap.
+     */
+    public static final double SEAM_BAND_BIAS = parseSeamBandBias();
+
+    private static double parseSeamBandBias() {
+        String raw = System.getProperty("seamlessportals.seamBandBias");
+        if (raw == null) {
+            return 1.0e-5;
+        }
+        try {
+            return Double.parseDouble(raw);
+        }
+        catch (NumberFormatException e) {
+            return 1.0e-5;
+        }
+    }
+
     // ============================================================================================
     // STEP (e) — THE TWO 2026-07-28 CART DEFECTS: same-dim window rendering + cross-dim riding.
     // ============================================================================================

@@ -167,6 +167,15 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
                 IPCGlobal.renderer.finishRendering();
             });
 
+            // ENGINE STAGE 2b — the band painter's hook: the SECOND AFTER_TRANSLUCENT_TERRAIN
+            // registration, immediately after the portal driver's (Fabric array-backed events
+            // invoke in registration order), so it runs AFTER every portal pass of the frame —
+            // and it runs EVERY frame regardless of whether any pass executed (the design
+            // PROHIBITS the doRenderPortal epilogue: skipped by the stale occlusion-query and
+            // fuse-view early-returns). Thin timing driver only; all logic is common-side.
+            LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context ->
+                qouteall.imm_ptl.core.render.SeamBandPainter.onAfterPortalPasses());
+
             // ===== S18: Mechanism-B main-pass draw site (R3 seam, design §2.1.3 decided) =====
             // Fires inside the main-pass framegraph lambda AFTER the entity feature phases
             // (solid/translucent/outline) execute and BEFORE translucent terrain — IP's exact

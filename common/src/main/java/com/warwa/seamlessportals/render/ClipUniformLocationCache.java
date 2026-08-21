@@ -61,6 +61,11 @@ public final class ClipUniformLocationCache {
     /** Cache: programId -> uniform location (or -1 if the program lacks it). */
     private static final Map<Integer, Integer> CACHE = new HashMap<>();
 
+    /** TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): programId -> seamlessportals_DebugTint
+     *  location. Same id-reuse hazard, same invalidation seam (clear() drops both maps),
+     *  same render-thread-only discipline. Only populated while the tint lever is armed. */
+    private static final Map<Integer, Integer> TINT_CACHE = new HashMap<>();
+
     /** Cached location for the program id, or {@code null} on miss. */
     public static Integer get(int programId) {
         return CACHE.get(programId);
@@ -74,6 +79,19 @@ public final class ClipUniformLocationCache {
         CACHE.put(programId, location);
     }
 
+    /** Cached tint-uniform location for the program id, or {@code null} on miss. */
+    public static Integer getTint(int programId) {
+        return TINT_CACHE.get(programId);
+    }
+
+    /** Record the queried tint-uniform location (may be -1 = "not applicable"). */
+    public static void putTint(int programId, int location) {
+        if (TINT_CACHE.size() >= MAX_ENTRIES) {
+            TINT_CACHE.clear();
+        }
+        TINT_CACHE.put(programId, location);
+    }
+
     /**
      * Drop everything — called by
      * {@link com.warwa.seamlessportals.mixin.client.GlDeviceClipCacheMixin}
@@ -82,5 +100,6 @@ public final class ClipUniformLocationCache {
      */
     public static void clear() {
         CACHE.clear();
+        TINT_CACHE.clear();
     }
 }
