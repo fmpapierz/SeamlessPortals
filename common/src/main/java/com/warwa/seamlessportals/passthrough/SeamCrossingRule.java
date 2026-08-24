@@ -151,8 +151,16 @@ public final class SeamCrossingRule {
         if (anchor == null) {
             return;
         }
+        // ★ ROUND 30 — CLOSE on the SWEPT box, not the post-tick box. Closing the instant the
+        // post-tick box clears the plane prunes the crossing while the RENDERED visual is still
+        // straddling (the visual lags by up to one tick of movement — 0.489 blocks at the
+        // measured crossing speed), which killed every painter for that tick's frames: the log
+        // shows both projections dying on the same tick as ANCHOR-CLOSE, leaving ~0.29 blocks of
+        // the body unpainted. The swept form keeps the crossing alive exactly one extra tick, by
+        // which point the visual has reached the cleared position and nothing is owed.
+        // Lever -PdisableSeamVisualSweep restores the post-tick form.
         if (anchor.isRemoved() || anchor.level() != entity.level()
-            || !SeamStraddleBracket.pinned(entity, anchor)) {
+            || !SeamStraddleBracket.pinnedForDraw(entity, anchor)) {
             holder.seamlessportals$setAnchorFace(null);
             SeamCartProbe.event(entity, "ANCHOR-CLOSE face=" + anchor.getId());
         }
@@ -234,7 +242,22 @@ public final class SeamCrossingRule {
         if (!SeamCartContinuity.isSeamContinuous(collidingPortal)) {
             return InPassBodyVerdict.NOT_ENGAGED;
         }
-        if (!SeamStraddleBracket.pinned(entity, collidingPortal)) {
+        // ★ ROUND 33 — THE LAST UN-MARGINED DRAW GATE (the cow's nose).
+        //
+        // This is a DRAW verdict, so it must use the swept+margined form like every other one.
+        // With the raw post-tick box, NOT_ENGAGED hands the decision back to vanilla's
+        // centre-based onDestSide test — the very test round 15's KEEP verdict exists to escape,
+        // which "culled the poked front until the center crossed". A cow's muzzle reaches 0.9375
+        // blocks ahead of its position against a 0.45 box half, so for the ~0.49 blocks (about
+        // one tick at crossing speed) between the nose piercing the plane and the BOX reaching
+        // it, this gate said "not crossing yet" and vanilla ate the nose. That is the user's
+        // "a tiny bit of the front of the cow's face cut off, specifically the nose/mouth",
+        // and its brevity ("very hard to capture, have to reduce speed") is that one tick.
+        //
+        // pinnedForDraw carries both corrections at once: the round-30 sweep (the rendered
+        // visual lags the post-tick box by up to a tick of movement) and the round-31/32 model
+        // margin (the clip cuts the drawn MODEL; every predicate measures the BOX).
+        if (!SeamStraddleBracket.pinnedForDraw(entity, collidingPortal)) {
             return InPassBodyVerdict.NOT_ENGAGED;
         }
         Plane passClip = renderingPortal.getInnerClipping();
@@ -342,6 +365,117 @@ public final class SeamCrossingRule {
      * into a +ADJ RETREAT — an error of {@code 2·corr} = 2cm, the round-18/19 wash-slit
      * signature. Re-derive through {@code getClipEquationInner} instead.
      */
+    /**
+     * ★ ROUND 35 — {@code mustBook}: THE MISSING SYMMETRIC HALF OF {@link #mustKeep}, and the
+     * mechanism behind the face cut.
+     *
+     * <p><b>The defect.</b> The projection painter's ONLY source is the physics collision booking
+     * ({@code CrossPortalEntityRenderer}'s loop over {@code portalCollisions}). If a face is not in
+     * that list, {@code renderProjectedEntity} is never entered and NO painter exists for the
+     * emerged part — no cull, no probe line, nothing. And booking is scoped to the COLLISION BOX
+     * expanded only by velocity ({@code CollisionHelper}), with zero model margin. Measured over
+     * all 8 crossings of the 2026-08-20 lap: booking fires at a near-constant <b>~0.71 blocks</b>
+     * from the plane while a cow's muzzle crosses at <b>0.9375</b> — a ~0.23-block interval, on
+     * every crossing, in which the emerged muzzle has no painter at all. A minecart's 0.625 reach
+     * never exceeds 0.71, which is exactly why the user saw the cow cut and the cart spared.
+     * Because the gap is a fixed DISTANCE, its duration scales as 1/speed: a few frames at
+     * crossing speed, ~31 frames at a crawl — "reproduces at very low speed".
+     *
+     * <p><b>Why the round-31/34 margin could never fix it.</b> {@code DRAW_MODEL_MARGIN} reaches
+     * only {@link SeamStraddleBracket#backPieceExists}, {@link SeamStraddleBracket#frontPieceExists},
+     * {@link SeamStraddleBracket#pinnedForDraw} (via {@link #mustKeep}) and the downstream locality
+     * cull. Every one of those is RETENTION or a CULL — <b>not one can create an entry</b>. The
+     * margin can delay a release; it can never advance an acquire. Raising it 1.0 → 2.0 was
+     * therefore guaranteed to leave the cut untouched, and reading that null result as "admission
+     * is innocent" was the wrong conclusion: admission is exactly where the defect lives, one
+     * layer above where the margin reaches.
+     *
+     * <p><b>What this returns.</b> Seam faces whose plane the entity's RENDER ENVELOPE straddles
+     * and which are NOT already booked. Callers use it to supplement the projection painter's
+     * candidate list ONLY — {@code PortalCollisionHandler} is never written, so physics, teleport
+     * timing and collision remain byte-identical. Every supplemented face still passes through
+     * {@code mainPassProjectionAdmitted}, the aperture mask and the locality gate, so the
+     * round-10 error direction holds: an over-admitted projection clips to nothing.
+     *
+     * <p>General by construction: the envelope is per-entity (vanilla's own frustum-cull box), so
+     * this works for horses, boats, armour stands, elytra players and modded entities alike — the
+     * user's "every single type of rider, entity, literally everything" requirement.
+     */
+    /**
+     * ★ ROUND 36 v2 — the same geometric candidate search as {@link #mustBook}, but WITHOUT the
+     * lever gate, so the DIAGNOSTIC can report "this entity's drawn model straddles a seam face
+     * and nothing has booked it" even while the supplement itself is switched off. Keeping the
+     * probe on the same code path as the fix is the point: an instrument that goes quiet when the
+     * fix is disabled cannot tell you whether the fix was needed.
+     */
+    public static java.util.List<Portal> mustBookCandidates(Entity entity) {
+        return computeUnbookedStraddledFaces(entity);
+    }
+
+    public static java.util.List<Portal> mustBook(Entity entity) {
+        if (AperturePassthroughLever.DISABLE_SEAM_RENDER_BOOKING) {
+            return java.util.Collections.emptyList();
+        }
+        return computeUnbookedStraddledFaces(entity);
+    }
+
+    private static java.util.List<Portal> computeUnbookedStraddledFaces(Entity entity) {
+        // ⚠ ROUND 35 CORRECTION — THE FIRST IMPLEMENTATION WAS DEAD CODE, and the way it was dead
+        // is worth recording. It required anchorOf(entity) != null and then skipped any face
+        // already booked. But the ANCHOR IS CREATED BY A BOOKING (setAnchorFace runs at the FLIP
+        // and at rider inheritance), so during the pre-booking gap this targets there is no
+        // anchor — the guard was null exactly when the fix was needed. It logged zero
+        // supplements across 7 live crossings. Do not reintroduce an anchor precondition here:
+        // this predicate must work BEFORE any seam state exists for the entity.
+        //
+        // The candidates are therefore found GEOMETRICALLY, from the entity's own position,
+        // independent of collision booking and of the anchor.
+        java.util.List<Portal> nearby = qouteall.imm_ptl.core.McHelper.findEntitiesRough(
+            Portal.class,
+            entity.level(),
+            entity.position(),
+            1,
+            p -> true
+        );
+        if (nearby.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        PortalCollisionHandler handler = ((IEEntity) entity).ip_getPortalCollisionHandler();
+        java.util.List<Portal> out = null;
+        for (Portal face : nearby) {
+            if (!SeamCartContinuity.isSeamContinuous(face)) {
+                continue;
+            }
+            // Already booked ⇒ the physics path covers it; adding it would double-draw.
+            boolean booked = false;
+            if (handler != null) {
+                for (PortalCollisionEntry e : handler.portalCollisions) {
+                    if (e.portal == face) {
+                        booked = true;
+                        break;
+                    }
+                }
+            }
+            if (booked) {
+                continue;
+            }
+            // Unbooked, but the DRAWN model straddles this face's plane ⇒ the emerged part has
+            // no painter at all. Supplement it.
+            if (!SeamStraddleBracket.straddlesForDraw(entity, face)) {
+                continue;
+            }
+            if (out == null) {
+                out = new java.util.ArrayList<>(2);
+            }
+            out.add(face);
+            // At most 2 concurrent seam crossings per unit (design §3.1).
+            if (out.size() >= 2) {
+                break;
+            }
+        }
+        return out == null ? java.util.Collections.emptyList() : out;
+    }
+
     public static boolean inPassProjectionSideAgrees(
         Portal collidingPortal,
         @Nullable Plane imageInnerClip,

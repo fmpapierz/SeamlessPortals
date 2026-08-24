@@ -379,3 +379,61 @@ The next session should treat these as first-class hypotheses, not afterthoughts
 - Every deviation from IP gets the citation-comment treatment in code.
 - Windows/PS5.1: Edit tool or .NET UTF8 only; fable/opus subagent tags; javap the deobf jar
   before new mixin targets; @Unique initializers must not make cross-class static calls.
+
+---
+
+## 9. ★ DEFERRED: CROSS-DIM PARITY (user decision 2026-08-20 — "we will worry about cross dim after we fix same dim, just add it to documentation")
+
+**Status: OPEN, NOT STARTED, deliberately deferred.** The user reports real discontinuity crossing
+ow↔nether (and expects ow↔end, nether↔end to share it). Do NOT start this until the same-dim
+residuals (rider clip, shadow, deceleration) are closed.
+
+**Why it is not automatic — the project's own precedent.** Every seam entity-crossing fix in this
+arc was developed and verified on the SAME-DIM-FAR rig. Design §7 Q5 explicitly deferred cross-dim
+and stated no design may claim ledger entry 1 "by construction" cross-dim until a live round runs.
+That round never ran. And this codebase has already been bitten by exactly this shape: the (e)
+DEFECT-B fix was written at `ClientTeleportationManager.moveClientEntityAcrossDimension`, and the
+IDENTICAL defect survived on the same-dim path for weeks, because
+`fromDimension != toDimension` gates them into separate code. **Assume nothing carries over;
+prove reachability per fix.**
+
+### What is already established (2026-08-20, before the deferral)
+
+- **The VERDICT layer looks dimension-agnostic.** A grep for dimension-conditional branches
+  (`getDestDim() ==`, `dimension() ==`, `sameDim`, `fromDimension`) across
+  `CrossPortalEntityRenderer`, `SeamCrossingRule`, `SeamStraddleBracket` and `SeamCartContinuity`
+  found NONE. Encouraging, not conclusive.
+- **The RENDER path DOES fork:** `SecondaryWorldRenderCore:1159` `renderPortalEntities` (cross-dim)
+  vs `:1164` `renderPortalEntitiesSameDim`. `PerEntityClipBracket`'s javadoc claims draw sites in
+  BOTH — unverified.
+- **THE MASTER GATE is the first thing to check.** `SeamCartContinuity.isSeamContinuous(portal)`
+  looks up a `SeamRegistry.SeamCell` and requires a binding with
+  `b.isMirrorable() && b.seamContinuous()`. EVERY seam entity verdict begins with it. Those rules
+  were written for same-dim obsidian pairs under the EXACT-ONLY alignment decision (2026-07-26),
+  and ow↔nether carries an 8:1 coordinate scale. **If this gate returns false cross-dim, the entire
+  engine is silently disarmed there and that alone is the reported discontinuity.** Check it first;
+  it is one predicate and it could explain everything.
+- **R30 (the visual sweep) may be a no-op — or worse — cross-dim.** `sweptBox` unions the current
+  box with the box at `McHelper.lastTickPosOf` (`entity.xo/yo/zo`). Cross-dim moves run through
+  `moveClientEntityAcrossDimension`. If that path sets `xo == x` at arrival, the sweep collapses to
+  the post-tick box and R30 does NOTHING cross-dim. If it leaves `xo` at the DEPARTURE coordinates
+  in the other dimension, the swept box spans two worlds — far worse than the original defect.
+  Determine which, and guard it.
+- **Other cross-dim-specific hazards:** two live `ClientLevel`s (does `collidedEntities` / the
+  anchor / the rider fan survive a mid-transfer unit?); the NO-HISTORY FLIP path (§3.2 — cross-dim
+  client entities SPAWN at the destination rather than crossing, so the anchor has no history; the
+  design specifies open-post-flip + nearest-to-server reconciliation, reachability unverified); and
+  a KNOWN unfixed cross-dim defect from the record — `REBASE via portal 1999
+  visual=(716.28,173.06,-127.5) server=(35.28,118.06,…)`, the rebase transform applied in the
+  WRONG FRAME, writing garbage client visuals.
+
+**HOW TO START THIS, per the user (2026-08-20):** do NOT open with a speculative code audit — one
+was launched and the user STOPPED it as "pointless" without a symptom to aim at. They will supply the
+EXACT observed cross-dim behaviour when the time comes, and that narrows the search. Wait for it.
+The suspicions above are starting points to CHECK against a reported symptom, not a work plan.
+(This is the same discipline that cracked the same-dim arc: the tint lap worked because it measured
+a symptom; every blind panel this session had its framing overturned by the next screenshot.)
+
+**Hard constraint when this is picked up:** same-dim crossing is USER-CONFIRMED GOOD as of
+2026-08-20 ("head is gone, no blue bleed either direction"; tail clip much improved by R30).
+No cross-dim change ships without a lever bounding its same-dim blast radius.

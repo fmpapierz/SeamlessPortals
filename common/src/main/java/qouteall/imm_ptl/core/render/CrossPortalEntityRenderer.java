@@ -110,6 +110,27 @@ public class CrossPortalEntityRenderer {
 
     public static boolean isRenderingEntityProjection = false;
 
+    /**
+     * ★ ROUND 31 (D2) — THE PROJECTION CAMERA DISTANCE OVERRIDE. {@code -1.0} = unset.
+     *
+     * <p>A projected entity is DRAWN at {@code transformPoint(entityInstantPos)} relative to the
+     * real camera, but vanilla stamps {@code EntityRenderState.distanceToCameraSq} from
+     * {@code EntityRenderDispatcher.distanceToSqr(entity)} — the entity's REAL position. On a far
+     * seam those differ by ~691 blocks, giving ~4.8e5 against vanilla's shadow threshold of 256
+     * ({@code EntityRenderer.extractShadow}: the shadow-piece loop only runs while
+     * {@code pow = (1 - distSq/256) * strength > 0}). So EVERY projected image is submitted with
+     * an EMPTY {@code shadowPieces} list and {@code EntityRenderDispatcher} skips
+     * {@code submitShadow} entirely — the user-reported "the ENTIRE shadow disappears when it
+     * touches the seam". Not the clip, not the band: the decal is never built.
+     *
+     * <p>Read by {@code MixinEntityRenderDispatcher.onDistanceToSqr}, which returns it in place of
+     * the real distance while it is set. Scoped to a single {@code extractEntity} call and cleared
+     * in a {@code finally} — it must never outlive that call, or an unrelated entity's distance
+     * would be answered with a stale value. Render-thread-only, like everything on this path.
+     * Lever {@code -PdisableSeamProjectionCameraDistance}.
+     */
+    public static double projectionCameraDistanceSqOverride = -1.0;
+
     public static void init() {
         IPGlobal.POST_CLIENT_TICK_EVENT.register(CrossPortalEntityRenderer::onClientTick);
 
@@ -181,6 +202,38 @@ public class CrossPortalEntityRenderer {
 
         FrontClipping.disableClipping();
 
+        // ★ ROUND 36: one tick spans several frames; the probe must be able to tell them apart.
+        // ⚠ This hook fires once PER PASS (main pass + one per portal pass), not once per frame —
+        // the first version counted pass-ends and made every portal pass look like a "frame with
+        // no main-pass projection", which is trivially true and meaningless. Only the MAIN pass
+        // (isRendering == false) opens a new frame.
+        if (!qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+            // ★ ROUND 36 v4 — report the PREVIOUS frame's execute-side truth before resetting.
+            // Phases execute AFTER this hook's submits, so the counts for frame N are only
+            // complete when frame N+1 begins. A frame with healthy submits but ORANGE-EXEC=0 is
+            // the RenderDoc signature reproduced in the log: the registered snapshot was never
+            // found at execute time, so the tint (and the CLIP) never reached the GPU.
+            if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
+                && probeSubmitsThisFrame > 0) {
+                com.warwa.seamlessportals.passthrough.SeamCartProbe.rpc(
+                    "[EXEC] f=" + probeFrameCounter
+                        + " projSubmits=" + probeSubmitsThisFrame
+                        + " phasesExecuted=" + PerEntityClipBracket.phasesExecuted
+                        + " registryHits=" + PerEntityClipBracket.phasesRegisteredHit
+                        + " TINTED-EXEC=" + PerEntityClipBracket.orangePhasesExecuted
+                        + (PerEntityClipBracket.orangePhasesExecuted == 0
+                            ? "  *** NO TINTED SNAPSHOT REACHED EXECUTE ***" : ""));
+            }
+            PerEntityClipBracket.phasesExecuted = 0;
+            PerEntityClipBracket.phasesRegisteredHit = 0;
+            PerEntityClipBracket.orangePhasesExecuted = 0;
+            probeSubmitsThisFrame = 0;
+
+            onFrameBegin();
+            com.warwa.seamlessportals.passthrough.SeamRenderExtent.onFrameBegin();
+            mainPassProjectionFaces.clear();
+        }
+
         if (!isCrossPortalRenderingEnabled()) {
             return;
         }
@@ -244,7 +297,8 @@ public class CrossPortalEntityRenderer {
             + " normal=" + collidingPortal.getNormal()
             + " entries=" + describeEntries(collisionHandler));
         PerEntityClipBracket.submitMainPassEntityClipped(
-            dispatcher, state, cam, camX, camY, camZ, poseStack, storage, collidingPortal
+            dispatcher, state, cam, camX, camY, camZ, poseStack, storage, collidingPortal,
+            entity.getId(), entity.getType().toString()
         );
         return true;
     }
@@ -252,13 +306,60 @@ public class CrossPortalEntityRenderer {
     // ═════════ F6 RENDER-PATH INSTRUMENT (probe-gated; the signature the arc was missing) ═════════
 
     /** Per-frame draw-decision record for carts + their riders, under -PseamCartProbe only. */
+    /**
+     * ★ ROUND 36 — THE FRAME COUNTER. The probe stamps the TICK (t=), and a tick spans several
+     * frames, so a painter that draws on some frames of a tick and not others reads as a healthy
+     * per-tick draw count. That is exactly how the face cut hid: 40558 main-pass projection draws
+     * across the run, "2-6 per tick" steady, while a RenderDoc capture of one cut FRAME showed
+     * the projection's tint uploaded ZERO times. Every probe line now carries f=<frame> so the
+     * per-frame picture is legible.
+     */
+    private static long probeFrameCounter = 0;
+
+    /**
+     * ★ ROUND 36: incremented wherever a MAIN-PASS projection actually reaches its draw, so the
+     * per-frame verdict can state DREW vs ABSENT outright instead of leaving absence to be
+     * inferred from missing log lines — the inference that hid this defect for six rounds.
+     */
+    private static int mainPassProjectionDrawCount = 0;
+
+    /**
+     * ★ ROUND 36 v2: which FACE ids actually reached a main-pass projection draw this frame.
+     * Per-face, because a co-located twin drawing is not the same as the anchor face drawing —
+     * v1's any-face counter reported DREW in exactly that case and hid the defect.
+     */
+    private static final java.util.Set<Integer> mainPassProjectionFaces = new java.util.HashSet<>();
+
+    /**
+     * ★ ROUND 36 v4: main-pass projection submits issued this frame, paired with the execute-side
+     * counters in {@link PerEntityClipBracket} so a frame can be read as
+     * submitted-but-never-executed — the state RenderDoc showed and no probe could see.
+     */
+    private static int probeSubmitsThisFrame = 0;
+
+    public static void onFrameBegin() {
+        probeFrameCounter++;
+    }
+
     private static void frameProbe(Entity entity, String what) {
         if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE) {
             return;
         }
-        if (!(entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart
-            || (entity.isPassenger() && !(entity instanceof Player))
-            || entity instanceof net.minecraft.world.entity.animal.cow.AbstractCow)) {
+        what = "f=" + probeFrameCounter + " " + what;
+        // ★ ROUND 35 — THE PROBE FILTER WAS SPECIES-SCOPED, WHICH MADE EVERY NON-COW LAP VACUOUS.
+        // It admitted only minecarts, passengers and cows, so a horse, boat, armour stand or
+        // elytra player crossing the seam logged ZERO lines — and a silent log reads as "clean"
+        // rather than "unobserved", the exact false reading this project has paid for repeatedly.
+        // Now: anything the seam machinery is actually tracking (a live crossing anchor or a
+        // colliding portal) is watched, whatever species it is. The user's requirement is that
+        // fixes cover "every single type of rider, entity, literally everything" — an instrument
+        // that cannot SEE those entities cannot verify a fix for them.
+        boolean tracked =
+            com.warwa.seamlessportals.passthrough.SeamCrossingRule.anchorOf(entity) != null
+                || ((IEEntity) entity).ip_getCollidingPortal() != null;
+        if (!tracked
+            && !(entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart
+                || (entity.isPassenger() && !(entity instanceof Player)))) {
             return;
         }
         com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity, "[DRAW] " + what);
@@ -332,17 +433,165 @@ public class CrossPortalEntityRenderer {
 
         ResourceKey<Level> clientDim = client.level.dimension();
 
+        // ★ ROUND 36 — THE SILENT EXITS, MADE OBSERVABLE.
+        //
+        // A RenderDoc capture diff proved the defect lives HERE, not downstream: on a cut frame
+        // the ORANGE (main-pass projection) tint uniform is uploaded ZERO times, while on a good
+        // frame it is uploaded 4 times, with everything else in the two frames identical (GREEN
+        // 11 vs 10, YELLOW 8 vs 8, same clip planes). So the projection is not clipped, not
+        // depth-rejected and not stencil-masked on cut frames — it is NEVER SUBMITTED.
+        //
+        // Every exit in this loop was silent, which is why the probe census looked clean while
+        // pixels went missing: the later gates (gated/masked/skipped) log, but "entity absent
+        // from collidedEntities", "no collision entries", "is a Mirror" and "dimension mismatch"
+        // logged NOTHING. Silence read as coverage. Worse, the census counts draws PER TICK and a
+        // tick spans several frames, so "2-6 draws per tick" was consistent with "some frames in
+        // that tick drew nothing" — which is exactly what was happening.
+        //
+        // These probes are DIAGNOSTIC ONLY (SEAM_CART_PROBE-gated, byte-inert otherwise).
         for (Entity entity : collidedEntities.keySet()) {
             PortalCollisionHandler collisionHandler = ((IEEntity) entity).ip_getPortalCollisionHandler();
 
-            if (collisionHandler != null) {
+            // ★ ROUND 36 — THE MAIN-PASS VERDICT LINE. In the MAIN pass, every seam-tracked
+            // entity reports whether a main-pass projection was drawn for it THIS FRAME. A frame
+            // where the projection is absent now states so outright, instead of being an absence
+            // I have to infer from missing lines — which is what let this hide for six rounds.
+            boolean mainPass = !qouteall.imm_ptl.core.render.context_management
+                .PortalRendering.isRendering();
+            int drewBefore = mainPass ? mainPassProjectionDrawCount : 0;
+
+            if (collisionHandler == null) {
+                frameProbe(entity, "PROJ-SILENT no collision handler");
+                continue;
+            }
+            if (collisionHandler.portalCollisions.isEmpty()) {
+                frameProbe(entity, "PROJ-SILENT zero collision entries (nothing to project through)");
+                continue;
+            }
+            {
                 for (PortalCollisionEntry e : collisionHandler.portalCollisions) {
                     Portal collidingPortal = e.portal;
+                    if (collidingPortal instanceof Mirror) {
+                        frameProbe(entity, "PROJ-SILENT face " + collidingPortal.getId() + " is a Mirror");
+                    }
                     if (!(collidingPortal instanceof Mirror)) {
                         ResourceKey<Level> projectionDimension = collidingPortal.getDestDim();
+                        if (clientDim != projectionDimension) {
+                            frameProbe(entity, "PROJ-SILENT face " + collidingPortal.getId()
+                                + " dim mismatch: client=" + clientDim
+                                + " projection=" + projectionDimension);
+                        }
                         if (clientDim == projectionDimension) {
                             renderProjectedEntity(entity, collidingPortal, dispatcher, cam, matrixStack, storage);
                         }
+                    }
+                }
+            }
+
+            // ★ ROUND 36 v2 — THE VERDICT, REBUILT SO IT CANNOT BE SILENT.
+            //
+            // v1 was structurally vacuous and its "DREW 1470 / ABSENT 0" ledger is RETIRED. Two
+            // defects, both of which hid the failure rather than reporting it:
+            //   (i) it gated on isSeamContinuous(portalCollisions.get(0)) — only the FIRST entry.
+            //       These entities also hold a NETHER-portal entry (426 dim-mismatch lines in the
+            //       same log), so whenever entry 0 was the nether portal the verdict printed
+            //       NOTHING. Measured: verdict lines on 753 of 1652 seam-active frames.
+            //   (ii) `drew` was a per-entity ANY-FACE counter, so a frame where the correct face
+            //       was dropped but its co-located TWIN drew still reported DREW.
+            // Now: one verdict PER SEAM FACE, keyed to that face, emitted unconditionally.
+            if (mainPass) {
+                for (PortalCollisionEntry e : collisionHandler.portalCollisions) {
+                    Portal face = e.portal;
+                    if (!com.warwa.seamlessportals.passthrough.SeamCartContinuity
+                            .isSeamContinuous(face)) {
+                        continue;
+                    }
+                    boolean straddles = com.warwa.seamlessportals.passthrough.SeamStraddleBracket
+                        .straddlesForDraw(entity, face);
+                    boolean drewThisFace = mainPassProjectionFaces.contains(face.getId());
+                    frameProbe(entity, "PROJ-FACE-VERDICT face " + face.getId()
+                        + " mainPassProjection=" + (drewThisFace ? "DREW" : "*** ABSENT ***")
+                        + " modelStraddles=" + straddles
+                        + " entries=" + collisionHandler.portalCollisions.size());
+                }
+            }
+
+            // ★ ROUND 35 — THE RENDER-SIDE BOOKING SUPPLEMENT (the face cut).
+            //
+            // The loop above is the projection painter's ONLY source, and it is the PHYSICS
+            // collision booking — scoped to the COLLISION BOX expanded by velocity, with zero
+            // model margin (CollisionHelper). The seam clip cuts the DRAWN MODEL, which reaches
+            // further, and by a per-type amount. Measured across all 8 crossings of the
+            // 2026-08-20 lap: booking fires at a near-constant ~0.71 blocks from the plane while
+            // a cow's muzzle crosses at 0.9375 — so for ~0.23 blocks of travel the emerged muzzle
+            // has NO PAINTER AT ALL. Not culled: never invoked. The probe log shows the
+            // signature directly — 37 consecutive ticks with no PROJ line of any kind (every
+            // early return in renderProjectedEntity emits one), while the module's own straddle
+            // predicate already reported the cow straddling that face.
+            //
+        }
+
+        // ★ ROUND 35 — THE RENDER-SIDE BOOKING SUPPLEMENT (the face cut).
+        //
+        // ⚠ THIS MUST LIVE OUTSIDE THE collidedEntities LOOP. The first attempt placed it inside
+        // and it was dead code: collidedEntities is populated from ip_isCollidingWithPortal()
+        // (:162-163) — the SAME box-scoped collision that does the booking — so during the
+        // pre-booking gap the entity is not in that map and the loop never reaches it. It logged
+        // ZERO supplements across 7 live crossings.
+        //
+        // THE DEFECT: the projection painter's only source is the PHYSICS collision booking,
+        // scoped to the COLLISION BOX expanded by velocity, with zero model margin
+        // (CollisionHelper). The seam clip cuts the DRAWN MODEL, which reaches further and by a
+        // per-type amount. Measured across all 8 crossings of the 2026-08-20 lap: booking fires
+        // at a near-constant ~0.71 blocks from the plane while a cow's muzzle crosses at 0.9375
+        // — so for ~0.23 blocks of travel the emerged muzzle has NO PAINTER AT ALL. Not culled:
+        // never invoked. Signature in the probe log: 37 consecutive ticks with no PROJ line of
+        // any kind (every early return in renderProjectedEntity emits one) while the module's
+        // own straddle predicate already reported the straddle.
+        //
+        // Render-only: PortalCollisionHandler is never written, so physics, teleport timing and
+        // collision stay byte-identical. Every supplemented face still runs
+        // mainPassProjectionAdmitted, the aperture mask and the locality gate, so the round-10
+        // error direction holds — an over-admitted projection clips to nothing.
+        // Lever -PdisableSeamRenderBooking.
+        // ★ ROUND 36 v5 — THE DIAGNOSTIC RUNS UNCONDITIONALLY; ONLY THE FIX IS LEVERED.
+        // v2 put this loop inside the lever gate, so it went silent exactly when the supplement
+        // was off — and the one measurement that would have identified this defect ("the cart is
+        // absent from collidedEntities while its model straddles") reported zero, for the same
+        // reason the defect itself was invisible. That is the sixth instrument in this session to
+        // measure its own switch rather than the world. Diagnostic OUT of the gate; fix INSIDE.
+        {
+            for (Entity entity : client.level.entitiesForRendering()) {
+                if (collidedEntities.containsKey(entity)) {
+                    continue;   // the physics loop above already handled this one
+                }
+                // THE CASE THE OLD PROBE COULD NOT SEE AT ALL. An entity whose DRAWN model
+                // straddles a seam plane but which is absent from collidedEntities never enters
+                // the loop above, so it produced no line of any kind — the loudest possible
+                // failure was the quietest possible log. MEASURED 2026-08-21: on the 11 cut
+                // frames of a slow crossing the MINECART (id=3, the entity that actually moves)
+                // has ZERO lines anywhere, while its rider renders normally — so what is missing
+                // from the destination image is the CART around the cow, which reads as the
+                // cow's face being cut.
+                java.util.List<Portal> unbooked = com.warwa.seamlessportals.passthrough
+                    .SeamCrossingRule.mustBookCandidates(entity);
+                for (Portal f : unbooked) {
+                    frameProbe(entity, "PROJ-FACE-VERDICT face " + f.getId()
+                        + " mainPassProjection=*** ABSENT(unbooked) ***"
+                        + " modelStraddles=true entries=0");
+                }
+                if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                        .DISABLE_SEAM_RENDER_BOOKING) {
+                    continue;   // diagnostic only; the supplement itself is switched off
+                }
+                for (Portal supplemental : com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                        .mustBook(entity)) {
+                    if (!(supplemental instanceof Mirror)
+                        && clientDim == supplemental.getDestDim()) {
+                        frameProbe(entity, "PROJ render-booked face " + supplemental.getId()
+                            + " (model straddles, physics has not booked)");
+                        renderProjectedEntity(
+                            entity, supplemental, dispatcher, cam, matrixStack, storage);
                     }
                 }
             }
@@ -516,7 +765,35 @@ public class CrossPortalEntityRenderer {
             Vec3 transformedEntityPos = newEyePos.subtract(McHelper.getEyeOffset(entity));
             AABB transformedBoundingBox = McHelper.getBoundingBoxWithMovedPosition(entity, transformedEntityPos);
 
-            boolean intersects = PortalManipulation.isOtherSideBoxInside(transformedBoundingBox, renderingPortal);
+            // ★ ROUND 32 — THE LOCALITY GATE'S MODEL MARGIN. This test asks whether the entity's
+            // transformed BOX still reaches the side of the window the pass shows; but the seam
+            // clip cuts the drawn MODEL, which reaches further. A cow's muzzle extends 0.9375
+            // blocks from its position against a 0.45 box half, so between ~0.5 and ~0.94 blocks
+            // past the plane the model still pokes back through the window while this gate has
+            // already culled its projection — and the main body's outer clip stops at the plane,
+            // so nothing paints that sliver.
+            //
+            // MEASURED (tint lap 2026-08-20, and the reason this gate was found at all): the
+            // in-pass projection drew only within 0.75 blocks of the plane and was dead beyond,
+            // while "PROJ skipped (outside rendering portal N)" took over at exactly that
+            // distance — 0.50-0.75 flipped from 124 drawn/30 culled to 18 drawn/164 culled. The
+            // user's tint photos show the BLUE (in-pass projection) fading progressively while
+            // the RED (main body) stays clipped at the plane: "cuts off from dest and grows from
+            // seam".
+            //
+            // Widening is safe in the way the round-10 argument is safe: an over-admitted
+            // projection is clipped to nothing by its own inner plane, so the error direction is
+            // "draw a piece that paints no pixels", never "cull a piece that should paint".
+            // Scoped to seam faces so non-seam IP behaviour stays byte-identical.
+            AABB localityBox = transformedBoundingBox;
+            if (com.warwa.seamlessportals.passthrough.SeamCartContinuity
+                    .isSeamContinuous(transformingPortal)) {
+                double m = com.warwa.seamlessportals.passthrough.SeamStraddleBracket.modelMargin();
+                if (m > 0.0) {
+                    localityBox = transformedBoundingBox.inflate(m);
+                }
+            }
+            boolean intersects = PortalManipulation.isOtherSideBoxInside(localityBox, renderingPortal);
 
             if (!intersects) {
                 frameProbe(entity, "PROJ skipped (outside rendering portal "
@@ -525,6 +802,12 @@ public class CrossPortalEntityRenderer {
             }
         }
 
+        if (!PortalRendering.isRendering()) {
+            // ★ ROUND 36 v3: reaching HERE only means the function got this far — there are
+            // early returns below and the submit is ~90 lines further on. The per-face verdict
+            // is fed from the PROJ-SUBMIT marker AFTER the submit returns, never from here.
+            mainPassProjectionDrawCount++;
+        }
         frameProbe(entity, "PROJ via face " + transformingPortal.getId()
             + " clip=" + (innerClipPlane == null ? "DISABLED"
                 : innerClipPlane.pos() + "/" + innerClipPlane.normal())
@@ -590,14 +873,52 @@ public class CrossPortalEntityRenderer {
             // The camera-pos substitution is preserved exactly: the seam submits at
             // (state.{x,y,z} - newCameraPos.{x,y,z}), i.e. the destination-transformed position relative to
             // the main camera (identical to IP feeding newCameraPos into ip_myRenderEntity).
-            EntityRenderState projectionState =
-                dispatcher.extractEntity(entity, RenderStates.getPartialTick());
-            PerEntityClipBracket.submitProjectedEntityClipped(
+            // ★ ROUND 31 (D2) — THE PROJECTION CAMERA DISTANCE, the vanishing-shadow fix.
+            // extractEntity stamps distanceToCameraSq from EntityRenderDispatcher.distanceToSqr,
+            // which measures the entity's REAL position — but this projection is DRAWN at
+            // newEntityInstantPos. On a far seam those differ by ~691 blocks, so the stamped value
+            // is ~4.8e5 against vanilla's shadow gate of 256 (EntityRenderer.extractShadow:
+            // pow = (1 - distSq/256) * strength, and the piece loop only runs while pow > 0).
+            // The projection therefore arrives with an EMPTY shadowPieces list and
+            // EntityRenderDispatcher skips submitShadow outright — which is why the user sees the
+            // ENTIRE shadow vanish at the seam rather than half of it clipped. Override the
+            // measurement to the DRAWN position for exactly this extraction.
+            if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                    .DISABLE_SEAM_PROJECTION_CAMERA_DISTANCE) {
+                projectionCameraDistanceSqOverride =
+                    newEntityInstantPos.distanceToSqr(cameraPos);
+            }
+            EntityRenderState projectionState;
+            try {
+                projectionState = dispatcher.extractEntity(entity, RenderStates.getPartialTick());
+            }
+            finally {
+                projectionCameraDistanceSqOverride = -1.0;
+            }
+            int touched = PerEntityClipBracket.submitProjectedEntityClipped(
                 dispatcher, projectionState, cam, newCameraPos, matrixStack, storage,
-                innerClipPlane, false
+                innerClipPlane, false, entity.getId(), entity.getType().toString()
             );
+            // ★ ROUND 36 v3 — ASSERT THE OUTCOME, NOT THE REQUEST. v2's marker sat at the
+            // "PROJ via face" probe ~90 lines ABOVE this call, so "DREW" only ever meant
+            // "reached the probe" — the fourth time this session that a request was measured
+            // and reported as an outcome. The marker now sits AFTER the submit returns, and
+            // carries what the submit actually produced: the number of SubmitNodeCollections
+            // the entity's geometry landed in. touched==0 means nothing was submitted at all
+            // and no phase can ever carry the ORANGE snapshot to the GPU — which is exactly
+            // the RenderDoc signature (0 orange uniform uploads on a cut frame, 4 on a good one).
+            if (!PortalRendering.isRendering()) {
+                mainPassProjectionFaces.add(transformingPortal.getId());
+                probeSubmitsThisFrame++;
+                frameProbe(entity, "PROJ-SUBMIT face " + transformingPortal.getId()
+                    + " touchedCollections=" + touched
+                    + (touched == 0 ? "  *** NOTHING SUBMITTED ***" : ""));
+            }
         }
         finally {
+            // Belt-and-braces: the override must never outlive this extraction, or an unrelated
+            // entity's distance would be answered with a stale value.
+            projectionCameraDistanceSqOverride = -1.0;
             matrixStack.popPose();
             isRenderingEntityProjection = false;
         }
@@ -686,6 +1007,26 @@ public class CrossPortalEntityRenderer {
                     // contentDirection: it flips meaning with the renderer's co-located face
                     // pick), and the KEEP verdict is FINAL (no binary center-side test; the
                     // pass's plane-exact ambient clip cuts pixels).
+                    // ★ ROUND 39 REVERTED 2026-08-22, at the user's direction. Round 39 ran this
+                    // verdict against EVERY straddled face instead of ip_getCollidingPortal()'s
+                    // entry-0 lookup. Two reasons it does not ride along:
+                    //
+                    // 1. ITS PREMISE WAS REFUTED BY THE USER'S OWN PHOTO. It was built on "the cow
+                    //    paints GREEN at the cut, so a spurious vanilla in-pass body is drawing".
+                    //    The photo then showed GREEN covering the whole window — grass, sky and
+                    //    clouds included — because the ambient arm tints everything the pass draws.
+                    //    A cow at the destination SHOULD be green; there was no spurious draw.
+                    //
+                    // 2. IT IS A CANDIDATE CAUSE OF THE WRONG-SIDE BLEED IT COINCIDED WITH. The
+                    //    anyKeep fold returned true if ANY straddled face voted KEEP, where before
+                    //    only entry 0 voted — so the real body could paint in passes that
+                    //    previously culled it, which is a wrong-side bleed by construction.
+                    //
+                    // The underlying observation stands and is worth revisiting deliberately:
+                    // entry-0 addressing IS arbitrary on a bi-faced cluster, and the same shape
+                    // already produced a silent wrong verdict in the round-36 probe. But it must be
+                    // re-derived against a measurement that cannot be masked, not against a tint
+                    // lap — round 41 proved the tint hides this artifact rather than attributing it.
                     switch (com.warwa.seamlessportals.passthrough.SeamCrossingRule
                         .inPassRealBodyVerdict(entity, collidingPortal, (Portal) renderingPortal)) {
                         case CULL -> {

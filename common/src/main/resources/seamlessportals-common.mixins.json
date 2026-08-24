@@ -23,6 +23,7 @@
     "client.stencil.RenderTargetMixin",
     "client.stencil.GlStateManagerMixin",
     "client.CameraInvokerMixin",
+    "client.EntityRendererCullingBoxInvoker",
     "client.ClearSkipMixin",
     "client.GameRendererAccessorMixin",
     "client.GameRendererLightmapMixin",

@@ -45,4 +45,38 @@ public class MixinEntityRenderDispatcher {
         }
     }
 
+    /**
+     * ★ ROUND 31 (D2) — THE VANISHING SHADOW.
+     *
+     * <p>Vanilla only builds an entity shadow within 16 blocks of the camera
+     * ({@code EntityRenderer.extractShadow}: the shadow-piece loop runs only while
+     * {@code pow = (1 - distSq/256) * strength > 0}), and it measures {@code distSq} from the
+     * entity's REAL position. A seam PROJECTION is DRAWN at the transformed position but stamped
+     * with the real one — ~691 blocks away on a far seam, giving ~4.8e5 against a threshold of
+     * 256, i.e. ~1890x over. So every projected image arrives with an EMPTY
+     * {@code shadowPieces} list and {@code submitShadow} is skipped outright. That is why the
+     * user saw the WHOLE shadow disappear at the seam rather than the half-clip the body gets:
+     * the decal is never built, so there is nothing for the clip plane to cut.
+     *
+     * <p>While {@link CrossPortalEntityRenderer#projectionCameraDistanceSqOverride} is set — only
+     * across the projection's own {@code extractEntity} call, and cleared in a {@code finally} —
+     * answer with the distance to the position the image is actually DRAWN at.
+     *
+     * <p>javap-verified against the loom deobf jar before first launch (house rule):
+     * {@code public double distanceToSqr(net.minecraft.world.entity.Entity)}, not synthetic-bridged.
+     */
+    @Inject(
+        method = "distanceToSqr(Lnet/minecraft/world/entity/Entity;)D",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private void seamlessportals$projectionCameraDistance(
+        Entity entity, CallbackInfoReturnable<Double> cir
+    ) {
+        double override = CrossPortalEntityRenderer.projectionCameraDistanceSqOverride;
+        if (override >= 0.0) {
+            cir.setReturnValue(override);
+        }
+    }
+
 }
