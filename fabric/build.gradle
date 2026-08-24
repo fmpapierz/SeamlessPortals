@@ -172,6 +172,7 @@ loom {
             // disableSeamSignal is (c)'s master A/B switch; dispatch is its independent half.
             if (project.findProperty('disableSeamSignal') == 'true') { vmArg('-Dseamlessportals.disableSeamSignal=true') }
             if (project.findProperty('disableSeamSignalDispatch') == 'true') { vmArg('-Dseamlessportals.disableSeamSignalDispatch=true') }
+            if (project.findProperty('disableSeamWalkSever') == 'true') { vmArg('-Dseamlessportals.disableSeamWalkSever=true') }
             if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
             if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
             // RS (c) STEP 2 — redstone WIRE (dust) continuity; disableSeamWire is its A/B switch.
@@ -202,6 +203,23 @@ loom {
             if (project.findProperty('seamBandBias') != null) { vmArg('-Dseamlessportals.seamBandBias=' + project.findProperty('seamBandBias')) }
             // ENGINE par.1.3 (b) - in-pass projection SIDE AGREEMENT rollback lever (round 29).
             if (project.findProperty('disableSeamInPassSideAgreement') == 'true') { vmArg('-Dseamlessportals.disableSeamInPassSideAgreement=true') }
+            // ROUND 30 - THE VISUAL SWEEP (tail-clip fix): draw gates + CLOSE on the last-tick/post-tick sweep.
+            if (project.findProperty('disableSeamVisualSweep') == 'true') { vmArg('-Dseamlessportals.disableSeamVisualSweep=true') }
+            // ROUND 31 - THE MODEL MARGIN (residual rider clip): draw gates widen the box to the drawn model's reach.
+            if (project.findProperty('disableSeamModelMargin') == 'true') { vmArg('-Dseamlessportals.disableSeamModelMargin=true') }
+            // ROUND 35 - the face-cut fix: render-side booking supplement + the per-entity render envelope.
+            if (project.findProperty('enableSeamRenderBooking') == 'true') { vmArg('-Dseamlessportals.enableSeamRenderBooking=true') }
+            if (project.findProperty('disableSeamRenderEnvelope') == 'true') { vmArg('-Dseamlessportals.disableSeamRenderEnvelope=true') }
+            // ROUND 37 - the seam collision ENTRY's lifetime measures the render envelope, not the raw box.
+            if (project.findProperty('disableSeamKeepModelExtent') == 'true') { vmArg('-Dseamlessportals.disableSeamKeepModelExtent=true') }
+            // ROUND 38 - tint keys on the ENTITY, not the painter (needs seamPainterTint too).
+            if (project.findProperty('seamTintPerEntity') == 'true') { vmArg('-Dseamlessportals.seamTintPerEntity=true') }
+            // ROUND 41 - all of the tint's pipeline effects, none of the colour.
+            if (project.findProperty('seamTintNeutral') == 'true') { vmArg('-Dseamlessportals.seamTintNeutral=true') }
+            // ROUND 39 - in-pass visibility verdict judges EVERY straddled face, not entry 0.
+            if (project.findProperty('disableSeamAllFaceVisibility') == 'true') { vmArg('-Dseamlessportals.disableSeamAllFaceVisibility=true') }
+            // ROUND 31 (D2) - THE PROJECTION CAMERA DISTANCE: distance gates measure the DRAWN position (shadows, name tags).
+            if (project.findProperty('disableSeamProjectionCameraDistance') == 'true') { vmArg('-Dseamlessportals.disableSeamProjectionCameraDistance=true') }
             // RS (e) DEFECT A — restores the WRAP-AROUND section lookup on the dest-pass entity
             // visibility gate (the same-dim window loses its entities at any real distance).
             if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
@@ -399,6 +417,7 @@ loom {
             // RS (c) FIX LEVERS — redstone signal across the seam (see the client block's rows).
             if (project.findProperty('disableSeamSignal') == 'true') { vmArg('-Dseamlessportals.disableSeamSignal=true') }
             if (project.findProperty('disableSeamSignalDispatch') == 'true') { vmArg('-Dseamlessportals.disableSeamSignalDispatch=true') }
+            if (project.findProperty('disableSeamWalkSever') == 'true') { vmArg('-Dseamlessportals.disableSeamWalkSever=true') }
             if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
             if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
             if (project.findProperty('disableSeamWire') == 'true') { vmArg('-Dseamlessportals.disableSeamWire=true') }
@@ -424,6 +443,23 @@ loom {
             if (project.findProperty('seamBandBias') != null) { vmArg('-Dseamlessportals.seamBandBias=' + project.findProperty('seamBandBias')) }
             // ENGINE par.1.3 (b) - in-pass projection SIDE AGREEMENT rollback lever (round 29).
             if (project.findProperty('disableSeamInPassSideAgreement') == 'true') { vmArg('-Dseamlessportals.disableSeamInPassSideAgreement=true') }
+            // ROUND 30 - THE VISUAL SWEEP (tail-clip fix): draw gates + CLOSE on the last-tick/post-tick sweep.
+            if (project.findProperty('disableSeamVisualSweep') == 'true') { vmArg('-Dseamlessportals.disableSeamVisualSweep=true') }
+            // ROUND 31 - THE MODEL MARGIN (residual rider clip): draw gates widen the box to the drawn model's reach.
+            if (project.findProperty('disableSeamModelMargin') == 'true') { vmArg('-Dseamlessportals.disableSeamModelMargin=true') }
+            // ROUND 35 - the face-cut fix: render-side booking supplement + the per-entity render envelope.
+            if (project.findProperty('enableSeamRenderBooking') == 'true') { vmArg('-Dseamlessportals.enableSeamRenderBooking=true') }
+            if (project.findProperty('disableSeamRenderEnvelope') == 'true') { vmArg('-Dseamlessportals.disableSeamRenderEnvelope=true') }
+            // ROUND 37 - the seam collision ENTRY's lifetime measures the render envelope, not the raw box.
+            if (project.findProperty('disableSeamKeepModelExtent') == 'true') { vmArg('-Dseamlessportals.disableSeamKeepModelExtent=true') }
+            // ROUND 38 - tint keys on the ENTITY, not the painter (needs seamPainterTint too).
+            if (project.findProperty('seamTintPerEntity') == 'true') { vmArg('-Dseamlessportals.seamTintPerEntity=true') }
+            // ROUND 41 - all of the tint's pipeline effects, none of the colour.
+            if (project.findProperty('seamTintNeutral') == 'true') { vmArg('-Dseamlessportals.seamTintNeutral=true') }
+            // ROUND 39 - in-pass visibility verdict judges EVERY straddled face, not entry 0.
+            if (project.findProperty('disableSeamAllFaceVisibility') == 'true') { vmArg('-Dseamlessportals.disableSeamAllFaceVisibility=true') }
+            // ROUND 31 (D2) - THE PROJECTION CAMERA DISTANCE: distance gates measure the DRAWN position (shadows, name tags).
+            if (project.findProperty('disableSeamProjectionCameraDistance') == 'true') { vmArg('-Dseamlessportals.disableSeamProjectionCameraDistance=true') }
             // RS (e) DEFECT A inversion lever + the two (e) probe levers.
             // ⚠ NO GATE LEG CONSUMES disableDestEntitySectionExact. Defect A is covered by LIVE
             // evidence only (2026-08-01: user-confirmed, with a zombie-in-a-minecart control that

@@ -106,6 +106,15 @@ public final class AperturePassthroughInit {
                     && mc.level.getEntity(watched) != null);
         });
 
+        // RS-XTALK live round 3 — CLIENT-VIEW probe (1 Hz, -PseamSignalProbe only): what the
+        // CLIENT holds per seam cell — chunk state with POWERED, occupancy mask, side-table
+        // secondary with ITS powered bit. The dynamic seam draw renders exactly these
+        // (SeamClipRenderer reads live client state per frame), so diffing this line against the
+        // server-side "pair truth" line attributes a dark-looking seam rail to the client sync,
+        // the side-table fragment, or the render, in one glance. Log-only; touches nothing.
+        qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
+            AperturePassthroughInit::clientSeamViewProbe);
+
         // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
         // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was
         // not possible at the time.
@@ -228,5 +237,44 @@ public final class AperturePassthroughInit {
     /** Test/probe accounting: how many portals currently hold a binding fingerprint in a level. */
     public static int trackedPortalCount(net.minecraft.world.level.Level level) {
         return ((SeamIndexHolder) level).seamlessportals$bindFingerprints().size();
+    }
+
+    private static long clientSeamViewProbeLast = 0;
+
+    /** RS-XTALK round 3 — the 1 Hz client-view line; see the registration comment. Log-only. */
+    private static void clientSeamViewProbe() {
+        if (!AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
+            return;
+        }
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc == null || mc.level == null) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (now - clientSeamViewProbeLast < 1_000_000_000L) {
+            return;
+        }
+        clientSeamViewProbeLast = now;
+        var cells = ((SeamIndexHolder) mc.level).seamlessportals$seamCells();
+        if (cells.isEmpty()) {
+            return;
+        }
+        var powered = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
+        for (var e : cells.long2ObjectEntrySet()) {
+            net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.of(e.getLongKey());
+            var st = mc.level.getBlockState(pos);
+            if (st.isAir()) {
+                continue;
+            }
+            var sec = SeamOccupancy.secondaryOf(mc.level, pos);
+            LOGGER.info("[RS-SIGNAL] client view: {} {} powered={} mask={} secondary={}{}",
+                pos, st.getBlock(),
+                st.hasProperty(powered) ? st.getValue(powered) : "n/a",
+                SeamOccupancy.occupancyOf(mc.level, pos),
+                sec != null,
+                sec == null ? "" : (" secBlock=" + sec.state().getBlock() + " secPowered="
+                    + (sec.state().hasProperty(powered) ? sec.state().getValue(powered) : "n/a")
+                    + " secHalf=" + sec.half()));
+        }
     }
 }

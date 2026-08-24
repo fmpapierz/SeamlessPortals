@@ -72,6 +72,17 @@ public abstract class MixinBaseRailBlockMirrorAuthority {
         if (!SeamlessPortalsConfig.isEntityPortals()) {
             return;
         }
+        // ★ SHARED-PAIR WAKE (RS-XTALK live round 2): every poke DELIVERED at a bound seam rail
+        // — flip or no flip, marked or not — queues a tick-end updateNeighborsAt at the
+        // counterpart, waking the far side's ADJACENT rails. The pair's POWERED bit is the OR of
+        // the two through-paths, so a path transition that leaves the OR unchanged produces no
+        // state change and D1 (which keys on state changes) never fires — the other path's far
+        // rails were never told to look. Rides the (c) levers inside onSeamRailPoked, NOT the
+        // authority lever — it is signal machinery, placed before the authority gate on purpose.
+        if (level instanceof net.minecraft.server.level.ServerLevel pokeLevel) {
+            com.warwa.seamlessportals.passthrough.SeamSignalContinuity
+                .onSeamRailPoked(pokeLevel, pos);
+        }
         if (AperturePassthroughLever.DISABLED
             || AperturePassthroughLever.DISABLE_MIRROR_AUTHORITY) {
             return;

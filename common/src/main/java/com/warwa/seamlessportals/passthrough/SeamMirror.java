@@ -534,16 +534,19 @@ public final class SeamMirror {
                 traceEnd(dest, destPos, cleared, air, sourceLevel, sourcePos, "aperture-clear");
                 forceClientSync(sourceLevel, dest, destPos);
                 clearedMirrors++;
-                // ★ F1 (2026-08-11, user ruling): the counterpart's end fires its OWN native
-                // destroy burst + sound — the silent setBlockAndUpdate clear never showed one,
-                // so a broken pair's far half just blinked out while the breaking end's burst
-                // was half-eaten by birth-teleports. levelEvent 2001 is vanilla's own destroy
-                // effect for the cleared state; the client-side TerrainParticle birth cull
-                // (SeamParticleTeleport) half-scopes each end's burst to its own side of the
-                // plane, so together the two ends show one full block's worth of crumbs.
+                // ★ F1 (2026-08-11, user ruling): the counterpart's end fires its OWN destroy
+                // burst — the silent setBlockAndUpdate clear never showed one, so a broken
+                // pair's far half just blinked out. PARTICLES ONLY (live round 9, user order
+                // "the break sound plays twice — fix this"): levelEvent 2001 carries the break
+                // SOUND too, and with both ends in earshot the one break sounded twice; the
+                // breaking end's own vanilla sound is the one true sound. The client-side
+                // TerrainParticle birth cull half-scopes each end's burst to its own side.
                 if (cleared) {
-                    dest.levelEvent(2001, destPos,
-                        net.minecraft.world.level.block.Block.getId(existing));
+                    dest.sendParticles(
+                        new net.minecraft.core.particles.BlockParticleOption(
+                            net.minecraft.core.particles.ParticleTypes.BLOCK, existing),
+                        destPos.getX() + 0.5, destPos.getY() + 0.5, destPos.getZ() + 0.5,
+                        20, 0.25, 0.25, 0.25, 0.05);
                 }
                 probe("cleared counterpart at", destPos, dest, sourcePos, sourceLevel);
                 // ★ THE COUNTERPART'S OCCUPANCY BOOKKEEPING MUST HAPPEN HERE — its own driver never
@@ -610,6 +613,13 @@ public final class SeamMirror {
                     .seamlessportals$getFireTickDelay(dest.getRandom()));
         }
         forceClientSync(sourceLevel, dest, destPos);
+        // RS-XTALK round 3: the stamp is the ONLY writer of a marked half's primary, and it
+        // notifies the cell's NEIGHBOURS, never the cell — so a fragment sharing the stamped
+        // cell would keep a stale POWERED until some unrelated poke. Re-derive it here, at the
+        // write that changes the primary, through the fragment's ONE writer (change-gated, so a
+        // no-op when nothing moved; a second writer outside it ping-ponged 1.9M flips through
+        // its own update fans in one live session).
+        SeamWireBridge.refreshSecondary(dest, destPos);
         // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
         // user's break rule ("frame break clears the destination half") is undecidable without it.
         // PROVENANCE IS NEVER TOUCHED BY A REFINEMENT — a refinement neither creates nor removes,
@@ -660,6 +670,14 @@ public final class SeamMirror {
      * route into per-player tracking, so a mirrored write is broadcast on the same terms as any other
      * block change regardless of which filters the write itself passed.
      */
+    // NOTE (RS-XTALK round 6, kept as a warning): a "doubly-marked pair self-heal" lived here
+    // for one suite run and was REFUTED by its first firing — bind-time reconciliation marks
+    // the carried copy by DESIGN, so a pair with both halves marked is a legitimate transient,
+    // not always a relic; the heal unmarked a lawful mirror half and the provenance-gated
+    // frame-break rule then had nothing to clear ("the seam does not exist"). Any future
+    // deafness fix must distinguish reconciliation marks from stale ones — do not re-add a
+    // counterpart-marked check alone.
+
     private static void forceClientSync(Level sourceLevel, ServerLevel dest, BlockPos pos) {
         // ★ CROSS-DIMENSION ONLY. User-reported regression, and the discriminator was exact:
         // obsidian portals fine, man-made CROSS-dim fine, man-made SAME-dim broken ("sometimes only

@@ -1145,6 +1145,57 @@ public final class SeamFractional {
                         state.rotate(binding.stateRotation()), destHalf));
                 SeamOccupancy.broadcast(dest, binding.destPos());
             }
+            // ★ THE GESTURE IS A PLACEMENT AND MUST SOUND AND WAKE LIKE ONE (live round 9).
+            // Side-table installs write no chunk state, so vanilla's placement side-effects
+            // never ran: no place sound ("no place sound if the other side seam rail is
+            // occupied"), and — worse — no neighbor updates and no fragment derivation, so a
+            // re-placed rail sat dark on a live line until an unrelated break poked the chain
+            // ("i have to break one of the rails on the dest side"). Sound once (server,
+            // everyone hears), then derive both ends' fragments from their real rails and wake
+            // both neighborhoods exactly as a chunk placement would have.
+            var soundType = state.getSoundType();
+            serverLevel.playSound(null, target, soundType.getPlaceSound(),
+                net.minecraft.sounds.SoundSource.BLOCKS,
+                (soundType.getVolume() + 1.0F) / 2.0F, soundType.getPitch() * 0.8F);
+            SeamWireBridge.refreshSecondary(serverLevel, target);
+            serverLevel.updateNeighborsAt(target, state.getBlock());
+            if (dest != null) {
+                SeamWireBridge.refreshSecondary(dest, binding.destPos());
+                dest.updateNeighborsAt(binding.destPos(), state.getBlock());
+            }
+        }
+        else if (level.isClientSide() && binding.destPos() != null) {
+            // ★ PREDICT THE COUNTERPART FRAGMENT TOO (live round 10, "place mirror has a tiny
+            // lag"): the primary path's counterpart is client-predicted (SeamMirrorClient), so
+            // the gesture must predict as well or the far half pops in one round-trip later —
+            // exactly the lag reported only when the other side is occupied. Same math as the
+            // server install; the server's broadcast confirms/corrects moments later.
+            Direction emptyDirC = Direction.get(
+                emptyHalf == SeamOccupancy.HALF_POSITIVE
+                    ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
+                axis);
+            byte destHalfC = SeamOccupancy.halfOf(
+                SeamRegistry.mapDir(binding, emptyDirC.getOpposite()));
+            // peekWorld, not PortalWorldManager: the loader's per-dim world is the instance
+            // every portal-view consumer reads (SeamOccupancyClient's proven resolution) — the
+            // manager's store answered NULL cross-dim and the prediction silently died (the
+            // round-13 probe line: "farClient=NULL (no prediction — the lag)").
+            net.minecraft.client.multiplayer.ClientLevel farClient =
+                level.dimension().equals(binding.destDim())
+                    ? (net.minecraft.client.multiplayer.ClientLevel) level
+                    : qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(binding.destDim());
+            if (farClient != null) {
+                SeamOccupancy.setSecondary(farClient, binding.destPos(),
+                    new SeamOccupancy.Secondary(
+                        state.rotate(binding.stateRotation()), destHalfC));
+            }
+            if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+                SeamFractionalProbe.onSeamCell(target, "PREDICT-PLACE",
+                    "counterpart fragment prediction: farClient="
+                        + (farClient == null ? "NULL (no prediction — the lag)"
+                            : farClient.dimension().identifier().toString())
+                        + " destPos=" + binding.destPos() + " destHalf=" + destHalfC);
+            }
         }
         if (!ctx.getPlayer().getAbilities().instabuild) {
             stack.shrink(1);
@@ -1309,21 +1360,75 @@ public final class SeamFractional {
         net.minecraft.server.level.ServerLevel level, BlockPos pos,
         net.minecraft.server.level.ServerPlayer player
     ) {
+        return breakSecondary(level, pos, player, null);
+    }
+
+    public static boolean breakSecondary(
+        net.minecraft.server.level.ServerLevel level, BlockPos pos,
+        net.minecraft.server.level.ServerPlayer player,
+        @org.jetbrains.annotations.Nullable SeamRegistry.SeamBinding routedBinding
+    ) {
         SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(level, pos);
         if (sec == null) {
             return false;
         }
-        SeamRegistry.SeamBinding binding = cuttingBinding(level, pos);
+        // ★ THE COUNTERPART CLEAR MUST NEVER SILENTLY SKIP (live round 12, the phantom power
+        // door): re-deriving the binding here can miss (bindings live only while portals tick),
+        // and a skipped far clear leaves an ORPHAN fragment whose door-walks feed lone rails
+        // across the seam indefinitely — log-proven at 21:48:05 (a fragment-half probe firing
+        // AFTER the promotes had consumed every legitimate fragment). Prefer the binding the
+        // ROUTER already resolved for this very break; fall back to re-derivation; and when the
+        // clear still cannot run, say so loudly instead of leaving the orphan unattributed.
+        SeamRegistry.SeamBinding binding = routedBinding != null && routedBinding.isMirrorable()
+            ? routedBinding : cuttingBinding(level, pos);
         SeamOccupancy.setSecondary(level, pos, null);
         SeamOccupancy.broadcast(level, pos);
+        // ★ A FRAGMENT BREAK IS A BREAK AND MUST SOUND LIKE ONE (live round 10, "break sound
+        // doesn't play"): a side-table removal runs no vanilla destroy, so no sound and no crumb
+        // burst ever fired. Break sound at the breaking end; crumb burst at BOTH ends (the far
+        // end soundless — one break, one sound, same as the pair rule).
+        var sndType = sec.state().getSoundType();
+        level.playSound(null, pos, sndType.getBreakSound(),
+            net.minecraft.sounds.SoundSource.BLOCKS,
+            (sndType.getVolume() + 1.0F) / 2.0F, sndType.getPitch() * 0.8F);
+        level.sendParticles(
+            new net.minecraft.core.particles.BlockParticleOption(
+                net.minecraft.core.particles.ParticleTypes.BLOCK, sec.state()),
+            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, 20, 0.25, 0.25, 0.25, 0.05);
         if (binding != null && binding.destPos() != null) {
             net.minecraft.server.level.ServerLevel dest =
                 level.getServer().getLevel(binding.destDim());
             if (dest != null) {
                 SeamOccupancy.setSecondary(dest, binding.destPos(), null);
                 SeamOccupancy.broadcast(dest, binding.destPos());
+                dest.sendParticles(
+                    new net.minecraft.core.particles.BlockParticleOption(
+                        net.minecraft.core.particles.ParticleTypes.BLOCK, sec.state()),
+                    binding.destPos().getX() + 0.5, binding.destPos().getY() + 0.5,
+                    binding.destPos().getZ() + 0.5, 20, 0.25, 0.25, 0.25, 0.05);
+                // ★ A FRAGMENT REMOVAL IS A BREAK AND MUST WAKE LIKE ONE (live round 12, the
+                // frozen lone rails): the side-table clear writes no chunk state, so no
+                // neighbor ever re-evaluates — rails whose walks had crossed through this
+                // fragment's door keep their last answer indefinitely (log-proven: the lone
+                // rails' final evaluation ran while the fragment lived; the clear was silent;
+                // the user's manual "fixes" were both just pokes). Wake exactly as a chunk
+                // break would have.
+                dest.updateNeighborsAt(binding.destPos(), sec.state().getBlock());
+            }
+            else if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+                SeamFractionalProbe.onSeamCell(pos, "ORPHAN-RISK",
+                    "counterpart fragment clear SKIPPED — dest level missing for "
+                        + binding.destDim());
             }
         }
+        else if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
+            SeamFractionalProbe.onSeamCell(pos, "ORPHAN-RISK",
+                "counterpart fragment clear SKIPPED — no mirrorable binding resolvable at break"
+                    + " time (routed=" + (routedBinding != null) + "); the far fragment survives"
+                    + " as a phantom power door");
+        }
+        // The breaking end's own neighborhood wakes too — same round-12 rule as the counterpart.
+        level.updateNeighborsAt(pos, sec.state().getBlock());
         if (!player.getAbilities().instabuild) {
             net.minecraft.world.level.block.Block.popResource(level, pos,
                 new net.minecraft.world.item.ItemStack(sec.state().getBlock()));

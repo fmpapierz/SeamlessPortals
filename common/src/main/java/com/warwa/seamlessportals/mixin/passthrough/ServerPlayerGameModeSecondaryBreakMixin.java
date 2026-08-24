@@ -34,26 +34,41 @@ public abstract class ServerPlayerGameModeSecondaryBreakMixin {
     @Final
     protected ServerPlayer player;
 
-    /**
-     * The level the game mode operates on — NOT {@code player.level()}: under cross-portal
-     * interaction the break can target a cell in another dimension than the one the player stands
-     * in, and the occupancy that matters is the target level's.
-     */
     @Shadow
     protected ServerLevel level;
+
+    /**
+     * ★ THE LEVEL THE BREAK ACTUALLY TARGETS (live round 8, cross-dim: "breaking nether-a broke
+     * the ow-a↔nether-b rail"). The {@code level} FIELD is only correct for the vanilla path: a
+     * THROUGH-WINDOW break arrives via IP's {@code BlockManipulationServer}, which swaps the far
+     * world in by redirecting the field READS inside {@code destroyBlock}'s own bytecode — a
+     * redirect this handler's direct shadow-field access does not go through. Reading the raw
+     * field here made the seam lookup run against the PLAYER's level with far-cell coordinates:
+     * lookup missed, the routing stood down, and vanilla destroy removed the far cell's chunk
+     * primary — the OTHER object — while the aimed fragment survived. Resolve exactly as IP
+     * does: the redirect context's world when a cross-portal manipulation is in flight, the
+     * field otherwise.
+     */
+    @org.spongepowered.asm.mixin.Unique
+    private ServerLevel seamlessportals$actualLevel() {
+        var redirect = qouteall.imm_ptl.core.block_manipulation.BlockManipulationServer
+            .REDIRECT_CONTEXT.get();
+        return redirect != null ? redirect.world() : this.level;
+    }
 
     @Inject(method = "destroyBlock", at = @At("HEAD"), cancellable = true, require = 1)
     private void seamlessportals$routeSecondaryBreak(
         BlockPos pos, CallbackInfoReturnable<Boolean> cir
     ) {
-        if (!SeamFractional.active() || this.level == null) {
+        ServerLevel actual = seamlessportals$actualLevel();
+        if (!SeamFractional.active() || actual == null) {
             return;
         }
-        var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(this.level, pos);
+        var seam = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(actual, pos);
         if (seam == null) {
             return;
         }
-        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(this.level, pos);
+        SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(actual, pos);
         for (var binding : seam.bindings()) {
             if (binding == null || binding.cut() == null) {
                 continue;
@@ -64,7 +79,7 @@ public abstract class ServerPlayerGameModeSecondaryBreakMixin {
             // coincided with the material, letting the far-side-only object be broken from the
             // side that provably shows nothing.
             byte playerHalf = SeamFractional.viewerTargetableHalf(
-                this.level, pos, binding, this.player);
+                actual, pos, binding, this.player);
             if (playerHalf == 0) {
                 // No legitimate line to this cell from where the breaker is: refuse the break
                 // outright rather than letting vanilla destroy whatever the cell holds.
@@ -88,19 +103,36 @@ public abstract class ServerPlayerGameModeSecondaryBreakMixin {
                     playerHalf = SeamOccupancy.halfFromHit(pickHit.getLocation(), pos,
                         binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
                 } else {
-                    byte owned22 = SeamOccupancy.occupancyOf(this.level, pos);
+                    byte owned22 = SeamOccupancy.occupancyOf(actual, pos);
                     playerHalf = (owned22 == SeamOccupancy.HALF_POSITIVE
                         || owned22 == SeamOccupancy.HALF_NEGATIVE) ? owned22
                         : SeamOccupancy.halfOfEye(this.player, pos,
                             binding.srcFacing().getAxis(), binding.cut().srcPlaneOffset());
                 }
             }
+            // ★ ROUTING DECISION PROBE (live round 11 — "the second break destroyed the wrong
+            // object"): every routed seam break logs its full resolution, so a wrong-object
+            // break is attributable from the log instead of reconstructed from promote echoes.
+            if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                    .SEAM_FRACTIONAL_PROBE) {
+                com.warwa.seamlessportals.passthrough.SeamFractionalProbe.onSeamCell(pos,
+                    "BREAK-ROUTE", "playerHalf=" + playerHalf
+                        + " secHalf=" + (sec == null ? "none" : sec.half())
+                        + " owned=" + SeamOccupancy.occupancyOf(actual, pos)
+                        + " chunk=" + actual.getBlockState(pos).getBlock()
+                        + " viewerAt=" + this.player.blockPosition()
+                        + " in " + this.player.level().dimension().identifier()
+                        + " -> " + (sec != null && playerHalf == sec.half()
+                            ? "SECONDARY" : "PRIMARY/vanilla"));
+            }
             if (sec != null && playerHalf == sec.half()) {
                 // The breaker is on the second object's side: remove IT, leave the primary.
-                cir.setReturnValue(SeamFractional.breakSecondary(this.level, pos, this.player));
+                // The ROUTED binding rides along so the counterpart clear never depends on a
+                // second lookup that can blink (the round-12 phantom-door hole).
+                cir.setReturnValue(SeamFractional.breakSecondary(actual, pos, this.player, binding));
                 return;
             }
-            byte owned = SeamOccupancy.occupancyOf(this.level, pos);
+            byte owned = SeamOccupancy.occupancyOf(actual, pos);
             if ((owned == SeamOccupancy.HALF_POSITIVE || owned == SeamOccupancy.HALF_NEGATIVE)
                 && playerHalf != owned) {
                 // The breaker's targetable half is EMPTY (single-object cell, material on the other

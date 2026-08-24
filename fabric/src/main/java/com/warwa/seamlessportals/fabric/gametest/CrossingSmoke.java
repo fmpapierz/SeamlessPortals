@@ -548,6 +548,13 @@ public class CrossingSmoke implements FabricClientGameTest {
             // notify the far side) and in arm A's lamp (power originating beyond the seam).
             rsSignalLegDisjoint(context);
             rsSignalLegCoincident(context, py);
+            // RS-XTALK — TWO OPPOSITE THROUGH-PATHS (user contract 2026-08-22): path 1 (source
+            // side A → dest side B) powered, path 2 (source side B → dest side A) must stay dark
+            // in BOTH dimensions, even though each dimension's raw coordinates hold one
+            // continuous rail line through the plane. After the signal legs on purpose: it
+            // consumes the one-path crossing they just proved, so a failure here is a crosstalk
+            // bug, not a crossing one.
+            rsRailCrosstalkLeg(context, py);
             // RS (c) STEP 2 — DUST. After the signal legs on purpose: it consumes the same
             // fixture shape and the (c) primitives those just proved, so a failure here is a
             // wire bug. Carries its own volume ceiling (the 2026-08-10 revert-loop scar).
@@ -2642,6 +2649,732 @@ public class CrossingSmoke implements FabricClientGameTest {
     }
 
     /**
+     * ★ RS-XTALK GATE — TWO OPPOSITE THROUGH-PATHS NEVER SHARE POWER (user contract 2026-08-22,
+     * {@code migration/REDSTONE_SEAM_CROSSTALK_PROMPT.md}): redstone across the seam behaves
+     * exactly as across normal terrain, and the two through-paths never interact — even sharing
+     * a seam cell or adjacent cells. Path 1 runs source side A → dest side B and is powered;
+     * path 2 runs source side B → dest side A and must stay dark EVERYWHERE.
+     *
+     * <p>The geometry that makes this hard: in RAW per-dimension coordinates each dimension
+     * holds ONE continuous golden-rail line through the plane — path 1's approach and path 2's
+     * source segment are axis-adjacent through the shared aperture slot in the overworld, and
+     * path 1's continuation and path 2's dest segment are axis-adjacent through the mirrored
+     * slot in the nether. The STITCHING defines the circuits, not raw adjacency. This is the
+     * fixture RS-SIGNAL-A deliberately avoids (it airs the behind-plane cells "a powered rail
+     * there would false-pass the inversion") — so this coverage existed nowhere before.
+     *
+     * <p>No rail fragment is staged for path 2 at the shared cell itself (the raw-walk leak
+     * this leg watches does not need one — one variable per lap; the two-object side-table
+     * fixture is ARM T's wire territory).
+     */
+    private static void rsRailCrosstalkLeg(ClientGameTestContext context, int py) {
+        if (AperturePassthroughLever.DISABLED) {
+            return;
+        }
+        if (AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC
+            || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+            || AperturePassthroughLever.DISABLE_SEAM_SHADOW) {
+            // Path 1's crossing — this leg's PRECONDITION — consumes shape sync + the (c) walk
+            // bridge; with any of them off there is no powered path 1 to leak from, and the
+            // contract assert would pass vacuously. Their inversions live in RS-SIGNAL-A.
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-XTALK SKIPPED under a (c)-disabling"
+                + " lever — needs a live powered path 1 to test crosstalk against");
+            return;
+        }
+        // Nether counterpart ~(1700,-1700): 300+ nether-blocks from every other fixture's
+        // (nearest: RS-SEAM-FIRE at 11200,-11200 → (1400,-1400)) — outside the 128-block (±152
+        // effective) frame-match radius. NOT (9000,-9000): RS-CART-A owns that site, and the
+        // first run at it broke the cart leg's ignition (fixture-collision scar).
+        final int fx = 13600, fz = -13600;
+        final BlockPos cellSA = new BlockPos(fx, py + 1, fz);
+        AtomicReference<String> failure = new AtomicReference<>(null);
+        AtomicReference<Vec3> destSeen = new AtomicReference<>(null);
+        final var POWERED = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
+
+        try {
+            runCommands(context, List.of(
+                "forceload add " + (fx - 16) + " " + (fz - 16) + " " + (fx + 16) + " " + (fz + 16),
+                "fill " + (fx - 2) + " " + py + " " + (fz - 4) + " "
+                    + (fx + 3) + " " + (py + 5) + " " + (fz + 4) + " minecraft:air",
+                fill(fx - 1, py, fz, fx + 2, py, fz),
+                fill(fx - 1, py + 4, fz, fx + 2, py + 4, fz),
+                fill(fx - 1, py + 1, fz, fx - 1, py + 3, fz),
+                fill(fx + 2, py + 1, fz, fx + 2, py + 3, fz)
+            ));
+            context.waitTicks(20);
+            runOnServer(context, server -> {
+                boolean fired = qouteall.imm_ptl.peripheral.portal_generation.IntrinsicPortalGeneration
+                    .onFireLitOnObsidian(server.getLevel(Level.OVERWORLD),
+                        new BlockPos(fx, py + 1, fz), null);
+                if (!fired) {
+                    failure.set("ignition entry rejected the frame");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-XTALK SETUP FAILED: " + failure.get());
+            }
+            final net.minecraft.world.phys.AABB frameBox = new net.minecraft.world.phys.AABB(
+                fx - 8, py - 8, fz - 8, fx + 8, py + 8, fz + 8);
+            try {
+                context.waitFor(mc -> {
+                    MinecraftServer server = mc.getSingleplayerServer();
+                    if (server == null) {
+                        return false;
+                    }
+                    return !server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                        qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                        frameBox, x -> true).isEmpty();
+                }, 1200);
+            }
+            catch (Throwable t) {
+                throw new AssertionError(LOG + "RS-XTALK FAILED: no NetherPortalEntity generated"
+                    + " within 1200 ticks", t);
+            }
+            runOnServer(context, server -> {
+                var portals = server.getLevel(Level.OVERWORLD).getEntitiesOfClass(
+                    qouteall.imm_ptl.core.portal.nether_portal.NetherPortalEntity.class,
+                    frameBox, x -> true);
+                destSeen.set(portals.get(0).getDestPos());
+            });
+
+            AtomicReference<com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding> bindingRef =
+                new AtomicReference<>(null);
+            for (int attempt = 0; attempt < 30 && bindingRef.get() == null; attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    var cell = com.warwa.seamlessportals.passthrough.SeamRegistry.lookup(ow, cellSA);
+                    if (cell == null) {
+                        return;
+                    }
+                    cell.bindings().stream()
+                        .filter(com.warwa.seamlessportals.passthrough.SeamRegistry.SeamBinding::isMirrorable)
+                        .findFirst().ifPresent(bindingRef::set);
+                });
+                if (bindingRef.get() == null) {
+                    context.waitTicks(10);
+                }
+            }
+            var binding = bindingRef.get();
+            if (binding == null) {
+                throw new AssertionError(LOG + "RS-XTALK FAILED: aperture cell " + cellSA
+                    + " never bound with a mirrorable binding");
+            }
+            if (binding.phase() != com.warwa.seamlessportals.passthrough.SeamMap.SeamPhase.COINCIDENT
+                || !binding.seamContinuous()) {
+                throw new AssertionError(LOG + "RS-XTALK FAILED: obsidian binding phase="
+                    + binding.phase() + " continuous=" + binding.seamContinuous());
+            }
+            final net.minecraft.core.Direction crossDir = binding.crossDir();
+            final net.minecraft.core.Direction approachDir = crossDir.getOpposite();
+            final BlockPos destPos = binding.destPos();                       // S' — the far half
+            final BlockPos contC = binding.continuationToward(crossDir);      // path 1 far B1'
+            final net.minecraft.world.level.block.Rotation rotR = binding.stateRotation();
+            final net.minecraft.core.Direction farStep = rotR.rotate(crossDir);
+            final BlockPos contC2 = contC.relative(farStep);                  // path 1 far B2'
+            final BlockPos a1 = cellSA.relative(approachDir);                 // path 1 src
+            final BlockPos a0 = a1.relative(approachDir);
+            final BlockPos powerPos = a0.relative(crossDir.getClockWise());
+            // Path 2 — the OTHER stitching: source segment beyond the plane in the overworld,
+            // dest segment behind the far plane in the nether. Raw-adjacent to path 1's line.
+            final BlockPos p2s1 = cellSA.relative(crossDir);
+            final BlockPos p2s2 = p2s1.relative(crossDir);
+            final BlockPos p2d1 = destPos.relative(farStep.getOpposite());
+            final BlockPos p2d2 = p2d1.relative(farStep.getOpposite());
+            SeamlessPortalsConstants.LOGGER.info(
+                LOG + "RS-XTALK geometry: S={} crossDir={} S'={} in {} P1(src A1={} A0={} far"
+                    + " B1'={} B2'={}) P2(src {}/{} far {}/{}) power={} R={}",
+                cellSA, crossDir, destPos, binding.destDim().identifier(), a1, a0, contC, contC2,
+                p2s1, p2s2, p2d1, p2d2, powerPos, rotR);
+
+            // Forceload the nether side and wait for its own bindings (RS-SIGNAL-A's first-run
+            // lesson: without them every far assertion is vacuous).
+            runCommands(context, List.of(
+                "execute in minecraft:the_nether run forceload add "
+                    + (destPos.getX() - 16) + " " + (destPos.getZ() - 16) + " "
+                    + (destPos.getX() + 16) + " " + (destPos.getZ() + 16)));
+            AtomicReference<Boolean> netherBound = new AtomicReference<>(false);
+            for (int attempt = 0; attempt < 30 && !netherBound.get(); attempt++) {
+                runOnServer(context, server -> {
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    if (nether == null) {
+                        return;
+                    }
+                    var farCell = com.warwa.seamlessportals.passthrough.SeamRegistry
+                        .lookup(nether, destPos);
+                    netherBound.set(farCell != null && farCell.bindings().stream().anyMatch(fb ->
+                        fb.isMirrorable() && fb.seamContinuous()));
+                });
+                if (!netherBound.get()) {
+                    context.waitTicks(10);
+                }
+            }
+            if (!netherBound.get()) {
+                throw new AssertionError(LOG + "RS-XTALK SETUP FAILED: the NETHER side of the"
+                    + " seam never bound at " + destPos);
+            }
+
+            // Far side: BOTH paths' nether segments, deterministic dead-ends beyond each.
+            runOnServer(context, server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                if (nether == null) {
+                    failure.set("destination level " + binding.destDim() + " missing");
+                    return;
+                }
+                nether.getChunk(contC.getX() >> 4, contC.getZ() >> 4);
+                nether.getChunk(p2d2.getX() >> 4, p2d2.getZ() >> 4);
+                for (BlockPos p : List.of(contC2.relative(farStep), p2d2.relative(farStep.getOpposite()))) {
+                    nether.setBlock(p, Blocks.AIR.defaultBlockState(), 3);
+                    nether.setBlock(p.below(), Blocks.AIR.defaultBlockState(), 3);
+                }
+                for (BlockPos p : List.of(contC, contC2, p2d1, p2d2)) {
+                    nether.setBlock(p.below(), Blocks.STONE.defaultBlockState(), 3);
+                    nether.setBlock(p.above(), Blocks.AIR.defaultBlockState(), 3);
+                    nether.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                for (BlockPos p : List.of(contC, contC2, p2d1, p2d2)) {
+                    if (!nether.getBlockState(p).is(Blocks.POWERED_RAIL)) {
+                        failure.set("nether rail did not survive placement at " + p + ": "
+                            + nether.getBlockState(p).getBlock());
+                        return;
+                    }
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-XTALK SETUP FAILED: " + failure.get());
+            }
+
+            // Source side: BOTH paths' overworld segments, then the seam rail AS THE PLAYER
+            // (the mirror creates the far half — the shared slot both paths adjoin).
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                for (BlockPos p : List.of(a1, a0, p2s1, p2s2)) {
+                    ow.setBlock(p.below(), Blocks.STONE.defaultBlockState(), 3);
+                    ow.setBlock(p.above(), Blocks.AIR.defaultBlockState(), 3);
+                    ow.setBlock(p, Blocks.POWERED_RAIL.defaultBlockState(), 3);
+                }
+                writeAsPlayer(ow, cellSA, Blocks.POWERED_RAIL.defaultBlockState());
+            });
+            context.waitTicks(10);
+
+            // Baseline: every rail of BOTH paths present and DARK, including the mirrored half.
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                for (BlockPos p : List.of(a0, a1, cellSA, p2s1, p2s2)) {
+                    var st = ow.getBlockState(p);
+                    if (!st.is(Blocks.POWERED_RAIL) || st.getValue(POWERED)) {
+                        failure.set("baseline: source rail at " + p + " is " + st);
+                        return;
+                    }
+                }
+                var mirrored = nether.getBlockState(destPos);
+                if (!mirrored.is(Blocks.POWERED_RAIL)) {
+                    failure.set("baseline: the mirrored half at " + destPos + " is "
+                        + mirrored.getBlock() + " — (a)'s mirror did not run");
+                    return;
+                }
+                for (BlockPos p : List.of(contC, contC2, p2d1, p2d2)) {
+                    var st = nether.getBlockState(p);
+                    if (!st.is(Blocks.POWERED_RAIL) || st.getValue(POWERED)) {
+                        failure.set("baseline: far rail at " + p + " is " + st);
+                        return;
+                    }
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-XTALK FAILED: " + failure.get());
+            }
+
+            final long walkBefore =
+                com.warwa.seamlessportals.passthrough.SeamSignalContinuity.walkCrossedCount();
+
+            // ---- POWER PATH 1 ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+
+            // PRECONDITION (the feature, not the defect): path 1 crosses — its far continuation
+            // powers. A sever that kills this has traded the leak for a regression.
+            pollOrFail(context, 20, 5, "RS-XTALK path 1's far rails never powered — fixture"
+                + " precondition (the one-path crossing RS-SIGNAL-A proves)", server -> {
+                ServerLevel nether = server.getLevel(binding.destDim());
+                return nether.getBlockState(contC).getValue(POWERED)
+                    && nether.getBlockState(contC2).getValue(POWERED);
+            });
+            runOnServer(context, server -> {
+                long walkAfter = com.warwa.seamlessportals.passthrough
+                    .SeamSignalContinuity.walkCrossedCount();
+                if (walkAfter <= walkBefore) {
+                    failure.set("COVERAGE FAILED: path 1's far rails powered but walkCrossed"
+                        + " never moved — the crossing did not ride the bridge and this leg"
+                        + " proves nothing. counters: " + com.warwa.seamlessportals.passthrough
+                        .SeamSignalContinuity.counters());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-XTALK FAILED: " + failure.get());
+            }
+
+            final boolean severOn = !AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER;
+            if (severOn) {
+                // ---- THE CONTRACT: path 2 stays dark in BOTH dimensions, held for 60 ticks ----
+                for (int i = 0; i < 12 && failure.get() == null; i++) {
+                    context.waitTicks(5);
+                    runOnServer(context, server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        StringBuilder lit = new StringBuilder();
+                        for (BlockPos p : List.of(p2s1, p2s2)) {
+                            var st = ow.getBlockState(p);
+                            if (st.is(Blocks.POWERED_RAIL) && st.getValue(POWERED)) {
+                                lit.append(" overworld:").append(p.toShortString());
+                            }
+                        }
+                        for (BlockPos p : List.of(p2d1, p2d2)) {
+                            var st = nether.getBlockState(p);
+                            if (st.is(Blocks.POWERED_RAIL) && st.getValue(POWERED)) {
+                                lit.append(" nether:").append(p.toShortString());
+                            }
+                        }
+                        if (lit.length() > 0) {
+                            failure.set("CROSSTALK: path 2 energised from path 1 at" + lit
+                                + " — the two through-paths must never interact. counters: "
+                                + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+                        }
+                    });
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK FAILED: " + failure.get());
+                }
+                // Path 1 must STILL be live at the end of the hold (an over-broad sever fails here).
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    if (!ow.getBlockState(cellSA).getValue(POWERED)
+                        || !nether.getBlockState(contC).getValue(POWERED)) {
+                        failure.set("PATH 1 REGRESSED during the crosstalk hold: seam="
+                            + ow.getBlockState(cellSA).getValue(POWERED) + " far="
+                            + nether.getBlockState(contC).getValue(POWERED));
+                    }
+                });
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK FAILED: " + failure.get());
+                }
+            }
+            else {
+                // ---- INVERSION (-PdisableSeamWalkSever): the pre-fix local-first order returns
+                // and the 2026-08-22 defect must REPRODUCE — path 2's source segment powers from
+                // path 1's source through the shared slot (defect-on-demand, proving this leg
+                // watches the real mechanism and the lever really is the A/B switch). ----
+                pollOrFail(context, 20, 5, "RS-XTALK INVERSION FAILED (the defect did not"
+                    + " reproduce): with -PdisableSeamWalkSever path 2 stayed dark — either the"
+                    + " lever does not restore the raw walk or the fixture lost its leak",
+                    server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        return ow.getBlockState(p2s1).getValue(POWERED)
+                            && ow.getBlockState(p2s2).getValue(POWERED);
+                    });
+            }
+
+            // ---- ARM 2 — PATH 2 POWERED WHILE PATH 1 STAYS POWERED (the user's exact 2026-08-22
+            // live sequence, both rounds): the pair is SHARED INFRASTRUCTURE and is ALREADY LIT
+            // by path 1, so powering path 2 changes nothing at the pair — the no-flip wake gap
+            // (round 2's live log: pair lit, door route live, dest-side rail never re-evaluated).
+            // Power arriving on path 2's approach must reach path 2's far rails through the
+            // shared-pair wake + the paired door, with path 1 unaffected; then cutting path 2's
+            // source alone must darken ONLY path 2 while path 1 keeps the pair lit. ----
+            if (severOn) {
+                final BlockPos p2PowerPos = p2s2.relative(crossDir.getClockWise());
+                final long walkBeforeP2 =
+                    com.warwa.seamlessportals.passthrough.SeamSignalContinuity.walkCrossedCount();
+                final long wakeBeforeP2 =
+                    com.warwa.seamlessportals.passthrough.SeamSignalContinuity.wakeDeliveredCount();
+                runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                    .setBlock(p2PowerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5, "RS-XTALK-2 path 2's far rails never powered from path"
+                    + " 2's source while path 1 held the pair lit (the no-flip wake gap — the"
+                    + " user's 2026-08-22 live symptom, round 2)", server -> {
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    return nether.getBlockState(p2d1).getValue(POWERED)
+                        && nether.getBlockState(p2d2).getValue(POWERED);
+                });
+                // Independence under both-lit: path 1's rails and the pair stay powered, 40 ticks.
+                for (int i = 0; i < 8 && failure.get() == null; i++) {
+                    context.waitTicks(5);
+                    runOnServer(context, server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        StringBuilder dark = new StringBuilder();
+                        for (BlockPos p : List.of(a0, a1, cellSA)) {
+                            if (!ow.getBlockState(p).getValue(POWERED)) {
+                                dark.append(" overworld:").append(p.toShortString());
+                            }
+                        }
+                        for (BlockPos p : List.of(destPos, contC, contC2)) {
+                            if (!nether.getBlockState(p).getValue(POWERED)) {
+                                dark.append(" nether:").append(p.toShortString());
+                            }
+                        }
+                        if (dark.length() > 0) {
+                            failure.set("PATH 1 DISTURBED while path 2 came up:" + dark
+                                + " went dark. counters: " + com.warwa.seamlessportals.passthrough
+                                .SeamSignalContinuity.counters());
+                        }
+                    });
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK-2 FAILED: " + failure.get());
+                }
+                runOnServer(context, server -> {
+                    long walkAfterP2 = com.warwa.seamlessportals.passthrough
+                        .SeamSignalContinuity.walkCrossedCount();
+                    long wakeAfterP2 = com.warwa.seamlessportals.passthrough
+                        .SeamSignalContinuity.wakeDeliveredCount();
+                    if (walkAfterP2 <= walkBeforeP2 || wakeAfterP2 <= wakeBeforeP2) {
+                        failure.set("COVERAGE FAILED: path 2's far rails powered but walkCrossed"
+                            + " (" + walkBeforeP2 + "->" + walkAfterP2 + ") or wakeDelivered ("
+                            + wakeBeforeP2 + "->" + wakeAfterP2 + ") never moved — the crossing"
+                            + " did not ride the bridge+wake. counters: "
+                            + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+                    }
+                });
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK-2 FAILED: " + failure.get());
+                }
+                // PARTIAL OFF — the OR-transition down: path 2's source alone removed; ONLY
+                // path 2 darkens, the pair stays lit by path 1 (the stuck-on half of the gap).
+                runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                    .setBlock(p2PowerPos, Blocks.AIR.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5, "RS-XTALK-2 path 2 never darkened after its source"
+                    + " was removed while path 1 held (stuck-on through the shared pair)",
+                    server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        return !ow.getBlockState(p2s1).getValue(POWERED)
+                            && !ow.getBlockState(p2s2).getValue(POWERED)
+                            && !nether.getBlockState(p2d1).getValue(POWERED)
+                            && !nether.getBlockState(p2d2).getValue(POWERED)
+                            && ow.getBlockState(cellSA).getValue(POWERED)
+                            && nether.getBlockState(contC).getValue(POWERED);
+                    });
+            }
+
+            // ---- OFF: path 1's source removed last — everything fully dark in both dims ----
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+            pollOrFail(context, 20, 5, "RS-XTALK the rails never unpowered after the source was"
+                + " removed", server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                ServerLevel nether = server.getLevel(binding.destDim());
+                return !ow.getBlockState(cellSA).getValue(POWERED)
+                    && !ow.getBlockState(a0).getValue(POWERED)
+                    && !ow.getBlockState(p2s1).getValue(POWERED)
+                    && !ow.getBlockState(p2s2).getValue(POWERED)
+                    && !nether.getBlockState(destPos).getValue(POWERED)
+                    && !nether.getBlockState(p2d1).getValue(POWERED)
+                    && !nether.getBlockState(contC).getValue(POWERED)
+                    && !nether.getBlockState(contC2).getValue(POWERED);
+            });
+
+            // ---- ARM 3 — THE CLAIMED REGIME, CROSS-DIM (live rounds 2026-08-23): the user's
+            // real builds run with claims, a marked half, and side-table fragments — the regime
+            // every command-staged cell skips (mask 0 = whole-cell vanilla), which is exactly
+            // why this leg stayed green while the user's nether portal misbehaved. Re-stages
+            // the pair the way a player builds it, then scripts the user's toggle sequence
+            // INCLUDING repeated cycles — the live signature was per-cycle alternation, so each
+            // cycle asserts the identical outcome. ----
+            if (severOn) {
+                final var occHalfA = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .halfOf(approachDir);
+                final var occHalfB = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                    .halfOf(crossDir);
+                final net.minecraft.core.Direction farFragDir = farStep.getOpposite();
+                final var RAIL_SHAPE_SRC = crossDir.getAxis() == net.minecraft.core.Direction.Axis.Z
+                    ? net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH
+                    : net.minecraft.world.level.block.state.properties.RailShape.EAST_WEST;
+                final var RAIL_SHAPE_FAR = farStep.getAxis() == net.minecraft.core.Direction.Axis.Z
+                    ? net.minecraft.world.level.block.state.properties.RailShape.NORTH_SOUTH
+                    : net.minecraft.world.level.block.state.properties.RailShape.EAST_WEST;
+                final var SHAPE_PROP = net.minecraft.world.level.block.state.properties
+                    .BlockStateProperties.RAIL_SHAPE_STRAIGHT;
+
+                // Re-stage the pair in the claimed regime: break (clears pair + marks), claim
+                // the source half as a crosshair placement would, re-place as the player (the
+                // mirror marks the counterpart and runs claimCrossingHalf off the single-bit
+                // source), then install the second path's fragments at BOTH ends with the
+                // flipped halves — the two-object gesture's exact writes.
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    writeAsPlayer(ow, cellSA, Blocks.AIR.defaultBlockState());
+                });
+                context.waitTicks(5);
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.claim(ow, cellSA, occHalfA);
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(ow, cellSA);
+                    writeAsPlayer(ow, cellSA, Blocks.POWERED_RAIL.defaultBlockState());
+                });
+                context.waitTicks(5);
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    if (!nether.getBlockState(destPos).is(Blocks.POWERED_RAIL)) {
+                        failure.set("ARM3 staging: the mirror did not re-create the far half at "
+                            + destPos);
+                        return;
+                    }
+                    byte srcMask = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .occupancyOf(ow, cellSA);
+                    byte dstMask = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .occupancyOf(nether, destPos);
+                    if (srcMask != occHalfA || dstMask == 0) {
+                        failure.set("ARM3 staging: claims wrong — src mask=" + srcMask
+                            + " (want " + occHalfA + ") dst mask=" + dstMask
+                            + " (want the crossing-claim flip, non-zero)");
+                        return;
+                    }
+                    boolean dstMarked = ((com.warwa.seamlessportals.passthrough.SeamIndexHolder)
+                        nether).seamlessportals$mirrorCreatedCells().contains(destPos.asLong());
+                    boolean srcMarked = ((com.warwa.seamlessportals.passthrough.SeamIndexHolder)
+                        ow).seamlessportals$mirrorCreatedCells().contains(cellSA.asLong());
+                    if (!dstMarked || srcMarked) {
+                        failure.set("ARM3 staging: provenance wrong — srcMarked=" + srcMarked
+                            + " dstMarked=" + dstMarked + " (want false/true)");
+                        return;
+                    }
+                    var srcFrag = Blocks.POWERED_RAIL.defaultBlockState()
+                        .setValue(SHAPE_PROP, RAIL_SHAPE_SRC);
+                    var dstFrag = Blocks.POWERED_RAIL.defaultBlockState()
+                        .setValue(SHAPE_PROP, RAIL_SHAPE_FAR);
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(ow, cellSA,
+                        new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(
+                            srcFrag, occHalfB));
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(ow, cellSA);
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.setSecondary(nether, destPos,
+                        new com.warwa.seamlessportals.passthrough.SeamOccupancy.Secondary(
+                            dstFrag, com.warwa.seamlessportals.passthrough.SeamOccupancy
+                                .halfOf(farFragDir)));
+                    com.warwa.seamlessportals.passthrough.SeamOccupancy.broadcast(nether, destPos);
+                });
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK-3 STAGING FAILED: " + failure.get());
+                }
+                context.waitTicks(10);
+
+                // Path-2's nether-side source (the user powers set 2 "from nether a").
+                final BlockPos p2NetherPower = p2d2.relative(farStep.getClockWise());
+                final var POW = POWERED;
+
+                // One path-1 toggle cycle, asserted identically every time (the live signature
+                // was ALTERNATING per-cycle outcomes — cycle index in every failure message).
+                for (int cycle = 1; cycle <= 3 && failure.get() == null; cycle++) {
+                    final int cyc = cycle;
+                    runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                        .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+                    pollOrFail(context, 20, 5, "RS-XTALK-3 cycle " + cyc + " ON: path 1 never"
+                        + " fully lit (claimed regime)", server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        return ow.getBlockState(a0).getValue(POW)
+                            && ow.getBlockState(a1).getValue(POW)
+                            && ow.getBlockState(cellSA).getValue(POW)
+                            && nether.getBlockState(destPos).getValue(POW)
+                            && nether.getBlockState(contC).getValue(POW)
+                            && nether.getBlockState(contC2).getValue(POW);
+                    });
+                    runOnServer(context, server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        var srcSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                            .secondaryOf(ow, cellSA);
+                        var dstSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                            .secondaryOf(nether, destPos);
+                        if (srcSec != null && srcSec.state().getValue(POW)
+                            || dstSec != null && dstSec.state().getValue(POW)) {
+                            failure.set("cycle " + cyc + " ON: a path-2 FRAGMENT lit from path"
+                                + " 1's power (src=" + (srcSec != null && srcSec.state().getValue(POW))
+                                + " dst=" + (dstSec != null && dstSec.state().getValue(POW)) + ")");
+                        }
+                        for (BlockPos p : List.of(p2s1, p2s2)) {
+                            if (ow.getBlockState(p).getValue(POW)) {
+                                failure.set("cycle " + cyc + " ON: path-2 rail lit at "
+                                    + p.toShortString());
+                            }
+                        }
+                        for (BlockPos p : List.of(p2d1, p2d2)) {
+                            if (nether.getBlockState(p).getValue(POW)) {
+                                failure.set("cycle " + cyc + " ON: path-2 nether rail lit at "
+                                    + p.toShortString());
+                            }
+                        }
+                    });
+                    if (failure.get() != null) {
+                        break;
+                    }
+                    runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                        .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+                    pollOrFail(context, 20, 5, "RS-XTALK-3 cycle " + cyc + " OFF: path 1 never"
+                        + " fully dark (claimed regime — the live rounds saw stuck halves and"
+                        + " transient flashes here)", server -> {
+                        ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                        ServerLevel nether = server.getLevel(binding.destDim());
+                        return !ow.getBlockState(a0).getValue(POW)
+                            && !ow.getBlockState(a1).getValue(POW)
+                            && !ow.getBlockState(cellSA).getValue(POW)
+                            && !nether.getBlockState(destPos).getValue(POW)
+                            && !nether.getBlockState(contC).getValue(POW)
+                            && !nether.getBlockState(contC2).getValue(POW);
+                    });
+                    // Hold 20 ticks: no late flip-backs (the "split second" flash family).
+                    for (int i = 0; i < 4 && failure.get() == null; i++) {
+                        context.waitTicks(5);
+                        runOnServer(context, server -> {
+                            ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                            ServerLevel nether = server.getLevel(binding.destDim());
+                            if (ow.getBlockState(cellSA).getValue(POW)
+                                || nether.getBlockState(destPos).getValue(POW)
+                                || ow.getBlockState(a0).getValue(POW)
+                                || nether.getBlockState(contC).getValue(POW)) {
+                                failure.set("cycle " + cyc + " OFF-hold: a path-1 cell flipped"
+                                    + " BACK on after settling (S=" + ow.getBlockState(cellSA)
+                                    .getValue(POW) + " D=" + nether.getBlockState(destPos)
+                                    .getValue(POW) + " a0=" + ow.getBlockState(a0).getValue(POW)
+                                    + " contC=" + nether.getBlockState(contC).getValue(POW) + ")");
+                            }
+                        });
+                    }
+                }
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK-3 FAILED: " + failure.get()
+                        + " counters: " + com.warwa.seamlessportals.passthrough
+                        .SeamSignalContinuity.counters());
+                }
+
+                // Path 2 powered FROM THE NETHER SIDE (the user's failing direction), then the
+                // both-powered mix, then path 1 released while path 2 holds.
+                runOnServer(context, server -> server.getLevel(binding.destDim())
+                    .setBlock(p2NetherPower, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5, "RS-XTALK-3 path 2 (nether-sourced) never lit its"
+                    + " own line through the pair (fragments + OW rails)", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    var srcSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(ow, cellSA);
+                    var dstSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(nether, destPos);
+                    return nether.getBlockState(p2d1).getValue(POW)
+                        && nether.getBlockState(p2d2).getValue(POW)
+                        && ow.getBlockState(p2s1).getValue(POW)
+                        && ow.getBlockState(p2s2).getValue(POW)
+                        && srcSec != null && srcSec.state().getValue(POW)
+                        && dstSec != null && dstSec.state().getValue(POW);
+                });
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    if (ow.getBlockState(cellSA).getValue(POW)
+                        || nether.getBlockState(destPos).getValue(POW)
+                        || ow.getBlockState(a0).getValue(POW)
+                        || nether.getBlockState(contC).getValue(POW)) {
+                        failure.set("path-2-only: a path-1 cell lit (S=" + ow.getBlockState(cellSA)
+                            .getValue(POW) + " D=" + nether.getBlockState(destPos).getValue(POW)
+                            + " a0=" + ow.getBlockState(a0).getValue(POW) + " contC="
+                            + nether.getBlockState(contC).getValue(POW) + ")");
+                    }
+                });
+                if (failure.get() != null) {
+                    throw new AssertionError(LOG + "RS-XTALK-3 FAILED: " + failure.get());
+                }
+                runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                    .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5, "RS-XTALK-3 both-powered: path 1 never lit alongside"
+                    + " path 2", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    return ow.getBlockState(cellSA).getValue(POW)
+                        && nether.getBlockState(destPos).getValue(POW)
+                        && nether.getBlockState(contC).getValue(POW)
+                        && ow.getBlockState(p2s1).getValue(POW);
+                });
+                runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                    .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5, "RS-XTALK-3 path 1 released while path 2 holds: path"
+                    + " 1 never went fully dark (THE user's cross-dim complaint — the stuck seam"
+                    + " half)", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    return !ow.getBlockState(cellSA).getValue(POW)
+                        && !nether.getBlockState(destPos).getValue(POW)
+                        && !ow.getBlockState(a0).getValue(POW)
+                        && !nether.getBlockState(contC).getValue(POW)
+                        && nether.getBlockState(p2d1).getValue(POW)
+                        && ow.getBlockState(p2s1).getValue(POW);
+                });
+                runOnServer(context, server -> server.getLevel(binding.destDim())
+                    .setBlock(p2NetherPower, Blocks.AIR.defaultBlockState(), 3));
+                pollOrFail(context, 20, 5, "RS-XTALK-3 final release: everything never went"
+                    + " dark", server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    ServerLevel nether = server.getLevel(binding.destDim());
+                    var srcSec = com.warwa.seamlessportals.passthrough.SeamOccupancy
+                        .secondaryOf(ow, cellSA);
+                    return !ow.getBlockState(cellSA).getValue(POW)
+                        && !ow.getBlockState(p2s1).getValue(POW)
+                        && !nether.getBlockState(p2d1).getValue(POW)
+                        && (srcSec == null || !srcSec.state().getValue(POW));
+                });
+            }
+
+            // Runaway ceiling (the volume scar rule).
+            runOnServer(context, server -> {
+                long walkDelta = com.warwa.seamlessportals.passthrough
+                    .SeamSignalContinuity.walkCrossedCount() - walkBefore;
+                if (walkDelta > 10_000) {
+                    failure.set("RUNAWAY: the crosstalk leg burned " + walkDelta
+                        + " walk crossings. counters: " + com.warwa.seamlessportals.passthrough
+                        .SeamSignalContinuity.counters());
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "RS-XTALK FAILED: " + failure.get());
+            }
+            SeamlessPortalsConstants.LOGGER.info(LOG + "RS-XTALK PASS — path 1 crossed, "
+                + (AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER
+                    ? "INVERSION: the raw-walk leak reproduced under -PdisableSeamWalkSever"
+                    : "path 2 stayed dark both dims for 60 ticks; arm 2: path 2's own power"
+                        + " crossed while path 1 held the pair lit, and darkened alone on its"
+                        + " partial-off (the no-flip wake)")
+                + ". counters: "
+                + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
+        }
+        finally {
+            try {
+                runCommands(context, List.of(
+                    "fill " + (fx - 2) + " " + (py - 1) + " " + (fz - 4) + " "
+                        + (fx + 3) + " " + (py + 5) + " " + (fz + 4) + " minecraft:air",
+                    "forceload remove " + (fx - 16) + " " + (fz - 16) + " "
+                        + (fx + 16) + " " + (fz + 16)
+                ));
+                Vec3 d = destSeen.get();
+                if (d != null) {
+                    int dx = (int) Math.floor(d.x), dy = (int) Math.floor(d.y), dz = (int) Math.floor(d.z);
+                    runCommands(context, List.of(
+                        "execute in minecraft:the_nether run forceload add " + (dx - 16) + " "
+                            + (dz - 16) + " " + (dx + 16) + " " + (dz + 16),
+                        inDim("minecraft:the_nether", "fill " + (dx - 5) + " " + (dy - 2) + " "
+                            + (dz - 5) + " " + (dx + 5) + " " + (dy + 5) + " " + (dz + 5)
+                            + " minecraft:air"),
+                        "execute in minecraft:the_nether run forceload remove " + (dx - 16) + " "
+                            + (dz - 16) + " " + (dx + 16) + " " + (dz + 16)
+                    ));
+                }
+            }
+            catch (Throwable t) {
+                SeamlessPortalsConstants.LOGGER.warn(LOG + "RS-XTALK cleanup failed", t);
+            }
+        }
+    }
+
+    /**
      * ★ RS-WIRE GATE — redstone DUST crosses the seam ((c) step 2, spec §6.2; user ruling
      * 2026-08-10: full continuity, "the lit dust should also propagate down the stream"). The
      * surface the 2026-08-10 live sweep found completely dark: no {@code RedStoneWireBlock} hook
@@ -3975,15 +4708,26 @@ public class CrossingSmoke implements FabricClientGameTest {
      * DIAGNOSTIC REPRO 2 — the user's OTHER live variable: the rail line THREADS TWO SEAMS. An
      * ignited obsidian nether portal sits mid-line (its aperture cell carries a mirrored rail into
      * the nether), and the line continues east to a same-dim COINCIDENT pair whose far end holds
-     * the continuation. Power at the west end must reach the far end's rails through BOTH seams'
-     * machinery coexisting on one line — the user's world had exactly this shape, and their laggy
-     * levers / stuck states appeared with "a second portal passing another redstone signal".
+     * the continuation. The user's world had exactly this shape, and their laggy levers / stuck
+     * states appeared with "a second portal passing another redstone signal".
+     *
+     * <p>★ EXPECTATION SUPERSEDED 2026-08-22 (RS-XTALK contract): the original assert — west
+     * power reaches the far end THROUGH the aperture — depended on the raw walk passing straight
+     * through the nether portal's plane inside the overworld, which is exactly the cross-path
+     * bleed the crosstalk contract forbids ("the two through-paths never interact"). Under the
+     * walk sever the threaded line is TWO stitched paths: the west segment's continuation is in
+     * the NETHER (through the portal), and the east sub-line (behind the aperture → same-dim
+     * seam → far end) is a separate circuit. The leg now asserts the new contract in both
+     * directions: west power stops at the aperture; east power carries across the same-dim seam
+     * to the far end without bleeding back west; both release on removal (the stuck-on half of
+     * the original complaint, unchanged).
      */
     private static void rsSignalTwoSeamLineRepro(ClientGameTestContext context, int py) {
         if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
             || AperturePassthroughLever.DISABLE_SEAM_SIGNAL_DISPATCH
             || AperturePassthroughLever.DISABLE_SEAM_SHADOW
-            || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC) {
+            || AperturePassthroughLever.DISABLE_SEAM_SHAPE_SYNC
+            || AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER) {
             return;
         }
         final int nx = 8200, nz = -8200, ry = py + 1;   // nether counterpart ~(1025,-1025): clear
@@ -4133,7 +4877,9 @@ public class CrossingSmoke implements FabricClientGameTest {
             context.waitTicks(10);
             runOnServer(context, server -> dump.accept(server, "baseline"));
 
-            // ---- POWER ON at the WEST end: through the nether-portal aperture, then the seam ----
+            // ---- PHASE 1 — WEST power: the aperture SEVERS the threaded line (RS-XTALK
+            // contract). The west segment powers up to and including the aperture cell; its
+            // stitched continuation is the NETHER, so nothing east of the aperture may light. ----
             runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
                 .setBlock(powerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
             for (int i = 0; i < 12; i++) {
@@ -4143,26 +4889,83 @@ public class CrossingSmoke implements FabricClientGameTest {
             }
             runOnServer(context, server -> {
                 ServerLevel ow = server.getLevel(Level.OVERWORLD);
-                if (!ow.getBlockState(b1).getValue(POWERED) || !ow.getBlockState(b2).getValue(POWERED)) {
-                    failure.set("USER BUG REPRODUCED (ON, two-seam line): far rails dark — b1="
-                        + ow.getBlockState(b1).getValue(POWERED) + " b2="
-                        + ow.getBlockState(b2).getValue(POWERED) + " S="
-                        + ow.getBlockState(cellS).getValue(POWERED) + " D="
-                        + ow.getBlockState(cellD).getValue(POWERED) + " NP="
-                        + ow.getBlockState(npCell).getValue(POWERED));
+                if (!ow.getBlockState(npCell).getValue(POWERED)) {
+                    failure.set("PHASE 1 FIXTURE BROKEN: the aperture cell itself never powered"
+                        + " from the west source — that is the plain local chain, not the seam");
+                    return;
+                }
+                StringBuilder lit = new StringBuilder();
+                for (BlockPos p : List.of(new BlockPos(nx + 1, ry, nz),
+                    new BlockPos(nx + 2, ry, nz), cellS, cellD, b1, b2)) {
+                    if (ow.getBlockState(p).is(Blocks.POWERED_RAIL)
+                        && ow.getBlockState(p).getValue(POWERED)) {
+                        lit.append(" ").append(p.toShortString());
+                    }
+                }
+                if (lit.length() > 0) {
+                    failure.set("CROSSTALK (two-seam line): west power bled through the aperture"
+                        + " to" + lit + " — behind-the-plane rails are the OTHER stitching"
+                        + " (RS-XTALK contract 2026-08-22)");
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO2: " + failure.get());
+            }
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+            for (int i = 0; i < 6; i++) {
+                context.waitTicks(5);
+                final int step = i;
+                runOnServer(context, server -> dump.accept(server, "off+" + (step * 5 + 5) + "t"));
+            }
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                if (ow.getBlockState(npCell).getValue(POWERED)) {
+                    failure.set("STUCK ON (two-seam line, west): the aperture cell held power"
+                        + " after the source was removed");
                 }
             });
             if (failure.get() != null) {
                 throw new AssertionError(LOG + "REPRO2: " + failure.get());
             }
 
-            // ---- POWER OFF ----
+            // ---- PHASE 2 — EAST sub-line power: the SECOND seam still carries. The east
+            // sub-line (behind the aperture → same-dim seam → far end) is its own circuit:
+            // powered directly, it must reach b1/b2 through the same-dim pair — and must NOT
+            // bleed back west through the aperture. ----
+            final BlockPos eastPowerPos = new BlockPos(nx + 1, ry, nz - 1);
             runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
-                .setBlock(powerPos, Blocks.AIR.defaultBlockState(), 3));
+                .setBlock(eastPowerPos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3));
+            pollOrFail(context, 20, 5, "REPRO2 the far end never powered from the east sub-line"
+                + " (the same-dim seam stopped carrying)", server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                return ow.getBlockState(b1).getValue(POWERED)
+                    && ow.getBlockState(b2).getValue(POWERED);
+            });
+            runOnServer(context, server -> {
+                ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                dump.accept(server, "east-on");
+                StringBuilder lit = new StringBuilder();
+                for (BlockPos p : List.of(new BlockPos(nx - 1, ry, nz),
+                    new BlockPos(nx - 2, ry, nz))) {
+                    if (ow.getBlockState(p).getValue(POWERED)) {
+                        lit.append(" ").append(p.toShortString());
+                    }
+                }
+                if (lit.length() > 0) {
+                    failure.set("CROSSTALK (two-seam line, reverse): east power bled back west"
+                        + " through the aperture to" + lit);
+                }
+            });
+            if (failure.get() != null) {
+                throw new AssertionError(LOG + "REPRO2: " + failure.get());
+            }
+            runOnServer(context, server -> server.getLevel(Level.OVERWORLD)
+                .setBlock(eastPowerPos, Blocks.AIR.defaultBlockState(), 3));
             for (int i = 0; i < 12; i++) {
                 context.waitTicks(5);
                 final int step = i;
-                runOnServer(context, server -> dump.accept(server, "off+" + (step * 5 + 5) + "t"));
+                runOnServer(context, server -> dump.accept(server, "east-off+" + (step * 5 + 5) + "t"));
             }
             runOnServer(context, server -> {
                 ServerLevel ow = server.getLevel(Level.OVERWORLD);
@@ -4183,8 +4986,9 @@ public class CrossingSmoke implements FabricClientGameTest {
             if (failure.get() != null) {
                 throw new AssertionError(LOG + "REPRO2: " + failure.get());
             }
-            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO2 PASS — the two-seam line carried and"
-                + " released the signal. counters: "
+            SeamlessPortalsConstants.LOGGER.info(LOG + "REPRO2 PASS — west power stopped at the"
+                + " aperture (RS-XTALK contract), the east sub-line carried across the same-dim"
+                + " seam to the far end without bleeding back, and both released. counters: "
                 + com.warwa.seamlessportals.passthrough.SeamSignalContinuity.counters());
         }
         finally {

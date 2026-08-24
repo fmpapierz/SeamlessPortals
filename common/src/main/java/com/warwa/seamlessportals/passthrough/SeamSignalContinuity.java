@@ -61,7 +61,7 @@ public final class SeamSignalContinuity {
     private static final int MAX_DISPATCH_PER_TICK = 64;
 
     private static long unionReads, unionHits, walkCrossed, dispatchQueued, dispatchDelivered,
-        dispatchDeduped, dispatchDropped, declinedCold, budgetTrips;
+        dispatchDeduped, dispatchDropped, declinedCold, budgetTrips, wakeQueued, wakeDelivered;
     private static int dispatchedThisTick = 0;
     private static boolean readFaultWarned = false;
 
@@ -69,12 +69,19 @@ public final class SeamSignalContinuity {
      * One queued cross-seam re-evaluation. {@code waitFor} non-null = a cold-far retry: hold the
      * entry until that chunk warms rather than force-loading (the (b) rule — and the retry waits on
      * the chunk that was actually cold, the (b) panel's fix, not on the owner's own).
+     * {@code wakeAround} = deliver {@code updateNeighborsAt(target)} (the six cells AROUND the
+     * counterpart, never the counterpart itself) instead of {@code neighborChanged(target)} — the
+     * shared-pair wake ({@link #onSeamRailPoked}).
      */
-    private record Dispatch(GlobalPos target, Block sourceBlock, @Nullable GlobalPos waitFor) {}
+    private record Dispatch(
+        GlobalPos target, Block sourceBlock, @Nullable GlobalPos waitFor, boolean wakeAround
+    ) {}
 
     private static final ArrayDeque<Dispatch> QUEUE = new ArrayDeque<>();
     /** Per-tick enqueue dedupe — one delivery per cell per tick bounds any cross-seam cycle. */
     private static final Set<GlobalPos> DEDUPE = new HashSet<>();
+    /** The wake kind dedupes separately — a wake is not a poke and must not shadow one. */
+    private static final Set<GlobalPos> WAKE_DEDUPE = new HashSet<>();
 
     /**
      * ★ THE IDENTITY OF THE CELL THE MIRROR IS CURRENTLY WRITING (adversarial panel, 2026-07-27 —
@@ -480,7 +487,197 @@ public final class SeamSignalContinuity {
         }
     }
 
-    /** The horizontal axis step from a walk's current cell to its stepped target (probe use only). */
+    /**
+     * True when this walk step LEAVES a bound seam cell through the plane with live machinery —
+     * so in raw per-dimension coordinates the stepped cell holds the OTHER stitching (the
+     * opposite through-path) and must not be consulted (RS-XTALK, user contract 2026-08-22: the
+     * two through-paths never interact, even sharing a seam cell or adjacent cells).
+     *
+     * <p>WHERE the plane sits decides WHICH exits cross, and both refinements came from a red
+     * run each (first build severed both axis exits of a COINCIDENT cell unconditionally —
+     * killing the seam rail's own depth-0 walk back into its OWN approach, RS-SIGNAL-A red;
+     * second build severed a claimed cell's depth-0 step into its empty half — killing the
+     * seam rail powering FROM the second path's approach, the user's 2026-08-22 live round):
+     * <ul>
+     *   <li><b>DISJOINT</b> — the plane is flush with the cell face on the mapped side: every
+     *       exit through it crosses, at any depth.</li>
+     *   <li><b>COINCIDENT, {@code depth > 0}</b> — the plane bisects the cell and the walk is
+     *       monotone, so a walk still running at this cell ENTERED from the opposite side and
+     *       crossed the plane inside it: the exit crosses.</li>
+     *   <li><b>COINCIDENT, {@code depth == 0}</b> — the cell's own rail is evaluating. An
+     *       UNCLAIMED byte-identical pair (command-staged fixtures) is one shared slot serving
+     *       both lines: its own two-direction probes stay local. A CLAIMED cell's rail is ONE
+     *       path's object (live round 5, "the first set's seam rail won't turn off"): its step
+     *       into the empty half crosses (its line continues through its own door in the far
+     *       level, and the raw cell there is the other path's territory) — safe now because the
+     *       second path's representative at the cell is the side-table FRAGMENT, which walks
+     *       resolve via {@link #probeIntoFragmentHalf} and whose state tracks its own circuit.</li>
+     * </ul>
+     *
+     * <p>The M1 wrap asks this BEFORE its local probe: a crossing step is redirect-or-severed,
+     * never raw — a cold/unresolvable far side answers false with the retry {@link #walkRedirect}
+     * already queued, where the pre-fix order fell back to the raw read (the leak). The gate
+     * chain mirrors {@code walkRedirect}+{@code shadowFor} exactly — plus this fix's own lever —
+     * so any lever that disables the bridge also restores the pre-fix local-first order.
+     */
+    public static boolean walkStepCrossesSeam(
+        Level level, BlockPos currentPos, BlockPos steppedPos, int depth
+    ) {
+        try {
+            if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+                || AperturePassthroughLever.DISABLE_SEAM_SHADOW
+                || AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER
+                || !SeamlessPortalsConfig.isEntityPortals()
+                || !(level instanceof ServerLevel src)
+                || !SeamRegistry.sectionHasSeam(level, currentPos)) {
+                return false;
+            }
+            MinecraftServer server = src.getServer();
+            if (server == null || !server.isSameThread()) {
+                return false;
+            }
+            SeamRegistry.SeamCell owner = SeamRegistry.lookup(level, currentPos);
+            if (owner == null) {
+                return false;
+            }
+            Direction step = seamlessportals$stepOf(currentPos, steppedPos);
+            if (step == Direction.UP) {
+                return false;
+            }
+            for (SeamRegistry.SeamBinding b : owner.bindings()) {
+                if (!b.isMirrorable() || !b.seamContinuous()
+                    || b.continuationToward(step) == null) {
+                    continue;
+                }
+                if (b.phase() == SeamMap.SeamPhase.DISJOINT || depth > 0) {
+                    return true;
+                }
+                if (SeamFractional.emptyHalfDir(level, currentPos) == step) {
+                    return true;   // claimed cell's own step into its empty half — its line
+                                   // crosses; the raw cell there is the other path's territory
+                }
+            }
+            return false;
+        }
+        catch (Throwable t) {
+            readFault(t);
+            return false;
+        }
+    }
+
+    /**
+     * True when this is a claimed cell's OWN depth-0 step toward its CLAIMED side — a probe that
+     * must be strictly LOCAL (ARM 3's deterministic repro, 2026-08-23): after the local probe
+     * fails, the wrap's additive walkRedirect fallback maps this direction to the CO-LOCATED far
+     * cell — the OTHER path's far territory — and a far source there lit the pair from the wrong
+     * circuit ("path-2-only: S=true D=true"). The claimed cell's line on this side is its local
+     * approach and nothing else; its far continuation is the EMPTY-half step's door, which the
+     * depth-0 crossing rule already routes. Unclaimed cells keep the additive fallback.
+     */
+    public static boolean walkStepIsClaimedOwnSide(
+        Level level, BlockPos currentPos, BlockPos steppedPos, int depth
+    ) {
+        try {
+            if (depth > 0 || AperturePassthroughLever.DISABLED
+                || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+                || AperturePassthroughLever.DISABLE_SEAM_SHADOW
+                || AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER
+                || !SeamlessPortalsConfig.isEntityPortals()
+                || !(level instanceof ServerLevel)
+                || !SeamRegistry.sectionHasSeam(level, currentPos)
+                || SeamRegistry.lookup(level, currentPos) == null) {
+                return false;
+            }
+            Direction step = seamlessportals$stepOf(currentPos, steppedPos);
+            if (step == Direction.UP) {
+                return false;
+            }
+            Direction empty = SeamFractional.emptyHalfDir(level, currentPos);
+            return empty != null && empty == step.getOpposite();
+        }
+        catch (Throwable t) {
+            readFault(t);
+            return false;
+        }
+    }
+
+    /** The arriving-side resolution of a walk probe into a claimed seam cell — see {@link #probeIntoFragmentHalf}. */
+    public record IntoProbe(boolean passable, boolean localSignal, @Nullable WalkRedirect farDoor) {}
+
+    /**
+     * ★ THE ARRIVING-SIDE GATE (RS-XTALK live round 5 — full per-path model). A walk probing
+     * INTO a claimed seam cell must ask the occupant of the half it ARRIVES on: from the
+     * primary's side, the chunk rail (vanilla probe — return null); from the empty half, the
+     * side-table FRAGMENT — the second path's rail — which the chunk-reading vanilla probe
+     * cannot see. Without this, the second path's passability rode the FIRST path's POWERED
+     * bit, which forced the primary to carry a shared OR of both circuits — the "first set's
+     * seam rail won't turn off while the second set is powered" complaint.
+     *
+     * <p>The emulated probe mirrors {@code isSameRailWithPower} minus the POWERED gate: the
+     * fragment's bit is DERIVED from its circuit (its lifecycle in {@code SeamWireBridge}), so
+     * gating on it would only add an update-ordering deadlock — chain continuity is enforced by
+     * the real rails behind the doors. {@code passable} = same block + axis-compatible shape;
+     * {@code localSignal} = the cell's neighbor scan skipping the PRIMARY's side (the
+     * fragment's behind-plane); {@code farDoor} = the walk's continuation through the
+     * fragment's own door (null = cold far, severed with the retry queued). Returns null for
+     * unclaimed cells, primary-side arrivals, or dead machinery — the caller falls through to
+     * the vanilla probe.
+     */
+    @Nullable
+    public static IntoProbe probeIntoFragmentHalf(
+        Level level, BlockPos currentPos, BlockPos steppedPos, RailShape dirShape, Block walkBlock
+    ) {
+        try {
+            if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+                || AperturePassthroughLever.DISABLE_SEAM_SHADOW
+                || AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER
+                || !SeamlessPortalsConfig.isEntityPortals()
+                || !(level instanceof ServerLevel src)
+                || !SeamRegistry.sectionHasSeam(level, steppedPos)) {
+                return null;
+            }
+            MinecraftServer server = src.getServer();
+            if (server == null || !server.isSameThread()) {
+                return null;
+            }
+            if (SeamRegistry.lookup(level, steppedPos) == null) {
+                return null;
+            }
+            Direction step = seamlessportals$stepOf(currentPos, steppedPos);
+            if (step == Direction.UP) {
+                return null;
+            }
+            Direction empty = SeamFractional.emptyHalfDir(level, steppedPos);
+            if (empty == null || empty != step.getOpposite()) {
+                return null;    // unclaimed, or arriving on the primary's own half
+            }
+            SeamOccupancy.Secondary sec = SeamOccupancy.secondaryOf(level, steppedPos);
+            if (sec == null || !sec.state().is(walkBlock)) {
+                // The arriving half is genuinely empty, or holds a different block: the walk
+                // dies here exactly as it would at a gap or a foreign rail type in vanilla.
+                return new IntoProbe(false, false, null);
+            }
+            RailShape fragShape = sec.state().getValue(
+                ((net.minecraft.world.level.block.BaseRailBlock) sec.state().getBlock())
+                    .getShapeProperty());
+            if (isAxisIncompatible(fragShape, dirShape)) {
+                return new IntoProbe(false, false, null);
+            }
+            boolean localSignal = hasLocalNeighborSignalSkippingEmptyHalf(
+                level, steppedPos, empty.getOpposite());
+            WalkRedirect farDoor = walkRedirect(
+                level, steppedPos, steppedPos.relative(step), dirShape);
+            probeLog("fragment-half probe at {} from {} step {}: shape={} localSignal={} farDoor={}",
+                steppedPos, currentPos, step, fragShape, localSignal, farDoor != null);
+            return new IntoProbe(true, localSignal, farDoor);
+        }
+        catch (Throwable t) {
+            readFault(t);
+            return null;
+        }
+    }
+
+    /** The horizontal axis step from a walk's current cell to its stepped target. */
     private static Direction seamlessportals$stepOf(BlockPos from, BlockPos to) {
         int dx = to.getX() - from.getX();
         int dz = to.getZ() - from.getZ();
@@ -547,8 +744,85 @@ public final class SeamSignalContinuity {
         }
     }
 
+    /**
+     * ★ THE SHARED-PAIR WAKE (RS-XTALK live round 2, 2026-08-22). Called for every
+     * {@code neighborChanged} DELIVERED at a bound seam rail cell — whether or not the rail's own
+     * state flips. Queues a tick-end {@code updateNeighborsAt(counterpart)} in the far level,
+     * waking the counterpart's ADJACENT rails (never the counterpart itself — no authority
+     * re-entry; {@code updateNeighborsAt} notifies AROUND P, never P).
+     *
+     * <p>The gap it closes: the pair's POWERED bit is the OR of the two through-paths. A path
+     * transition that does not change the OR — powering the second path while the first already
+     * lights the pair, or un-powering it while the first still does — produces NO state change at
+     * the pair, so no refinement, no shape-sync stamp, no far-side notification: the second
+     * path's far rails were never told to look (live log: the seam pair powered, the walk route
+     * through the paired door was live, and the dest-side rail never re-evaluated). The D1
+     * dispatch cannot see these transitions because it keys on seam-cell STATE CHANGES; this
+     * wake keys on DELIVERIES. Volume: per-tick deduped per counterpart (one wake per cell per
+     * tick), budgeted by the shared flush, and silent at rest — pokes only exist while something
+     * is actually changing near the pair.
+     */
+    public static void onSeamRailPoked(ServerLevel level, BlockPos pos) {
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_SIGNAL
+            || AperturePassthroughLever.DISABLE_SEAM_SIGNAL_DISPATCH
+            || AperturePassthroughLever.DISABLE_SEAM_WALK_SEVER
+            || !SeamlessPortalsConfig.isEntityPortals()
+            || !SeamRegistry.sectionHasSeam(level, pos)) {
+            return;
+        }
+        MinecraftServer server = level.getServer();
+        if (server == null || !server.isSameThread()) {
+            return;
+        }
+        SeamRegistry.SeamCell cell = SeamRegistry.lookup(level, pos);
+        if (cell == null) {
+            return;
+        }
+        Block source = level.getBlockState(pos).getBlock();
+        BlockPos lastTarget = null;
+        ResourceKey<Level> lastDim = null;
+        for (SeamRegistry.SeamBinding b : cell.bindings()) {
+            if (!b.isMirrorable() || !b.seamContinuous()) {
+                continue;
+            }
+            BlockPos target = b.phase() == SeamMap.SeamPhase.COINCIDENT
+                ? b.destPos()
+                : b.continuationToward(b.crossDir());
+            if (target == null || (target.equals(lastTarget) && b.destDim().equals(lastDim))) {
+                continue;
+            }
+            lastTarget = target;
+            lastDim = b.destDim();
+            // PAIR-TRUTH probe (live round 3, "seam rail looks dark"): print the SERVER's view of
+            // both halves on every poke, so a dark-looking rail can be attributed to the server
+            // state or to the client sync/render layer in one glance at the log.
+            if (AperturePassthroughLever.SEAM_SIGNAL_PROBE && server.getLevel(b.destDim()) != null
+                && server.getLevel(b.destDim()).hasChunkAt(target)) {
+                BlockState near = level.getBlockState(pos);
+                BlockState farSt = server.getLevel(b.destDim()).getBlockState(target);
+                var POWERED = net.minecraft.world.level.block.state.properties
+                    .BlockStateProperties.POWERED;
+                probeLog("pair truth: near {} {} powered={} mask={} secondary={} | far {} {} powered={}",
+                    pos, near.getBlock(),
+                    near.hasProperty(POWERED) ? near.getValue(POWERED) : "n/a",
+                    SeamOccupancy.occupancyOf(level, pos),
+                    SeamOccupancy.secondaryOf(level, pos) != null,
+                    target, farSt.getBlock(),
+                    farSt.hasProperty(POWERED) ? farSt.getValue(POWERED) : "n/a");
+            }
+            queue(GlobalPos.of(b.destDim(), target.immutable()), source, null, true);
+        }
+    }
+
     private static void queue(GlobalPos target, Block sourceBlock, @Nullable GlobalPos waitFor) {
-        if (waitFor == null && !DEDUPE.add(target)) {
+        queue(target, sourceBlock, waitFor, false);
+    }
+
+    private static void queue(
+        GlobalPos target, Block sourceBlock, @Nullable GlobalPos waitFor, boolean wakeAround
+    ) {
+        Set<GlobalPos> dedupe = wakeAround ? WAKE_DEDUPE : DEDUPE;
+        if (waitFor == null && !dedupe.add(target)) {
             dispatchDeduped++;
             return;
         }
@@ -559,13 +833,18 @@ public final class SeamSignalContinuity {
                 // Un-dedupe the evicted target so a later same-tick change can re-queue it —
                 // without this the dedupe entry pins the loss for the rest of the tick. A drop is
                 // still a real (counted, gate-asserted-zero) loss for one-shot events.
-                DEDUPE.remove(evicted.target());
+                (evicted.wakeAround() ? WAKE_DEDUPE : DEDUPE).remove(evicted.target());
             }
         }
-        QUEUE.addLast(new Dispatch(target, sourceBlock, waitFor));
-        dispatchQueued++;
-        probeLog("dispatch queued -> {} {} (waitFor={})", target.dimension().identifier(),
-            target.pos(), waitFor);
+        QUEUE.addLast(new Dispatch(target, sourceBlock, waitFor, wakeAround));
+        if (wakeAround) {
+            wakeQueued++;
+        }
+        else {
+            dispatchQueued++;
+        }
+        probeLog("dispatch queued -> {} {} (waitFor={} wake={})", target.dimension().identifier(),
+            target.pos(), waitFor, wakeAround);
     }
 
     /**
@@ -606,6 +885,7 @@ public final class SeamSignalContinuity {
     public static void onServerTickEnd(MinecraftServer server) {
         dispatchedThisTick = 0;
         DEDUPE.clear();
+        WAKE_DEDUPE.clear();
         if (QUEUE.isEmpty()) {
             return;
         }
@@ -630,7 +910,7 @@ public final class SeamSignalContinuity {
                 }
             }
             if (!lvl.hasChunkAt(d.target().pos())) {
-                QUEUE.addLast(new Dispatch(d.target(), d.sourceBlock(), d.target()));
+                QUEUE.addLast(new Dispatch(d.target(), d.sourceBlock(), d.target(), d.wakeAround()));
                 continue;   // target itself went cold; wait on it
             }
             if (dispatchedThisTick >= MAX_DISPATCH_PER_TICK) {
@@ -639,13 +919,32 @@ public final class SeamSignalContinuity {
                 break;   // leftover flushes next tick — delayed, never lost
             }
             dispatchedThisTick++;
-            dispatchDelivered++;
-            probeLog("dispatch delivered -> {} {}", lvl.dimension().identifier(), d.target().pos());
+            if (d.wakeAround()) {
+                wakeDelivered++;
+            }
+            else {
+                dispatchDelivered++;
+            }
+            probeLog("dispatch delivered -> {} {} (wake={})", lvl.dimension().identifier(),
+                d.target().pos(), d.wakeAround());
             try {
-                lvl.neighborChanged(d.target().pos(), d.sourceBlock(), null);
+                if (d.wakeAround()) {
+                    lvl.updateNeighborsAt(d.target().pos(), d.sourceBlock());
+                    // The counterpart's FRAGMENT derives from rails in BOTH dimensions, and
+                    // this wake is the only signal that the far input changed: the wake pokes
+                    // AROUND the cell (never the cell — authority), so nothing re-runs the
+                    // cell's own fragment refresh when only the far side moved — the fragment
+                    // stayed stale-lit ~12s live (round 7). Re-derive it here directly: the
+                    // ONE writer, side-table only, change-gated, loop-safe.
+                    SeamWireBridge.refreshSecondary(lvl, d.target().pos());
+                }
+                else {
+                    lvl.neighborChanged(d.target().pos(), d.sourceBlock(), null);
+                }
             }
             catch (Throwable t) {
-                LOGGER.warn("[RS-SIGNAL] cross-seam neighborChanged failed at {} in {}",
+                LOGGER.warn("[RS-SIGNAL] cross-seam {} failed at {} in {}",
+                    d.wakeAround() ? "updateNeighborsAt" : "neighborChanged",
                     d.target().pos(), lvl.dimension().identifier(), t);
             }
         }
@@ -731,7 +1030,13 @@ public final class SeamSignalContinuity {
             + " dispatchDeduped=" + dispatchDeduped
             + " dispatchDropped=" + dispatchDropped
             + " declinedCold=" + declinedCold
-            + " budgetTrips=" + budgetTrips;
+            + " budgetTrips=" + budgetTrips
+            + " wakeQueued=" + wakeQueued
+            + " wakeDelivered=" + wakeDelivered;
+    }
+
+    public static long wakeDeliveredCount() {
+        return wakeDelivered;
     }
 
     public static long walkCrossedCount() {

@@ -431,6 +431,24 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamSignalDispatch");
 
     /**
+     * Disables the WALK-SEVER fix (RS-XTALK, 2026-08-22) —
+     * {@code -Dseamlessportals.disableSeamWalkSever=true}.
+     *
+     * <p>With the fix ON (default), a powered-rail walk step that LEAVES a bound seam cell
+     * through the plane never consults the raw stepped cell: in raw per-dimension coordinates
+     * that cell holds the OTHER stitching (the opposite through-path), and the walk either
+     * redirects into the far level or, when the far side is unresolvable (cold chunk), answers
+     * false with a warm-up retry queued — never the raw read. With it OFF, the pre-fix
+     * LOCAL-FIRST order returns and the 2026-08-22 live defect reproduces: two opposite
+     * through-paths sharing a seam cell exchange power, because the unpowered path's walk
+     * continues raw through the shared slot into the powered path's approach and finds its
+     * power source within the 8-rail cap ((c)'s "purely additive" premise assumed nothing
+     * conductive raw-behind the plane, which the mirror's two-sided writes made false).
+     */
+    public static final boolean DISABLE_SEAM_WALK_SEVER =
+        Boolean.getBoolean("seamlessportals.disableSeamWalkSever");
+
+    /**
      * Disables the STALE-PROVENANCE fix — {@code -Dseamlessportals.disableSeamBreakUnmark=true}.
      *
      * <p>With the fix ON (default), breaking a seam cell clears that cell's OWN mirror-created
@@ -696,6 +714,182 @@ public final class AperturePassthroughLever {
      */
     public static final boolean DISABLE_SEAM_INPASS_SIDE_AGREEMENT =
         Boolean.getBoolean("seamlessportals.disableSeamInPassSideAgreement");
+
+    /**
+     * ★ ROUND 30 — rollback lever for THE VISUAL SWEEP, the tail-clip fix
+     * ({@code -Dseamlessportals.disableSeamVisualSweep=true}).
+     *
+     * <p>With the fix ON (default), the DRAW-side existence predicates and the crossing's CLOSE
+     * guard evaluate on the SWEEP of the last-tick and post-tick boxes — the exact region the
+     * interpolated visual can occupy — instead of the post-tick box alone. With it OFF, the
+     * measured defect returns: at a crossing speed of 0.489 blocks/tick the post-tick box leads
+     * the rendered visual by half a block, so on the tick the box clears the plane every
+     * projection stops while up to <b>0.285 blocks</b> of the RENDERED body is still behind it,
+     * unpainted — the trailing ~25–29% of the cart+cow vanishes for that tick's frames.
+     *
+     * <p>This is the 29-round "tail-end sliver", finally attributed: it was never the
+     * ±ADJUSTMENT band. It is ONE TICK OF MOVEMENT, which is why it scaled with crossing speed,
+     * why it appeared in both directions, why it snapped in one frame, and why no epsilon
+     * arithmetic ever touched it. Evidence: the per-painter tint showed the vanishing piece was
+     * the main-pass projection (away) and the in-pass projection (toward) — a painter DROPPING
+     * OUT, not a clip plane cutting; the probe log then put every one of 14 dropouts at
+     * 0.400–0.510 blocks/tick with {@code ANCHOR-CLOSE} on the same tick.
+     *
+     * <p>See {@link SeamStraddleBracket#backPieceExists} for the arithmetic and the scope
+     * discipline (booking, pruning and collision deliberately stay on the post-tick box).
+     */
+    public static final boolean DISABLE_SEAM_VISUAL_SWEEP =
+        Boolean.getBoolean("seamlessportals.disableSeamVisualSweep");
+
+    /**
+     * ★ ROUND 31 — rollback lever for THE MODEL MARGIN, the residual rider-clip fix
+     * ({@code -Dseamlessportals.disableSeamModelMargin=true}).
+     *
+     * <p>With the fix ON (default), the draw-side existence predicates widen the collision box by
+     * a normal-projected margin before testing it against the seam plane, because the clip is a
+     * hardware plane on the drawn MODEL while the predicates measure the BOX. With it OFF, the
+     * measured defect returns: the cow's muzzle overhangs its box by 0.4875 blocks and its rump
+     * by 0.175 (versus the minecart shell's 0.135), so at 0.4 blocks/tick the cow's leading
+     * overhang spans 1.22 tick steps and reliably loses one — the user's "front of the cow's face
+     * cut off" and "tail end cut off", which are the same defect on opposite edges. See
+     * {@link SeamStraddleBracket} for the geometry, the yaw-independence argument, and the
+     * consumer-by-consumer safety case.
+     */
+    public static final boolean DISABLE_SEAM_MODEL_MARGIN =
+        Boolean.getBoolean("seamlessportals.disableSeamModelMargin");
+
+    /**
+     * ★ ROUND 31 (D2) — rollback lever for THE PROJECTION CAMERA DISTANCE, the vanishing-shadow
+     * fix ({@code -Dseamlessportals.disableSeamProjectionCameraDistance=true}).
+     *
+     * <p>With the fix ON (default), a projected entity's {@code distanceToCameraSq} is measured to
+     * the position it is actually DRAWN at. With it OFF, the measured defect returns: on a
+     * ~691-block seam the stamped value is ~4.8e5 against vanilla's shadow threshold of 256, so
+     * no projected entity ever gets a shadow — the user's "the ENTIRE shadow disappears when it
+     * touches the seam and reappears when it exits".
+     *
+     * <p>⚠ SCOPE NOTE: {@code distanceToCameraSq} also drives vanilla's NAME-TAG distance gates
+     * (64 blocks, and 10 for the sneaking case), so this fix additionally makes name tags behave
+     * correctly on projected entities. That is a deliberate widening of the same correctness
+     * rule — the distance a viewer perceives is the distance to what is drawn — and the lever
+     * reverts both together.
+     */
+    public static final boolean DISABLE_SEAM_PROJECTION_CAMERA_DISTANCE =
+        Boolean.getBoolean("seamlessportals.disableSeamProjectionCameraDistance");
+
+    /**
+     * ★ ROUND 35 — rollback lever for THE RENDER-SIDE BOOKING SUPPLEMENT, the face-cut fix
+     * ({@code -Dseamlessportals.disableSeamRenderBooking=true}).
+     *
+     * <p>With the fix ON (default), the projection painter's candidate list is supplemented with
+     * seam faces whose plane the entity's DRAWN model straddles but which the physics booking has
+     * not yet acquired. With it OFF, the measured defect returns: booking fires at ~0.71 blocks
+     * from the plane while a cow's muzzle crosses at 0.9375, leaving ~0.23 blocks of travel in
+     * which the emerged muzzle has no painter at all — a few frames at crossing speed, ~31 at a
+     * crawl. Render-only: {@code PortalCollisionHandler} is never written, so physics, teleport
+     * timing and collision are unaffected either way.
+     *
+     * <p>See {@link SeamCrossingRule#mustBook} for the measurement and for why the round-31/34
+     * model margin could never have fixed this (it reaches only retention and cull predicates —
+     * none of which can create a booking).
+     */
+    /**
+     * ⚠ ROUND 35 POSTSCRIPT — POLARITY INVERTED TO DEFAULT-OFF. The supplement was built on the
+     * booking mechanism and that mechanism is now <b>REFUTED BY DIRECT TEST</b>: with the
+     * supplement live it fired 3426 times over 9 crossings and produced real draws (main-pass
+     * projection draws rose to 16922, coverage extended from ~0.7 out to 2.75 blocks), and the
+     * face cut was <b>unchanged</b>. Admission is therefore genuinely innocent — the painter is
+     * invoked and drawing throughout the window the mechanism blamed.
+     *
+     * <p>It is also EXPENSIVE: it iterates every rendered entity against every nearby portal, and
+     * the probe measured spikes of <b>14,820 draws in a single tick</b> against a 2-6 baseline.
+     * A change that fixes nothing and costs that does not stay on. Retained behind
+     * {@code -PenableSeamRenderBooking=true} for A/B only.
+     *
+     * <p>What the refutation leaves: the projection DRAWS every tick while the user observes the
+     * orange painter FLICKERING on and off between consecutive frames at essentially the same
+     * entity position. A per-frame flicker with a per-tick-constant draw count means the
+     * fragments are being discarded downstream — depth or clip — by something that varies with
+     * the CAMERA, not with the entity. That is the "depth wall" the original 27-round band arc
+     * died on, and the standing handoff's conclusion applies: only pixel-level attribution
+     * (RenderDoc frame capture) can carry it further.
+     */
+    public static final boolean DISABLE_SEAM_RENDER_BOOKING =
+        !Boolean.getBoolean("seamlessportals.enableSeamRenderBooking");
+
+    /**
+     * ★ ROUND 35 — rollback lever for THE RENDER ENVELOPE
+     * ({@code -Dseamlessportals.disableSeamRenderEnvelope=true}).
+     *
+     * <p>With the fix ON (default), the seam's draw-side predicates measure a per-entity upper
+     * bound on the DRAWN model — vanilla's own frustum-cull box, which is contractual for every
+     * renderable entity including modded ones and carries Mojang's per-type widenings. With it
+     * OFF, they fall back to the plain collision box and every predicate is once again blind to
+     * the box-to-model gap, which differs per species (cow 0.9375 reach vs 0.45 box half;
+     * minecart 0.625 vs 0.49).
+     *
+     * <p>This is what makes the seam fixes satisfy the user's requirement that they work for
+     * "every single type of rider, entity, literally everything, not just cows" — the correction
+     * is derived at runtime per entity rather than hardcoded from the test fixture.
+     * See {@link SeamRenderExtent}.
+     */
+    public static final boolean DISABLE_SEAM_RENDER_ENVELOPE =
+        Boolean.getBoolean("seamlessportals.disableSeamRenderEnvelope");
+
+    /**
+     * ★ ROUND 37 — rollback lever for THE ENTRY-LIFETIME MODEL EXTENT
+     * ({@code -Dseamlessportals.disableSeamKeepModelExtent=true}).
+     *
+     * <p>With the fix ON (default), {@link SeamStraddleBracket#keeps} — the predicate deciding how
+     * long a seam collision ENTRY survives the per-tick prune — measures the swept box plus the
+     * per-entity render envelope, as every draw predicate already does. With it OFF, it reverts to
+     * the raw post-tick collision box and the measured defect returns: the MINECART loses its
+     * entry mid-crossing, drops out of {@code CrossPortalEntityRenderer.collidedEntities}
+     * entirely, and is never visited by the projection loop — producing zero probe lines of any
+     * kind and an unpainted cart at the destination, which reads as the rider's face being cut.
+     */
+    public static final boolean DISABLE_SEAM_KEEP_MODEL_EXTENT =
+        Boolean.getBoolean("seamlessportals.disableSeamKeepModelExtent");
+
+    /**
+     * ★ ROUND 38 — PER-ENTITY TINT MODE ({@code -PseamTintPerEntity=true}, on top of
+     * {@code -PseamPainterTint=true}; inert without it).
+     *
+     * <p>Switches {@link com.warwa.seamlessportals.render.SeamTint} from keying colour on the
+     * PAINTER to keying it on the ENTITY, so one entity is a single flat hue across the seam. The
+     * role palette cannot answer the open question because painter identity changes at the seam by
+     * design — exactly where the defect appears — so a colour change there is produced by the
+     * normal handoff and by a defect alike.
+     */
+    public static final boolean SEAM_TINT_PER_ENTITY =
+        Boolean.getBoolean("seamlessportals.seamTintPerEntity");
+
+    /**
+     * ★ ROUND 41 — NEUTRAL TINT ({@code -PseamTintNeutral=true}, alongside -PseamPainterTint).
+     *
+     * <p>Keeps every PIPELINE side effect of the tint — fragment-shader rewriting, fresh Snapshot
+     * instances per painter, the per-draw uniform upload — and removes only the visible colour.
+     * Isolates "the tint's pipeline perturbation is what fixes the cut" from "the colours were
+     * merely masking it", which the 2026-08-22 tint-off regression made the live question.
+     */
+    public static final boolean SEAM_TINT_NEUTRAL =
+        Boolean.getBoolean("seamlessportals.seamTintNeutral");
+
+    /**
+     * ★ ROUND 39 — rollback lever for the ALL-FACE in-pass visibility verdict
+     * ({@code -PdisableSeamAllFaceVisibility=true}).
+     *
+     * <p>With the fix ON (default), {@code CrossPortalEntityRenderer.shouldRenderEntityNow} judges
+     * its seam verdict against EVERY straddled face in the collision handler. With it OFF, the
+     * verdict is judged against {@code ip_getCollidingPortal()} — hard-wired to
+     * {@code portalCollisions.get(0)} — and the measured defect returns: on a bi-faced seam
+     * cluster the straddled face is often not first, the verdict comes back NOT_ENGAGED against
+     * the wrong face, the real body draws vanilla inside the portal pass under the pass's ambient
+     * clip, and that clip amputates the model at the window plane (user-visible as the rider's
+     * nose being cut; the tint lap paints the animal GREEN at exactly that moment).
+     */
+    public static final boolean DISABLE_SEAM_ALL_FACE_VISIBILITY =
+        Boolean.getBoolean("seamlessportals.disableSeamAllFaceVisibility");
 
     /**
      * DIAGNOSTIC (SEAM_BAND_HANDOFF §4.3 — the bias LADDER): the band painter's glDepthRange

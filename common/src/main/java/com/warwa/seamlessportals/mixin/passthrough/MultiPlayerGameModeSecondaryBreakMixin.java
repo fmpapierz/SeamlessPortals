@@ -80,6 +80,20 @@ public abstract class MultiPlayerGameModeSecondaryBreakMixin {
                 // Predict the SECONDARY's removal only. The vanilla path below this cancel would
                 // have removed the primary's blockstate and cascaded into the dest client level.
                 SeamOccupancy.setSecondary(mc.level, pos, null);
+                // ★ Predict the COUNTERPART fragment's removal too (live round 10, "break
+                // mirror has a tiny lag"): the far half otherwise lingers one round-trip until
+                // the server broadcast lands. Same-dim: this level; cross-dim: the secondary
+                // client level when present. The broadcast confirms/corrects.
+                if (binding.isMirrorable() && binding.destPos() != null) {
+                    // peekWorld — the loader's per-dim world, the instance the portal view
+                    // reads (round 13: the manager's store was NULL cross-dim, prediction dead).
+                    net.minecraft.client.multiplayer.ClientLevel farClient =
+                        mc.level.dimension().equals(binding.destDim()) ? mc.level
+                            : qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(binding.destDim());
+                    if (farClient != null) {
+                        SeamOccupancy.setSecondary(farClient, binding.destPos(), null);
+                    }
+                }
                 cir.setReturnValue(true);
                 return;
             }

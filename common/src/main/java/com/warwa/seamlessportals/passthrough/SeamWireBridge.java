@@ -442,13 +442,41 @@ public final class SeamWireBridge {
                 updated = sec.state().setValue(POWER, target);
             }
             else {
-                boolean target = block > 0 || wireIn > 0;
+                // ★ RAIL FRAGMENT = ITS OWN CIRCUIT'S STATE (RS-XTALK live rounds 3-4). Rails
+                // power via the WALK, not adjacency, so the original adjacency target was almost
+                // always false (permanently dark seam rail). Round 3 mirrored the chunk PRIMARY
+                // instead — but the fragment is the SECOND path's rail, and the primary carries
+                // the pair's shared bit, so path 1's power held the fragment lit ("won't power
+                // off if the first set is on"). The fragment sits between its two REAL rails on
+                // its own stitched line — the own-side neighbour on its half's side, and the
+                // counterpart's fragment-side neighbour across the seam — and power only reaches
+                // either through its own path's severed-door walks, so their OR is the
+                // fragment's vanilla-consistent state under every mix of the two paths. Inputs
+                // flow one way (real rails → fragment; their walks read the chunk primary, never
+                // the fragment), the write is change-gated: acyclic, cannot ping-pong (the round
+                // 3.5 two-writer loop burned 1.9M flips through this method's own update fans).
                 var POWERED = net.minecraft.world.level.block.state.properties
                     .BlockStateProperties.POWERED;
+                boolean target = false;
+                BlockState ownSide = level.getBlockState(pos.relative(secDir));
+                if (ownSide.hasProperty(POWERED) && ownSide.getBlock()
+                        instanceof net.minecraft.world.level.block.BaseRailBlock) {
+                    target = ownSide.getValue(POWERED);
+                }
+                if (!target && far != null) {
+                    Direction farFragDir = SeamRegistry.mapDir(b, secDir).getOpposite();
+                    BlockPos farN = b.destPos().relative(farFragDir);
+                    if (far.isInsideBuildHeight(farN) && far.hasChunkAt(farN)) {
+                        BlockState farSide = far.getBlockState(farN);
+                        if (farSide.hasProperty(POWERED) && farSide.getBlock()
+                                instanceof net.minecraft.world.level.block.BaseRailBlock) {
+                            target = farSide.getValue(POWERED);
+                        }
+                    }
+                }
                 if (sec.state().getValue(POWERED) == target) {
                     refreshProbe(level, pos, sec, "EXIT no-change powered=" + target
-                        + " (block=" + block + " wireIn=" + wireIn + ") via srcFacing="
-                        + b.srcFacing());
+                        + " (own+far rail OR) via srcFacing=" + b.srcFacing());
                     return;
                 }
                 updated = sec.state().setValue(POWERED, target);

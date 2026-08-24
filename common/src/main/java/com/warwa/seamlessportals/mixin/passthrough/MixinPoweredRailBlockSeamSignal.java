@@ -97,12 +97,62 @@ public abstract class MixinPoweredRailBlockSeamSignal {
         // actually needed the answer, not the (already-powered, never-flipping) seam cell.
         boolean owned = SeamSignalContinuity.walkOriginBegin(level, currentPos);
         try {
-            if (op.call(self, level, stepped, forward, depth, dirShape)) {
-                return true;                               // ── LOCAL FIRST ──
+            // ── CROSSING-FIRST (RS-XTALK fix, 2026-08-22): a step that leaves a bound seam cell
+            // through the plane never consults the raw stepped cell — in raw coordinates that
+            // cell holds the OTHER stitching (the opposite through-path), and the pre-fix
+            // local-first read there let the unpowered path's walk continue raw into the powered
+            // path's approach and find its power source (the two-through-paths crosstalk).
+            // Which exits cross is phase- and depth-dependent (a passed-through cell severs both
+            // exits; the cell's own depth-0 evaluation only its claimed empty half — see
+            // walkStepCrossesSeam). Non-crossing steps keep the local-first order, so all-local
+            // circuits stay byte-identical to vanilla; under -PdisableSeamWalkSever (or any
+            // bridge-disabling lever) walkStepCrossesSeam answers false and the pre-fix order
+            // returns. ──
+            // ── ARRIVING-SIDE GATE (RS-XTALK round 5): a probe INTO a claimed seam cell from
+            // its empty half asks the FRAGMENT (the second path's rail), never the chunk
+            // primary (the other path's). passable+quiet+door-resolved → the walk continues in
+            // the far level through the fragment's own door, at depth+1 (the cell consumed a
+            // step); cold far → severed with the retry queued. Primary-side arrivals and
+            // unclaimed cells return null and take the vanilla probe below. ──
+            SeamSignalContinuity.IntoProbe ip = SeamSignalContinuity.probeIntoFragmentHalf(
+                level, currentPos, stepped, dirShape, self);
+            if (ip != null) {
+                if (!ip.passable()) {
+                    return false;
+                }
+                if (ip.localSignal()) {
+                    return true;
+                }
+                if (ip.farDoor() == null) {
+                    return false;
+                }
+                boolean fragCrossed = op.call(self, ip.farDoor().farLevel(),
+                    ip.farDoor().farPos(), ip.farDoor().forward(), depth + 1,
+                    ip.farDoor().dirShape());
+                if (!fragCrossed) {
+                    SeamSignalContinuity.probeWalkDied(ip.farDoor().farLevel(),
+                        ip.farDoor().farPos(), ip.farDoor().dirShape(), self);
+                }
+                return fragCrossed;
+            }
+            boolean crossing =
+                SeamSignalContinuity.walkStepCrossesSeam(level, currentPos, stepped, depth);
+            if (!crossing && op.call(self, level, stepped, forward, depth, dirShape)) {
+                return true;                               // ── LOCAL (non-crossing steps) ──
+            }
+            if (!crossing && SeamSignalContinuity.walkStepIsClaimedOwnSide(
+                level, currentPos, stepped, depth)) {
+                // A claimed cell's own-side probe is STRICTLY local: the additive redirect for
+                // this direction is the co-located far cell — the OTHER path's territory (the
+                // ARM 3 "path-2-only lit the pair" repro). Its far continuation is the
+                // empty-half door, handled by the crossing rule above.
+                return false;
             }
             SeamSignalContinuity.WalkRedirect r =
                 SeamSignalContinuity.walkRedirect(level, currentPos, stepped, dirShape);
             if (r == null) {
+                // A crossing step lands here only when the far side is unresolvable (cold far —
+                // walkRedirect queued the warm-up retry): SEVERED, never the raw fallback.
                 return false;
             }
             boolean crossed = op.call(self, r.farLevel(), r.farPos(), r.forward(), depth, r.dirShape());
