@@ -59,25 +59,9 @@ public class RequiemCompat {
         return (Mob) possessedEntity;
     }
     
-    @Environment(EnvType.CLIENT)
-    public static void onPlayerTeleportedClient() {
-        if (!isRequiemPresent) {
-            return;
-        }
-        
-        LocalPlayer player = Minecraft.getInstance().player;
-        Mob possessedEntity = getPossessedEntity(player);
-        if (possessedEntity != null) {
-            if (possessedEntity.level() != player.level()) {
-                Helper.LOGGER.info("Move Requiem Possessed Entity at Client");
-                ClientTeleportationManager.moveClientEntityAcrossDimension(
-                    possessedEntity,
-                    ((ClientLevel) player.level()),
-                    player.position()
-                );
-            }
-        }
-    }
+    // NF-PARITY C3 dist-split (2026-08-25): onPlayerTeleportedClient moved VERBATIM to
+    // RequiemCompatClient — its LocalPlayer->Player assignability proof force-loaded client
+    // classes when this (server-linked) class verified on a NeoForge dedicated server.
     
     public static void onPlayerTeleportedServer(ServerPlayer player) {
         if (!isRequiemPresent) {

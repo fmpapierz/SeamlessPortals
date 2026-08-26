@@ -6,6 +6,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import qouteall.imm_ptl.core.collision.CollisionHelper;
+import qouteall.imm_ptl.core.collision.CollisionHelperClient;
 import qouteall.imm_ptl.core.commands.ClientDebugCommand;
 import qouteall.imm_ptl.core.compat.IPFlywheelCompat;
 import qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface;
@@ -93,7 +94,7 @@ public class IPModMainClient {
         
         GLResourceCache.init();
         
-        CollisionHelper.initClient();
+        CollisionHelperClient.initClient(); // NF-PARITY C3
         
         PortalRenderInfo.init();
         

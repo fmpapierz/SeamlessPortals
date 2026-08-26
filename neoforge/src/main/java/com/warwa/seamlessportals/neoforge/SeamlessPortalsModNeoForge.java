@@ -80,17 +80,17 @@ public class SeamlessPortalsModNeoForge {
 
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) server/common init ===================
-            // DEPENDENCY_ORDER §4.2, byte-mirroring SeamlessPortalsModFabric's flag-ON branch:
-            // the MiscUtilModEntry sequence THEN IPModMain.init THEN PeripheralModMain.init.
-            // Every event registration inside rides the game bus (legal at ctor time); every
-            // registry-touching call rides a queued facade (drained below).
-            qouteall.q_misc_util.ImplRemoteProcedureCall.init();
-            qouteall.q_misc_util.MiscNetworking.init();
-            qouteall.q_misc_util.dimension.DimensionIntId.init();
-            qouteall.imm_ptl.core.IPModMain.init();
-            qouteall.imm_ptl.peripheral.PeripheralModMain.init();
-            SeamlessPortalsConstants.LOGGER.info(
-                "Seamless Portals: entity-portal engine initialized (NeoForge server/common)");
+            // E0 boot iteration 4 finding: the chain CANNOT run at ctor time on NeoForge —
+            // Portal.<clinit> BUILDS its EntityType, and EntityType.<init> creates an
+            // INTRUSIVE HOLDER in the (frozen-outside-the-window) ENTITY_TYPE registry
+            // ("Registry is already frozen" at MappedRegistry.createIntrusiveHolder). So only
+            // the data-pack-registry hoist runs here (its NewRegistry event fires BEFORE the
+            // unfreeze window, CommonModLoader.begin:52-55), and the FULL chain runs at the
+            // FIRST RegisterEvent dispatch (ATTRIBUTE — GameData.getRegistrationOrder:120
+            // hoists it first), i.e. inside the unfrozen window, before every registry this
+            // chain feeds (ENTITY_TYPE drain, COMMAND_ARGUMENT_TYPE queue, TICKET_TYPE).
+            qouteall.imm_ptl.core.portal.custom_portal_gen.CustomPortalGenManager
+                .registerDataPackRegistries();
         } else {
             // ===== BLOCK-ERA driver set (flag-OFF, the legacy opt-out) ====================
             // The chunk/entity trackers + prewarm + mirror flush, mirroring Fabric's
@@ -136,7 +136,25 @@ public class SeamlessPortalsModNeoForge {
      * Direct {@code Registry.register} sinks are legal ONLY here — everything below mirrors
      * the direct-sink calls Fabric makes at mod-init time (where its registries are mutable).
      */
+    /** Latch: the flag-ON IP init chain runs exactly once, at the FIRST RegisterEvent. */
+    private boolean ipInitChainRan = false;
+
     private void onRegisterRegistries(RegisterEvent event) {
+        if (!ipInitChainRan && SeamlessPortalsConfig.isEntityPortals()) {
+            ipInitChainRan = true;
+            // DEPENDENCY_ORDER §4.2, byte-mirroring SeamlessPortalsModFabric's flag-ON
+            // branch: the MiscUtilModEntry sequence THEN IPModMain.init THEN
+            // PeripheralModMain.init. Runs INSIDE the unfrozen registry window (see the ctor
+            // note) — EntityType statics, ticket types, and every queued facade fill before
+            // their own registry's dispatch reaches them.
+            qouteall.q_misc_util.ImplRemoteProcedureCall.init();
+            qouteall.q_misc_util.MiscNetworking.init();
+            qouteall.q_misc_util.dimension.DimensionIntId.init();
+            qouteall.imm_ptl.core.IPModMain.init();
+            qouteall.imm_ptl.peripheral.PeripheralModMain.init();
+            SeamlessPortalsConstants.LOGGER.info(
+                "Seamless Portals: entity-portal engine initialized (NeoForge server/common, in-window)");
+        }
         if (event.getRegistryKey() == Registries.ENTITY_TYPE) {
             NeoForgePlatformHelper.drainEntityTypeRegistrations(
                 (id, type) -> Registry.register(BuiltInRegistries.ENTITY_TYPE, id, type));
@@ -178,6 +196,10 @@ public class SeamlessPortalsModNeoForge {
                 com.warwa.seamlessportals.mixin.TicketTypeInvoker.seamlessportals$invokeRegister(
                     "imm_ptl", TicketType.NO_TIMEOUT,
                     TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION);
+            // The block-era tickets, same window, both flag states (D3) — E0 boot fix: their
+            // old <clinit> registrations were exactly the "Registry is already frozen" crash.
+            PortalChunkTracker.bootstrapTicketType();
+            com.warwa.seamlessportals.chunk.PortalEntityTracker.bootstrapTicketTypes();
         }
         else if (event.getRegistryKey() == Registries.CREATIVE_MODE_TAB) {
             if (SeamlessPortalsConfig.isEntityPortals()) {

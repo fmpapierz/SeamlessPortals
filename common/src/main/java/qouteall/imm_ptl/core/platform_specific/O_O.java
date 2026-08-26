@@ -40,7 +40,9 @@ public class O_O {
     public static void onPlayerChangeDimensionClient(
         ResourceKey<Level> from, ResourceKey<Level> to
     ) {
-        RequiemCompat.onPlayerTeleportedClient();
+        // NF-PARITY C3: the client half of RequiemCompat is a separate class now (dist-split).
+        // This method's own signature/body are dist-safe (invokestatic needs no callee load).
+        RequiemCompatClient.onPlayerTeleportedClient();
     }
     
     public static void onPlayerTravelOnServer(
@@ -82,10 +84,14 @@ public class O_O {
     
     }
     
-    @Environment(EnvType.CLIENT)
-    public static ClientChunkCache createMyClientChunkManager(ClientLevel world, int loadDistance) {
-        return new ImmPtlClientChunkMap(world, loadDistance);
-    }
+    // NF-PARITY C3 dist-split (2026-08-25, E0 measured): createMyClientChunkManager DELETED.
+    // Verifying its body (ImmPtlClientChunkMap -> ClientChunkCache assignability) force-loaded
+    // client classes when O_O LINKED on a NeoForge dedicated server — the measured
+    // NoClassDefFoundError at IPModMain.loadConfig's O_O.getGameDir() call. Fabric never hit
+    // this only because its loader physically strips @Environment members on servers; NeoForge
+    // has no stripping, so client-typed bodies cannot live in server-linked classes. The single
+    // caller (MixinClientLevel:122, client-only) now constructs ImmPtlClientChunkMap directly —
+    // the method body was exactly that one constructor call.
     
     // NF-PARITY W2 (2026-08-25): getIsPehkuiPresent() deleted — zero callers in-tree
     // (pehkui compat was never ported; grep "getIsPehkuiPresent" = declaration only).

@@ -176,8 +176,14 @@ public class PortalWandItem extends Item {
         super(properties);
     }
     
+    // NF-PARITY C3 (2026-08-25): param LocalPlayer -> Player. The old signature made the
+    // body's showSettings(player) call a LocalPlayer->Player assignability proof, which
+    // force-loads the client-only LocalPlayer when this class VERIFIES — and this class
+    // verifies on the dedicated server (item registration class-inits it). The body only
+    // needs Player members; the sole caller (MixinMinecraft_PortalWand, client-linked)
+    // widens at the call site instead, where client classes are safe.
     @Environment(EnvType.CLIENT)
-    public static void onClientLeftClick(LocalPlayer player, ItemStack itemStack) {
+    public static void onClientLeftClick(Player player, ItemStack itemStack) {
         if (player.isShiftKeyDown()) {
             showSettings(player);
         }

@@ -39,7 +39,20 @@ public class CustomPortalGenManager {
     private final ArrayList<CustomPortalGeneration> convGen = new ArrayList<>();
     private final Map<UUID, WithDim<Vec3>> playerPosBeforeTravel = new HashMap<>();
     
-    public static void init() {
+    // NF-PARITY (2026-08-25): the data-pack-registry half of init(), split out with an
+    // idempotence latch. NeoForge's DataPackRegistryEvent.NewRegistry fires BEFORE the
+    // RegisterEvent unfreeze window (CommonModLoader.begin:52-55), while the REST of the IP
+    // init chain must run INSIDE that window (EntityType building creates intrusive holders,
+    // frozen otherwise) — so the NeoForge mod ctor calls this hoist early and the full init()
+    // runs later in-window; the latch makes init()'s own call a no-op there. Fabric reaches
+    // this only through init() (single call — behavior unchanged).
+    private static boolean dataPackRegistriesRegistered = false;
+
+    public static void registerDataPackRegistries() {
+        if (dataPackRegistriesRegistered) {
+            return;
+        }
+        dataPackRegistriesRegistered = true;
         Platform.get().registerDataPackRegistry( // NF-PARITY W9
             CustomPortalGeneration.REGISTRY_KEY,
             CustomPortalGeneration.CODEC
@@ -48,6 +61,10 @@ public class CustomPortalGenManager {
             CustomPortalGeneration.LEGACY_REGISTRY_KEY,
             CustomPortalGeneration.CODEC
         );
+    }
+
+    public static void init() {
+        registerDataPackRegistries();
 
         Platform.get().onServerDataPackReloadEnd(CustomPortalGenManager::onDataPackReloaded); // NF-PARITY W9
 

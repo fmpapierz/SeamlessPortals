@@ -265,9 +265,21 @@ public class PortalChunkTracker {
      * re-added every tick by {@link #updatePlayerPortalChunks} so it auto-expires
      * ~10 s after the player leaves the portal.
      */
-    private static final net.minecraft.server.level.TicketType SEAMLESS_CHUNK_TICKET =
-        com.warwa.seamlessportals.mixin.TicketTypeInvoker
-            .seamlessportals$invokeRegister("seamlessportals_chunk_residency", 200L, 0b0010);
+    // NF-PARITY (2026-08-25, E0 boot fix): was a static-FINAL field whose <clinit> registered
+    // the ticket type directly. Fine on Fabric (class loads at mod init, registries mutable);
+    // on NeoForge ANY class-load outside the RegisterEvent unfreeze window threw "Registry is
+    // already frozen" — this was the June-2026 ExceptionInInitializerError-at-constructMods
+    // crash. Now an idempotent bootstrap: Fabric calls it at mod init, NeoForge inside the
+    // RegisterEvent TICKET_TYPE branch. Registered in BOTH flag states (D3).
+    private static net.minecraft.server.level.TicketType SEAMLESS_CHUNK_TICKET;
+
+    /** Idempotent ticket-type registration — call only while the registry is mutable. */
+    public static void bootstrapTicketType() {
+        if (SEAMLESS_CHUNK_TICKET == null) {
+            SEAMLESS_CHUNK_TICKET = com.warwa.seamlessportals.mixin.TicketTypeInvoker
+                .seamlessportals$invokeRegister("seamlessportals_chunk_residency", 200L, 0b0010);
+        }
+    }
 
     /** One-shot log confirming Phase-4a residency tickets are being applied. */
     private static boolean loggedResidency = false;

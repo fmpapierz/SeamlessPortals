@@ -103,7 +103,7 @@ public class GlobalPortalStorage extends SavedData {
         });
         
         if (!O_O.isDedicatedServer()) {
-            initClient();
+            GlobalPortalStorageClient.initClient(); // NF-PARITY C3: client half split out
         }
     }
     
@@ -171,22 +171,11 @@ public class GlobalPortalStorage extends SavedData {
         }
     }
     
-    @Environment(EnvType.CLIENT)
-    private static void initClient() {
-        IPCGlobal.CLIENT_CLEANUP_EVENT.register(GlobalPortalStorage::onClientCleanup);
-    }
-    
-    @Environment(EnvType.CLIENT)
-    private static void onClientCleanup() {
-        if (ClientWorldLoader.getIsInitialized()) {
-            for (ClientLevel clientWorld : ClientWorldLoader.getClientWorlds()) {
-                for (Portal globalPortal : getGlobalPortals(clientWorld)) {
-                    globalPortal.remove(Entity.RemovalReason.UNLOADED_TO_CHUNK);
-                }
-            }
-        }
-    }
-    
+    // NF-PARITY C3 dist-split (2026-08-25): initClient/onClientCleanup/receiveGlobalPortalSync
+    // moved VERBATIM to GlobalPortalStorageClient — their ClientLevel->Level assignability
+    // proofs force-loaded client classes when this (server-linked SavedData) class verified
+    // on a NeoForge dedicated server. getPortalsFromTag became package-private for it.
+
     public GlobalPortalStorage(ServerLevel world_) {
         world = new WeakReference<>(world_);
         data = new ArrayList<>();
@@ -287,7 +276,7 @@ public class GlobalPortalStorage extends SavedData {
         clearAbnormalPortals(currWorld.getServer());
     }
     
-    private static List<Portal> getPortalsFromTag(
+    static List<Portal> getPortalsFromTag( // NF-PARITY C3: package-private for the client half
         CompoundTag tag,
         Level currWorld
     ) {
@@ -394,32 +383,8 @@ public class GlobalPortalStorage extends SavedData {
         //removed
     }
     
-    @Environment(EnvType.CLIENT)
-    public static void receiveGlobalPortalSync(ResourceKey<Level> dimension, CompoundTag compoundTag) {
-        ClientLevel world = ClientWorldLoader.getWorld(dimension);
-        
-        List<Portal> oldGlobalPortals = ((IEClientWorld) world).ip_getGlobalPortals();
-        if (oldGlobalPortals != null) {
-            for (Portal p : oldGlobalPortals) {
-                p.remove(Entity.RemovalReason.KILLED);
-            }
-        }
-        
-        List<Portal> newPortals = getPortalsFromTag(compoundTag, world);
-        for (Portal p : newPortals) {
-            p.myUnsetRemoved();
-            p.isGlobalPortal = true;
-            
-            Validate.isTrue(p.isPortalValid());
-            
-            ClientWorldLoader.getWorld(p.getDestDim());
-        }
-        
-        ((IEClientWorld) world).ip_setGlobalPortals(newPortals);
-        
-        LOGGER.info("Global Portals Updated {}", dimension.identifier());
-    }
-    
+    // receiveGlobalPortalSync -> GlobalPortalStorageClient (NF-PARITY C3, see the note above).
+
     public static void convertNormalPortalIntoGlobalPortal(Portal portal) {
         Validate.isTrue(!portal.getIsGlobal());
         Validate.isTrue(!portal.level().isClientSide());

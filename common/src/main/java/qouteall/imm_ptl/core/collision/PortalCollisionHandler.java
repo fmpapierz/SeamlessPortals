@@ -246,7 +246,7 @@ public class PortalCollisionHandler {
     
     private static Vec3 handleOtherSideChunkNotLoaded(Entity entity, Vec3 attemptedMove, Portal collidingPortal, AABB originalBoundingBox) {
         if (entity instanceof Player && entity.level().isClientSide()) {
-            CollisionHelper.informClientStagnant();
+            CollisionHelperClient.informClientStagnant(); // NF-PARITY C3
         }
         
         // when the other side chunk is not loaded, don't let the player to go into the portal.

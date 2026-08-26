@@ -290,7 +290,33 @@ public class NeoForgePlatformHelper implements PlatformHelper {
 
     @Override
     public void registerPayloads() {
-        SeamlessPortalsConstants.LOGGER.info("NeoForge network payloads will be registered via event");
+        // NF-PARITY W7 (2026-08-25): the COMPLETE block-era payload TYPE set, mirroring
+        // FabricPlatformHelper.registerPayloads' 19 registrations. The old NeoForge module
+        // registered only 5 — the missing 14 were the June-2026 server crash
+        // ("UnsupportedOperationException: Payload seamlessportals:portal_link may not be
+        // sent to the client" — NeoForge's checkPacket THROWS where Fabric silently drops).
+        // Queued through the seams; drained at RegisterPayloadHandlersEvent with map-lookup
+        // handlers (no-op until a handler is registered — the block-era handler SETS remain
+        // Fabric-only, the recorded flag-OFF deviation). The 4 payloads with live NeoForge
+        // handlers keep their direct registrations in onRegisterPayloadHandlers and are NOT
+        // duplicated here.
+        registerClientboundPayload(ModPayloads.RedirectedChunkPayload.TYPE, ModPayloads.RedirectedChunkPayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.PortalLinkPayload.TYPE, ModPayloads.PortalLinkPayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.ClientboundSeamlessMovePayload.TYPE, ModPayloads.ClientboundSeamlessMovePayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.SpeculativePrewarmScopePayload.TYPE, ModPayloads.SpeculativePrewarmScopePayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.RemoteBlockUpdatePayload.TYPE, ModPayloads.RemoteBlockUpdatePayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.RemoteEntityAddPayload.TYPE, ModPayloads.RemoteEntityAddPayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.RemoteEntityMovePayload.TYPE, ModPayloads.RemoteEntityMovePayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.RemoteEntityRemovePayload.TYPE, ModPayloads.RemoteEntityRemovePayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.RemoteEntityDataPayload.TYPE, ModPayloads.RemoteEntityDataPayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.RemoteEntityEquipmentPayload.TYPE, ModPayloads.RemoteEntityEquipmentPayload.STREAM_CODEC);
+        registerClientboundPayload(ModPayloads.PortalUnregisterPayload.TYPE, ModPayloads.PortalUnregisterPayload.STREAM_CODEC);
+        registerServerboundPayload(ModPayloads.RequestPortalDataPayload.TYPE, ModPayloads.RequestPortalDataPayload.STREAM_CODEC);
+        registerServerboundPayload(ModPayloads.ClientPortalCrossingPayload.TYPE, ModPayloads.ClientPortalCrossingPayload.STREAM_CODEC);
+        registerServerboundPayload(ModPayloads.RedirectedChunkAckPayload.TYPE, ModPayloads.RedirectedChunkAckPayload.STREAM_CODEC);
+
+        SeamlessPortalsConstants.LOGGER.info(
+            "NeoForge network payloads queued (19 block-era types; drained at RegisterPayloadHandlersEvent)");
     }
 
     public static void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {

@@ -109,6 +109,12 @@ public class SeamlessPortalsModFabric implements ModInitializer {
         // collide with the block-era "seamlessportals_chunk_residency".
         ImmPtlChunkTickets.TICKET_TYPE = TicketTypeInvoker.seamlessportals$invokeRegister(
             "imm_ptl", TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION);
+        // NF-PARITY E0 fix (2026-08-25): the block-era ticket registrations moved out of
+        // PortalChunkTracker/PortalEntityTracker <clinit> (a frozen-registry crash on
+        // NeoForge class-load) into idempotent bootstraps. Same timing as before on Fabric
+        // (mod init, registry mutable), UNCONDITIONAL in both flag states (D3).
+        PortalChunkTracker.bootstrapTicketType();
+        PortalEntityTracker.bootstrapTicketTypes();
 
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) server/common init — S13 step 4 ==============

@@ -31,6 +31,7 @@ import qouteall.imm_ptl.core.McHelper;
 import qouteall.imm_ptl.core.api.PortalAPI;
 import qouteall.imm_ptl.core.portal.Portal;
 import qouteall.imm_ptl.core.portal.global_portals.GlobalPortalStorage;
+import qouteall.imm_ptl.core.portal.global_portals.GlobalPortalStorageClient;
 import qouteall.imm_ptl.core.teleportation.ServerTeleportationManager;
 
 import java.util.Objects;
@@ -112,12 +113,9 @@ public class ImmPtlNetworking {
             buf.writeNbt(data);
         }
         
-        @Environment(EnvType.CLIENT)
-        public void handle() {
-            ResourceKey<Level> dim = PortalAPI.clientIntToDimKey(dimensionId);
-            
-            GlobalPortalStorage.receiveGlobalPortalSync(dim, data);
-        }
+        // NF-PARITY C3: handle() moved to ImmPtlNetworkingClient.handleGlobalPortalSync
+        // (client bodies cannot live in the record — registering TYPE class-inits it on the
+        // dedicated server; see ImmPtlNetworkingClient's header).
         
         @Override
         public @NotNull Type<? extends CustomPacketPayload> type() {
@@ -172,61 +170,9 @@ public class ImmPtlNetworking {
             return new PortalSyncPacket(id, uuid, type, dimensionId, x, y, z, extraData);
         }
         
-        /**
-         * {@link ClientPacketListener#handleAddEntity(ClientboundAddEntityPacket)}
-         */
-        @Environment(EnvType.CLIENT)
-        public void handle() {
-//            Helper.LOGGER.info("PortalSyncPacket handle {}", RenderStates.frameIndex);
-            
-            ResourceKey<Level> dimension = PortalAPI.clientIntToDimKey(dimensionId);
-            ClientLevel world = ClientWorldLoader.getWorld(dimension);
-            
-            Entity existing = world.getEntity(id);
-            
-            if (existing instanceof Portal existingPortal) {
-                // update existing portal (handles default animation)
-                if (!Objects.equals(existingPortal.getUUID(), uuid)) {
-                    LOGGER.error("UUID mismatch when syncing portal {} {}", existingPortal, uuid);
-                    return;
-                }
-                
-                if (existingPortal.getType() != entityType) {
-                    LOGGER.error(
-                        "Entity type mismatch when syncing portal {} {}", existingPortal, entityType
-                    );
-                    return;
-                }
-                
-                existingPortal.acceptDataSync(new Vec3(x, y, z), extraData);
-            }
-            else {
-                // spawn new portal
-                Entity entity = entityType.create(world, EntitySpawnReason.LOAD);
-                Validate.notNull(entity, "Entity type is null");
-                
-                if (!(entity instanceof Portal portal)) {
-                    LOGGER.error("Spawned entity is not a portal. {} {}", entity, entityType);
-                    return;
-                }
-                
-                entity.setId(id);
-                entity.setUUID(uuid);
-                entity.syncPacketPositionCodec(x, y, z);
-                entity.snapTo(x, y, z);
-                
-                portal.readPortalDataFromNbt(extraData);
-                
-                world.addEntity(entity);
-                
-                ClientWorldLoader.getWorld(portal.getDestDim());
-                Portal.CLIENT_PORTAL_SPAWN_EVENT.invoker().accept(portal);
-                
-                if (IPGlobal.clientPortalLoadDebug) {
-                    LOGGER.info("Portal loaded to client {}", portal);
-                }
-            }
-        }
+        // NF-PARITY C3: handle() moved to ImmPtlNetworkingClient.handlePortalSync — its
+        // ClientLevel->Level assignability proofs force-loaded client classes when this
+        // record VERIFIED on the dedicated server (registering TYPE class-inits it).
         
         @Override
         public @NotNull Type<? extends CustomPacketPayload> type() {
@@ -256,12 +202,12 @@ public class ImmPtlNetworking {
     public static void initClient() {
         PlatformHelper.getInstance().registerClientPayloadHandler(
             GlobalPortalSyncPacket.TYPE,
-            (packet, client) -> packet.handle()
+            (packet, client) -> ImmPtlNetworkingClient.handleGlobalPortalSync(packet) // NF-PARITY C3
         );
         
         PlatformHelper.getInstance().registerClientPayloadHandler(
             PortalSyncPacket.TYPE,
-            (packet, client) -> packet.handle()
+            (packet, client) -> ImmPtlNetworkingClient.handlePortalSync(packet) // NF-PARITY C3
         );
     }
     

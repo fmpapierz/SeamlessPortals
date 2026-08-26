@@ -40,7 +40,7 @@ import java.util.function.Function;
 
 public class CollisionHelper {
     
-    private static final LimitedLogger limitedLogger = new LimitedLogger(20);
+    static final LimitedLogger limitedLogger = new LimitedLogger(20); // NF-PARITY C3: package-private for the client half
     
     /**
      * cut a box with a plane.
@@ -437,26 +437,9 @@ public class CollisionHelper {
         });
     }
     
-    @Environment(EnvType.CLIENT)
-    public static void initClient() {
-        IPGlobal.POST_CLIENT_TICK_EVENT.register(CollisionHelper::tickClient);
-    }
-    
-    @Environment(EnvType.CLIENT)
-    public static void tickClient() {
-        updateClientCollidingStatus();
-        
-        updateClientStagnateStatus();
-    }
-    
-    @Environment(EnvType.CLIENT)
-    private static void updateClientCollidingStatus() {
-        if (ClientWorldLoader.getIsInitialized()) {
-            for (ClientLevel world : ClientWorldLoader.getClientWorlds()) {
-                updateCollidingPortalForWorld(world, 0);
-            }
-        }
-    }
+    // NF-PARITY C3 dist-split (2026-08-25): initClient/tickClient/updateClientCollidingStatus
+    // moved VERBATIM to CollisionHelperClient — the ClientLevel loop force-loaded client
+    // classes when this (server-linked) class verified on a NeoForge dedicated server.
     
     /**
      * Note that there are 3 kinds of portals in the aspect of collision:
@@ -512,33 +495,8 @@ public class CollisionHelper {
         return box;
     }
     
-    private static boolean thisTickStagnate = false;
-    private static boolean lastTickStagnate = false;
-    
-    @Environment(EnvType.CLIENT)
-    public static void informClientStagnant() {
-        thisTickStagnate = true;
-        limitedLogger.log("client movement stagnated");
-    }
-    
-    @Environment(EnvType.CLIENT)
-    private static void updateClientStagnateStatus() {
-        if (thisTickStagnate && lastTickStagnate) {
-            Minecraft.getInstance().gui.hud.setOverlayMessage(
-                Component.translatable("imm_ptl.stagnate_movement"),
-                false
-            );
-        }
-        else if (!thisTickStagnate && lastTickStagnate) {
-            Minecraft.getInstance().gui.hud.setOverlayMessage(
-                Component.literal(""),
-                false
-            );
-        }
-        
-        lastTickStagnate = thisTickStagnate;
-        thisTickStagnate = false;
-    }
+    // NF-PARITY C3: the stagnate flags + informClientStagnant/updateClientStagnateStatus
+    // moved to CollisionHelperClient (see the split note above).
     
     @Nullable
     public static AABB getTotalBlockCollisionBox(Entity entity, AABB box, Function<VoxelShape, VoxelShape> shapeFilter) {

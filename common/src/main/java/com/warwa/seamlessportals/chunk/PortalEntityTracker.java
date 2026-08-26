@@ -195,9 +195,9 @@ public class PortalEntityTracker {
      *
      * <p>Timeout 40 ticks (2 s) so re-adding every tick keeps it fresh.
      */
-    private static final TicketType MIRROR_VIEW_TICKET =
-        com.warwa.seamlessportals.mixin.TicketTypeInvoker
-            .seamlessportals$invokeRegister("seamlessportals_mirror_view", 40L, 0b0110);
+    // NF-PARITY (2026-08-25, E0 boot fix): static-final -> bootstrapped, same rationale as
+    // PortalChunkTracker.bootstrapTicketType (frozen-registry crash on NeoForge class-load).
+    private static TicketType MIRROR_VIEW_TICKET;
 
     /**
      * Pre-warm chunk ticket. Used by
@@ -222,9 +222,23 @@ public class PortalEntityTracker {
      * "walk up to portal and step in" interval, so the chunks remain
      * loaded by the time the player teleports.
      */
-    public static final TicketType PORTAL_PREWARM_TICKET =
-        com.warwa.seamlessportals.mixin.TicketTypeInvoker
-            .seamlessportals$invokeRegister("seamlessportals_portal_prewarm", 1200L, 0b0010);
+    // NF-PARITY (2026-08-25, E0 boot fix): the "PortalEntityTracker is referenced at mod-init
+    // time so its static init runs early enough" trick above is exactly what CRASHES on
+    // NeoForge (frozen registry at class-load). public non-final + bootstrap instead; the
+    // field is only READ at portal-formation/tick time, long after both loaders' windows.
+    public static TicketType PORTAL_PREWARM_TICKET;
+
+    /** Idempotent ticket-type registration — call only while the registry is mutable. */
+    public static void bootstrapTicketTypes() {
+        if (MIRROR_VIEW_TICKET == null) {
+            MIRROR_VIEW_TICKET = com.warwa.seamlessportals.mixin.TicketTypeInvoker
+                .seamlessportals$invokeRegister("seamlessportals_mirror_view", 40L, 0b0110);
+        }
+        if (PORTAL_PREWARM_TICKET == null) {
+            PORTAL_PREWARM_TICKET = com.warwa.seamlessportals.mixin.TicketTypeInvoker
+                .seamlessportals$invokeRegister("seamlessportals_portal_prewarm", 1200L, 0b0010);
+        }
+    }
 
     private static void keepChunksLoaded(ServerLevel destLevel, Vec3 center) {
         net.minecraft.world.level.ChunkPos centerChunk = new net.minecraft.world.level.ChunkPos(

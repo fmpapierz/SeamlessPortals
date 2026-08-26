@@ -118,8 +118,10 @@ public abstract class MixinClientLevel implements IEClientWorld {
         LevelExtractor levelExtractor, boolean bl, long l, int seaLevel, CallbackInfo ci
     ) {
         ClientLevel clientWorld = (ClientLevel) (Object) this;
+        // NF-PARITY C3 (2026-08-25): O_O.createMyClientChunkManager deleted (its client-typed
+        // body broke O_O's LINK on a NeoForge dedicated server); its one-line body inlined.
         ClientChunkCache myClientChunkManager =
-            O_O.createMyClientChunkManager(clientWorld, loadDistance);
+            new qouteall.imm_ptl.core.chunk_loading.ImmPtlClientChunkMap(clientWorld, loadDistance);
         chunkSource = myClientChunkManager;
     }
 

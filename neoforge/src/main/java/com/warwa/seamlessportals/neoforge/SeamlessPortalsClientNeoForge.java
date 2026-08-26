@@ -51,10 +51,14 @@ public class SeamlessPortalsClientNeoForge {
 
         // ===== WIRE 2: UNCONDITIONAL entity-renderer registration (both flag states) =====
         // Same rationale as Fabric's call-site note: entity types register unconditionally
-        // (D3), so their renderers must too. Queue now, drain at RegisterRenderers.
-        PortalEntityRenderers.registerAll();
-        modEventBus.addListener((EntityRenderersEvent.RegisterRenderers event) ->
-            NeoForgePlatformHelper.drainEntityRendererRegistrations(event::registerEntityRenderer));
+        // (D3), so their renderers must too. registerAll() runs INSIDE the event listener,
+        // not at ctor time — it references Portal.ENTITY_TYPE and friends, whose <clinit>
+        // BUILDS the types (intrusive holders — frozen-registry crash before the window; the
+        // E0 boot lesson). By RegisterRenderers (Minecraft.<init>) they are long initialized.
+        modEventBus.addListener((EntityRenderersEvent.RegisterRenderers event) -> {
+            PortalEntityRenderers.registerAll();
+            NeoForgePlatformHelper.drainEntityRendererRegistrations(event::registerEntityRenderer);
+        });
 
         modEventBus.addListener(this::onClientSetup);
 
