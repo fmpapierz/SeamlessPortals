@@ -32,6 +32,38 @@ public class FabricPlatformHelper implements PlatformHelper {
         ServerPlayNetworking.send(player, payload);
     }
 
+    // ==== NF-PARITY W13 (2026-08-25): chunk-sent seams, Fabric binding ==================
+    // The attachment initial-sync body moves here VERBATIM from PlayerChunkLoading.onSendPacket
+    // (it was :common's only fabric.impl.* reach — the 26.2 trySync note carries over).
+
+    @Override
+    public net.minecraft.network.protocol.Packet<?> decorateChunkPacket(
+            net.minecraft.world.level.chunk.LevelChunk chunk,
+            net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet) {
+        return packet; // Fabric's sendChunk sends the packet undecorated
+    }
+
+    @Override
+    public void onChunkSentToPlayer(
+            net.minecraft.server.network.ServerGamePacketListenerImpl listener,
+            net.minecraft.server.level.ServerLevel level,
+            net.minecraft.world.level.chunk.LevelChunk chunk) {
+        ServerPlayer player = listener.player;
+
+        java.util.List<net.fabricmc.fabric.impl.attachment.sync.AttachmentChange> changes =
+            new java.util.ArrayList<>();
+        ((net.fabricmc.fabric.impl.attachment.AttachmentTargetImpl) chunk)
+            .fabric_computeInitialSyncChanges(player, changes::add);
+
+        if (!changes.isEmpty()) {
+            // 26.2: fabric-data-attachment-api 2.2.16 removed AttachmentChange.partitionAndSendPackets;
+            //       the partition-and-send half moved to AttachmentSync.trySync(List, ServerPlayer)
+            //       (chunk-loading.md row 53; byte-faithful to Fabric's own 26.2 PlayerChunkSenderMixin,
+            //       which IP cancels + re-implements through this seam).
+            net.fabricmc.fabric.impl.attachment.sync.AttachmentSync.trySync(changes, player);
+        }
+    }
+
     // ==== NF-PARITY W12 (2026-08-25): configuration-phase seams, Fabric binding =========
     // Verbatim re-homing of the calls ImmPtlNetworkConfig.init()/initClient() made directly
     // before the facade rewrite — type registration + global receivers + the CONFIGURE hook.

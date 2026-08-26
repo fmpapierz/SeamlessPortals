@@ -3,9 +3,6 @@ package qouteall.imm_ptl.core.chunk_loading;
 import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
-import net.fabricmc.fabric.impl.attachment.AttachmentTargetImpl;
-import net.fabricmc.fabric.impl.attachment.sync.AttachmentChange;
-import net.fabricmc.fabric.impl.attachment.sync.AttachmentSync;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
@@ -199,36 +196,34 @@ public class PlayerChunkLoading {
         PacketRedirection.withForceRedirect(
             serverLevel,
             () -> {
+                // NF-PARITY W13: the loader's own sendChunk decorations ride the
+                // PlatformHelper seams now — decorateChunkPacket (identity on Fabric;
+                // NeoForge attaches the aux block-light data) and onChunkSentToPlayer
+                // (Fabric: the attachment initial-sync that used to live in onSendPacket
+                // here, moved verbatim into FabricPlatformHelper; NeoForge:
+                // ChunkWatchEvent.Sent with the C6 remote-dim guard). Both loaders' own
+                // PlayerChunkSender mixin/patch is bypassed by IP's HEAD-cancel of
+                // sendNextChunks, so this seam restores their per-chunk side effects.
                 serverGamePacketListenerImpl.send(
-                    new ClientboundLevelChunkWithLightPacket(
-                        levelChunk, serverLevel.getLightEngine(), null, null
-                    )
+                    com.warwa.seamlessportals.network.PlatformHelper.getInstance()
+                        .decorateChunkPacket(
+                            levelChunk,
+                            new ClientboundLevelChunkWithLightPacket(
+                                levelChunk, serverLevel.getLightEngine(), null, null
+                            )
+                        )
                 );
-                
-                onSendPacket(serverGamePacketListenerImpl, levelChunk);
+
+                // NF-PARITY W13 stale-@IPVanillaCopy fix (loader-independent): vanilla 26.2's
+                // sendChunk also starts debug-synchronizer chunk tracking
+                // (PlayerChunkSender.java:83 / NF:85); IP's copy predated it.
+                serverLevel.debugSynchronizers().startTrackingChunk(
+                    serverGamePacketListenerImpl.player, levelChunk.getPos());
+
+                com.warwa.seamlessportals.network.PlatformHelper.getInstance()
+                    .onChunkSentToPlayer(serverGamePacketListenerImpl, serverLevel, levelChunk);
             }
         );
-    }
-    
-    /**
-     * Fabric API's mixin {@link net.fabricmc.fabric.mixin.attachment.ChunkDataSenderMixin}
-     * is cancelled in {@link qouteall.imm_ptl.core.mixin.common.chunk_sync.MixinPlayerChunkSender}.
-     * So manually implement it here.
-     * */
-    @IPVanillaCopy
-    private static void onSendPacket(ServerGamePacketListenerImpl listener, LevelChunk chunk) {
-        ServerPlayer player = listener.player;
-        
-        List<AttachmentChange> changes = new ArrayList<>();
-        ((AttachmentTargetImpl) chunk).fabric_computeInitialSyncChanges(player, changes::add);
-
-        if (!changes.isEmpty()) {
-            // 26.2: fabric-data-attachment-api 2.2.16 removed AttachmentChange.partitionAndSendPackets;
-            //       the partition-and-send half moved to AttachmentSync.trySync(List, ServerPlayer)
-            //       (chunk-loading.md row 53; byte-faithful to Fabric's own 26.2 PlayerChunkSenderMixin,
-            //       which IP cancels + re-implements here). fabric_computeInitialSyncChanges survives.
-            AttachmentSync.trySync(changes, player);
-        }
     }
     
     /**

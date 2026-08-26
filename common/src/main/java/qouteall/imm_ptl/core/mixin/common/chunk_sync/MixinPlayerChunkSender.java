@@ -42,8 +42,11 @@ public class MixinPlayerChunkSender {
     }
     
     /**
-     * Fabric API mixins this method
-     * {@link net.fabricmc.fabric.mixin.attachment.ChunkDataSenderMixin}
+     * Fabric API mixins this method ({@code net.fabricmc.fabric.mixin.attachment.ChunkDataSenderMixin});
+     * NeoForge patches it (aux-light wrap + ChunkWatchEvent.Sent). This cancel bypasses BOTH —
+     * their per-chunk side effects are restored through the NF-PARITY W13 PlatformHelper seams
+     * in {@link qouteall.imm_ptl.core.chunk_loading.PlayerChunkLoading} (decorateChunkPacket +
+     * onChunkSentToPlayer).
      */
     @Inject(
         method = "sendNextChunks",

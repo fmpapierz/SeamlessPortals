@@ -83,6 +83,35 @@ public interface PlatformHelper {
      */
     void registerEntityTypes(Consumer<BiConsumer<Identifier, EntityType<?>>> registrationSource);
 
+    // ==== NF-PARITY W13 (2026-08-25): chunk-sent seams ====
+    // IP's PlayerChunkLoading HEAD-cancels vanilla PlayerChunkSender.sendNextChunks and
+    // re-implements the send loop, which bypasses each loader's per-chunk side effects.
+    // These two seams restore them: Fabric loses the attachment initial-sync (its own
+    // PlayerChunkSenderMixin dies with the cancel); NeoForge loses the aux-light packet
+    // wrap AND the ChunkWatchEvent.Sent post (NF PlayerChunkSender.java:76-87).
+
+    /**
+     * Wraps/decorates the chunk packet the way the loader's own sendChunk would (identity on
+     * Fabric; NeoForge: {@code chunk.getAuxLightManager(pos).sendLightDataTo(packet)} — without
+     * it every NeoForge dynamic-light mod loses block-light data for IP-sent chunks).
+     */
+    net.minecraft.network.protocol.Packet<?> decorateChunkPacket(
+        net.minecraft.world.level.chunk.LevelChunk chunk,
+        net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet);
+
+    /**
+     * Fired after IP sends a chunk packet (Fabric: attachment initial-sync; NeoForge:
+     * {@code EventHooks.fireChunkSent} → {@code ChunkWatchEvent.Sent}). The NeoForge binding
+     * skips REMOTE-dimension chunks (recon C6: NeoForge's attachment receiver resolves
+     * against {@code player.level()}, so a cross-dim chunk's attachments would apply to the
+     * same-coordinate chunk in the player's CURRENT dimension) and try/catches subscribers
+     * (a throwing listener must not abort IP's send loop).
+     */
+    void onChunkSentToPlayer(
+        net.minecraft.server.network.ServerGamePacketListenerImpl listener,
+        net.minecraft.server.level.ServerLevel level,
+        net.minecraft.world.level.chunk.LevelChunk chunk);
+
     // ==== NF-PARITY W12 (2026-08-25): configuration-phase networking seams ====
     // The only consumer is ImmPtlNetworkConfig (IP's version handshake). Contract: call all
     // three during mod init. Fabric registers immediately (PayloadTypeRegistry +

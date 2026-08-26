@@ -113,6 +113,40 @@ public class NeoForgePlatformHelper implements PlatformHelper {
         PENDING_ENTITY_TYPE_SOURCES.add(registrationSource);
     }
 
+    // ==== NF-PARITY W13 (2026-08-25): chunk-sent seams, NeoForge binding ================
+
+    @Override
+    public net.minecraft.network.protocol.Packet<?> decorateChunkPacket(
+            net.minecraft.world.level.chunk.LevelChunk chunk,
+            net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet) {
+        // NeoForge's own sendChunk wrap (NF PlayerChunkSender.java:77-79): attaches the
+        // auxiliary block-light data dynamic-light mods rely on.
+        return chunk.getAuxLightManager(chunk.getPos()).sendLightDataTo(packet);
+    }
+
+    @Override
+    public void onChunkSentToPlayer(
+            net.minecraft.server.network.ServerGamePacketListenerImpl listener,
+            net.minecraft.server.level.ServerLevel level,
+            net.minecraft.world.level.chunk.LevelChunk chunk) {
+        // C6 guard: NeoForge's chunk-attachment receiver resolves against player.level(), so
+        // an event for a REMOTE-dimension chunk would mis-apply attachments to the
+        // same-coordinate chunk in the player's current dimension. Remote-dim chunk
+        // attachments are simply not synced — narrow, documented deviation.
+        if (level.dimension() != listener.player.level().dimension()) {
+            return;
+        }
+        try {
+            // Posts ChunkWatchEvent.Sent ("may be used to send additional chunk-related data
+            // to the client"). This fires from inside IP's own send loop
+            // (PacketRedirection.withForceRedirect); a throwing subscriber must not abort it.
+            net.neoforged.neoforge.event.EventHooks.fireChunkSent(listener.player, chunk, level);
+        } catch (Throwable t) {
+            SeamlessPortalsConstants.LOGGER.error(
+                "[NF-PARITY W13] a ChunkWatchEvent.Sent subscriber threw during an IP chunk send", t);
+        }
+    }
+
     // ==== NF-PARITY W12 (2026-08-25): configuration-phase seams, NeoForge binding ========
 
     @Override
