@@ -100,6 +100,23 @@ public abstract class PortalRenderer {
             }
         );
 
+    // NF-PARITY guard (2026-08-26, was the L6 probe — kept permanently): this class captures
+    // Minecraft.getInstance() into a static-final at <clinit>. On NeoForge, mod init /
+    // registry events run BEFORE `new Minecraft(...)`, so any early class-init here freezes
+    // `client` as null and the first in-world frame crashes (measured; the convicted trigger
+    // — GlobalPortalStorage.init touching IPCGlobal — was re-homed to IPModMainClient.init).
+    // If a future change re-introduces an early touch, this fails LOUDLY at the trigger with
+    // its stack instead of null-crashing later at a distance.
+    static {
+        if (Minecraft.getInstance() == null) {
+            throw new IllegalStateException(
+                "[SEAMLESS] PortalRenderer <clinit> ran BEFORE Minecraft exists — some init"
+                    + " path touches the renderer family too early on this loader; see the"
+                    + " NF-PARITY guard note and re-home that call into the CLIENT init chain."
+            );
+        }
+    }
+
     public static final Minecraft client = Minecraft.getInstance();
 
     public abstract void onBeforeTranslucentRendering(Matrix4f modelView);

@@ -102,9 +102,14 @@ public class GlobalPortalStorage extends SavedData {
             }
         });
         
-        if (!O_O.isDedicatedServer()) {
-            GlobalPortalStorageClient.initClient(); // NF-PARITY C3: client half split out
-        }
+        // NF-PARITY L6 fix (2026-08-26, probe-convicted): the `!isDedicatedServer() ->
+        // GlobalPortalStorageClient.initClient()` call moved to IPModMainClient.init.
+        // Here it ran inside the SERVER init chain — which on NeoForge executes in the
+        // RegisterEvent window, BEFORE `new Minecraft(...)` — and touching
+        // IPCGlobal.CLIENT_CLEANUP_EVENT class-inits IPCGlobal -> new RendererDummy() ->
+        // PortalRenderer.<clinit> freezes `client = Minecraft.getInstance()` as NULL
+        // (the first-world-join render crash). Fabric never hit this because its mod init
+        // runs inside Minecraft's ctor, after `instance = this` (Minecraft.java:381).
     }
     
     public static GlobalPortalStorage get(

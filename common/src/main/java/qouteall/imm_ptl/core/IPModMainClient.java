@@ -73,6 +73,12 @@ public class IPModMainClient {
     }
     
     public static void init() {
+        // NF-PARITY L6 fix (2026-08-26): re-homed from GlobalPortalStorage.init's
+        // !isDedicatedServer() branch — the server init chain runs pre-Minecraft on NeoForge
+        // and the IPCGlobal touch froze PortalRenderer.client null (see the note there).
+        // Timing-neutral: CLIENT_CLEANUP_EVENT only fires on disconnect, long after init.
+        qouteall.imm_ptl.core.portal.global_portals.GlobalPortalStorageClient.initClient();
+
         ClientWorldLoader.init();
         
         ClientTeleportationManager.init();

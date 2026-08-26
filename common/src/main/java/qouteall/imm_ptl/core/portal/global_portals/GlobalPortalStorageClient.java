@@ -29,8 +29,8 @@ public class GlobalPortalStorageClient {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    /** Called from {@code GlobalPortalStorage.init()}'s non-dedicated branch. */
-    static void initClient() {
+    /** Called from IPModMainClient.init (re-homed there by the NF-PARITY L6 fix). */
+    public static void initClient() {
         IPCGlobal.CLIENT_CLEANUP_EVENT.register(GlobalPortalStorageClient::onClientCleanup);
     }
 
