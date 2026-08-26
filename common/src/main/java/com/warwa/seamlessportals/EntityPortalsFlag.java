@@ -37,7 +37,13 @@ import java.util.Properties;
  * subsequent launches the user's edited value is read from the same file. Both readers hit the same
  * file/key, so they never disagree within a session.
  *
- * <p><b>Fabric-only hard gate (S13-B P4).</b> The ported IP integration is wired on Fabric ONLY (the
+ * <p><b>NF-PARITY W23 (2026-08-25): the S13-B P4 Fabric-only hard gate below is RETIRED.</b>
+ * The W8-W13 facade rewrite removed every functional {@code net.fabricmc.*} reference from
+ * {@code :common} and the NeoForge module wires the same IP entrypoints, so the flag resolves
+ * identically on both loaders now ({@code resolveConfigDir} gained a reflective
+ * {@code FMLPaths.CONFIGDIR} arm). The paragraph below is kept for history:
+ *
+ * <p><b>[RETIRED] Fabric-only hard gate (S13-B P4).</b> The ported IP integration is wired on Fabric ONLY (the
  * init sequence, the entity/renderer registrations, the mixin-config manifest entries — WIRE 1/2;
  * NeoForge IP integration is deferred, S07 §6). The whole IP mixin set references {@code net.fabricmc.*}
  * types that exist only as {@code compileOnly} stubs off the NeoForge runtime classpath, so if the flag
@@ -82,22 +88,20 @@ public final class EntityPortalsFlag {
      */
     public static synchronized void seedIfUnset(boolean value) {
         if (cached == null) {
-            // S13-B P4: force-OFF off Fabric so a NeoForge config never turns the IP set on.
-            // (S17 note: the seed value comes from an EXPLICIT config key — the flipped default
-            // only applies in readFromDisk's missing-dir/file/key paths, identically here-vs-there
-            // because loadFrom only calls this when the key is present.)
-            cached = isFabricLoaderPresent() && value;
+            // NF-PARITY W23 (2026-08-25): the S13-B P4 force-OFF-off-Fabric gate is RETIRED.
+            // Its premise — "the IP mixin set references compileOnly net.fabricmc.* stubs and
+            // would NoClassDefFoundError on NeoForge" — no longer holds: the W8-W13 facade
+            // rewrite removed every functional net.fabricmc.* reference from :common (only the
+            // CLASS-retention @Environment annotations remain, which the JVM never resolves),
+            // and the NeoForge module now wires the same IP entrypoints as Fabric.
+            cached = value;
         }
     }
 
     private static boolean readFromDisk() {
         try {
-            // S13-B P4: IP integration is Fabric-only. Off Fabric (FabricLoader absent → plain NeoForge)
-            // the flag is force-OFF regardless of config, so the IP mixin set is never woven (it references
-            // compileOnly net.fabricmc.* stubs) and the runtime gates all fall to the block-era path.
-            if (!isFabricLoaderPresent()) {
-                return false;
-            }
+            // NF-PARITY W23: force-OFF-off-Fabric gate retired — see seedIfUnset. The flag now
+            // resolves identically on both loaders (default TRUE since the S17 cutover).
             Path dir = resolveConfigDir();
             if (dir == null) {
                 // S17 THE CUTOVER FLIP (EXECUTION_PLAN §S17, 2026-07-18): the DEFAULT is now TRUE
@@ -167,7 +171,22 @@ public final class EntityPortalsFlag {
                 return p;
             }
         } catch (Throwable ignored) {
-            // not Fabric, or loader not ready — fall through to the default
+            // not Fabric, or loader not ready — fall through to the NeoForge path
+        }
+        // NF-PARITY W23: NeoForge path — FMLPaths.CONFIGDIR is loaded and populated long
+        // before mixin config plugins are instantiated (FMLLoader.java: loadAbsolutePaths at
+        // offset 62 vs mixin-plugin instantiation at offset 663 — recon-verified), so this is
+        // safe at the earliest point this class runs. Reflective for the same reason the
+        // Fabric path is: this file must stay loadable on BOTH loaders.
+        try {
+            Class<?> pathsClass = Class.forName("net.neoforged.fml.loading.FMLPaths");
+            Object configDir = pathsClass.getField("CONFIGDIR").get(null);
+            Object path = pathsClass.getMethod("get").invoke(configDir);
+            if (path instanceof Path p) {
+                return p;
+            }
+        } catch (Throwable ignored) {
+            // not NeoForge either — fall through to the conventional default
         }
         try {
             return Paths.get("config");

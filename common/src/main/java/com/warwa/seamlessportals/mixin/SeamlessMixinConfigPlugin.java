@@ -107,7 +107,10 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
      */
     private static final Set<String> NEOFORGE_ONLY_MIXINS = Set.of(
         "qouteall.imm_ptl.core.mixin.client.render.MixinLevelExtractor_DestSubLevers_BEShapeNeoForge",
-        "com.warwa.seamlessportals.mixin.client.HandleRespawnLoadScreenShapeNeoForge"
+        "com.warwa.seamlessportals.mixin.client.HandleRespawnLoadScreenShapeNeoForge",
+        // W21: the clip-bracket main-pass draw site — Fabric drives it via
+        // BEFORE_TRANSLUCENT_TERRAIN; NeoForge has no event in that gap.
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelRenderer_ClipBracketMainPassNeoForge"
     );
 
     private static final Set<String> NON_NEOFORGE_MIXINS = Set.of(

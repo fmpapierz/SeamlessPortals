@@ -11,6 +11,11 @@ neoForge {
         accessTransformers.from(at.absolutePath)
     }
 
+    // NF-PARITY D.1 (2026-08-25): moddev defaults this to FALSE, which makes a stale AT entry
+    // a silent no-op — the exact failure family the repo's scoped-suppression lessons ban.
+    // All 16 entries were verified against neoforge262-ref; this keeps them verified.
+    validateAccessTransformers = true
+
     runs {
         configureEach {
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
@@ -19,11 +24,18 @@ neoForge {
         client {
             client()
             gameDirectory = file('runs/client')
+            // NF-PARITY W18: the C2 JIT protection is a property of the ported render code,
+            // NOT of the loader — the EXCEPTION_ACCESS_VIOLATION reproduced on both Temurin
+            // 25.0.2 and Zulu 25.0.4 (migration/C2_JIT_PROTECTION.md; proven leg E2
+            // 2026-08-02). One dontinline on the leaf, same as fabric/build.gradle's default
+            // c2JitArgs branch. Single-quoted so nothing interpolates.
+            jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
         }
         server {
             server()
             programArgument '--nogui'
             gameDirectory = file('runs/server')
+            jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
         }
     }
 
@@ -34,10 +46,26 @@ neoForge {
     }
 }
 
+// NF-PARITY W18: the gradle.properties toolchain pin (jdkVendor=AZUL) does NOT carry to
+// moddev — ModDevRunWorkflow copies ONLY languageVersion into the launcher spec and drops
+// the vendor (recon-verified against ModDevRunWorkflow.java:417-418; the
+// multiloader-common.gradle comment about loom deriving the launcher is loom-only). Re-pin
+// the launcher explicitly on every run task. Per the repo's standing rule
+// (gradle.properties:53-58): measure the LIVE process command line rather than trusting
+// this — Get-CimInstance filtered to this project's path must show zulu-25.
+tasks.withType(JavaExec).configureEach {
+    if (name.toLowerCase().contains('run')) {
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(project.java_version as int)
+            if (project.hasProperty('jdkVendor') && project.jdkVendor) {
+                vendor = JvmVendorSpec.matching(project.jdkVendor as String)
+            }
+        }
+    }
+}
+
 repositories {
-    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 for MC 26.2 (see dependencies). Modrinth's
-    // maven publishes both with EMPTY POMs (no transitives). This module had no repositories
-    // block before — added solely for these compileOnly compat types.
+    // S19-E lineage: real Sodium + Iris from the Modrinth maven (empty POMs, no transitives).
     maven {
         name = 'Modrinth'
         url = 'https://api.modrinth.com/maven'
@@ -45,11 +73,7 @@ repositories {
             includeGroup 'maven.modrinth'
         }
     }
-    // S19-E: real Cloth Config 26.2.155 for MC 26.2 (retires the F21
-    // me.shedaniel.autoconfig no-op). This loader recompiles :common's raw source,
-    // which imports me.shedaniel.autoconfig.* — so the real API must be visible on
-    // THIS compile too. compileOnly below. IP build.gradle:34 resolves cloth from
-    // this same maven.
+    // Real Cloth Config from the shedaniel maven (IP build.gradle:34 precedent).
     maven {
         name = 'Shedaniel'
         url = 'https://maven.shedaniel.me/'
@@ -60,29 +84,32 @@ repositories {
 }
 
 dependencies {
-    // S19-E: real Sodium 0.9.1 + Iris 1.11.2 on the :neoforge compile classpath. This loader
-    // recompiles :common's raw source (multiloader-loader.gradle `source(configurations.commonJava)`),
-    // which now references the real sodium/iris types after the F21 stub retirement — so those
-    // types must be visible on THIS compile too, exactly as they are on :common and :fabric.
-    // compileOnly ONLY: the compat code is runtime-dead today (On*Present invokers unwired until
-    // C2) and these are Fabric-published jars — they must NEVER enter the NeoForge runtime.
-    // Empty POMs (no transitives). Remap-free build → plain compileOnly. Retired at S20/C2.
+    // NF-PARITY W15 (2026-08-25): the FABRIC classifiers are RETIRED here — Sodium and Iris
+    // publish first-party -neoforge builds of the SAME versions on the SAME Modrinth
+    // projects (live-verified 2026-08-25: jars present; mod ids stay `sodium`/`iris`; all
+    // 23 compat-mixin target classes present under identical loader-neutral names —
+    // sodium's inside its META-INF/jarjar nested mod jar, iris's top-level). compileOnly
+    // ONLY: the compat code is invoker-gated at runtime (RenderCompatGating installs the
+    // OnSodiumPresent/OnIrisPresent invokers when the mods are detected); users supply the
+    // runtime jars.
+    // COMPILE classpath: the FABRIC classifiers — the -neoforge sodium maven artifact is a
+    // bootstrap wrapper whose classes live in a nested META-INF/jarjar mod jar, unusable as
+    // a compile dep. The class surface is IDENTICAL (live-verified 2026-08-25: all compat-
+    // mixin target FQNs present in the -neoforge builds — sodium nested, iris top-level), so
+    // compiling against -fabric and running against -neoforge is sound. compileOnly ONLY —
+    // these jars must NEVER enter the NeoForge runtime.
     compileOnly "maven.modrinth:sodium:${project.sodium_version}"
     compileOnly "maven.modrinth:iris:${project.iris_version}"
 
-    // S19-E: real Cloth Config 26.2.155 on the :neoforge compile classpath, replacing the
-    // retired F21 me.shedaniel.autoconfig no-op. This loader recompiles :common's raw source
-    // (multiloader-loader.gradle `source(configurations.commonJava)`), which imports
-    // me.shedaniel.autoconfig.* — so the real API must resolve on THIS compile too, exactly as
-    // on :common and :fabric. compileOnly ONLY: cloth-config-fabric is a FABRIC-published jar
-    // and the flag is force-OFF on NeoForge (EntityPortalsFlag S13-B P4) — it must NEVER enter
-    // the NeoForge runtime. Excludes mirror IP build.gradle:85 (fabric-api) + drop cloth's
-    // transitive fabric-loader (never wanted on NeoForge). Remap-free build → plain compileOnly.
-    // Retired at S20/C2.
-    compileOnly("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
-        exclude(group: 'net.fabricmc.fabric-api')
-        exclude(group: 'net.fabricmc', module: 'fabric-loader')
-    }
+    // NF-PARITY W15: real Cloth Config, NEOFORGE build — and IMPLEMENTATION + jarJar, not
+    // compileOnly: IPConfig implements ConfigData, which resolves at class-definition time →
+    // NCDFE without the runtime jar. This is the recorded C7 landmine
+    // (migration/EXECUTION_PLAN.md:1600-1601), now discharged. jarJar ships it inside the
+    // mod jar (mod id `cloth_config`, verified from the jar's neoforge.mods.toml); needed on
+    // BOTH dists (IPModMain.loadConfig runs on both). Zero declared transitives on the
+    // -neoforge artifact (module metadata verified) — no excludes needed.
+    implementation "me.shedaniel.cloth:cloth-config-neoforge:${project.cloth_config_version}"
+    jarJar "me.shedaniel.cloth:cloth-config-neoforge:${project.cloth_config_version}"
 }
 
 sourceSets.main.resources {

@@ -31,7 +31,7 @@
     "seamlessportals-ip-qmisc.mixins.json",
     "seamlessportals-ip-core-common.mixins.json",
     "seamlessportals-ip-client.mixins.json",
-    "seamlessportals-ip-fabric.mixins.json",
+    "seamlessportals-ip-platform.mixins.json",
     "seamlessportals-ip-peripheral.mixins.json",
     "seamlessportals-ip-dimlib.mixins.json",
     "seamlessportals-ip-compat.mixins.json"

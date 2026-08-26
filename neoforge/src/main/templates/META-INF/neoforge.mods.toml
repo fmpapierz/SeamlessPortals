@@ -18,15 +18,21 @@ config = "seamlessportals-ip-core-common.mixins.json"
 [[mixins]]
 config = "seamlessportals-ip-client.mixins.json"
 
-# S16 consistency (verify wf_91b049a9-0c1 minor): listed like the other IP configs. NEAR-inert on
-# NeoForge — EntityPortalsFlag force-falses off Fabric (S13-B P4), so the plugin skips every
-# qouteall.* mixin EXCEPT the two D3 carve-out sets, which bypass the flag and weave here too:
-# the worldgen accessors (S19-D; pure @Accessor/@Invoker) and the wand/stick legacy-item datafix
-# (S19 commons tail; additive @Inject(RETURN), references only DFU/guava/log4j — audited benign on
-# NeoForge, where the peripheral items are C7-deferred; converting the NBT preserves the data for a
-# later world move to Fabric). All behavioral qouteall mixins remain skipped; flag-ON NeoForge is C7.
+# NF-PARITY W16 (2026-08-25): the S16 "NEAR-inert on NeoForge" era is OVER — the W23 flag
+# retirement means EntityPortalsFlag resolves identically on both loaders (default ON since
+# S17), so the qouteall.* mixin sets weave here exactly as on Fabric. The D3 carve-out notes
+# (worldgen accessors, item datafix) remain accurate in both flag states.
 [[mixins]]
 config = "seamlessportals-ip-peripheral.mixins.json"
+
+# NF-PARITY W16: renamed from seamlessportals-ip-fabric.mixins.json — the name was a misnomer
+# (both mixins target vanilla PlayerList/ServerPlayer, zero net.fabricmc references; NeoForge's
+# patches to both targets are purely additive). Deliberately NOT rewritten onto NeoForge events:
+# PlayerList.respawn HEAD fires BEFORE players.remove/removePlayerImmediately, which the event
+# route (firePlayerRespawnPositionEvent, PlayerList.java:405) loses. Ordering note: both mixins
+# call ImmPtlChunkTracking/ServerTaskList — those are wired by the W9 facade, landed before this.
+[[mixins]]
+config = "seamlessportals-ip-platform.mixins.json"
 
 [[dependencies.${mod_id}]]
     modId="neoforge"
@@ -46,10 +52,10 @@ config = "seamlessportals-ip-peripheral.mixins.json"
 config = "seamlessportals-ip-dimlib.mixins.json"
 
 # C2-0 (migration/C2_DESIGN.md §6.1/§6.3): the real Sodium/Iris compat config. Listed on both
-# loaders because it ships in :common. INERT on NeoForge: its IPCompatMixinPlugin gate 2 is
-# EntityPortalsFlag.isOn(), which is force-false off Fabric (S13-B P4) — so gate 2 skips EVERY
-# compat class here regardless of whether sodium/embeddium/iris are present. No invoker install
-# exists on NeoForge either, so the facades no-op. (embeddium is NOT treated as sodium by the
-# plugin — design §6.3.) Flag-ON NeoForge is C7.
+# loaders because it ships in :common. NF-PARITY W17 (2026-08-25): no longer blanket-inert —
+# with the flag defaulting ON here, IPCompatMixinPlugin's gates decide per-mod: gate 1 is the
+# (LoadingModList-fixed) sodium/iris presence probe, gate 2 the entityPortals flag. First-party
+# Sodium/Iris publish -neoforge builds under the SAME mod ids and (verified by jar listing) the
+# SAME loader-neutral target packages, so present+flag-ON weaves the compat set here too.
 [[mixins]]
 config = "seamlessportals-ip-compat.mixins.json"

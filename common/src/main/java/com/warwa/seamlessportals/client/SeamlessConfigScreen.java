@@ -1,7 +1,7 @@
-package com.warwa.seamlessportals.fabric;
+package com.warwa.seamlessportals.client;
 
 import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
-import net.fabricmc.loader.api.FabricLoader;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
@@ -91,7 +91,7 @@ public class SeamlessConfigScreen extends Screen {
 
     @Override
     public void onClose() {
-        SeamlessPortalsConfig.saveTo(FabricLoader.getInstance().getConfigDir());
+        SeamlessPortalsConfig.saveTo(Platform.get().getConfigDir()); // NF-PARITY W19
         this.minecraft.setScreenAndShow(parent);
     }
 

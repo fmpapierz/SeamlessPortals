@@ -22,21 +22,21 @@
 //    accessible in seamlessportals.accesswidener:30, same widen CustomPortalGenManager relies on).
 package qouteall.imm_ptl.core.platform_specific.mixin.common;
 
-import net.minecraft.server.level.ServerLevel;
+
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.Relative;
+
 import net.minecraft.world.level.portal.TeleportTransition;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import qouteall.imm_ptl.core.IPPerServerInfo;
 import qouteall.imm_ptl.core.chunk_loading.ImmPtlChunkTracking;
 import qouteall.imm_ptl.core.mc_utils.ServerTaskList;
 import qouteall.imm_ptl.core.portal.custom_portal_gen.CustomPortalGenManager;
 
-import java.util.Set;
+
 
 @Mixin(ServerPlayer.class)
 public class MixinServerPlayerEntity_MA {
@@ -53,28 +53,13 @@ public class MixinServerPlayerEntity_MA {
         }
     }
 
-    // update chunk visibility data
-    @Inject(
-        method = "teleportTo(Lnet/minecraft/server/level/ServerLevel;DDDLjava/util/Set;FFZ)Z",
-        at = @At("HEAD")
-    )
-    private void onTeleported(
-        ServerLevel targetWorld,
-        double x,
-        double y,
-        double z,
-        Set<Relative> relatives,
-        float newYRot,
-        float newXRot,
-        boolean resetCamera,
-        CallbackInfoReturnable<Boolean> cir
-    ) {
-        ServerPlayer this_ = (ServerPlayer) (Object) this;
-
-        if (this_.level() != targetWorld) {
-            onBeforeDimensionTravel(this_);
-        }
-    }
+    // NF-PARITY W16/B4 (2026-08-25): the teleportTo(ServerLevel,DDD,Set,FFZ)Z HEAD injection
+    // is DELETED — on 26.2 it is SUBSUMED by the teleport(TeleportTransition) injection above:
+    // ServerPlayer.teleportTo -> super.teleportTo -> Entity.teleport(new TeleportTransition(...))
+    // (mc262 Entity.java:3313-3318), which ServerPlayer overrides — so a cross-dim teleportTo
+    // ran onBeforeDimensionTravel TWICE and queued two onAfterConventionalDimensionChange
+    // tasks. Pre-existing on Fabric too (loader-independent vanilla-shape drift, found in the
+    // NeoForge-parity recon). One injection now fires exactly once per conventional change.
 
     private static void onBeforeDimensionTravel(ServerPlayer player) {
         CustomPortalGenManager customPortalGenManager =

@@ -3,6 +3,7 @@ package com.warwa.seamlessportals.fabric;
 import com.terraformersmc.modmenu.api.ConfigScreenFactory;
 import com.terraformersmc.modmenu.api.ModMenuApi;
 import com.warwa.seamlessportals.EntityPortalsFlag;
+import com.warwa.seamlessportals.client.SeamlessConfigScreen; // NF-PARITY W19: moved to :common
 import qouteall.imm_ptl.core.platform_specific.IPConfigGUI;
 
 /**
