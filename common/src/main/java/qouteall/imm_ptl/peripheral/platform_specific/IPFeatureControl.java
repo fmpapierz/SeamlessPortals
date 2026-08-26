@@ -1,8 +1,7 @@
 package qouteall.imm_ptl.peripheral.platform_specific;
 
 import com.mojang.logging.LogUtils;
-import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.api.ModContainer;
+import com.warwa.seamlessportals.platform.Platform;
 import org.slf4j.Logger;
 
 public class IPFeatureControl {
@@ -13,11 +12,8 @@ public class IPFeatureControl {
         // its mod id "iportal"; this port ships as "seamlessportals" (same semantics — is OUR
         // jar nested inside another mod). Registry/asset namespaces stay verbatim; loader
         // self-lookups must use the host mod id or they throw at init.
-        ModContainer modContainer = FabricLoader.getInstance()
-            .getModContainer("seamlessportals")
-            .orElseThrow(() -> new RuntimeException("seamlessportals mod not found"));
-        
-        return modContainer.getContainingMod().isPresent();
+        // NF-PARITY W8: relaxation — the old code threw when the container was missing; isModNested returns false.
+        return Platform.get().isModNested("seamlessportals");
     }
     
     public static boolean enableVanillaBehaviorChangingByDefault() {

@@ -4,7 +4,7 @@ import com.mojang.logging.LogUtils;
 import com.mojang.serialization.Codec;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -81,7 +81,7 @@ public class GlobalPortalStorage extends SavedData {
     public BlockState bedrockReplacement;
     
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register((server) -> {
+        Platform.get().onServerTickEnd((server) -> { // NF-PARITY W9
             server.getAllLevels().forEach(world1 -> {
                 GlobalPortalStorage gps = GlobalPortalStorage.get(world1);
                 gps.tick();

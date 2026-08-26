@@ -1,8 +1,8 @@
 package qouteall.imm_ptl.core.platform_specific;
 
+import com.warwa.seamlessportals.platform.Platform;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -29,7 +29,7 @@ public class RequiemCompat {
     }
     
     public static void init() {
-        isRequiemPresent = FabricLoader.getInstance().isModLoaded("requiem");
+        isRequiemPresent = Platform.get().isModLoaded("requiem"); // NF-PARITY W8
         
         if (!isRequiemPresent) {
             return;

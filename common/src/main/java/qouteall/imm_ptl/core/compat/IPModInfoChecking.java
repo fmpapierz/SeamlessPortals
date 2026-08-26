@@ -1,11 +1,9 @@
 package qouteall.imm_ptl.core.compat;
 
 import com.mojang.logging.LogUtils;
+import com.warwa.seamlessportals.platform.Platform;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.api.ModContainer;
 import net.minecraft.ChatFormatting;
 // 26.2 API-map translation: net.minecraft.Util -> net.minecraft.util.Util (package move);
 // Util.backgroundExecutor() now returns net.minecraft.TracingExecutor, which implements Executor
@@ -233,11 +231,10 @@ public class IPModInfoChecking {
         IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.withDelayCondition(
             () -> Minecraft.getInstance().level == null,
             MyTaskList.oneShotTask(() -> {
-                if (IPConfig.getConfig().shouldDisplayWarning("many_mods") && !FabricLoader.getInstance().isDevelopmentEnvironment()) {
-                    List<ModContainer> topLevelMods = FabricLoader.getInstance().getAllMods().stream()
-                        .filter(modContainer -> modContainer.getContainingMod().isEmpty()).toList();
+                if (IPConfig.getConfig().shouldDisplayWarning("many_mods") && !Platform.get().isDevelopmentEnvironment()) { // NF-PARITY W8
+                    int topLevelModCount = Platform.get().getTopLevelModCount(); // NF-PARITY W8
 
-                    if (topLevelMods.size() > 20) {
+                    if (topLevelModCount > 20) {
                         CHelper.printChat(Component.literal(
                             "[Immersive Portals] WARNING: You are using many mods. It's likely that one of them has compatibility issues with Immersive Portals. " +
                                 "If you are sure that there is no compatibility issue, disable this warning."
@@ -285,7 +282,7 @@ public class IPModInfoChecking {
     }
 
     public static void initDedicatedServer() {
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+        Platform.get().onServerStarted(server -> { // NF-PARITY W8
             if (!IPGlobal.checkModInfoFromInternet) {
                 return;
             }

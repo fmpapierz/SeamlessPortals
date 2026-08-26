@@ -82,6 +82,19 @@ public interface Platform {
     /** Count of top-level (non-nested) mods — drives IP's "many mods" warning. */
     int getTopLevelModCount();
 
+    /**
+     * The mod's icon/logo path inside its jar, if declared (Fabric:
+     * {@code metadata.getIconPath(512)}; NeoForge: {@code IModInfo.getLogoFile()} — no size
+     * variants there, so the size hint is Fabric-only).
+     */
+    Optional<String> getModIconPath(String modId);
+
+    /** The mod's display name, or empty if absent. */
+    Optional<String> getModDisplayName(String modId);
+
+    /** All loaded mod ids, sorted (drives the debug mod-list dump). */
+    java.util.List<String> getLoadedModIds();
+
     // ==== registries / registration windows ====
 
     /**

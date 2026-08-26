@@ -3,8 +3,7 @@ package qouteall.imm_ptl.core.portal.custom_portal_gen;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.mojang.logging.LogUtils;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.fabricmc.fabric.api.event.registry.DynamicRegistries;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.network.chat.Component;
@@ -41,20 +40,18 @@ public class CustomPortalGenManager {
     private final Map<UUID, WithDim<Vec3>> playerPosBeforeTravel = new HashMap<>();
     
     public static void init() {
-        DynamicRegistries.register(
+        Platform.get().registerDataPackRegistry( // NF-PARITY W9
             CustomPortalGeneration.REGISTRY_KEY,
             CustomPortalGeneration.CODEC
         );
-        DynamicRegistries.register(
+        Platform.get().registerDataPackRegistry( // NF-PARITY W9
             CustomPortalGeneration.LEGACY_REGISTRY_KEY,
             CustomPortalGeneration.CODEC
         );
-        
-        ServerLifecycleEvents.END_DATA_PACK_RELOAD.register(
-            (server, resourceManager, success) -> onDataPackReloaded(server)
-        );
-        
-        ServerLifecycleEvents.SERVER_STARTED.register(CustomPortalGenManager::onDataPackReloaded);
+
+        Platform.get().onServerDataPackReloadEnd(CustomPortalGenManager::onDataPackReloaded); // NF-PARITY W9
+
+        Platform.get().onServerStarted(CustomPortalGenManager::onDataPackReloaded); // NF-PARITY W9
     }
     
     private static void onDataPackReloaded(MinecraftServer server) {

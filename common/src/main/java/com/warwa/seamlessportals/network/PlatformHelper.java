@@ -2,6 +2,7 @@ package com.warwa.seamlessportals.network;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -81,6 +82,66 @@ public interface PlatformHelper {
      * states (D3 registries-unconditional rule).
      */
     void registerEntityTypes(Consumer<BiConsumer<Identifier, EntityType<?>>> registrationSource);
+
+    // ==== NF-PARITY W12 (2026-08-25): configuration-phase networking seams ====
+    // The only consumer is ImmPtlNetworkConfig (IP's version handshake). Contract: call all
+    // three during mod init. Fabric registers immediately (PayloadTypeRegistry +
+    // Client/ServerConfigurationNetworking + ServerConfigurationConnectionEvents.CONFIGURE);
+    // NeoForge queues and drains inside RegisterPayloadHandlersEvent (payloads, NETWORK-thread
+    // handlers to match Fabric's config-receiver threading, .optional() so a modless client
+    // reaches IP's own polite reject/warn path instead of NeoForge's blunt one) and
+    // RegisterConfigurationTasksEvent (the configure hook — MOD bus, wired by the mod class).
+
+    /** Registers a clientbound CONFIGURATION-phase payload + its client receiver. */
+    <T extends CustomPacketPayload> void registerConfigClientboundPayload(
+        CustomPacketPayload.Type<T> type,
+        StreamCodec<? super FriendlyByteBuf, T> codec,
+        ClientConfigPayloadHandler<T> handler);
+
+    /** Registers a serverbound CONFIGURATION-phase payload + its server receiver. */
+    <T extends CustomPacketPayload> void registerConfigServerboundPayload(
+        CustomPacketPayload.Type<T> type,
+        StreamCodec<? super FriendlyByteBuf, T> codec,
+        ServerConfigPayloadHandler<T> handler);
+
+    /**
+     * Runs when a player's server-side CONFIGURATION phase starts (Fabric:
+     * {@code ServerConfigurationConnectionEvents.CONFIGURE}, after channel sync; NeoForge:
+     * {@code RegisterConfigurationTasksEvent}, after the modded-network negotiation — both
+     * points can already answer {@code canSend}).
+     */
+    void onServerConfigurationStart(ServerConfigurationStartHandler handler);
+
+    @FunctionalInterface
+    interface ClientConfigPayloadHandler<T extends CustomPacketPayload> {
+        /** {@code replySender} sends a serverbound configuration payload back on the same connection. */
+        void handle(T payload, Consumer<CustomPacketPayload> replySender);
+    }
+
+    @FunctionalInterface
+    interface ServerConfigPayloadHandler<T extends CustomPacketPayload> {
+        void handle(T payload, ServerConfigContext context);
+    }
+
+    /** Per-connection server-side configuration context. */
+    interface ServerConfigContext {
+        com.mojang.authlib.GameProfile gameProfile();
+        void finishTask(net.minecraft.server.network.ConfigurationTask.Type type);
+        void disconnect(net.minecraft.network.chat.Component reason);
+    }
+
+    @FunctionalInterface
+    interface ServerConfigurationStartHandler {
+        void onConfigure(ServerConfigStartControl control, net.minecraft.server.MinecraftServer server);
+    }
+
+    /** Controls available while a player's configuration phase is being assembled. */
+    interface ServerConfigStartControl {
+        boolean canSend(CustomPacketPayload.Type<?> type);
+        void addTask(net.minecraft.server.network.ConfigurationTask task);
+        void disconnect(net.minecraft.network.chat.Component reason);
+        com.mojang.authlib.GameProfile gameProfile();
+    }
 
     /**
      * Entity-RENDERER registration seam, mirroring the Fabric

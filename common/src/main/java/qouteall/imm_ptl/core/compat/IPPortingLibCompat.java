@@ -1,9 +1,9 @@
 package qouteall.imm_ptl.core.compat;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.warwa.seamlessportals.platform.Platform;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.loader.api.FabricLoader;
 import qouteall.imm_ptl.core.ducks.IEFrameBuffer;
 import qouteall.q_misc_util.Helper;
 
@@ -16,11 +16,11 @@ public class IPPortingLibCompat {
     private static Field f_port_lib$stencilEnabled;
     
     public static void init() {
-        if (FabricLoader.getInstance().isModLoaded("porting_lib")) {
+        if (Platform.get().isModLoaded("porting_lib")) { // NF-PARITY W8
             Helper.log("Porting Lib is present");
             isPortingLibPresent = true;
-            
-            if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
+
+            if (!Platform.get().isDedicatedServer()) { // NF-PARITY W8
                 f_port_lib$stencilEnabled = Helper.noError(
                     () -> RenderTarget.class.getDeclaredField("port_lib$stencilEnabled")
                 );

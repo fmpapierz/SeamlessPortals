@@ -2,15 +2,10 @@ package qouteall.imm_ptl.core.network;
 
 import com.mojang.authlib.GameProfile;
 import com.mojang.logging.LogUtils;
+import com.warwa.seamlessportals.network.PlatformHelper;
+import com.warwa.seamlessportals.platform.ClientPlatform;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationNetworking;
-import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.networking.v1.FabricServerConfigurationPacketListenerImpl;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
-import net.fabricmc.fabric.api.networking.v1.ServerConfigurationConnectionEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerConfigurationNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.FriendlyByteBuf;
@@ -114,14 +109,20 @@ public class ImmPtlNetworkConfig {
         }
         
         // handled on client side
-        @Environment(EnvType.CLIENT)
-        public void handle(ClientConfigurationNetworking.Context context) {
+        // NF-PARITY W12: loader Context -> facade replySender (PlatformHelper.
+        // ClientConfigPayloadHandler). The @Environment(CLIENT) annotation is DROPPED: the
+        // new signature references no client type (the old one took Fabric's client-only
+        // Context), and init() now forms a method ref to this from COMMON code — on a
+        // stripped Fabric dedicated server an annotated method would NoSuchMethodError at
+        // the lambda bootstrap. The body is dist-safe (logger + statics + the reply sender);
+        // only clients ever RECEIVE the payload.
+        public void handle(Consumer<CustomPacketPayload> replySender) {
             LOGGER.info(
                 "Client received ImmPtl config packet. Server mod version: {}", versionFromServer
             );
-            
+
             serverVersion = versionFromServer;
-            context.responseSender().sendPacket(new C2SConfigCompletePacket(
+            replySender.accept(new C2SConfigCompletePacket(
                 immPtlVersion, IPConfig.getConfig().clientTolerantVersionMismatchWithServer
             ));
         }
@@ -156,26 +157,27 @@ public class ImmPtlNetworkConfig {
         }
         
         // handled on server side
+        // NF-PARITY W12: loader Context -> facade ServerConfigContext. The gameProfile
+        // accessor cast and the addTask/completeTask interface-injection casts moved into the
+        // loader bindings (FabricPlatformHelper / NeoForgePlatformHelper), unchanged in
+        // behavior; the version-gate logic below is byte-identical.
         public void handle(
-            ServerConfigurationNetworking.Context context
+            PlatformHelper.ServerConfigContext context
         ) {
-            ServerConfigurationPacketListenerImpl networkHandler = context.packetListener();
-            
-            GameProfile gameProfile =
-                ((IEServerConfigurationPacketListenerImpl) networkHandler).ip_getGameProfile();
-            
+            GameProfile gameProfile = context.gameProfile();
+
             LOGGER.info(
                 "Server received ImmPtl config packet. Mod version: {} Player: {} {}",
                 versionFromClient, gameProfile.name(), gameProfile.id()
             );
-            
+
             if (versionFromClient.isNormalVersion() && immPtlVersion.isNormalVersion()) {
                 if ((versionFromClient.major != immPtlVersion.major ||
                     versionFromClient.minor != immPtlVersion.minor) &&
                     !IPConfig.getConfig().serverTolerantVersionMismatchWithClient &&
                     !clientTolerantVersionMismatch
                 ) {
-                    networkHandler.disconnect(Component.translatable(
+                    context.disconnect(Component.translatable(
                         "imm_ptl.mod_major_minor_version_mismatch",
                         immPtlVersion.toString(),
                         versionFromClient.toString()
@@ -191,15 +193,8 @@ public class ImmPtlNetworkConfig {
                     return;
                 }
             }
-            
-            // 26.2: addTask/completeTask are fabric-networking-api interface-injection methods on
-            //       vanilla ServerConfigurationPacketListenerImpl. This build's minimal loom does not
-            //       APPLY the injection to the recompiled common source (verified S10A §4/§7), so the
-            //       calls are routed through the injected interface FabricServerConfigurationPacketListenerImpl
-            //       (renamed from FabricServerConfigurationNetworkHandler in v6). The cast is compile-legal
-            //       (non-final class -> interface) on both :common (fabricStubs shell) and :fabric (real
-            //       fabric-api provides the type + applies the mixin at runtime). Zero logic change.
-            ((FabricServerConfigurationPacketListenerImpl) networkHandler).completeTask(ImmPtlConfigurationTask.TYPE);
+
+            context.finishTask(ImmPtlConfigurationTask.TYPE);
         }
         
         @Override
@@ -210,71 +205,67 @@ public class ImmPtlNetworkConfig {
     
     public static void init() {
         immPtlVersion = O_O.getImmPtlVersion();
-        
+
         LOGGER.info("Immersive Portals Core version {}", immPtlVersion);
-        
-        // 26.2: fabric-networking-api v6 renamed PayloadTypeRegistry.configurationS2C()/configurationC2S()
-        //       -> clientboundConfiguration()/serverboundConfiguration() (network.md headline-5/F1).
-        PayloadTypeRegistry.clientboundConfiguration().register(
-            S2CConfigStartPacket.TYPE, S2CConfigStartPacket.CODEC
+
+        // NF-PARITY W12: type registration + receivers ride the loader-neutral configuration
+        // seams (Fabric: PayloadTypeRegistry.clientboundConfiguration()/
+        // serverboundConfiguration() + registerGlobalReceiver; NeoForge:
+        // PayloadRegistrar.configurationToClient/ToServer, NETWORK thread, .optional() — see
+        // the bindings). BOTH payloads register HERE, in common init, exactly like the old
+        // PayloadTypeRegistry calls — the S2C TYPE must exist on a dedicated server (it SENDS
+        // the packet); the Fabric binding guards the client-only receiver half internally.
+        PlatformHelper.getInstance().registerConfigClientboundPayload(
+            S2CConfigStartPacket.TYPE, S2CConfigStartPacket.CODEC,
+            S2CConfigStartPacket::handle
+        );
+        PlatformHelper.getInstance().registerConfigServerboundPayload(
+            C2SConfigCompletePacket.TYPE, C2SConfigCompletePacket.CODEC,
+            C2SConfigCompletePacket::handle
         );
 
-        PayloadTypeRegistry.serverboundConfiguration().register(
-            C2SConfigCompletePacket.TYPE, C2SConfigCompletePacket.CODEC
-        );
-        
-        ServerConfigurationConnectionEvents.CONFIGURE.register((handler, server) -> {
-            if (ServerConfigurationNetworking.canSend(handler, S2CConfigStartPacket.TYPE)) {
-                // 26.2: interface-injection cast, see completeTask above.
-                ((FabricServerConfigurationPacketListenerImpl) handler).addTask(new ImmPtlConfigurationTask());
+        PlatformHelper.getInstance().onServerConfigurationStart((control, server) -> {
+            if (control.canSend(S2CConfigStartPacket.TYPE)) {
+                control.addTask(new ImmPtlConfigurationTask());
             }
             else {
-                if (server.isDedicatedServer()) {
+                if (server != null && server.isDedicatedServer()) {
                     if (IPConfig.getConfig().serverRejectClientWithoutImmPtl) {
                         // cannot use translation key here
                         // because the translation does not exist on client without the mod
-                        handler.disconnect(Component.literal(
+                        control.disconnect(Component.literal(
                             """
                                 The server detected that client does not install Immersive Portals mod.
                                 A server with Immersive Portals mod only works with the clients that have it.
-                                
+
                                 (Note: The networking sync may be interfered by Essential mod or other mods. When you are using these mods, the detection may malfunction. In this case, you can disable networking check in the server side by changing `serverRejectClientWithoutImmPtl` to `false` in the server's config file `config/immersive_portals.json` and restart.)
                                 """
                         ));
                     }
                     else {
-                        GameProfile gameProfile =
-                            ((IEServerConfigurationPacketListenerImpl) handler).ip_getGameProfile();
-                        
+                        GameProfile gameProfile = control.gameProfile();
+
                         LOGGER.warn(
-                            "Fabric API's sendable channel sync detected that client does not install ImmPtl. {} {}",
+                            "Channel sync detected that client does not install ImmPtl. {} {}",
                             gameProfile.name(), gameProfile.id()
                         );
                     }
                 }
                 else {
-                    LOGGER.error("ImmPtl configuration channel is non-sendable from Fabric API in integrated server. Fabric API sendable channel sync is interfered.");
+                    LOGGER.error("ImmPtl configuration channel is non-sendable in integrated server. Sendable channel sync is interfered.");
                 }
             }
         });
-        
-        ServerConfigurationNetworking.registerGlobalReceiver(
-            C2SConfigCompletePacket.TYPE,
-            C2SConfigCompletePacket::handle
-        );
     }
-    
+
     @Environment(EnvType.CLIENT)
     public static void initClient() {
-        // ClientConfigurationNetworking.ConfigurationPacketHandler does not provide
-        // ClientConfigurationPacketListenerImpl argument
-        ClientConfigurationNetworking.registerGlobalReceiver(
-            S2CConfigStartPacket.TYPE,
-            S2CConfigStartPacket::handle
-        );
-        
-        ClientLoginConnectionEvents.INIT.register(
-            (handler, client) -> {
+        // NF-PARITY W12: the S2C payload registration (type + client receiver) moved to
+        // init() — one combined seam call on both dists; the binding guards the client half.
+
+        // NF-PARITY W9: NeoForge binding fires this reset at LoggingOut instead of login-INIT (see ClientPlatform.onNewConnectionStateReset javadoc)
+        ClientPlatform.get().onNewConnectionStateReset(
+            () -> {
                 LOGGER.info("Client login init");
                 // if the config packet is not received,
                 // serverProtocolInfo will always be nul
@@ -282,8 +273,8 @@ public class ImmPtlNetworkConfig {
                 serverVersion = null;
             }
         );
-        
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+
+        ClientPlatform.get().onClientPlayJoin(handler -> { // NF-PARITY W9
             onClientJoin();
         });
     }

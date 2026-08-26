@@ -11,8 +11,8 @@
 package qouteall.dimlib.api;
 
 import com.mojang.logging.LogUtils;
-import net.fabricmc.fabric.api.event.Event;
-import net.fabricmc.fabric.api.event.EventFactory;
+import com.warwa.seamlessportals.event.Event; // NF-PARITY W9
+import com.warwa.seamlessportals.event.EventFactory;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;

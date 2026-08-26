@@ -2,7 +2,7 @@ package qouteall.imm_ptl.peripheral;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -77,7 +77,7 @@ public class PeripheralModMain {
     // IP PeripheralModMain:40-51 — icon = wand, title = imm_ptl.item_group (lang key already
     // shipped), contents = 3 wand mode-variants, the built-in command sticks, portal helper.
     // FabricCreativeModeTab.builder() = the 26.2 successor of FabricItemGroup.builder().
-    public static final CreativeModeTab TAB = FabricCreativeModeTab.builder()
+    public static final CreativeModeTab TAB = Platform.get().createCreativeTabBuilder() // NF-PARITY W2
         .icon(() -> new ItemStack(PortalWandItem.instance))
         .title(Component.translatable("imm_ptl.item_group"))
         .displayItems((parameters, entries) -> {

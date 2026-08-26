@@ -70,7 +70,7 @@ import java.util.Set;
  *
  * <h2>Loader safety</h2>
  * Config plugins load VERY early (before the mod initializers). Mod detection here is pure
- * reflection over {@code FabricLoader} / NeoForge {@code ModList} — the same dual-path shape
+ * reflection over {@code FabricLoader} / NeoForge {@code LoadingModList} — the same dual-path shape
  * {@code SeamlessMixinConfigPlugin.detect()} uses — so it touches nothing on the C7 landmine list
  * (no fabric EventFactory, no Minecraft class). Results are cached (presence is fixed for the JVM
  * session). {@code embeddium} is deliberately NOT treated as {@code sodium} here: it is a NeoForge
@@ -172,7 +172,7 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
      * Reflective dual-path mod detection — the same shape
      * {@code SeamlessMixinConfigPlugin.detect()} uses (a config plugin runs before the loader is
      * fully wired, so a hard {@code FabricLoader} dependency is unwise). Tries the FabricLoader
-     * path first, then the NeoForge {@code ModList} path. Every failure resolves {@code false}.
+     * path first, then the NeoForge {@code LoadingModList} path. Every failure resolves {@code false}.
      * NOTE: embeddium is intentionally NOT matched — see the class javadoc (design §6.3).
      */
     private static boolean detectMod(String modId) {
@@ -189,18 +189,21 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         } catch (Throwable ignored) {
             // not Fabric, or loader not ready — fall through to the NeoForge path
         }
-        // NeoForge path.
+        // NeoForge path. NF-PARITY W8 (2026-08-25): the old ModList.get() probe was a SILENT
+        // NO-OP here — ModList.INSTANCE is only assigned in ModLoader.gatherAndInitializeMods,
+        // long AFTER mixin config plugins run, so the reflective call threw into the catch and
+        // detection never fired on NeoForge. The correct early API is LoadingModList (populated
+        // at FMLLoader.java:346, well before mixin plugin instantiation) — same fix as
+        // SeamlessMixinConfigPlugin.detect().
         try {
-            Class<?> modListClass = Class.forName("net.neoforged.fml.ModList");
-            Object instance = modListClass.getMethod("get").invoke(null);
-            Object result = modListClass
-                .getMethod("isLoaded", String.class)
-                .invoke(instance, modId);
-            if (result instanceof Boolean && (Boolean) result) {
+            Class<?> lmlClass = Class.forName("net.neoforged.fml.loading.LoadingModList");
+            Object lml = lmlClass.getMethod("get").invoke(null);
+            java.lang.reflect.Method byId = lmlClass.getMethod("getModFileById", String.class);
+            if (byId.invoke(lml, modId) != null) {
                 return true;
             }
         } catch (Throwable ignored) {
-            // not NeoForge or the id is absent
+            // not NeoForge, or LoadingModList unavailable
         }
         return false;
     }

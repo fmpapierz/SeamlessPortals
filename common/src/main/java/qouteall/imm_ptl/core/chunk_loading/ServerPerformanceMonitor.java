@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.chunk_loading;
 
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.server.MinecraftServer;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.q_misc_util.Helper;
@@ -15,7 +15,7 @@ public class ServerPerformanceMonitor {
     private static final LimitedLogger limitedLogger = new LimitedLogger(50);
     
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register(ServerPerformanceMonitor::tick);
+        Platform.get().onServerTickEnd(ServerPerformanceMonitor::tick); // NF-PARITY W9
     }
     
     private static long lastUpdateTime = 0;

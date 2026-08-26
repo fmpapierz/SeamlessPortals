@@ -1,7 +1,7 @@
 package qouteall.imm_ptl.peripheral.dim_stack;
 
-import net.fabricmc.fabric.api.event.Event;
-import net.fabricmc.fabric.api.event.EventFactory;
+import com.warwa.seamlessportals.event.Event; // NF-PARITY W9
+import com.warwa.seamlessportals.event.EventFactory;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;

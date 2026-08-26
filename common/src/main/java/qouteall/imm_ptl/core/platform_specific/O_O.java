@@ -1,13 +1,10 @@
 package qouteall.imm_ptl.core.platform_specific;
 
+import com.warwa.seamlessportals.platform.ClientPlatform;
+import com.warwa.seamlessportals.platform.ModVersionInfo;
+import com.warwa.seamlessportals.platform.Platform;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
-import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.api.ModContainer;
-import net.fabricmc.loader.api.Version;
-import net.fabricmc.loader.api.VersionParsingException;
-import net.fabricmc.loader.impl.util.version.SemanticVersionImpl;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -31,13 +28,12 @@ import qouteall.q_misc_util.Helper;
 
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Optional;
 
 public class O_O {
     public static boolean isDimensionalThreadingPresent = false;
     
     public static boolean isForge() {
-        return false;
+        return Platform.get().isForgeLike(); // NF-PARITY W8
     }
     
     @Environment(EnvType.CLIENT)
@@ -55,7 +51,7 @@ public class O_O {
     }
     
     public static Path getGameDir() {
-        return FabricLoader.getInstance().getGameDir();
+        return Platform.get().getGameDir(); // NF-PARITY W8
     }
     
     private static final BlockState obsidianState = Blocks.OBSIDIAN.defaultBlockState();
@@ -65,19 +61,21 @@ public class O_O {
     }
     
     public static void postClientChunkLoadEvent(LevelChunk chunk) {
-        ClientChunkEvents.CHUNK_LOAD.invoker().onChunkLoad(
+        // NF-PARITY W8
+        ClientPlatform.get().postClientChunkLoadEvent(
             ((ClientLevel) chunk.getLevel()), chunk
         );
     }
-    
+
     public static void postClientChunkUnloadEvent(LevelChunk chunk) {
-        ClientChunkEvents.CHUNK_UNLOAD.invoker().onChunkUnload(
+        // NF-PARITY W8
+        ClientPlatform.get().postClientChunkUnloadEvent(
             ((ClientLevel) chunk.getLevel()), chunk
         );
     }
-    
+
     public static boolean isDedicatedServer() {
-        return FabricLoader.getInstance().getEnvironmentType() == EnvType.SERVER;
+        return Platform.get().isDedicatedServer(); // NF-PARITY W8
     }
     
     public static void postPortalSpawnEventForge(PortalGenInfo info) {
@@ -107,89 +105,61 @@ public class O_O {
     }
     
     public static boolean isModLoadedWithinVersion(String modId, @Nullable String startVersion, @Nullable String endVersion) {
-        Optional<ModContainer> modContainer = FabricLoader.getInstance().getModContainer(modId);
-        if (modContainer.isPresent()) {
-            Version version = modContainer.get().getMetadata().getVersion();
-            
-            try {
-                if (startVersion != null) {
-                    int i = Version.parse(startVersion).compareTo(version);
-                    if (i > 0) {
-                        return false;
-                    }
-                }
-                
-                if (endVersion != null) {
-                    int i = Version.parse(endVersion).compareTo(version);
-                    if (i < 0) {
-                        return false;
-                    }
-                }
-            }
-            catch (VersionParsingException e) {
-                e.printStackTrace();
-            }
-            
-            return true;
-            
-        }
-        else {
+        // NF-PARITY W8: empty compare = unparseable bound -> ignore that bound (old print-and-pass path)
+        if (!Platform.get().isModLoaded(modId)) {
             return false;
         }
+
+        if (startVersion != null) {
+            var c = Platform.get().compareModVersionTo(modId, startVersion);
+            if (c.isPresent() && c.getAsInt() < 0) {
+                return false;
+            }
+        }
+
+        if (endVersion != null) {
+            var c = Platform.get().compareModVersionTo(modId, endVersion);
+            if (c.isPresent() && c.getAsInt() > 0) {
+                return false;
+            }
+        }
+
+        return true;
     }
     
     public static @NotNull ImmPtlNetworkConfig.ModVersion getImmPtlVersion() {
         // SELF-IDENTITY RE-HOST (S13 first-light fix): "iportal" -> the host mod id.
-        Version version = FabricLoader.getInstance()
-            .getModContainer("seamlessportals").orElseThrow()
-            .getMetadata().getVersion();
-        
-        if (!(version instanceof SemanticVersionImpl semanticVersion)) {
-            // in dev env, its ${version}
-            return ImmPtlNetworkConfig.ModVersion.OTHER;
-        }
-        
-        if (semanticVersion.getVersionComponentCount() != 3) {
+        // NF-PARITY W8: dev-placeholder + wrong-component-count fallbacks merged into one isRegularSemantic() branch
+        ModVersionInfo info = Platform.get().getModVersion("seamlessportals").orElseThrow();
+
+        if (!info.isRegularSemantic()) {
             Helper.LOGGER.error(
-                "immersive portals version {} is not in regular form", semanticVersion
+                "immersive portals version {} is not in regular form", info.raw()
             );
             return ImmPtlNetworkConfig.ModVersion.OTHER;
         }
-        
+
         return new ImmPtlNetworkConfig.ModVersion(
-            semanticVersion.getVersionComponent(0),
-            semanticVersion.getVersionComponent(1),
-            semanticVersion.getVersionComponent(2)
+            info.major(),
+            info.minor(),
+            info.patch()
         );
     }
     
     public static String getImmPtlVersionStr() {
         // SELF-IDENTITY RE-HOST (S13 first-light fix): "iportal" -> the host mod id.
-        return FabricLoader.getInstance()
-            .getModContainer("seamlessportals").orElseThrow()
-            .getMetadata().getVersion().toString();
+        return Platform.get().getModVersion("seamlessportals").orElseThrow().raw(); // NF-PARITY W8
     }
-    
+
     public static boolean shouldUpdateImmPtl(String latestReleaseVersion) {
-        if (FabricLoader.getInstance().isDevelopmentEnvironment()) {
+        if (Platform.get().isDevelopmentEnvironment()) { // NF-PARITY W8
             return false;
         }
-        
+
         // SELF-IDENTITY RE-HOST (S13 first-light fix): "iportal" -> the host mod id.
-        Version currentVersion = FabricLoader.getInstance()
-            .getModContainer("seamlessportals").orElseThrow().getMetadata().getVersion();
-        try {
-            Version latestVersion = Version.parse(latestReleaseVersion);
-            
-            if (latestVersion.compareTo(currentVersion) > 0) {
-                return true;
-            }
-        }
-        catch (VersionParsingException e) {
-            e.printStackTrace();
-        }
-        
-        return false;
+        // NF-PARITY W8: installed-vs-latest compare on the facade (empty = unparseable -> false)
+        var c = Platform.get().compareModVersionTo("seamlessportals", latestReleaseVersion);
+        return c.isPresent() && c.getAsInt() < 0;
     }
     
     public static String getModDownloadLink() {
@@ -202,8 +172,7 @@ public class O_O {
     
     @Nullable
     public static Identifier getModIconLocation(String modid) {
-        String path = FabricLoader.getInstance().getModContainer(modid)
-            .flatMap(c -> c.getMetadata().getIconPath(512))
+        String path = Platform.get().getModIconPath(modid) // NF-PARITY W8
             .orElse(null);
         if (path == null) {
             return null;
@@ -230,19 +199,16 @@ public class O_O {
     
     @Nullable
     public static String getModName(String modid) {
-        return FabricLoader.getInstance().getModContainer(modid)
-            .map(c -> c.getMetadata().getName())
-            .orElse(null);
+        return Platform.get().getModDisplayName(modid).orElse(null); // NF-PARITY W8
     }
     
     // most quilt installations use quilted fabric api
     public static boolean isQuilt() {
-        return FabricLoader.getInstance().isModLoaded("quilted_fabric_api");
+        return Platform.get().isModLoaded("quilted_fabric_api"); // NF-PARITY W8
     }
     
     public static List<String> getLoadedModIds() {
-        return FabricLoader.getInstance().getAllMods().stream()
-            .map(c -> c.getMetadata().getId()).sorted().toList();
+        return Platform.get().getLoadedModIds(); // NF-PARITY W8
     }
     
     public static boolean allowTeleportingEntity(Entity entity, Portal portal) {
@@ -251,6 +217,6 @@ public class O_O {
     }
     
     public static boolean isDevEnv() {
-        return FabricLoader.getInstance().isDevelopmentEnvironment();
+        return Platform.get().isDevelopmentEnvironment(); // NF-PARITY W8
     }
 }

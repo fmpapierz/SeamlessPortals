@@ -5,7 +5,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -43,7 +43,7 @@ public class ImmPtlChunkTracking {
     public static final int defaultDelayUnloadGenerations = 4;
     
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register(ImmPtlChunkTracking::tick);
+        Platform.get().onServerTickEnd(ImmPtlChunkTracking::tick); // NF-PARITY W9
         IPGlobal.SERVER_CLEANUP_EVENT.register(ImmPtlChunkTracking::cleanup);
         
         DimensionAPI.SERVER_PRE_REMOVE_DIMENSION_EVENT.register(

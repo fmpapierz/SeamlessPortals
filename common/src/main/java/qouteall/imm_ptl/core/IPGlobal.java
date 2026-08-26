@@ -2,7 +2,6 @@ package qouteall.imm_ptl.core;
 
 import com.google.gson.Gson;
 import me.shedaniel.autoconfig.ConfigHolder;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import com.warwa.seamlessportals.event.Event;
 import net.minecraft.server.MinecraftServer;
 import qouteall.imm_ptl.core.platform_specific.IPConfig;
@@ -20,7 +19,7 @@ public class IPGlobal {
     
     
     /**
-     * This is different to {@link ClientTickEvents#END_CLIENT_TICK}
+     * This is different to {@code ClientTickEvents.END_CLIENT_TICK} (NF-PARITY W9: javadoc-only, import dropped)
      * It fires right after ticking client world, which is earlier than the Fabric event.
      */
     public static final Event<Runnable> POST_CLIENT_TICK_EVENT = Helper.createRunnableEvent();

@@ -1,7 +1,7 @@
 package qouteall.imm_ptl.core.teleportation;
 
 import com.mojang.logging.LogUtils;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
@@ -65,7 +65,7 @@ public class ServerTeleportationManager {
     }
     
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register(server -> {
+        Platform.get().onServerTickEnd(server -> { // NF-PARITY W9
             of(server).tick(server);
         });
         

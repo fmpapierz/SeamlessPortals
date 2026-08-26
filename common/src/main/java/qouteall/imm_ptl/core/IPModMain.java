@@ -3,7 +3,7 @@ package qouteall.imm_ptl.core;
 import com.mojang.logging.LogUtils;
 import me.shedaniel.autoconfig.AutoConfig;
 import me.shedaniel.autoconfig.serializer.GsonConfigSerializer;
-import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
@@ -100,9 +100,7 @@ public class IPModMain {
         
         BlockManipulationServer.init();
         
-        CommandRegistrationCallback.EVENT.register(
-            (dispatcher, ctx, environment) -> PortalCommand.register(dispatcher, ctx)
-        );
+        Platform.get().onRegisterServerCommands(PortalCommand::register); // NF-PARITY W9
         SubCommandArgumentType.init();
         TimingFunctionArgumentType.init();
         AxisArgumentType.init();

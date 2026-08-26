@@ -7,7 +7,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import net.fabricmc.fabric.api.command.v2.ArgumentTypeRegistry;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.synchronization.SingletonArgumentInfo;
 import net.minecraft.core.Direction;
@@ -60,7 +60,7 @@ public class AxisArgumentType implements ArgumentType<Direction.Axis> {
     }
     
     public static void init() {
-        ArgumentTypeRegistry.registerArgumentType(
+        Platform.get().registerArgumentType( // NF-PARITY W10
             McHelper.newResourceLocation("imm_ptl:axis"),
             AxisArgumentType.class,
             SingletonArgumentInfo.contextFree(() -> AxisArgumentType.instance)

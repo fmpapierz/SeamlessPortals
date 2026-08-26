@@ -3,7 +3,7 @@ package qouteall.imm_ptl.core.collision;
 import com.google.common.collect.ImmutableList;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.Direction;
@@ -430,7 +430,7 @@ public class CollisionHelper {
     }
     
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register((server) -> {
+        Platform.get().onServerTickEnd((server) -> { // NF-PARITY W9
             for (ServerLevel world : server.getAllLevels()) {
                 updateCollidingPortalForWorld(world, 0);
             }

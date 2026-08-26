@@ -32,6 +32,94 @@ public class FabricPlatformHelper implements PlatformHelper {
         ServerPlayNetworking.send(player, payload);
     }
 
+    // ==== NF-PARITY W12 (2026-08-25): configuration-phase seams, Fabric binding =========
+    // Verbatim re-homing of the calls ImmPtlNetworkConfig.init()/initClient() made directly
+    // before the facade rewrite — type registration + global receivers + the CONFIGURE hook.
+    // The addTask/completeTask interface-injection casts and the ip_getGameProfile accessor
+    // move HERE (loader module) from :common, unchanged in behavior.
+
+    @Override
+    public <T extends CustomPacketPayload> void registerConfigClientboundPayload(
+            CustomPacketPayload.Type<T> type,
+            StreamCodec<? super net.minecraft.network.FriendlyByteBuf, T> codec,
+            ClientConfigPayloadHandler<T> handler) {
+        // Type registration runs on BOTH dists (the server must know the type to SEND it —
+        // this is the old ImmPtlNetworkConfig.init() PayloadTypeRegistry call, re-homed).
+        PayloadTypeRegistry.clientboundConfiguration().register(type, codec);
+        // The RECEIVER half is client-only: ClientConfigurationNetworking is
+        // @Environment(CLIENT)-stripped on a Fabric dedicated server, so the branch must be
+        // unreachable there (guarded, never-executed references to stripped classes are safe
+        // — the same pattern IP's own dist guards use).
+        if (net.fabricmc.loader.api.FabricLoader.getInstance().getEnvironmentType()
+                == net.fabricmc.api.EnvType.CLIENT) {
+            net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationNetworking.registerGlobalReceiver(
+                type,
+                (payload, context) -> handler.handle(payload, p -> context.responseSender().sendPacket(p))
+            );
+        }
+    }
+
+    @Override
+    public <T extends CustomPacketPayload> void registerConfigServerboundPayload(
+            CustomPacketPayload.Type<T> type,
+            StreamCodec<? super net.minecraft.network.FriendlyByteBuf, T> codec,
+            ServerConfigPayloadHandler<T> handler) {
+        PayloadTypeRegistry.serverboundConfiguration().register(type, codec);
+        net.fabricmc.fabric.api.networking.v1.ServerConfigurationNetworking.registerGlobalReceiver(
+            type,
+            (payload, context) -> {
+                var listener = context.packetListener();
+                handler.handle(payload, new ServerConfigContext() {
+                    @Override
+                    public com.mojang.authlib.GameProfile gameProfile() {
+                        return ((qouteall.imm_ptl.core.mixin.common.other_sync.IEServerConfigurationPacketListenerImpl) listener)
+                            .ip_getGameProfile();
+                    }
+
+                    @Override
+                    public void finishTask(net.minecraft.server.network.ConfigurationTask.Type taskType) {
+                        ((net.fabricmc.fabric.api.networking.v1.FabricServerConfigurationPacketListenerImpl) listener)
+                            .completeTask(taskType);
+                    }
+
+                    @Override
+                    public void disconnect(net.minecraft.network.chat.Component reason) {
+                        listener.disconnect(reason);
+                    }
+                });
+            }
+        );
+    }
+
+    @Override
+    public void onServerConfigurationStart(ServerConfigurationStartHandler handler) {
+        net.fabricmc.fabric.api.networking.v1.ServerConfigurationConnectionEvents.CONFIGURE.register(
+            (listener, server) -> handler.onConfigure(new ServerConfigStartControl() {
+                @Override
+                public boolean canSend(CustomPacketPayload.Type<?> type) {
+                    return net.fabricmc.fabric.api.networking.v1.ServerConfigurationNetworking.canSend(listener, type);
+                }
+
+                @Override
+                public void addTask(net.minecraft.server.network.ConfigurationTask task) {
+                    ((net.fabricmc.fabric.api.networking.v1.FabricServerConfigurationPacketListenerImpl) listener)
+                        .addTask(task);
+                }
+
+                @Override
+                public void disconnect(net.minecraft.network.chat.Component reason) {
+                    listener.disconnect(reason);
+                }
+
+                @Override
+                public com.mojang.authlib.GameProfile gameProfile() {
+                    return ((qouteall.imm_ptl.core.mixin.common.other_sync.IEServerConfigurationPacketListenerImpl) listener)
+                        .ip_getGameProfile();
+                }
+            }, server)
+        );
+    }
+
     @Override
     public void sendToServer(CustomPacketPayload payload) {
         ClientPlayNetworking.send(payload);

@@ -2,8 +2,8 @@ package qouteall.imm_ptl.core.block_manipulation;
 
 import com.mojang.datafixers.util.Pair;
 import com.mojang.logging.LogUtils;
-import net.fabricmc.fabric.api.event.Event;
-import net.fabricmc.fabric.api.event.EventFactory;
+import com.warwa.seamlessportals.event.Event; // NF-PARITY W9
+import com.warwa.seamlessportals.event.EventFactory;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.FriendlyByteBuf;

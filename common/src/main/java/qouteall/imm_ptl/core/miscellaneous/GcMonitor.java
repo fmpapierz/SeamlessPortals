@@ -3,7 +3,7 @@ package qouteall.imm_ptl.core.miscellaneous;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -68,7 +68,7 @@ public class GcMonitor {
     }
     
     public static void initCommon() {
-        ServerTickEvents.END_SERVER_TICK.register((server) -> {
+        Platform.get().onServerTickEnd((server) -> { // NF-PARITY W9
             if (server.isDedicatedServer()) {
                 update();
             }

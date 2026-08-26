@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.peripheral.alternate_dimension;
 
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.Registry;
@@ -117,7 +117,7 @@ public class AlternateDimensions {
             AlternateDimensions::addAltDimsIfUsedInDimStack
         );
         
-        ServerTickEvents.END_SERVER_TICK.register(AlternateDimensions::tick);
+        Platform.get().onServerTickEnd(AlternateDimensions::tick); // NF-PARITY W9
         
         DimensionTemplate.registerDimensionTemplate(
             "skyland", SKYLAND_TEMPLATE

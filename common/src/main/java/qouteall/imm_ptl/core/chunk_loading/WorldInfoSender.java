@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.chunk_loading;
 
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -15,7 +15,7 @@ import java.util.Set;
 
 public class WorldInfoSender {
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register((server) -> {
+        Platform.get().onServerTickEnd((server) -> { // NF-PARITY W9
             Profiler.get().push("portal_send_world_info");
             if (McHelper.getServerGameTime() % 100 == 42) {
                 for (ServerPlayer player : server.getPlayerList().getPlayers()) {

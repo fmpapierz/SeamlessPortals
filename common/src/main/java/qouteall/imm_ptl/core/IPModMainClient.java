@@ -1,6 +1,7 @@
 package qouteall.imm_ptl.core;
 
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+import com.mojang.brigadier.CommandDispatcher;
+import com.warwa.seamlessportals.platform.ClientPlatform;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -102,8 +103,11 @@ public class IPModMainClient {
         
         GcMonitor.initClient();
         
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
-            ClientDebugCommand.register(dispatcher);
+        ClientPlatform.get().onRegisterClientCommands(new ClientPlatform.ClientCommandRegistrationHandler() { // NF-PARITY W11
+            @Override
+            public <S> void register(CommandDispatcher<S> dispatcher, ClientPlatform.ClientCommandSupport<S> support) {
+                ClientDebugCommand.register(dispatcher, support);
+            }
         });
         
 //        showIntelVideoCardWarning();

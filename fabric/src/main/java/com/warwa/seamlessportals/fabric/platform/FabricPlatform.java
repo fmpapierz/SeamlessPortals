@@ -118,6 +118,24 @@ public class FabricPlatform implements Platform {
     }
 
     @Override
+    public Optional<String> getModIconPath(String modId) {
+        return FabricLoader.getInstance().getModContainer(modId)
+            .flatMap(container -> container.getMetadata().getIconPath(512));
+    }
+
+    @Override
+    public Optional<String> getModDisplayName(String modId) {
+        return FabricLoader.getInstance().getModContainer(modId)
+            .map(container -> container.getMetadata().getName());
+    }
+
+    @Override
+    public java.util.List<String> getLoadedModIds() {
+        return FabricLoader.getInstance().getAllMods().stream()
+            .map(c -> c.getMetadata().getId()).sorted().toList();
+    }
+
+    @Override
     public <T> void registerDataPackRegistry(ResourceKey<Registry<T>> key, Codec<T> codec) {
         DynamicRegistries.register(key, codec);
     }

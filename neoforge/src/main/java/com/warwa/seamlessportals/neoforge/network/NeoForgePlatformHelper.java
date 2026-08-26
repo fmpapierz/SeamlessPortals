@@ -57,6 +57,15 @@ public class NeoForgePlatformHelper implements PlatformHelper {
     private static final List<Consumer<EntityRendererSink>>
         PENDING_ENTITY_RENDERERS = new ArrayList<>();
 
+    // NF-PARITY W12 (2026-08-25): configuration-phase queues. Payload registrations drain in
+    // onRegisterPayloadHandlers below (NETWORK-thread + optional, see the drain); the
+    // configuration-start handlers drain in onRegisterConfigurationTasks (MOD-bus event,
+    // subscribed by SeamlessPortalsModNeoForge).
+    private static final List<Consumer<PayloadRegistrar>>
+        PENDING_CONFIG_PAYLOADS = new ArrayList<>();
+    private static final List<PlatformHelper.ServerConfigurationStartHandler>
+        CONFIG_START_HANDLERS = new ArrayList<>();
+
     /** Renderer-registration sink for {@link #drainEntityRendererRegistrations}. */
     @FunctionalInterface
     public interface EntityRendererSink {
@@ -102,6 +111,88 @@ public class NeoForgePlatformHelper implements PlatformHelper {
     @Override
     public void registerEntityTypes(Consumer<BiConsumer<Identifier, EntityType<?>>> registrationSource) {
         PENDING_ENTITY_TYPE_SOURCES.add(registrationSource);
+    }
+
+    // ==== NF-PARITY W12 (2026-08-25): configuration-phase seams, NeoForge binding ========
+
+    @Override
+    public <T extends CustomPacketPayload> void registerConfigClientboundPayload(
+            CustomPacketPayload.Type<T> type,
+            StreamCodec<? super net.minecraft.network.FriendlyByteBuf, T> codec,
+            ClientConfigPayloadHandler<T> handler) {
+        PENDING_CONFIG_PAYLOADS.add(registrar ->
+            registrar.configurationToClient(type, codec,
+                (payload, context) -> handler.handle(payload, context::reply)));
+    }
+
+    @Override
+    public <T extends CustomPacketPayload> void registerConfigServerboundPayload(
+            CustomPacketPayload.Type<T> type,
+            StreamCodec<? super net.minecraft.network.FriendlyByteBuf, T> codec,
+            ServerConfigPayloadHandler<T> handler) {
+        PENDING_CONFIG_PAYLOADS.add(registrar ->
+            registrar.configurationToServer(type, codec, (payload, context) ->
+                handler.handle(payload, new ServerConfigContext() {
+                    @Override
+                    public com.mojang.authlib.GameProfile gameProfile() {
+                        // getOwner() is a NeoForge-public on ServerCommonPacketListenerImpl (:229).
+                        return ((net.minecraft.server.network.ServerConfigurationPacketListenerImpl)
+                            context.listener()).getOwner();
+                    }
+
+                    @Override
+                    public void finishTask(net.minecraft.server.network.ConfigurationTask.Type taskType) {
+                        context.finishCurrentTask(taskType);
+                    }
+
+                    @Override
+                    public void disconnect(net.minecraft.network.chat.Component reason) {
+                        context.disconnect(reason);
+                    }
+                })));
+    }
+
+    @Override
+    public void onServerConfigurationStart(ServerConfigurationStartHandler handler) {
+        CONFIG_START_HANDLERS.add(handler);
+    }
+
+    /**
+     * MOD-BUS listener (subscribed by {@code SeamlessPortalsModNeoForge}). Fires per
+     * connection when the server assembles its configuration tasks — AFTER NeoForge's
+     * modded-network negotiation ({@code startConfiguration} runs the query first, so
+     * {@code hasChannel} answers correctly here; NeoForge's own
+     * {@code ConfigurationInitialization} relies on the same ordering).
+     */
+    public static void onRegisterConfigurationTasks(
+            net.neoforged.neoforge.network.event.RegisterConfigurationTasksEvent event) {
+        var listener = event.getListener();
+        PlatformHelper.ServerConfigStartControl control = new PlatformHelper.ServerConfigStartControl() {
+            @Override
+            public boolean canSend(CustomPacketPayload.Type<?> type) {
+                return listener.hasChannel(type);
+            }
+
+            @Override
+            public void addTask(net.minecraft.server.network.ConfigurationTask task) {
+                event.register(task);
+            }
+
+            @Override
+            public void disconnect(net.minecraft.network.chat.Component reason) {
+                listener.disconnect(reason);
+            }
+
+            @Override
+            public com.mojang.authlib.GameProfile gameProfile() {
+                return ((net.minecraft.server.network.ServerConfigurationPacketListenerImpl) listener).getOwner();
+            }
+        };
+        net.minecraft.server.MinecraftServer server =
+            net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
+        for (PlatformHelper.ServerConfigurationStartHandler handler : CONFIG_START_HANDLERS) {
+            handler.onConfigure(control, server);
+        }
     }
 
     @Override
@@ -205,6 +296,16 @@ public class NeoForgePlatformHelper implements PlatformHelper {
         // until the ported IP network stage, S7, starts feeding them).
         PENDING_CLIENTBOUND.forEach((type, codec) -> registerQueuedClientbound(registrar, type, codec));
         PENDING_SERVERBOUND.forEach((type, codec) -> registerQueuedServerbound(registrar, type, codec));
+
+        // NF-PARITY W12: configuration-phase payload drain. NETWORK thread = Fabric's config-
+        // receiver threading (the handshake replies mid-configuration); .optional() so a client
+        // WITHOUT the mod still connects far enough for IP's own reject/warn policy
+        // (serverRejectClientWithoutImmPtl) to decide — NeoForge's default non-optional gating
+        // would disconnect first and make that config a silent no-op (recon C5.1).
+        PayloadRegistrar configRegistrar = registrar
+            .executesOn(net.neoforged.neoforge.network.registration.HandlerThread.NETWORK)
+            .optional();
+        PENDING_CONFIG_PAYLOADS.forEach(reg -> reg.accept(configRegistrar));
 
         SeamlessPortalsConstants.LOGGER.info("NeoForge network payloads registered");
     }

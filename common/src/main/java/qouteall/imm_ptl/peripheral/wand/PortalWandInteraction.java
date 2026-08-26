@@ -1,7 +1,7 @@
 package qouteall.imm_ptl.peripheral.wand;
 
 import com.mojang.logging.LogUtils;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
@@ -318,7 +318,7 @@ public class PortalWandInteraction {
     }
     
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register((server) -> {
+        Platform.get().onServerTickEnd((server) -> { // NF-PARITY W9
             of(server).draggingSessionMap.entrySet().removeIf(
                 e -> {
                     ServerPlayer player = e.getKey();

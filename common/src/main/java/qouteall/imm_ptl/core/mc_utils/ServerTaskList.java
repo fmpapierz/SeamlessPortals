@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.mc_utils;
 
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import com.warwa.seamlessportals.platform.Platform;
 import net.minecraft.server.MinecraftServer;
 import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.IPPerServerInfo;
@@ -8,7 +8,7 @@ import qouteall.q_misc_util.my_util.MyTaskList;
 
 public class ServerTaskList {
     public static void init() {
-        ServerTickEvents.END_SERVER_TICK.register(server -> {
+        Platform.get().onServerTickEnd(server -> { // NF-PARITY W9
             of(server).processTasks();
         });
         

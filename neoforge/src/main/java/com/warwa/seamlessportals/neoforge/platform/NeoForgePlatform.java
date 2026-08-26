@@ -144,6 +144,24 @@ public class NeoForgePlatform implements Platform {
         return info.getOwningFile().getFile().getDiscoveryAttributes().parent() == null;
     }
 
+    @Override
+    public Optional<String> getModIconPath(String modId) {
+        return ModList.get().getModContainerById(modId)
+            .flatMap(container -> container.getModInfo().getLogoFile());
+    }
+
+    @Override
+    public Optional<String> getModDisplayName(String modId) {
+        return ModList.get().getModContainerById(modId)
+            .map(container -> container.getModInfo().getDisplayName());
+    }
+
+    @Override
+    public java.util.List<String> getLoadedModIds() {
+        return ModList.get().getMods().stream()
+            .map(IModInfo::getModId).sorted().toList();
+    }
+
     // ==== registries ====
 
     @Override

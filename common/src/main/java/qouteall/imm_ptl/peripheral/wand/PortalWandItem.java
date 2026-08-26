@@ -3,10 +3,10 @@ package qouteall.imm_ptl.peripheral.wand;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.serialization.Codec;
+import com.warwa.seamlessportals.platform.ClientPlatform;
+import com.warwa.seamlessportals.platform.Platform;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -62,12 +62,10 @@ public class PortalWandItem extends Item {
     }
 
     public static void init() {
-        AttackBlockCallback.EVENT.register((player, world, hand, pos, direction) -> {
-            if (player.getMainHandItem().getItem() == instance) {
-                // cannot break block using the wand
-                return InteractionResult.FAIL;
-            }
-            return InteractionResult.PASS;
+        // NF-PARITY W9 (handler returns false to cancel)
+        Platform.get().onAttackBlock((player, world, hand, pos, direction) -> {
+            // cannot break block using the wand
+            return player.getMainHandItem().getItem() != instance;
         });
         
         BlockManipulationServer.canDoCrossPortalInteractionEvent.register(p -> {
@@ -76,7 +74,7 @@ public class PortalWandItem extends Item {
     }
     
     public static void initClient() {
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+        ClientPlatform.get().onClientTickEnd(client -> { // NF-PARITY W9
             if (client.player != null) {
                 ItemStack itemStack = client.player.getMainHandItem();
                 if (itemStack.getItem() == instance) {
