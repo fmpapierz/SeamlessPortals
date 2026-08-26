@@ -27,6 +27,8 @@
     "client.LevelRendererAccessorMixin",
     "client.LevelRendererBlockOutlineMixin",
     "client.HandleRespawnMixin",
+    "client.HandleRespawnLoadScreenShapeVanilla",
+    "client.HandleRespawnLoadScreenShapeNeoForge",
     "client.MainProjectionBobMixin",
     "client.ParticleEngineAccessorMixin",
     "client.LocalPlayerMixin",

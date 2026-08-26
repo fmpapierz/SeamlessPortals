@@ -52,7 +52,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 4. After respawn completes, we feed pre-loaded chunks into the new level
  */
 @Mixin(ClientPacketListener.class)
-public abstract class HandleRespawnMixin {
+public abstract class HandleRespawnMixin implements SeamlessRespawnTransitionAccess {
 
     @Shadow private boolean clientLoaded;
 
@@ -86,6 +86,15 @@ public abstract class HandleRespawnMixin {
      * consumed by the renderer-swap @Redirects, cleared at RETURN).
      */
     private boolean seamlessportals$seamlessTransition = false;
+
+    /**
+     * NF-PARITY W3/B2: duck accessor for the loader-shape loading-screen siblings
+     * (see {@link SeamlessRespawnTransitionAccess}).
+     */
+    @Override
+    public boolean seamlessportals$isSeamlessTransition() {
+        return seamlessportals$seamlessTransition;
+    }
 
     /**
      * Set by the {@code new ClientLevel} redirect if a cached renderer+level
@@ -800,29 +809,17 @@ public abstract class HandleRespawnMixin {
         self.assignBaseValues(other);
     }
 
-    /**
-     * Skip the loading screen when we have pre-loaded chunks.
-     *
-     * startWaitingForNewLevel normally creates a LevelLoadTracker and shows
-     * a LevelLoadingScreen. We cancel it entirely and send the player-loaded
-     * packet immediately so the server knows we're ready.
-     */
-    @Inject(method = "startWaitingForNewLevel", at = @At("HEAD"), cancellable = true)
-    private void seamlessportals$skipLoadingScreen(LocalPlayer player, ClientLevel level,
-            LevelLoadingScreen.Reason reason, CallbackInfo ci) {
-        if (!seamlessportals$seamlessTransition) return;
-
-        // Send player-loaded notification to server immediately
-        // (vanilla would wait until chunks compile, but we already have them)
-        ((ClientPacketListener)(Object) this).send(new ServerboundPlayerLoadedPacket());
-        this.clientLoaded = true;
-
-        SeamlessPortalsConstants.rlog(
-            "[SEAMLESS] Skipped loading screen for {} — sent player-loaded immediately",
-            level.dimension().identifier());
-
-        ci.cancel();
-    }
+    // NF-PARITY W3/B2 (2026-08-25): the startWaitingForNewLevel loading-screen skip moved
+    // OUT of this class into the loader-shape siblings HandleRespawnLoadScreenShapeVanilla /
+    // ...ShapeNeoForge. NeoForge added a 5-arg overload (LocalPlayer, ClientLevel, Reason,
+    // @Nullable ResourceKey<Level> to, @Nullable ResourceKey<Level> from) and PATCHED
+    // handleRespawn to call THAT one directly (NF ClientPacketListener.java:1298/:1634); the
+    // 3-arg survives only as a delegating stub (:1630) that handleRespawn never calls. The old
+    // name-only @Inject would bind BOTH overloads on NeoForge with a 3-param handler — an
+    // InvalidInjectionException on the 5-arg — and pinning the 3-arg descriptor would cancel
+    // nothing on the respawn path there. SeamlessMixinConfigPlugin applies exactly one sibling
+    // per loader (NEOFORGE_ONLY_MIXINS / NON_NEOFORGE_MIXINS), each at defaultRequire=1
+    // strictness; they read the transition flag via SeamlessRespawnTransitionAccess.
 
     /**
      * After handleRespawn completes, feed pre-loaded chunks into the new level

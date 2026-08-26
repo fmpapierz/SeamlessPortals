@@ -101,24 +101,16 @@ public class MixinLevelExtractor_DestSubLevers {
         original.call(instance, camera, frustum, deltaTracker, output);
     }
 
-    @WrapOperation(
-        method = "extract",
-        at = @At(
-            value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractVisibleBlockEntities"
-                + "(Lnet/minecraft/client/Camera;F"
-                + "Lnet/minecraft/client/renderer/state/level/LevelRenderState;)V"
-        )
-    )
-    private void ip_leverExtractBlockEntities(
-        LevelExtractor instance, Camera camera, float deltaPartialTick, LevelRenderState output,
-        Operation<Void> original
-    ) {
-        if (SecondaryWorldRenderCore.isDestExtracting && IPGlobal.debugSkipExtractBlockEntities) {
-            return;
-        }
-        original.call(instance, camera, deltaPartialTick, output);
-    }
+    // NF-PARITY W3/B1 (2026-08-25): the extractVisibleBlockEntities lever moved OUT of this
+    // shared class into the two loader-shape variants (MixinLevelExtractor_DestSubLevers_
+    // BEShapeVanilla / _BEShapeNeoForge). NeoForge patches the call inside extract() to a
+    // 4-arg overload taking a trailing @Nullable Frustum (NF LevelExtractor.java:176; the
+    // 3-arg survives only as a deprecated delegating stub at NF:277-279 that extract() never
+    // calls), so no single @WrapOperation descriptor+handler pair can match both loaders.
+    // SeamlessMixinConfigPlugin selects exactly one variant per loader (NEOFORGE_ONLY_MIXINS /
+    // NON_NEOFORGE_MIXINS), keeping require=1 strictness within each loader. The other eight
+    // wraps in this class are loader-identical (extract() body diff 2026-08-25: only the
+    // createRegion additionalRenderers arg, the BE call, and an additive neoforge_custom tail).
 
     @WrapOperation(
         method = "extract",

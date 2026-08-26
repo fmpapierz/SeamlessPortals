@@ -3,7 +3,6 @@ package qouteall.q_misc_util.dimension;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.event.Event;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -30,11 +29,12 @@ public class DimensionIntId {
     
     public static void init() {
         // make sure that dimension int id updates before global portal storage update
-        DimensionAPI.SERVER_DIMENSION_DYNAMIC_UPDATE_EVENT.addPhaseOrdering(
-            DYNAMIC_UPDATE_EVENT_EARLY_PHASE,
-            Event.DEFAULT_PHASE
-        );
-        
+        // NF-PARITY W2 (2026-08-25): the addPhaseOrdering(early, Event.DEFAULT_PHASE) call is
+        // DROPPED — SERVER_DIMENSION_DYNAMIC_UPDATE_EVENT is a hand-rolled no-op holder
+        // (DimensionAPI.java:35-40, "the register()/addPhaseOrdering() calls are safe no-ops"),
+        // so the phase ordering was already inert; the ordering invariant is preserved by init
+        // order at the owning stage (mod-owned Event.java:22-26 policy). Removes the only
+        // net.fabricmc.fabric.api.event.Event reference in this file.
         DimensionAPI.SERVER_DIMENSION_DYNAMIC_UPDATE_EVENT.register(
             DYNAMIC_UPDATE_EVENT_EARLY_PHASE,
             (server, dimensions) -> {

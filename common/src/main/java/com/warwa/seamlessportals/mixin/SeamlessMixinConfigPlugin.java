@@ -94,6 +94,50 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         "qouteall.imm_ptl.peripheral.mixin.common.dfu.MixinItemStackComponentizationFix"
     );
 
+    /**
+     * NF-PARITY W3/B1 (2026-08-25): LOADER-SHAPE VARIANT sets. Where NeoForge PATCHES a vanilla
+     * call site so that one {@code @WrapOperation}/{@code @Inject} descriptor cannot match both
+     * loaders (e.g. {@code LevelExtractor.extract}'s {@code extractVisibleBlockEntities} call —
+     * 3-arg on vanilla/Fabric, 4-arg with a trailing {@code @Nullable Frustum} on NeoForge), the
+     * mixin exists in TWO shape variants and exactly ONE is applied per loader. This keeps
+     * {@code defaultRequire = 1} strictness within each loader — the selected variant hard-fails
+     * on a zero-match instead of silently no-opping (the repo's scoped-suppression lesson).
+     * Loader detection = {@link #isNeoForgeRuntime()}, a class-presence probe safe at
+     * mixin-bootstrap time.
+     */
+    private static final Set<String> NEOFORGE_ONLY_MIXINS = Set.of(
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelExtractor_DestSubLevers_BEShapeNeoForge",
+        "com.warwa.seamlessportals.mixin.client.HandleRespawnLoadScreenShapeNeoForge"
+    );
+
+    private static final Set<String> NON_NEOFORGE_MIXINS = Set.of(
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelExtractor_DestSubLevers_BEShapeVanilla",
+        "com.warwa.seamlessportals.mixin.client.HandleRespawnLoadScreenShapeVanilla"
+    );
+
+    private static volatile Boolean neoForgeRuntime = null;
+
+    /**
+     * Whether we are running under NeoForge's FML. {@code net.neoforged.fml.loading.FMLLoader}
+     * is loaded long before mixin config plugins are instantiated (FMLLoader bootstraps the
+     * mixin service itself), so a class-presence probe is safe and stable here. On Fabric the
+     * class is absent → false.
+     */
+    private static boolean isNeoForgeRuntime() {
+        Boolean cached = neoForgeRuntime;
+        if (cached != null) return cached;
+        boolean present;
+        try {
+            Class.forName("net.neoforged.fml.loading.FMLLoader", false,
+                SeamlessMixinConfigPlugin.class.getClassLoader());
+            present = true;
+        } catch (Throwable ignored) {
+            present = false;
+        }
+        neoForgeRuntime = present;
+        return present;
+    }
+
     private static volatile Boolean sodiumLoaded = null;
 
     private static boolean isSodiumPresent() {
@@ -116,20 +160,20 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         } catch (Throwable ignored) {
             // not Fabric or class missing
         }
-        // NeoForge path
+        // NeoForge path. NF-PARITY W8 fix (2026-08-25, recon-confirmed latent defect): the old
+        // ModList.get() probe was a SILENT NO-OP here — ModList.INSTANCE is only assigned in
+        // ModLoader.gatherAndInitializeMods (ModLoader.java:78-99), long AFTER mixin config
+        // plugins run, so the reflective call NPE'd into the catch and Sodium detection never
+        // fired on NeoForge. The correct early API is LoadingModList (populated at
+        // FMLLoader.java:346, well before mixin plugin instantiation).
         try {
-            Class<?> modListClass = Class.forName("net.neoforged.fml.ModList");
-            Object instance = modListClass.getMethod("get").invoke(null);
-            Object result = modListClass
-                .getMethod("isLoaded", String.class)
-                .invoke(instance, "sodium");
-            if (result instanceof Boolean && (Boolean) result) return true;
-            result = modListClass
-                .getMethod("isLoaded", String.class)
-                .invoke(instance, "embeddium");
-            if (result instanceof Boolean && (Boolean) result) return true;
+            Class<?> lmlClass = Class.forName("net.neoforged.fml.loading.LoadingModList");
+            Object lml = lmlClass.getMethod("get").invoke(null);
+            java.lang.reflect.Method byId = lmlClass.getMethod("getModFileById", String.class);
+            if (byId.invoke(lml, "sodium") != null) return true;
+            if (byId.invoke(lml, "embeddium") != null) return true;
         } catch (Throwable ignored) {
-            // not NeoForge or no Sodium fork present
+            // not NeoForge, or LoadingModList unavailable
         }
         return false;
     }
@@ -146,6 +190,15 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        // NF-PARITY W3/B1: loader-shape variant selection — exactly one variant of a
+        // shape-split mixin applies per loader (see the sets' javadoc). Checked FIRST so a
+        // variant never leaks through the flag gates below on the wrong loader.
+        if (NEOFORGE_ONLY_MIXINS.contains(mixinClassName) && !isNeoForgeRuntime()) {
+            return false;
+        }
+        if (NON_NEOFORGE_MIXINS.contains(mixinClassName) && isNeoForgeRuntime()) {
+            return false;
+        }
         // D3 EXCLUSIVITY GATE (entity-portal migration, migration/EXCLUSIVITY_LEDGER.md §4):
         // the ported Immersive-Portals mixin set lives in the qouteall.* packages. It is woven
         // ONLY when the entity-portal engine is ON. Flag OFF (the explicit opt-out; the default

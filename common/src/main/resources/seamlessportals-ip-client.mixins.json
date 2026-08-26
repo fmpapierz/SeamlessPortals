@@ -46,6 +46,8 @@
     "client.render.MixinGlStateManager",
     "client.render.MixinLevelExtractor",
     "client.render.MixinLevelExtractor_DestSubLevers",
+    "client.render.MixinLevelExtractor_DestSubLevers_BEShapeVanilla",
+    "client.render.MixinLevelExtractor_DestSubLevers_BEShapeNeoForge",
     "client.render.MixinLevelExtractor_Reload",
     "client.render.MixinLevelExtractor_TerrainSetupOverride",
     "client.render.MixinLevelRenderer",

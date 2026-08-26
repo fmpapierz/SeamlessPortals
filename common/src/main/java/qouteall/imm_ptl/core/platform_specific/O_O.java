@@ -89,10 +89,9 @@ public class O_O {
         return new ImmPtlClientChunkMap(world, loadDistance);
     }
     
-    public static boolean getIsPehkuiPresent() {
-        return FabricLoader.getInstance().isModLoaded("pehkui");
-    }
-    
+    // NF-PARITY W2 (2026-08-25): getIsPehkuiPresent() deleted — zero callers in-tree
+    // (pehkui compat was never ported; grep "getIsPehkuiPresent" = declaration only).
+
     @Nullable
     public static String getImmPtlModInfoUrl() {
         String gameVersion = SharedConstants.getCurrentVersion().name();
