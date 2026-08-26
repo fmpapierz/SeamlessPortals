@@ -44,6 +44,21 @@ public interface ClientPlatform {
      */
     void onNewConnectionStateReset(Runnable listener);
 
+    // ==== secondary-world resource reloads ====
+
+    /**
+     * Registers a reload listener for a SECONDARY portal-view dimension's resources
+     * (extractor / cloud renderer), callable at ANY time — including mid-session when a
+     * secondary ClientLevel is first created. Fabric: the vanilla-legal direct
+     * {@code ReloadableResourceManager.registerReloadListener}. NeoForge FREEZES that list
+     * after {@code AddClientReloadListenersEvent} (late registration throws
+     * UnsupportedOperationException — the measured L6 world-join crash), so its binding
+     * appends to a live list behind ONE early-registered forwarding listener that
+     * multiplexes the preparation barrier.
+     */
+    void registerSecondaryWorldReloadListener(
+        net.minecraft.server.packs.resources.PreparableReloadListener listener);
+
     // ==== event producers (for third-party mod compat) ====
 
     /** Posts the loader's client-chunk-LOAD event ({@code O_O.postClientChunkLoadEvent} — re-emitted because {@code ImmPtlClientChunkMap} overrides the vanilla/loader post sites). */

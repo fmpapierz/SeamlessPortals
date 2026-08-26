@@ -41,6 +41,15 @@ public class FabricClientPlatform implements ClientPlatform {
     }
 
     @Override
+    public void registerSecondaryWorldReloadListener(
+            net.minecraft.server.packs.resources.PreparableReloadListener listener) {
+        // Vanilla-legal on Fabric: the exact direct registration ClientWorldLoader made
+        // before the NF-PARITY seam (moved verbatim; no freeze exists here).
+        ((net.minecraft.server.packs.resources.ReloadableResourceManager)
+            Minecraft.getInstance().getResourceManager()).registerReloadListener(listener);
+    }
+
+    @Override
     public void postClientChunkLoadEvent(ClientLevel level, LevelChunk chunk) {
         ClientChunkEvents.CHUNK_LOAD.invoker().onChunkLoad(level, chunk);
     }

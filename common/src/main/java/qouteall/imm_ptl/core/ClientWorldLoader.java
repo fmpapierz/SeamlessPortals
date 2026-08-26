@@ -886,10 +886,15 @@ public class ClientWorldLoader {
             // (-pack) reloads. A secondary that registers only the extractor silently misses
             // cloud-resource reloads (CloudRenderer is a SimplePreparableReloadListener with no
             // synchronous onResourceManagerReload, so it can only be reached via registration).
-            ReloadableResourceManager reloadableResourceManager =
-                (ReloadableResourceManager) CLIENT.getResourceManager();
-            reloadableResourceManager.registerReloadListener(worldExtractor);
-            reloadableResourceManager.registerReloadListener(worldRenderer.cloudRenderer());
+            // NF-PARITY L6 fix #2 (2026-08-26): routed through the ClientPlatform seam —
+            // NeoForge FREEZES the resource manager's listener list after its mod-bus event
+            // (direct registerReloadListener throws UnsupportedOperationException, the
+            // measured crash on first secondary-world creation); its binding appends to a
+            // live list behind one early forwarder. Fabric's binding is the old direct call.
+            com.warwa.seamlessportals.platform.ClientPlatform.get()
+                .registerSecondaryWorldReloadListener(worldExtractor);
+            com.warwa.seamlessportals.platform.ClientPlatform.get()
+                .registerSecondaryWorldReloadListener(worldRenderer.cloudRenderer());
             // NOTE (no matching unregister — accepted): 26.2's ReloadableResourceManager exposes
             // registerReloadListener ONLY (private final listeners list; no removal API,
             // ReloadableResourceManager.java:36-38). So disposeDimensionDynamically has no way to

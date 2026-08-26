@@ -61,6 +61,10 @@ public class SeamlessPortalsClientNeoForge {
         });
 
         modEventBus.addListener(this::onClientSetup);
+        // NF-PARITY L6 fix #2: the secondary-world reload FORWARDER must register inside
+        // NeoForge's one listener window (the list freezes after this event).
+        modEventBus.addListener(
+            com.warwa.seamlessportals.neoforge.platform.NeoForgeClientPlatform::onAddReloadListeners);
 
         // Mod-list config button (the ModMenu equivalent) — same flag route as
         // fabric ModMenuIntegration: flag-ON -> IP's cloth screen; flag-OFF -> the vanilla
