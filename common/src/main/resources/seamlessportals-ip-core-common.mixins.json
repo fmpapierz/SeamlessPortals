@@ -52,6 +52,7 @@
     "common.interaction.MixinBucketItem",
     "common.interaction.MixinItem_Interaction",
     "common.interaction.MixinServerPlayerGameMode",
+    "common.interaction.MixinServerPlayerGameMode_RemoveBlockNeoForge",
     "common.mc_util.IELevelEntityGetterAdapter",
     "common.mc_util.MixinEntitySection",
     "common.mc_util.MixinEntitySectionStorage",

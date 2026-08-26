@@ -110,7 +110,10 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         "com.warwa.seamlessportals.mixin.client.HandleRespawnLoadScreenShapeNeoForge",
         // W21: the clip-bracket main-pass draw site — Fabric drives it via
         // BEFORE_TRANSLUCENT_TERRAIN; NeoForge has no event in that gap.
-        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelRenderer_ClipBracketMainPassNeoForge"
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelRenderer_ClipBracketMainPassNeoForge",
+        // Cross-portal break fix: targets the NF-patched-in ServerPlayerGameMode.removeBlock
+        // helper (absent on vanilla/Fabric) that escaped the parent mixin's level redirect.
+        "qouteall.imm_ptl.core.mixin.common.interaction.MixinServerPlayerGameMode_RemoveBlockNeoForge"
     );
 
     private static final Set<String> NON_NEOFORGE_MIXINS = Set.of(
