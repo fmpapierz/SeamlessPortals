@@ -1,11 +1,9 @@
 package qouteall.imm_ptl.core.mixin.common.networking;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.common.ClientCommonPacketListener;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -14,6 +12,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import qouteall.imm_ptl.core.ducks.IECustomPayloadPacket;
 import qouteall.imm_ptl.core.network.PacketRedirection;
+import qouteall.imm_ptl.core.network.PacketRedirectionClient;
 
 @Mixin(ClientboundCustomPayloadPacket.class)
 public class MixinClientboundCustomPayloadPacket implements IECustomPayloadPacket {
@@ -40,14 +39,13 @@ public class MixinClientboundCustomPayloadPacket implements IECustomPayloadPacke
     )
     private void onHandle(ClientCommonPacketListener listener, CallbackInfo ci) {
         if (payload instanceof PacketRedirection.Payload redirectPayload) {
-            Minecraft mc = Minecraft.getInstance();
-            if (!mc.packetProcessor().isSameThread()) {                     // netty pass
-                mc.packetProcessor().scheduleIfPossible(
-                    listener, (Packet<ClientCommonPacketListener>) (Object) this);
-            }
-            else if (listener instanceof ClientGamePacketListener cgpl) {   // main pass
-                redirectPayload.handle(cgpl);
-            }
+            // NF-PARITY C3 polish: body moved to PacketRedirectionClient.handleAtPacketHandle
+            // so this mixin weaves no client-class reference into the (server-linked) packet
+            // class — the woven Minecraft ref made DevDistCleaner log a loud ERROR on every
+            // dedicated-server boot. handle() only RUNS on clients; the invokestatic is inert
+            // server-side (callee resolution is lazy).
+            PacketRedirectionClient.handleAtPacketHandle(
+                redirectPayload, listener, (Packet<ClientCommonPacketListener>) (Object) this);
 
             ci.cancel();
         }

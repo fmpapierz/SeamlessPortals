@@ -32,6 +32,28 @@ public class PacketRedirectionClient {
     public static final ThreadLocal<ResourceKey<Level>> clientTaskRedirection =
         ThreadLocal.withInitial(() -> null);
     
+    /**
+     * NF-PARITY C3 polish (2026-08-25): the body of
+     * {@code MixinClientboundCustomPayloadPacket.onHandle}, moved here so the mixin's own
+     * code references no client class — a woven {@code Minecraft} reference made NeoForge's
+     * DevDistCleaner log a loud (non-fatal) ERROR during the mixin ClassInfo pass on every
+     * dedicated-server boot. Logic verbatim (SPIKE-R7 re-queue discipline; see the mixin's
+     * header comment for the ordering rationale).
+     */
+    public static void handleAtPacketHandle(
+        PacketRedirection.Payload redirectPayload,
+        net.minecraft.network.protocol.common.ClientCommonPacketListener listener,
+        net.minecraft.network.protocol.Packet<net.minecraft.network.protocol.common.ClientCommonPacketListener> outerPacket
+    ) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!mc.packetProcessor().isSameThread()) {                     // netty pass
+            mc.packetProcessor().scheduleIfPossible(listener, outerPacket);
+        }
+        else if (listener instanceof net.minecraft.network.protocol.game.ClientGamePacketListener cgpl) { // main pass
+            redirectPayload.handle(cgpl);
+        }
+    }
+
     public static boolean getIsProcessingRedirectedMessage() {
         return clientTaskRedirection.get() != null;
     }

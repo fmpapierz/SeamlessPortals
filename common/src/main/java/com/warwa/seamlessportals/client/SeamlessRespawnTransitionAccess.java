@@ -1,4 +1,4 @@
-package com.warwa.seamlessportals.mixin.client;
+package com.warwa.seamlessportals.client;
 
 /**
  * NF-PARITY W3/B2 (2026-08-25): duck interface exposing {@link HandleRespawnMixin}'s

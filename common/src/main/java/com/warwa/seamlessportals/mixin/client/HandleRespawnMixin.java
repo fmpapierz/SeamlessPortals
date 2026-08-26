@@ -1,6 +1,7 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
+import com.warwa.seamlessportals.client.SeamlessRespawnTransitionAccess;
 import com.warwa.seamlessportals.chunk.RemoteChunkManager;
 import com.warwa.seamlessportals.client.PortalWorldManager;
 import com.warwa.seamlessportals.network.ModPayloads;

@@ -24,6 +24,16 @@ neoForge {
         client {
             client()
             gameDirectory = file('runs/client')
+            // NF-PARITY verification lever: -PquickPlayWorld=<saveName> boots straight into a
+            // singleplayer world (headless-ish smoke legs without UI interaction).
+            if (project.findProperty('quickPlayWorld')) {
+                programArguments.addAll('--quickPlaySingleplayer', project.findProperty('quickPlayWorld').toString())
+            }
+            // -PquickPlayServer=<host:port> — joins a server straight from boot (the L3
+            // handshake leg: config-phase ImmPtlConfigurationTask over a real connection).
+            if (project.findProperty('quickPlayServer')) {
+                programArguments.addAll('--quickPlayMultiplayer', project.findProperty('quickPlayServer').toString())
+            }
             // NF-PARITY W18: the C2 JIT protection is a property of the ported render code,
             // NOT of the loader — the EXCEPTION_ACCESS_VIOLATION reproduced on both Temurin
             // 25.0.2 and Zulu 25.0.4 (migration/C2_JIT_PROTECTION.md; proven leg E2

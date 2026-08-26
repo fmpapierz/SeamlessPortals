@@ -1,6 +1,7 @@
 package com.warwa.seamlessportals.mixin.client;
 
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
+import com.warwa.seamlessportals.client.SeamlessRespawnTransitionAccess;
 import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
