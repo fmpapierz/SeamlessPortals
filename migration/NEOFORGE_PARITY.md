@@ -108,25 +108,33 @@ would desync the cache once; none exists in the target runtime today.
 | Latent-defect fixes proven en route | LoadingModList detection (mixin-plugin Sodium probe was a silent NPE no-op on NF); the 14 missing block-era payload types (the June portal_link crash); B4 double-fire; the stale sendChunk @IPVanillaCopy (debug-synchronizer tracking) |
 | Fabric regression client boot (flag ON) | GREEN — full init both sides, title screen, 0 injection errors (the facade rewrite did not regress Fabric) |
 
-## 6. Known-opens (live-session verdicts — the user is the verdict)
+## 6. Live verdicts (updated 2026-08-26 — USER-CONFIRMED sessions)
 
-1. **L6 visual**: portal renders through the stencil mask on a NF client; recursion ≥2.
-   (Engine + substrate proven live; the visual composite needs eyes.)
-2. **L3 full handshake**: NF client ↔ NF dedicated server join. QuickPlay (both variants)
-   stalls behind dev-env UI screens the headless harness cannot click — the levers are in
-   place (`-PquickPlayServer=127.0.0.1:25565`); one manual Join settles it, watching for
-   `serverVersion` non-null + `ImmPtlConfigurationTask` completion.
-3. Datapack `summon immersive_portals:portal` with inline NBT reaches the reader as an
-   EMPTY tag on 26.2 (the reader runs; the tag doesn't arrive — likely the ValueInput
-   summon-path change). Portal creation via the wand/commands is unaffected; only the
-   headless probe path. runs/server has the `nfsmoke` datapack for reproduction.
-4. C5.2 (NF payload `versioned()` strictness vs IP's patch-tolerant handshake): config
-   payloads are registered `.optional()` + unversioned, so IP's own ModVersion handshake
-   stays the sole arbiter — E5 answered structurally; a mismatched-patch pair test would
-   confirm live.
-5. The wand's `LeftClickBlock` creative-mode caveat (L5) — one creative swing.
-6. Flag-OFF NeoForge = tracker baseline only (block-era client/server payload HANDLER sets
-   remain Fabric-only statics) — recorded deviation; the block-era dies at S20.
+**CLOSED, user-verified live:**
+- **L6 base client**: portal view WORKS, crossing WORKS, seams CLEAN ("portal view works,
+  crossing works too, seams look clean"). Three defects found+fixed during the sessions:
+  `PortalRenderer.client` frozen null (`2a9eb6f0`), the frozen reload-listener list
+  (`80e10b5e`), and cross-seam BREAK (place worked, break didn't — NF's patched-in
+  `ServerPlayerGameMode.removeBlock` helper escaped IP's level redirect; the
+  NEOFORGE_ONLY sibling mixin fixed it, `15ce610f`; break then USER-CONFIRMED working).
+- **Sodium + Iris** (`aa0026a7`): `runClientSodium` with the first-party -neoforge jars,
+  Complementary Reimagined ON — full C2-4 install (both invokers, D7 resolved), the
+  IS-arc shaders-ON portal views live, 11 crossings, ~45 min, zero post-join errors —
+  USER-CONFIRMED "all good". One dev-only wart: NF's IDE-gated GL validation AIOOBEs on
+  compact vertex-bindings arrays under iris; `-Dneoforge.disableGlValidation=true` (NF's
+  own escape hatch) is on the run config; production never runs that code.
+
+**Still open (low, non-blocking):**
+1. **L3 dedicated-server join**: the pieces are individually proven (server boots flag-ON,
+   client boots, config-phase seams registered); one manual Join with
+   `-PquickPlayServer=127.0.0.1:25565` watches `serverVersion` + `ImmPtlConfigurationTask`.
+2. Datapack `summon immersive_portals:portal` inline NBT arrives EMPTY on 26.2 (the
+   headless probe path only; wand/commands unaffected; `nfsmoke` pack reproduces).
+3. C5.2: config payloads are `.optional()` + unversioned so IP's ModVersion handshake is
+   the sole arbiter; a mismatched-patch pair would confirm live.
+4. The wand's `LeftClickBlock` creative-mode caveat (one creative swing).
+5. Flag-OFF NeoForge = tracker baseline only (block-era handler sets remain Fabric-only)
+   — recorded deviation; the block-era dies at S20.
 
 ## 7. Env facts for future sessions
 
