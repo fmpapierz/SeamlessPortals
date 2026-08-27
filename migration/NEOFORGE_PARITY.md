@@ -4,7 +4,7 @@ The `:neoforge` module is no longer a KEEP-skeleton: it wires the SAME entity-po
 engine as `:fabric`, both dists, flag defaulting ON. This document is the ledger of what
 changed, what is measured-verified, and what remains for live sessions.
 
-Branch: `claude/nifty-kepler`. Commits: `c615e6eb` (Phase 0) → `e3ede802` (facade skeleton)
+Branch: `agent/nifty-kepler`. Commits: `c615e6eb` (Phase 0) → `e3ede802` (facade skeleton)
 → `566edab3` (facade rewrite W8-W12) → `a3f94ebb` (W13 chunk seams) → `81b58b1e` (module
 rebuild W15-W21+W23) → `324a8da9` (dist splits + registry windows) → the E0/L1 fix tail.
 

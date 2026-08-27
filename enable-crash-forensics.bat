@@ -15,5 +15,5 @@ auditpol /set /subcategory:"Process Termination" /success:enable
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit" /v ProcessCreationIncludeCmdLine_Enabled /t REG_DWORD /d 1 /f
 echo(
 echo Done. Process starts (with command lines) and exits are now audited.
-echo When IntelliJ closes on its own again, note the time and tell Claude.
+echo When IntelliJ closes on its own again, note the time for the debugging session.
 pause

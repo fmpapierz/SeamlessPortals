@@ -56,4 +56,4 @@ if (Test-Path $ideaLog) {
 }
 
 $lines | Set-Content -Path $out -Encoding utf8
-Write-Host "Wrote $out - tell Claude to read it."
+Write-Host "Wrote $out - attach it to the debugging session."

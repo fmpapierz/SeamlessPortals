@@ -9,5 +9,5 @@ if errorlevel 1 (
 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0collect-crash-evidence.ps1"
 echo(
-echo If it says "Wrote ...crash-evidence.txt", tell Claude to read it.
+echo If it says "Wrote ...crash-evidence.txt", attach it to the debugging session.
 pause
