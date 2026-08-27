@@ -47,6 +47,36 @@ neoForge {
             gameDirectory = file('runs/server')
             jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
         }
+        // NF-PARITY sodium/iris leg (2026-08-26): mirrors fabric's client-sodium run — a
+        // SEPARATE game dir whose mods/ holds the first-party -neoforge Sodium+Iris jars
+        // (runs/client-sodium/mods; FML scans the game dir's mods folder in dev). Same JIT
+        // protection + quickplay levers as the plain client run; the plain run stays
+        // sodium-free so the two states can't contaminate each other.
+        clientSodium {
+            client()
+            gameDirectory = file('runs/client-sodium')
+            jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
+            // DEV-ONLY GlRenderPass.VALIDATION (gated on IS_RUNNING_IN_IDE — never runs in
+            // production) blindly indexes getVertexFormatBindings()[i<16], and an
+            // iris-wrapped translucent pipeline carries a compact (length-1) bindings array
+            // -> AIOOBE at GlCommandEncoder.validateDraw:506 on the first shaded frame.
+            // NeoForge ships this first-party escape hatch for exactly that
+            // (GlRenderPass.java:27). Functionally harmless: the GL bind path iterates the
+            // array's own length.
+            jvmArgument '-Dneoforge.disableGlValidation=true'
+            if (project.findProperty('quickPlayWorld')) {
+                programArguments.addAll('--quickPlaySingleplayer', project.findProperty('quickPlayWorld').toString())
+            }
+            if (project.findProperty('compatProbe') == 'true') {
+                jvmArgument '-Dseamlessportals.compatProbe=true'
+            }
+            if (project.findProperty('sodiumCompatLever') == 'true') {
+                jvmArgument '-Dseamlessportals.experimentalSodiumCompat=true'
+            }
+            if (project.findProperty('shaderpackViewsProbe') == 'true') {
+                jvmArgument '-Dseamlessportals.shaderpackViewsProbe=true'
+            }
+        }
     }
 
     mods {
