@@ -256,6 +256,22 @@ public class NetherPortalGeneration {
             return false;
         }
 
+        // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
+        // -Dseamlessportals.disableAperturePassthrough=true. IP-core edit 10 of REDSTONE_A_SPEC.md
+        // §3.1: refuse to start generating a portal INSIDE a live aperture.
+        //
+        // Defence in depth against a bug family that already bit once during step 4. Widening the
+        // area predicate briefly made a live, lit portal's opening look like an empty matchable
+        // frame, and a second portal pair bound the SAME aperture cell with a DIFFERENT destination —
+        // in a real world, a portal that sometimes takes you somewhere else, plus an ambiguous mirror
+        // target. That root cause is fixed (the predicate no longer admits the placeholder), so this
+        // is a second line rather than the primary guard: any future change that makes an occupied
+        // aperture look free is caught here instead of shipping.
+        if (com.warwa.seamlessportals.passthrough.SeamRegistry.isSeamCell(fromWorld, startingPos)) {
+            Helper.log("Cancel Portal Generation Because The Position Is Inside A Live Portal Aperture");
+            return false;
+        }
+
         limitedLogger.log(String.format("Portal Generation Attempted %s %s %s %s",
             fromWorld.dimension().identifier(), startingPos.getX(), startingPos.getY(), startingPos.getZ()
         ));
@@ -297,9 +313,19 @@ public class NetherPortalGeneration {
         BlockPortalShape blockPortalShape
     ) {
         blockPortalShape.area.forEach(
-            blockPos -> setPortalContentBlock(
-                world, blockPos, blockPortalShape.axis
-            )
+            blockPos -> {
+                // RECORDED IP DEVIATION — RS PASSTHROUGH (a); IP-core edit 8 of REDSTONE_A_SPEC.md
+                // §3.1. IP overwrites EVERY opening cell with the placeholder. When a frame is
+                // re-lit over a surviving rail line (user decision §0.4) that would silently delete
+                // the track the player just kept — the portal would come back and the rails would
+                // not. Survivors keep their block; the portal renders and functions identically
+                // because its geometry is entity state and never read from these cells.
+                if (com.warwa.seamlessportals.passthrough.ApertureOccupancy
+                        .isSurvivor(world, blockPos)) {
+                    return;
+                }
+                setPortalContentBlock(world, blockPos, blockPortalShape.axis);
+            }
         );
     }
 

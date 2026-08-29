@@ -78,7 +78,57 @@ public class BlockManipulationClient {
             Portal portal = pair.getFirst();
             Vec3 hitPos = pair.getSecond().hitPos();
             double distanceToPortalPointing = hitPos.distanceTo(cameraPos);
-            if (distanceToPortalPointing < getCurrentTargetDistance() + 0.2) {
+            // RS PASSTHROUGH (a) step 3 — INSTRUMENTATION ONLY, no behaviour change.
+            // This comparison is the targeting bet: the design panel's two adversarial verifiers
+            // reached OPPOSITE conclusions about what it does once real blocks sit in an aperture,
+            // and neither observed it. Until (a), the aperture only ever held PortalPlaceholderBlock,
+            // for which getCurrentTargetDistance() returns the 23333 sentinel (:104-109) so the
+            // portal always won. With real blocks there the local hit has a real distance and the
+            // outcome becomes a genuine race. Armed via -Dseamlessportals.seamAimProbe=true.
+            double localTargetDistance = getCurrentTargetDistance();
+            // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
+            // -Dseamlessportals.disableSeamTargeting=true. THE TARGETING FIX.
+            //
+            // Measured, not reasoned: with seamAimProbe armed, aiming at a real block sitting in an
+            // aperture produced localDist=2.331 portalDist=2.419 margin=0.112 -> THROUGH-PORTAL. The
+            // local hit was genuinely CLOSER than the portal and still lost, purely to the hardcoded
+            // +0.2 above. The player's block then lands in the OTHER DIMENSION, silently, on the most
+            // common gesture the whole feature exists to support. (User-confirmed live: "aiming at
+            // the far half of a cell's top face still sends the block to the other dimension".)
+            //
+            // The fix must be NARROW. The same comparison has a second, CORRECT mode: for an EMPTY
+            // aperture cell getCurrentTargetDistance() returns the 23333 placeholder sentinel
+            // (:120-125) so the portal always wins — and that is exactly what lets a player reach
+            // THROUGH an open portal to interact with the far world, a real shipped feature. A blanket
+            // "seam cells win" would fix the rail and break cross-portal interaction in one stroke.
+            //
+            // So: the local hit wins ONLY when it is a seam cell holding a REAL, non-placeholder
+            // block. Aim at an empty aperture and you still reach through, unchanged.
+            boolean seamBlockWinsTargeting =
+                !com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLE_SEAM_TARGETING
+                    && localTargetDistance < 20000.0   // a real local hit, not the sentinel
+                    && client.hitResult instanceof BlockHitResult localHit
+                    && com.warwa.seamlessportals.passthrough.SeamRegistry.isSeamCell(
+                        client.level, localHit.getBlockPos());
+
+            boolean reroute = !seamBlockWinsTargeting
+                && distanceToPortalPointing < localTargetDistance + 0.2;
+
+            // Probe AFTER the decision is final. It previously ran BEFORE seamBlockWinsTargeting was
+            // computed and reported the OLD expression's result, so it logged "SEAM CELL LOST" for
+            // hits the fix was already keeping local — an instrument describing a code path that no
+            // longer runs. It now reports what actually happened, and whether the seam override is
+            // what caused it.
+            com.warwa.seamlessportals.passthrough.SeamAimProbe.aimDecision(
+                client.level,
+                client.hitResult instanceof BlockHitResult bhr ? bhr.getBlockPos() : null,
+                distanceToPortalPointing,
+                localTargetDistance,
+                reroute,
+                seamBlockWinsTargeting
+            );
+
+            if (reroute) {
                 client.hitResult = createMissedHitResult(cameraPos, hitPos);
                 
                 updateTargetedBlockThroughPortal(
@@ -91,6 +141,11 @@ public class BlockManipulationClient {
                 );
             }
         });
+        // ★ SEAM WHOLE-OBJECT SELECTION (user order 2026-08-03): from the frame's FINAL targeting,
+        // derive the targeted seam object's OTHER half so both halves outline as one block —
+        // near→far via the portal shells, far→near via the main extract. Separate store on
+        // purpose: remotePointedDim doubles as the interaction router and must not be synthesized.
+        com.warwa.seamlessportals.render.SeamCounterpartOutline.update(client);
     }
     
     private static double getCurrentTargetDistance() {

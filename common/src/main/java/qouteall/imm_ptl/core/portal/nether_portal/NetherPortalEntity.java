@@ -16,6 +16,8 @@ import qouteall.imm_ptl.core.IPGlobal;
 import qouteall.imm_ptl.core.platform_specific.O_O;
 import qouteall.imm_ptl.core.portal.PortalPlaceholderBlock;
 import qouteall.q_misc_util.my_util.DQuaternion;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughLever;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughProbe;
 
 public class NetherPortalEntity extends BreakablePortalEntity {
     private static final OverlayInfo overlay_x = new OverlayInfo(
@@ -71,10 +73,38 @@ public class NetherPortalEntity extends BreakablePortalEntity {
     @Override
     protected boolean isPortalIntactOnThisSide() {
 
-        return blockPortalShape.area.stream()
-            .allMatch(blockPos ->
-                level().getBlockState(blockPos).getBlock() == PortalPlaceholderBlock.instance
-            ) &&
+        // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
+        // -Dseamlessportals.disableAperturePassthrough=true. IP-core edit 3 of
+        // migration/REDSTONE_A_SPEC.md §3.1.
+        //
+        // Blocker 3, and the one confirmed live: IP requires EVERY opening cell to still hold the
+        // placeholder, so a single block in the aperture kills this portal AND its cross-dimension
+        // twin. Measured (RS-TEARDOWN-TEST, commit 26cd59d): the kill lands on the SAME TICK as the
+        // block change via the notify path — the 233-tick sweep is only the backstop — and takes all
+        // four entities, both coincident near-side portals and both twins.
+        //
+        // Under (a) this predicate becomes FRAME-ONLY: the user's decision is that the integrity
+        // check survives for IGNITION only, and that after lighting, opening contents never tear the
+        // portal down (REDSTONE_RECON.md §0.3). Breaking the obsidian frame still tears down, which
+        // is why the frame half below is untouched.
+        //
+        // IP's original opening scan is retained verbatim under the disable lever, so
+        // -Dseamlessportals.disableAperturePassthrough=true restores stock behaviour exactly. The
+        // old SUPPRESS_TEARDOWN diagnostic lever is retired here: it existed only to make the seam
+        // observable before this edit existed, and the frame-only rule subsumes it.
+        boolean openingIntact = true;
+        if (AperturePassthroughLever.DISABLED) {
+            for (net.minecraft.core.BlockPos blockPos : blockPortalShape.area) {
+                net.minecraft.world.level.block.state.BlockState state = level().getBlockState(blockPos);
+                if (state.getBlock() != PortalPlaceholderBlock.instance) {
+                    AperturePassthroughProbe.intactFailure(getId(), blockPos, state);
+                    openingIntact = false;
+                    break;
+                }
+            }
+        }
+
+        return openingIntact &&
             blockPortalShape.frameAreaWithoutCorner.stream()
                 .allMatch(blockPos ->
                     O_O.isObsidian(level().getBlockState(blockPos))

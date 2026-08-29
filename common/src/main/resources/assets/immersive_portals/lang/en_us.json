@@ -183,6 +183,8 @@
   "text.autoconfig.immersive_portals.category.client": "Client Config",
   "text.autoconfig.immersive_portals.title": "Immersive Portals Config",
   "text.autoconfig.immersive_portals.option.enableWarning": "Enable Warning",
+  "text.autoconfig.immersive_portals.option.passthroughExtras": "Passthrough Extras",
+  "text.autoconfig.immersive_portals.option.passthroughExtras.@Tooltip": "Rails, redstone, block placement and minecarts working ACROSS portal surfaces. OFF = the mod behaves as if this feature set did not exist. Takes effect within a tick — no restart needed.",
   "text.autoconfig.immersive_portals.option.maxPortalLayer": "Max Portal Rendering Recursion Layer",
   "text.autoconfig.immersive_portals.option.maxPortalLayer.@Tooltip": "How deep portal-in-portal rendering goes without a shaderpack. Type any number. This also caps the shaderpack depth below. Note a pair of portals linked to each other stops at 2 no matter what — reaching depth N needs a chain of N portals.",
   "text.autoconfig.immersive_portals.option.irisRecursionDepth": "Shaderpack Portal Recursion Depth",

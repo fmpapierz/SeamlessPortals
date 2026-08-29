@@ -251,6 +251,10 @@ public class FabricPlatformHelper implements PlatformHelper {
             ModPayloads.RemoteBlockUpdatePayload.STREAM_CODEC
         );
         PayloadTypeRegistry.clientboundPlay().register(
+            ModPayloads.SeamOccupancyPayload.TYPE,
+            ModPayloads.SeamOccupancyPayload.STREAM_CODEC
+        );
+        PayloadTypeRegistry.clientboundPlay().register(
             ModPayloads.RemoteBlockUpdateBatchPayload.TYPE,
             ModPayloads.RemoteBlockUpdateBatchPayload.STREAM_CODEC
         );
@@ -481,6 +485,11 @@ public class FabricPlatformHelper implements PlatformHelper {
                         payload.dimensionId(), payload.positions(), payload.blockStateIds()));
             }
         );
+        // (The SEAM OCCUPANCY receiver is NOT here on purpose. This method is the BLOCK-ERA driver
+        // set and only runs flag-OFF — registering it here is exactly how the 2026-08-02 live round
+        // got "Unknown custom packet payload" while the crossing half sat claimed on the server.
+        // It is registered UNCONDITIONALLY in SeamlessPortalsClientFabric.onInitializeClient,
+        // above the flag branch, where both configurations reach it.)
 
         // Phase 2a live-portal-view: entity mirroring. Add/move/remove
         // entities in the cached ClientLevel so they render through

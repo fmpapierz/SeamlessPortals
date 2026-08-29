@@ -52,6 +52,29 @@ public abstract class NetherPortalLikeForm extends PortalGenForm {
             return false;
         }
 
+        // RECORDED IP DEVIATION — RS PASSTHROUGH (a); IP-core edit 9 of REDSTONE_A_SPEC.md §3.1.
+        // The position-aware ignition rule (REDSTONE_RECON.md §0.3): rails/redstone always admitted,
+        // a support cube only when it carries a passthrough block directly above, frame still at
+        // least half air. Placed HERE, immediately after the shape is found, because getAreaPredicate
+        // returns Predicate<BlockState> with no coordinates and cannot express the rule. Under the
+        // disable lever this reduces to IP's original all-air requirement.
+        if (!com.warwa.seamlessportals.passthrough.ApertureOccupancy
+                .ignitionAreaAcceptable(fromWorld, fromShape)) {
+            return false;
+        }
+
+        // RECORDED IP DEVIATION — RS PASSTHROUGH; revert with
+        // -Dseamlessportals.disableFrameMirror=true. FAR-FRAME REPAIR AT IGNITION (user decision
+        // 2026-07-26): frame BREAKS mirror immediately, frame REPAIRS are staged until the portal is
+        // lit — lighting is the moment the player declares the frame finished.
+        //
+        // MUST run BEFORE the destination frame-match search below. If the far frame is still broken
+        // when that search looks at it, no match is found and generation fabricates a NEW portal
+        // elsewhere — precisely the symptom that started this: "a new dest portal gets created
+        // because the old portal is still in that position in the dest side".
+        com.warwa.seamlessportals.passthrough.SeamMirror
+            .repairFarFrameOnIgnition(fromWorld, fromShape);
+
         if (!testThisSideShape(fromWorld, fromShape)) {
             return false;
         }
@@ -63,6 +86,13 @@ public abstract class NetherPortalLikeForm extends PortalGenForm {
         // clear the area
         if (generateFrameIfNotFound) {
             for (BlockPos areaPos : fromShape.area) {
+                // RECORDED IP DEVIATION — RS PASSTHROUGH (a); IP-core edit 7. IP wipes the whole
+                // opening to air before lighting, which would delete the very rail line the user's
+                // break rule (§0.4) says must survive and be re-lit over. Survivors are skipped.
+                if (com.warwa.seamlessportals.passthrough.ApertureOccupancy
+                        .isSurvivor(fromWorld, areaPos)) {
+                    continue;
+                }
                 fromWorld.setBlockAndUpdate(areaPos, Blocks.AIR.defaultBlockState());
             }
         }

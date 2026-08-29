@@ -59,6 +59,28 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
         // nothing — EXECUTION_PLAN §3 S13 step 5).
         com.warwa.seamlessportals.client.PortalEntityRenderers.registerAll(); // NF-PARITY W19: extracted to :common (shared with NeoForge)
 
+        // ★ SEAM OCCUPANCY RECEIVER — UNCONDITIONAL, deliberately ABOVE the flag branch.
+        //
+        // The live 2026-08-02 round found the crossing half claimed on the server with the client
+        // logging "Unknown custom packet payload: seamlessportals:seam_occupancy". Root cause: the
+        // receiver was first registered inside FabricPlatformHelper.registerClientHandlers() — the
+        // BLOCK-ERA driver set, which the flag-ON branch below NEVER CALLS. The payload TYPE was
+        // registered (unconditional in registerPayloads), so the codec decoded fine and vanilla's
+        // ClientPacketListener.handleCustomPayload swallowed it with a warning. The seam is a
+        // flag-ON feature, so its receiver cannot live in the flag-OFF set; registering here covers
+        // both configurations and is harmless flag-OFF (occupancy simply never arrives).
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
+            com.warwa.seamlessportals.network.ModPayloads.SeamOccupancyPayload.TYPE,
+            (payload, context) -> context.client().execute(() ->
+                com.warwa.seamlessportals.passthrough.SeamOccupancyClient.apply(
+                    payload.dimensionId(), payload.packedPos(), (byte) payload.mask(),
+                    payload.secondaryStateId(), (byte) payload.secondaryHalf())));
+        // ★ PENDING flush driver (the live-relog fix): the JOIN burst lands before the joining
+        // client's level exists and parks in the PENDING stash — which previously only drained on
+        // the NEXT packet, i.e. never after a quiet relog. One branch per tick when empty.
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(
+            mc -> com.warwa.seamlessportals.passthrough.SeamOccupancyClient.flushPendingTick());
+
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== ENTITY-PORTAL (Immersive Portals) client init — S13 step 4 =====================
             // DEPENDENCY_ORDER §4.2 client init order: the MiscUtilModEntryClient sequence
@@ -166,6 +188,15 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
                 IPCGlobal.renderer.finishRendering();
             });
 
+            // ENGINE STAGE 2b — the band painter's hook: the SECOND AFTER_TRANSLUCENT_TERRAIN
+            // registration, immediately after the portal driver's (Fabric array-backed events
+            // invoke in registration order), so it runs AFTER every portal pass of the frame —
+            // and it runs EVERY frame regardless of whether any pass executed (the design
+            // PROHIBITS the doRenderPortal epilogue: skipped by the stale occlusion-query and
+            // fuse-view early-returns). Thin timing driver only; all logic is common-side.
+            LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context ->
+                qouteall.imm_ptl.core.render.SeamBandPainter.onAfterPortalPasses());
+
             // ===== S18: Mechanism-B main-pass draw site (R3 seam, design §2.1.3 decided) =====
             // Fires inside the main-pass framegraph lambda AFTER the entity feature phases
             // (solid/translucent/outline) execute and BEFORE translucent terrain — IP's exact
@@ -177,6 +208,27 @@ public class SeamlessPortalsClientFabric implements ClientModInitializer {
             // framegraph runs there — this event never fires for them).
             LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
                 qouteall.imm_ptl.core.render.PerEntityClipBracket.onMainPassBeforeTranslucentTerrain());
+
+            // ===== SEAM CLIP main-pass draw site (SEAM_CLIP_DESIGN.md §3) =====
+            // Same slot: after opaque terrain + entity phases, before translucent terrain and the
+            // portal driver — near halves are depth-buffered before the stencil pass computes
+            // window visibility. The handler carries the MANDATORY PortalRendering.isRendering()
+            // guard (this class-woven event DOES fire inside the full-pipeline twin's nested
+            // render with mc.level swapped — panel finding). Thin timing driver; logic is
+            // common-side in SeamClipRenderer.
+            LevelRenderEvents.BEFORE_TRANSLUCENT_TERRAIN.register(context ->
+                com.warwa.seamlessportals.render.SeamClipRenderer.onMainPassBeforeTranslucentTerrain());
+
+            // ===== SEAM DEST-END AMBIENCE (stitched-space contract item 3, 2026-08-10) =====
+            // Same-dim portal destinations are display-tick dead by construction (vanilla samples
+            // ±31 blocks around the PLAYER; IP's remote pass walks other-dim worlds only), so a
+            // mirrored torch at the far end never emits its own flame/smoke. This pass
+            // display-ticks nearby mirrorable portals' dest regions with the camera-distance gate
+            // defeated. END_CLIENT_TICK = after vanilla's own animateTick+engine tick; queued
+            // spawns drain on the next engine tick (one-tick latency, invisible). Cross-dim stays
+            // IP's remote pass. Logic is common-side (SeamDestAmbience); this is the timing driver.
+            ClientTickEvents.END_CLIENT_TICK.register(mc ->
+                com.warwa.seamlessportals.render.SeamDestAmbience.tick(mc));
 
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (client); "

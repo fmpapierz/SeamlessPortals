@@ -143,6 +143,29 @@ public abstract class ClientLevelMixin {
         }
     }
 
+    /**
+     * ★ CART CROSS-DIM SMOOTHNESS (2026-08-24): stash a seam-engaged entity's visual state at
+     * the moment its client instance is removed — on EVERY ClientLevel instance, played or far.
+     * The cross-dim recreate's REMOVE is the last moment the departure-side visual history
+     * exists; the crossing RPC then carries it through the portal transform onto the fresh
+     * destination instance ({@link com.warwa.seamlessportals.passthrough.SeamVisualCarryover}).
+     * javap-verified: {@code public void removeEntity(int, Entity$RemovalReason)}. The module
+     * filters to seam-engaged non-players, so ordinary despawns cost one map lookup.
+     */
+    @Inject(
+        method = "removeEntity(ILnet/minecraft/world/entity/Entity$RemovalReason;)V",
+        at = @At("HEAD")
+    )
+    private void seamlessportals$stashSeamVisualOnRemove(
+        int entityId, net.minecraft.world.entity.Entity.RemovalReason reason, CallbackInfo ci
+    ) {
+        net.minecraft.world.entity.Entity e =
+            ((ClientLevel) (Object) this).getEntity(entityId);
+        if (e != null) {
+            com.warwa.seamlessportals.passthrough.SeamVisualCarryover.onClientEntityRemoved(e);
+        }
+    }
+
     @Inject(method = "disconnect", at = @At("HEAD"))
     private void seamlessportals$onDisconnect(CallbackInfo ci) {
         com.warwa.seamlessportals.chunk.RedirectedPacketApplier.clearPending();

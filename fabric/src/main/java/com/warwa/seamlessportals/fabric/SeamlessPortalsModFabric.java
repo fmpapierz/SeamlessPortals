@@ -129,6 +129,32 @@ public class SeamlessPortalsModFabric implements ModInitializer {
             qouteall.q_misc_util.MiscNetworking.init();
             qouteall.q_misc_util.dimension.DimensionIntId.init();
             qouteall.imm_ptl.core.IPModMain.init();
+            // RS PASSTHROUGH (a) step 2: subscribe the seam registry to IP's portal lifecycle
+            // signals. MUST run after IPModMain.init, which is where the Portal entity type and its
+            // signal Events are created. Self-gates on the master lever, so with
+            // -Dseamlessportals.disableAperturePassthrough=true it registers listeners that
+            // immediately return rather than changing the init sequence.
+            com.warwa.seamlessportals.passthrough.AperturePassthroughInit.init();
+            // ★ FRACTIONAL OCCUPANCY JOIN SYNC (FRACTIONAL_DESIGN.md §3). Occupancy is the one
+            // piece of seam state a client cannot derive (it records placements), and the live
+            // broadcast only reaches players who are ONLINE when the write happens. A joining
+            // player gets every persisted entry of every level — all dims deliberately, matching
+            // the broadcast's own policy (a seam cell is visible cross-dim through a window), with
+            // the client's PENDING stash absorbing dims whose ClientLevel does not exist yet.
+            net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.JOIN.register(
+                (handler, sender, server) -> {
+                    if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLED) {
+                        return;
+                    }
+                    for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
+                        com.warwa.seamlessportals.passthrough.SeamOccupancySavedData
+                            .sendAllTo(level, handler.getPlayer());
+                    }
+                });
+            // ★ RE-SEND ON EVERY WORLD CHANGE lives in ServerPlayerSeamResendMixin (common), NOT
+            // here: the 26.2-era fabric-api REMOVED ServerEntityWorldChangeEvents (verified in
+            // fabric-entity-events-v1-5.0.5 — the class is gone), so the hook is a mixin on the
+            // one funnel every cross-dim move passes through, ServerPlayer.teleport(TeleportTransition).
             // S16: the peripheral init (IntrinsicPortalGeneration identifiers) runs after
             // IPModMain here. Verify correction (wf_91b049a9-0c1): IP's fabric.mod.json actually
             // lists PeripheralModEntry FIRST (before the core entry) — the order is functionally

@@ -190,6 +190,129 @@ loom {
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // RS PASSTHROUGH (a) diagnose-first probes (migration/REDSTONE_RECON.md §5). DEFAULT-OFF.
+            // The census dumps the live aperture cells and real /setblock targets. (The former
+            // apertureSuppressTeardown lever was retired at step 3 — IP-core edit 3 makes the
+            // integrity predicate frame-only outright, which subsumes it.) —
+            //   .\gradlew.bat :fabric:runClient -PapertureCensusProbe=true
+            if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
+            if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
+            if (project.findProperty('seamDeliveryTest') == 'true') { vmArg('-Dseamlessportals.seamDeliveryTest=true') }
+            // RS (a) FIX LEVERS — all DEFAULT-ON; each disables. -PdisableAperturePassthrough is the
+            // master A/B switch for the entire feature (REDSTONE_A_SPEC.md §5).
+            if (project.findProperty('disableAperturePassthrough') == 'true') { vmArg('-Dseamlessportals.disableAperturePassthrough=true') }
+            if (project.findProperty('disableSeamMirror') == 'true') { vmArg('-Dseamlessportals.disableSeamMirror=true') }
+            if (project.findProperty('disableIgnitionWhitelist') == 'true') { vmArg('-Dseamlessportals.disableIgnitionWhitelist=true') }
+            if (project.findProperty('disableSurvivorSkip') == 'true') { vmArg('-Dseamlessportals.disableSurvivorSkip=true') }
+            if (project.findProperty('disableSeamTargeting') == 'true') { vmArg('-Dseamlessportals.disableSeamTargeting=true') }
+            if (project.findProperty('disableMirrorAuthority') == 'true') { vmArg('-Dseamlessportals.disableMirrorAuthority=true') }
+            if (project.findProperty('disableFrameMirror') == 'true') { vmArg('-Dseamlessportals.disableFrameMirror=true') }
+            if (project.findProperty('disableSameDimRemesh') == 'true') { vmArg('-Dseamlessportals.disableSameDimRemesh=true') }
+            if (project.findProperty('disableSeamPlayerOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamPlayerOnly=true') }
+            if (project.findProperty('disableSeamExactOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamExactOnly=true') }
+            if (project.findProperty('disableSeamPrediction') == 'true') { vmArg('-Dseamlessportals.disableSeamPrediction=true') }
+            // RS (a) PROBE LEVERS — all DEFAULT-OFF. seamAimProbe is the step-3 gate: it settles the
+            // one thing the design panel's two verifiers disagreed about and neither observed.
+            if (project.findProperty('seamMapProbe') == 'true') { vmArg('-Dseamlessportals.seamMapProbe=true') }
+            if (project.findProperty('seamReconcileProbe') == 'true') { vmArg('-Dseamlessportals.seamReconcileProbe=true') }
+            if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }
+            if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
+            if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
+            // seamDeliveryProbe: traces each mirrored write down the whole client-delivery chain and
+            // names the stage it stops at. Exists because the same-dim bug survived three fixes that
+            // each theorised a mechanism and measured nothing.
+            if (project.findProperty('seamDeliveryProbe') == 'true') { vmArg('-Dseamlessportals.seamDeliveryProbe=true') }
+            // RS (b) FIX LEVERS — rails connecting across the seam. disableSeamShadow is (b)'s
+            // master A/B switch; the rest attribute its independent halves (REDSTONE_B_SPEC.md §8).
+            if (project.findProperty('disableSeamShadow') == 'true') { vmArg('-Dseamlessportals.disableSeamShadow=true') }
+            if (project.findProperty('disableSeamRailWrite') == 'true') { vmArg('-Dseamlessportals.disableSeamRailWrite=true') }
+            if (project.findProperty('disableSeamRailSlope') == 'true') { vmArg('-Dseamlessportals.disableSeamRailSlope=true') }
+            if (project.findProperty('disableSeamRailReseed') == 'true') { vmArg('-Dseamlessportals.disableSeamRailReseed=true') }
+            if (project.findProperty('disableSeamPhaseGate') == 'true') { vmArg('-Dseamlessportals.disableSeamPhaseGate=true') }
+            if (project.findProperty('disableSeamReverseDisambig') == 'true') { vmArg('-Dseamlessportals.disableSeamReverseDisambig=true') }
+            if (project.findProperty('disableSeamShapeSync') == 'true') { vmArg('-Dseamlessportals.disableSeamShapeSync=true') }
+            // CART CROSS-DIM SMOOTHNESS (2026-08-24): visual carryover across the dimension flip.
+            if (project.findProperty('disableSeamVisualCarryover') == 'true') { vmArg('-Dseamlessportals.disableSeamVisualCarryover=true') }
+            // PROJECTION LIGHT (2026-08-24): sample projection light at the image, in the target level.
+            if (project.findProperty('disableSeamProjectionLight') == 'true') { vmArg('-Dseamlessportals.disableSeamProjectionLight=true') }
+            // SEAM CLIP (renderer): DEFAULT OFF by user decision 2026-07-27 (fractional model is the
+            // chosen direction; the clip is kept as its renderer). One-line re-enable:
+            if (project.findProperty('enableSeamClip') == 'true') { vmArg('-Dseamlessportals.enableSeamClip=true') }
+            if (project.findProperty('disableSeamClip') == 'true') { vmArg('-Dseamlessportals.disableSeamClip=true') }
+            if (project.findProperty('seamClipProbe') == 'true') { vmArg('-Dseamlessportals.seamClipProbe=true') }
+            // RS (b) PROBE LEVER — DEFAULT-OFF.
+            if (project.findProperty('seamRailProbe') == 'true') { vmArg('-Dseamlessportals.seamRailProbe=true') }
+            // RS (c) FIX LEVERS — redstone signal across the seam (REDSTONE_C_SPEC.md §4).
+            // disableSeamSignal is (c)'s master A/B switch; dispatch is its independent half.
+            if (project.findProperty('disableSeamSignal') == 'true') { vmArg('-Dseamlessportals.disableSeamSignal=true') }
+            if (project.findProperty('disableSeamSignalDispatch') == 'true') { vmArg('-Dseamlessportals.disableSeamSignalDispatch=true') }
+            if (project.findProperty('disableSeamWalkSever') == 'true') { vmArg('-Dseamlessportals.disableSeamWalkSever=true') }
+            if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
+            if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
+            // RS (c) STEP 2 — redstone WIRE (dust) continuity; disableSeamWire is its A/B switch.
+            if (project.findProperty('disableSeamWire') == 'true') { vmArg('-Dseamlessportals.disableSeamWire=true') }
+            // F8 — half-scoped seam redstone (claimed cells emit/intake per-half).
+            if (project.findProperty('disableSeamHalfScope') == 'true') { vmArg('-Dseamlessportals.disableSeamHalfScope=true') }
+            // RS (c) PROBE LEVER — DEFAULT-OFF.
+            if (project.findProperty('seamSignalProbe') == 'true') { vmArg('-Dseamlessportals.seamSignalProbe=true') }
+            // RS (d) FIX LEVERS — minecart rail following across the seam. disableSeamCartRail is
+            // (d)'s master A/B switch; disableSeamCartCrossOnly restores the unrestricted
+            // two-directional seam view (the panel's phantom-rail defect, on demand).
+            if (project.findProperty('disableSeamCartRail') == 'true') { vmArg('-Dseamlessportals.disableSeamCartRail=true') }
+            if (project.findProperty('disableSeamCartCrossOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamCartCrossOnly=true') }
+            if (project.findProperty('disableSeamCartStraddle') == 'true') { vmArg('-Dseamlessportals.disableSeamCartStraddle=true') }
+            // RS (d) SHARED-MACHINERY FIX (user-authorised): the ridden-vehicle carry offset.
+            if (project.findProperty('disableSeamVehicleAttach') == 'true') { vmArg('-Dseamlessportals.disableSeamVehicleAttach=true') }
+            // RS (d) PROBE LEVER — DEFAULT-OFF. The minecart-crossing instrument (recon §5.5).
+            if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
+            // ENGINE STAGE 1 — shadow resolver (SEAM_ENTITY_ENGINE_DESIGN par.6): new-form verdicts computed alongside legacy, divergences logged.
+            if (project.findProperty('seamResolver') != null) { vmArg('-Dseamlessportals.seamResolver=' + project.findProperty('seamResolver')) }
+            // ENGINE STAGE 2b - band painter rollback lever (SEAM_ENTITY_ENGINE_DESIGN par.2.5).
+            if (project.findProperty('enableSeamBandPainter') == 'true') { vmArg('-Dseamlessportals.enableSeamBandPainter=true') }
+            // DIAGNOSTIC - the band painter landing beacon (verdict wf_8a9d68af-951 Part 4.1).
+            if (project.findProperty('seamBandBeacon') == 'true') { vmArg('-Dseamlessportals.seamBandBeacon=true') }
+            // DIAGNOSTIC - per-painter tint (SEAM_BAND_HANDOFF par.4.1): pixel attribution by colour.
+            if (project.findProperty('seamPainterTint') == 'true') { vmArg('-Dseamlessportals.seamPainterTint=true') }
+            // DIAGNOSTIC - the band painter's depth-bias ladder (SEAM_BAND_HANDOFF par.4.3), default 1e-5.
+            if (project.findProperty('seamBandBias') != null) { vmArg('-Dseamlessportals.seamBandBias=' + project.findProperty('seamBandBias')) }
+            // ENGINE par.1.3 (b) - in-pass projection SIDE AGREEMENT rollback lever (round 29).
+            if (project.findProperty('disableSeamInPassSideAgreement') == 'true') { vmArg('-Dseamlessportals.disableSeamInPassSideAgreement=true') }
+            // ROUND 30 - THE VISUAL SWEEP (tail-clip fix): draw gates + CLOSE on the last-tick/post-tick sweep.
+            if (project.findProperty('disableSeamVisualSweep') == 'true') { vmArg('-Dseamlessportals.disableSeamVisualSweep=true') }
+            // ROUND 31 - THE MODEL MARGIN (residual rider clip): draw gates widen the box to the drawn model's reach.
+            if (project.findProperty('disableSeamModelMargin') == 'true') { vmArg('-Dseamlessportals.disableSeamModelMargin=true') }
+            // ROUND 35 - the face-cut fix: render-side booking supplement + the per-entity render envelope.
+            if (project.findProperty('enableSeamRenderBooking') == 'true') { vmArg('-Dseamlessportals.enableSeamRenderBooking=true') }
+            if (project.findProperty('disableSeamRenderEnvelope') == 'true') { vmArg('-Dseamlessportals.disableSeamRenderEnvelope=true') }
+            // ROUND 37 - the seam collision ENTRY's lifetime measures the render envelope, not the raw box.
+            if (project.findProperty('disableSeamKeepModelExtent') == 'true') { vmArg('-Dseamlessportals.disableSeamKeepModelExtent=true') }
+            // ROUND 38 - tint keys on the ENTITY, not the painter (needs seamPainterTint too).
+            if (project.findProperty('seamTintPerEntity') == 'true') { vmArg('-Dseamlessportals.seamTintPerEntity=true') }
+            // ROUND 41 - all of the tint's pipeline effects, none of the colour.
+            if (project.findProperty('seamTintNeutral') == 'true') { vmArg('-Dseamlessportals.seamTintNeutral=true') }
+            // ROUND 39 - in-pass visibility verdict judges EVERY straddled face, not entry 0.
+            if (project.findProperty('disableSeamAllFaceVisibility') == 'true') { vmArg('-Dseamlessportals.disableSeamAllFaceVisibility=true') }
+            // ROUND 31 (D2) - THE PROJECTION CAMERA DISTANCE: distance gates measure the DRAWN position (shadows, name tags).
+            if (project.findProperty('disableSeamProjectionCameraDistance') == 'true') { vmArg('-Dseamlessportals.disableSeamProjectionCameraDistance=true') }
+            // RS (e) DEFECT A — restores the WRAP-AROUND section lookup on the dest-pass entity
+            // visibility gate (the same-dim window loses its entities at any real distance).
+            if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
+            // RS (e) PROBE LEVERS — DEFAULT-OFF. A: the dest-pass entity gate. B: the CLIENT-side
+            // ride trace across a cross-dim crossing (the server-side SeamCartProbe cannot see it).
+            // RS (e) DEFECT B — restores the stale relative-move base on a cross-dim client move.
+            if (project.findProperty('disableCrossDimPositionCodecSync') == 'true') { vmArg('-Dseamlessportals.disableCrossDimPositionCodecSync=true') }
+            if (project.findProperty('cartWindowProbe') == 'true') { vmArg('-Dseamlessportals.cartWindowProbe=true') }
+            if (project.findProperty('seamRideProbe') == 'true') { vmArg('-Dseamlessportals.seamRideProbe=true') }
+            // RS-ONLY suite mode (gametest-side skip of the crossing/teleport legs) — also exposed
+            // here so a live client run can carry it for symmetry, though only the gametest reads it.
+            if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
+            // THE FRACTIONAL SEAM MODEL (migration/FRACTIONAL_DESIGN.md). Fix levers DEFAULT-ON;
+            // seamSupportUnion is an EXPERIMENT lever, default-off, needing the user's word (§5).
+            if (project.findProperty('disableSeamFractional') == 'true') { vmArg('-Dseamlessportals.disableSeamFractional=true') }
+            if (project.findProperty('disableSeamFractionalCollision') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalCollision=true') }
+            if (project.findProperty('disableSeamFractionalSupport') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalSupport=true') }
+            if (project.findProperty('seamSupportUnion') == 'true') { vmArg('-Dseamlessportals.seamSupportUnion=true') }
+            if (project.findProperty('seamFractionalProbe') == 'true') { vmArg('-Dseamlessportals.seamFractionalProbe=true') }
             // TP-XDIM FRAME CENSUS (2026-07-28; log-only, DEFAULT OFF): classifies every in-world
             // frame by what renderCrossPortalView() did (11 codes) plus three independently-woven
             // witnesses of what actually ran (renderLevel / IS0 anchor / AFTER_TRANSLUCENT_TERRAIN) —
@@ -783,6 +906,128 @@ loom {
             // (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisablePortalBatchIsolation=true
             if (project.findProperty('disablePortalBatchIsolation') == 'true') { vmArg('-Dseamlessportals.disablePortalBatchIsolation=true') }
+            // RS PASSTHROUGH (a) diagnose-first probes (mirror of the client run above; both
+            // DEFAULT-OFF, so the 8-leg gate is byte-identical without the properties). Armed only
+            // for attribution rounds — the suite creates portals, so an armed census run tabulates
+            // every generated aperture —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true
+            if (project.findProperty('apertureCensusProbe') == 'true') { vmArg('-Dseamlessportals.apertureCensusProbe=true') }
+            // RS-TEARDOWN-TEST: builds + ignites its OWN isolated portal, drops a rail into a
+            // mid-height opening cell with the suppressor OFF, and reports whether the portal
+            // survived. Settles a recon claim that was read from source but never observed —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PapertureCensusProbe=true -PapertureTeardownTest=true
+            if (project.findProperty('apertureTeardownTest') == 'true') { vmArg('-Dseamlessportals.apertureTeardownTest=true') }
+            if (project.findProperty('seamDeliveryTest') == 'true') { vmArg('-Dseamlessportals.seamDeliveryTest=true') }
+            // RS (a) FIX + PROBE LEVERS (mirror of the client run above — the suite must be able to
+            // run the 8 legs under -PdisableAperturePassthrough=true for both-directions attribution).
+            if (project.findProperty('disableAperturePassthrough') == 'true') { vmArg('-Dseamlessportals.disableAperturePassthrough=true') }
+            if (project.findProperty('disableSeamMirror') == 'true') { vmArg('-Dseamlessportals.disableSeamMirror=true') }
+            if (project.findProperty('disableIgnitionWhitelist') == 'true') { vmArg('-Dseamlessportals.disableIgnitionWhitelist=true') }
+            if (project.findProperty('disableSurvivorSkip') == 'true') { vmArg('-Dseamlessportals.disableSurvivorSkip=true') }
+            if (project.findProperty('disableSeamTargeting') == 'true') { vmArg('-Dseamlessportals.disableSeamTargeting=true') }
+            if (project.findProperty('disableMirrorAuthority') == 'true') { vmArg('-Dseamlessportals.disableMirrorAuthority=true') }
+            if (project.findProperty('disableFrameMirror') == 'true') { vmArg('-Dseamlessportals.disableFrameMirror=true') }
+            if (project.findProperty('disableSameDimRemesh') == 'true') { vmArg('-Dseamlessportals.disableSameDimRemesh=true') }
+            if (project.findProperty('disableSeamPlayerOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamPlayerOnly=true') }
+            if (project.findProperty('disableSeamExactOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamExactOnly=true') }
+            if (project.findProperty('disableSeamPrediction') == 'true') { vmArg('-Dseamlessportals.disableSeamPrediction=true') }
+            if (project.findProperty('seamMapProbe') == 'true') { vmArg('-Dseamlessportals.seamMapProbe=true') }
+            if (project.findProperty('seamReconcileProbe') == 'true') { vmArg('-Dseamlessportals.seamReconcileProbe=true') }
+            if (project.findProperty('seamAimProbe') == 'true') { vmArg('-Dseamlessportals.seamAimProbe=true') }
+            if (project.findProperty('seamMirrorProbe') == 'true') { vmArg('-Dseamlessportals.seamMirrorProbe=true') }
+            if (project.findProperty('seamLedgerProbe') == 'true') { vmArg('-Dseamlessportals.seamLedgerProbe=true') }
+            if (project.findProperty('seamDeliveryProbe') == 'true') { vmArg('-Dseamlessportals.seamDeliveryProbe=true') }
+            // RS (b) FIX LEVERS — rails connecting across the seam (see the client block's rows).
+            if (project.findProperty('disableSeamShadow') == 'true') { vmArg('-Dseamlessportals.disableSeamShadow=true') }
+            if (project.findProperty('disableSeamRailWrite') == 'true') { vmArg('-Dseamlessportals.disableSeamRailWrite=true') }
+            if (project.findProperty('disableSeamRailSlope') == 'true') { vmArg('-Dseamlessportals.disableSeamRailSlope=true') }
+            if (project.findProperty('disableSeamRailReseed') == 'true') { vmArg('-Dseamlessportals.disableSeamRailReseed=true') }
+            if (project.findProperty('disableSeamPhaseGate') == 'true') { vmArg('-Dseamlessportals.disableSeamPhaseGate=true') }
+            if (project.findProperty('disableSeamReverseDisambig') == 'true') { vmArg('-Dseamlessportals.disableSeamReverseDisambig=true') }
+            if (project.findProperty('disableSeamShapeSync') == 'true') { vmArg('-Dseamlessportals.disableSeamShapeSync=true') }
+            // CART CROSS-DIM SMOOTHNESS (2026-08-24): visual carryover across the dimension flip.
+            if (project.findProperty('disableSeamVisualCarryover') == 'true') { vmArg('-Dseamlessportals.disableSeamVisualCarryover=true') }
+            // PROJECTION LIGHT (2026-08-24): sample projection light at the image, in the target level.
+            if (project.findProperty('disableSeamProjectionLight') == 'true') { vmArg('-Dseamlessportals.disableSeamProjectionLight=true') }
+            // SEAM CLIP (renderer): DEFAULT OFF by user decision 2026-07-27 (fractional model is the
+            // chosen direction; the clip is kept as its renderer). One-line re-enable:
+            if (project.findProperty('enableSeamClip') == 'true') { vmArg('-Dseamlessportals.enableSeamClip=true') }
+            if (project.findProperty('disableSeamClip') == 'true') { vmArg('-Dseamlessportals.disableSeamClip=true') }
+            if (project.findProperty('seamClipProbe') == 'true') { vmArg('-Dseamlessportals.seamClipProbe=true') }
+            if (project.findProperty('seamRailProbe') == 'true') { vmArg('-Dseamlessportals.seamRailProbe=true') }
+            // RS (c) FIX LEVERS — redstone signal across the seam (see the client block's rows).
+            if (project.findProperty('disableSeamSignal') == 'true') { vmArg('-Dseamlessportals.disableSeamSignal=true') }
+            if (project.findProperty('disableSeamSignalDispatch') == 'true') { vmArg('-Dseamlessportals.disableSeamSignalDispatch=true') }
+            if (project.findProperty('disableSeamWalkSever') == 'true') { vmArg('-Dseamlessportals.disableSeamWalkSever=true') }
+            if (project.findProperty('disableSeamPowerWake') == 'true') { vmArg('-Dseamlessportals.disableSeamPowerWake=true') }
+            if (project.findProperty('disableSeamBreakUnmark') == 'true') { vmArg('-Dseamlessportals.disableSeamBreakUnmark=true') }
+            if (project.findProperty('disableSeamWire') == 'true') { vmArg('-Dseamlessportals.disableSeamWire=true') }
+            if (project.findProperty('disableSeamHalfScope') == 'true') { vmArg('-Dseamlessportals.disableSeamHalfScope=true') }
+            if (project.findProperty('seamSignalProbe') == 'true') { vmArg('-Dseamlessportals.seamSignalProbe=true') }
+            // RS (d) FIX LEVERS — see the client block's rows.
+            if (project.findProperty('disableSeamCartRail') == 'true') { vmArg('-Dseamlessportals.disableSeamCartRail=true') }
+            if (project.findProperty('disableSeamCartCrossOnly') == 'true') { vmArg('-Dseamlessportals.disableSeamCartCrossOnly=true') }
+            if (project.findProperty('disableSeamCartStraddle') == 'true') { vmArg('-Dseamlessportals.disableSeamCartStraddle=true') }
+            if (project.findProperty('disableSeamVehicleAttach') == 'true') { vmArg('-Dseamlessportals.disableSeamVehicleAttach=true') }
+            // RS (d) PROBE LEVER — DEFAULT-OFF. Arms the minecart-crossing instrument's extra
+            // logging (SAMPLE/EVT/COME-OFF-TRACK/bridge-hit lines) in the RS-CART gates.
+            if (project.findProperty('seamCartProbe') == 'true') { vmArg('-Dseamlessportals.seamCartProbe=true') }
+            // ENGINE STAGE 1 — shadow resolver (SEAM_ENTITY_ENGINE_DESIGN par.6): new-form verdicts computed alongside legacy, divergences logged.
+            if (project.findProperty('seamResolver') != null) { vmArg('-Dseamlessportals.seamResolver=' + project.findProperty('seamResolver')) }
+            // ENGINE STAGE 2b - band painter rollback lever (SEAM_ENTITY_ENGINE_DESIGN par.2.5).
+            if (project.findProperty('enableSeamBandPainter') == 'true') { vmArg('-Dseamlessportals.enableSeamBandPainter=true') }
+            // DIAGNOSTIC - the band painter landing beacon (verdict wf_8a9d68af-951 Part 4.1).
+            if (project.findProperty('seamBandBeacon') == 'true') { vmArg('-Dseamlessportals.seamBandBeacon=true') }
+            // DIAGNOSTIC - per-painter tint (SEAM_BAND_HANDOFF par.4.1): pixel attribution by colour.
+            if (project.findProperty('seamPainterTint') == 'true') { vmArg('-Dseamlessportals.seamPainterTint=true') }
+            // DIAGNOSTIC - the band painter's depth-bias ladder (SEAM_BAND_HANDOFF par.4.3), default 1e-5.
+            if (project.findProperty('seamBandBias') != null) { vmArg('-Dseamlessportals.seamBandBias=' + project.findProperty('seamBandBias')) }
+            // ENGINE par.1.3 (b) - in-pass projection SIDE AGREEMENT rollback lever (round 29).
+            if (project.findProperty('disableSeamInPassSideAgreement') == 'true') { vmArg('-Dseamlessportals.disableSeamInPassSideAgreement=true') }
+            // ROUND 30 - THE VISUAL SWEEP (tail-clip fix): draw gates + CLOSE on the last-tick/post-tick sweep.
+            if (project.findProperty('disableSeamVisualSweep') == 'true') { vmArg('-Dseamlessportals.disableSeamVisualSweep=true') }
+            // ROUND 31 - THE MODEL MARGIN (residual rider clip): draw gates widen the box to the drawn model's reach.
+            if (project.findProperty('disableSeamModelMargin') == 'true') { vmArg('-Dseamlessportals.disableSeamModelMargin=true') }
+            // ROUND 35 - the face-cut fix: render-side booking supplement + the per-entity render envelope.
+            if (project.findProperty('enableSeamRenderBooking') == 'true') { vmArg('-Dseamlessportals.enableSeamRenderBooking=true') }
+            if (project.findProperty('disableSeamRenderEnvelope') == 'true') { vmArg('-Dseamlessportals.disableSeamRenderEnvelope=true') }
+            // ROUND 37 - the seam collision ENTRY's lifetime measures the render envelope, not the raw box.
+            if (project.findProperty('disableSeamKeepModelExtent') == 'true') { vmArg('-Dseamlessportals.disableSeamKeepModelExtent=true') }
+            // ROUND 38 - tint keys on the ENTITY, not the painter (needs seamPainterTint too).
+            if (project.findProperty('seamTintPerEntity') == 'true') { vmArg('-Dseamlessportals.seamTintPerEntity=true') }
+            // ROUND 41 - all of the tint's pipeline effects, none of the colour.
+            if (project.findProperty('seamTintNeutral') == 'true') { vmArg('-Dseamlessportals.seamTintNeutral=true') }
+            // ROUND 39 - in-pass visibility verdict judges EVERY straddled face, not entry 0.
+            if (project.findProperty('disableSeamAllFaceVisibility') == 'true') { vmArg('-Dseamlessportals.disableSeamAllFaceVisibility=true') }
+            // ROUND 31 (D2) - THE PROJECTION CAMERA DISTANCE: distance gates measure the DRAWN position (shadows, name tags).
+            if (project.findProperty('disableSeamProjectionCameraDistance') == 'true') { vmArg('-Dseamlessportals.disableSeamProjectionCameraDistance=true') }
+            // RS (e) DEFECT A inversion lever + the two (e) probe levers.
+            // ⚠ NO GATE LEG CONSUMES disableDestEntitySectionExact. Defect A is covered by LIVE
+            // evidence only (2026-08-01: user-confirmed, with a zombie-in-a-minecart control that
+            // removes despawn as a confound; probe logged the aliasing in coordinates — entity at
+            // section (0,1,2500) resolving via the wrap to (0,1,0), 189,210/201,525 gate calls
+            // disagreeing, 6,026 verdicts flipped from cull to keep). This row therefore proves
+            // only that the lever is WIRED — a suite pass under it is NOT evidence the fix works.
+            // Writing that leg (RS-CART-F) is a queued item; it needs a same-dim destination
+            // outside the ViewArea preset window AND at a Y whose aliased section is UNCOMPILED,
+            // and a fixture missing either precondition passes for the wrong reason.
+            if (project.findProperty('disableDestEntitySectionExact') == 'true') { vmArg('-Dseamlessportals.disableDestEntitySectionExact=true') }
+            // RS (e) DEFECT B — restores the stale relative-move base on a cross-dim client move.
+            if (project.findProperty('disableCrossDimPositionCodecSync') == 'true') { vmArg('-Dseamlessportals.disableCrossDimPositionCodecSync=true') }
+            if (project.findProperty('cartWindowProbe') == 'true') { vmArg('-Dseamlessportals.cartWindowProbe=true') }
+            if (project.findProperty('seamRideProbe') == 'true') { vmArg('-Dseamlessportals.seamRideProbe=true') }
+            // RS-ONLY suite mode: skip the crossing/teleport legs (thrown items, hurt cow, pearl,
+            // far-dest leg 7, leg 5's world reopen); portal staging, 6a/6b and every RS gate still
+            // run. The full suite stays the default and is required before a commit.
+            if (project.findProperty('rsOnly') == 'true') { vmArg('-Dseamlessportals.rsOnly=true') }
+            // THE FRACTIONAL SEAM MODEL (migration/FRACTIONAL_DESIGN.md). rsSeamCollisionGate reads
+            // these: it is lever-aware from its first run, before any fix exists, and reports which
+            // truth it asserted rather than passing vacuously.
+            if (project.findProperty('disableSeamFractional') == 'true') { vmArg('-Dseamlessportals.disableSeamFractional=true') }
+            if (project.findProperty('disableSeamFractionalCollision') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalCollision=true') }
+            if (project.findProperty('disableSeamFractionalSupport') == 'true') { vmArg('-Dseamlessportals.disableSeamFractionalSupport=true') }
+            if (project.findProperty('seamSupportUnion') == 'true') { vmArg('-Dseamlessportals.seamSupportUnion=true') }
+            if (project.findProperty('seamFractionalProbe') == 'true') { vmArg('-Dseamlessportals.seamFractionalProbe=true') }
             // IS5-P phantom fix A/B (2026-07-22): the iris temporal-target guard is DEFAULT-ON; pass this to
             // force it OFF and reproduce the whole-screen phantom overlay (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisTemporalGuard=true

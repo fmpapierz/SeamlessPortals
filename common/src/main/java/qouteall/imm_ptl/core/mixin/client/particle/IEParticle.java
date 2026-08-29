@@ -27,4 +27,72 @@ public interface IEParticle {
 
     @Accessor("z")
     double portal_getZ();
+
+    // ★ SEAM ROUND 35 — the PARTICLE SEAM TELEPORT (user-proposed mechanism: "can we do the same
+    // delete + mirror thing for particles like we do with blocks?"). A particle crossing into a
+    // cut cell's empty half is not culled — it is MOVED to the counterpart world/position, the
+    // client-side analogue of the entity teleport: re-tag the level (the global engine is
+    // multi-world by IP design; S18 renders dest-tagged particles through windows), reposition,
+    // and remap velocity. The level field is protected FINAL on 26.2 — hence @Mutable.
+
+    @org.spongepowered.asm.mixin.Mutable
+    @Accessor("level")
+    void portal_setWorld(ClientLevel level);
+
+    @Accessor("x")
+    void portal_setX(double x);
+
+    @Accessor("y")
+    void portal_setY(double y);
+
+    @Accessor("z")
+    void portal_setZ(double z);
+
+    @Accessor("xo")
+    void portal_setXo(double xo);
+
+    @Accessor("yo")
+    void portal_setYo(double yo);
+
+    @Accessor("zo")
+    void portal_setZo(double zo);
+
+    // ★ SEAM ROUND 40 — previous-position reads for the crossing gate: the open-aperture
+    // teleport fires only on a genuine plane TRANSITION this tick (prev half vs current half),
+    // and the came-from half picks the binding. xo/yo/zo hold the tick-start position
+    // (Particle.tick copies x/y/z into them before moving).
+
+    @Accessor("xo")
+    double portal_getXo();
+
+    @Accessor("yo")
+    double portal_getYo();
+
+    @Accessor("zo")
+    double portal_getZo();
+
+    // ★ SEAM ROUND 41 — spawn-scatter correction: a particle whose FIRST tick finds it past a
+    // binding's plane materialized there (fire's animateTick scatters spawn points across the
+    // whole block, some beyond the cut) — a crossing at birth, teleported once. age is the
+    // one-shot guard: each funnel pass runs tick() first, so age<=1 is true exactly once.
+    @Accessor("age")
+    int portal_getAge();
+
+    @Accessor("xd")
+    double portal_getXd();
+
+    @Accessor("yd")
+    double portal_getYd();
+
+    @Accessor("zd")
+    double portal_getZd();
+
+    @Accessor("xd")
+    void portal_setXd(double xd);
+
+    @Accessor("yd")
+    void portal_setYd(double yd);
+
+    @Accessor("zd")
+    void portal_setZd(double zd);
 }

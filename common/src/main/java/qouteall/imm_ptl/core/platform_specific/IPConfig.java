@@ -209,7 +209,19 @@ public class IPConfig implements ConfigData {
     public boolean initialScreenShown = false;
     
     // common visible configs
-    
+
+    /**
+     * PASSTHROUGH EXTRAS — the master switch for the seam feature set: rails, redstone,
+     * fractional block placement/breaking and cart crossings working ACROSS portal surfaces,
+     * plus their crossing-visual machinery. Default OFF: no seam ever binds
+     * ({@code AperturePassthroughInit.onPortalTick} gates on this and actively releases live
+     * bindings when toggled off), and every consumer of the feature starts by consulting the
+     * registry that gate starves — so the mod behaves exactly as it did before the feature
+     * existed. Live both directions: toggling takes effect within a tick, no restart.
+     */
+    @ConfigEntry.Gui.Tooltip
+    public boolean passthroughExtras = false;
+
     @ConfigEntry.Gui.EnumHandler(option = ConfigEntry.Gui.EnumHandler.EnumDisplayOption.BUTTON)
     public IPGlobal.NetherPortalMode netherPortalMode =
         IPFeatureControl.enableVanillaBehaviorChangingByDefault() ?

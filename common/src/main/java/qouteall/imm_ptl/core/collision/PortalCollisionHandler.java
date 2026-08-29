@@ -42,12 +42,21 @@ public class PortalCollisionHandler {
             if (p.portal.level() != entity.level()) {
                 return true;
             }
-            
+
+            // Stage 0 (engine design §1.3): the straddle pin + rider bracket mirror live in
+            // the module as mustKeep — consulted BEFORE the box/staleness/eye gates below
+            // (a rebased arrival visual can trail more than the 0.5 stretch margin; a rider's
+            // own gates would delete the fanned entry every tick before a frame renders).
+            if (com.warwa.seamlessportals.passthrough.SeamCrossingRule.mustKeep(entity, p)) {
+                p.activeTime = getTiming(entity);
+                return false;
+            }
+
             AABB stretchedBoundingBox = CollisionHelper.getStretchedBoundingBox(entity);
             if (!stretchedBoundingBox.inflate(0.5).intersects(p.portal.getBoundingBox())) {
                 return true;
             }
-            
+
             if (Math.abs(getTiming(entity) - p.activeTime) >= 3) {
                 return true;
             }

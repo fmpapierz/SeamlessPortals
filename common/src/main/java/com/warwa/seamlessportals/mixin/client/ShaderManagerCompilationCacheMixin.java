@@ -34,13 +34,31 @@ public abstract class ShaderManagerCompilationCacheMixin {
     )
     private void seamlessportals$transformShaderSource(
             Identifier id, ShaderType type, CallbackInfoReturnable<String> cir) {
-        if (type != ShaderType.VERTEX) return;
         String source = cir.getReturnValue();
         if (source == null) return;
         // Only touch vanilla-namespaced shaders. Mod shaders (Iris,
         // Sodium, etc.) manage their own clip logic and our transform
         // could collide with theirs.
         if (!"minecraft".equals(id.getNamespace())) return;
+
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): while -PseamPainterTint is armed, every
+        // vanilla FRAGMENT shader gains the debug-tint wrapper. Lever off ⇒ this branch is one
+        // static read and the fragment sources stay byte-identical.
+        if (type == ShaderType.FRAGMENT) {
+            if (!com.warwa.seamlessportals.render.SeamTint.ENABLED) return;
+            String tinted = ShaderCodeTransformation.transformFragment(source);
+            if (tinted != source) {
+                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAM TINT] fragment shader patched: {}", id);
+                cir.setReturnValue(tinted);
+            } else {
+                com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+                    "[SEAM TINT] fragment shader skipped: {} (no match)", id);
+            }
+            return;
+        }
+
+        if (type != ShaderType.VERTEX) return;
 
         String transformed = ShaderCodeTransformation.transformVertex(source);
         if (transformed != source) {

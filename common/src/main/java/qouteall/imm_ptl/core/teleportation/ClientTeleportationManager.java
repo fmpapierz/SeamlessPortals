@@ -339,7 +339,18 @@ public class ClientTeleportationManager {
         
         Entity vehicle = player.getVehicle();
         Vec3 oldVehiclePos = vehicle != null ? vehicle.position() : null;
-        
+
+        // (e) DEFECT-B instrument, armed HERE rather than only in changePlayerDimension.
+        // The 2026-08-01 round proved the first placement wrong: a SAME-DIM crossing never calls
+        // changePlayerDimension (see the fromDimension != toDimension gate below), so the probe
+        // recorded ZERO lines across 472 real crossings. This is the entry point BOTH topologies
+        // share, so arming here covers same-dim and cross-dim alike.
+        if (vehicle != null) {
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.armForCrossing(
+                player.level().dimension().identifier().toString(),
+                toDimension.identifier().toString(), vehicle);
+        }
+
         Vec3 thisTickEyePos = McHelper.getEyePos(player);
         Vec3 lastTickEyePos = McHelper.getLastTickEyePos(player);
         
@@ -382,9 +393,34 @@ public class ClientTeleportationManager {
         PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
             player, newThisTickEyePos, newLastTickEyePos, RenderStates.getPartialTick()
         );
-        
+
         McHelper.adjustVehicle(player);
-        
+
+        if (vehicle != null) {
+            // F5: the carry moved the cart whole — flip its collision bookkeeping WITH it.
+            // The player got its refresh just above, but the cart kept the SOURCE portal's
+            // stale entry (garbage clip + counterpart for 1-3 rendered frames) and gained
+            // the dest-side entry only at the next POST_CLIENT_TICK sweep — the ridden
+            // flavour of the live "back half of the cart" pop.
+            PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                vehicle, McHelper.getEyePos(vehicle), McHelper.getEyePos(vehicle),
+                RenderStates.getPartialTick()
+            );
+            qouteall.imm_ptl.core.render.CrossPortalEntityRenderer.onEntityTickClient(vehicle);
+        }
+
+        // (e) instrument: the CLIENT's post-crossing ride state, read after adjustVehicle — the
+        // last thing the client mutates on this path. On the SAME-DIM path this is the ONLY
+        // vehicle handling there is (no dismount, no recreate, no re-mount), so if the link is
+        // already broken here the cause is upstream of the crossing entirely.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.event("CLIENT-TELEPORT-DONE",
+            "sameDim=" + (fromDimension == toDimension)
+                + " vehicle=" + (player.getVehicle() == null
+                    ? "NULL(dismounted)" : String.valueOf(player.getVehicle().getId()))
+                + " playerPos=" + player.position()
+                + " vehiclePos=" + (player.getVehicle() == null
+                    ? "-" : player.getVehicle().position().toString()));
+
         //because the teleportation may happen before rendering
         //but after pre render info being updated
         RenderStates.updatePreRenderInfo(partialTick);
@@ -460,12 +496,26 @@ public class ClientTeleportationManager {
     public static void changePlayerDimension(
         LocalPlayer player, ClientLevel fromWorld, ClientLevel toWorld, Vec3 newEyePos
     ) {
+        // (e) DEFECT-B instrument: arm BEFORE the three preconditions below, deliberately. One
+        // recon candidate for the user's "white/blank background" is precisely a SECOND
+        // changePlayerDimension aborting on one of these Validates mid-cutover (client.level and
+        // the renderer already re-pointed, gameRenderer.setLevel not yet) — armed here, the
+        // window's own SAMPLE lines record that half-swapped state instead of going silent.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.armForCrossing(
+            fromWorld.dimension().identifier().toString(),
+            toWorld.dimension().identifier().toString(),
+            player.getVehicle());
+
         Validate.isTrue(!WorldRenderInfo.isRendering());
         Validate.isTrue(!FrontClipping.isClippingEnabled);
         Validate.isTrue(!PacketRedirectionClient.getIsProcessingRedirectedMessage());
-        
+
         Entity vehicle = player.getVehicle();
         player.unRide();
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.event("UNRIDE",
+            "heldVehicle=" + (vehicle == null ? "null" : String.valueOf(vehicle.getId()))
+                + " playerVehicleNow="
+                + (player.getVehicle() == null ? "null" : String.valueOf(player.getVehicle().getId())));
         
         ResourceKey<Level> toDimension = toWorld.dimension();
         ResourceKey<Level> fromDimension = fromWorld.dimension();
@@ -551,6 +601,17 @@ public class ClientTeleportationManager {
         if (vehicle != null) {
             Vec3 offset = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
             Vec3 vehiclePos = player.position().add(offset);
+            // (e) instrument: dump BOTH offset forms in the same line, so the §0 A/B question
+            // ("is the 2026-07-28 two-term attachment fix implicated in the ridden defect?") is
+            // answered numerically without spending a separate launch on the lever. The two-term
+            // form is what ships; the one-term form is what -PdisableSeamVehicleAttach restores.
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.event("CARRY-TERMS",
+                "offsetUsed=" + offset
+                    + " oneTerm=" + player.getVehicleAttachmentPoint(vehicle)
+                    + " vehiclePassengerAttach="
+                    + vehicle.getPassengerRidingPosition(player).subtract(vehicle.position())
+                    + " playerPos=" + player.position()
+                    + " vehiclePosTarget=" + vehiclePos);
             moveClientEntityAcrossDimension(
                 vehicle, toWorld,
                 vehiclePos
@@ -560,7 +621,16 @@ public class ClientTeleportationManager {
                 player.position().add(offset),
                 McHelper.lastTickPosOf(player).add(offset)
             );
-            player.startRiding(vehicle, true, false);
+            // The boolean return is IP-discarded; capture it. Entity.startRiding returns false
+            // early on !couldAcceptPassenger or !type.canSerialize (javap: 26.2 Entity.startRiding
+            // (Entity,ZZ)Z), so a silent false here would produce exactly the reported symptom
+            // with nothing in any existing log to show for it.
+            boolean remounted = player.startRiding(vehicle, true, false);
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.onRemount(vehicle, remounted);
+        }
+        else {
+            com.warwa.seamlessportals.passthrough.SeamRideProbe.event("NO-VEHICLE",
+                "crossing carried no vehicle");
         }
         
         Helper.log(String.format(
@@ -608,6 +678,47 @@ public class ClientTeleportationManager {
         oldWorld.removeEntity(entity.getId(), Entity.RemovalReason.CHANGED_DIMENSION);
         ((IEEntity) entity).ip_setWorld(newWorld);
         entity.setPos(newPos.x, newPos.y, newPos.z);
+
+        // (e) DEFECT B — REBASE THE RELATIVE-MOVE CODEC AND DROP THE STALE INTERPOLATION.
+        //
+        // Measured 2026-08-01, ridden cross-dim crossing, cart id=2396:
+        //   t+0  cart placed in the nether at (40000.5, 68.0625, 0.710)      [this method]
+        //   t+2  cart at (56.5, 68.0625, 8.910) via ClientPacketListener.handleMoveEntity
+        //          < ClientboundMoveEntityPacket$Pos < PacketRedirectionClient.handleRedirectedPacket
+        //   t+7  dragged back by handleEntityPositionSync, then lerped to (26586, …) by
+        //          InterpolationHandler.interpolate < OldMinecartBehavior.tick — partway along the
+        //          40,000-block gap. The player, riding it, is dragged with it: the reported
+        //          "spazzing in place", ending stranded and only escapable with /kill.
+        //
+        // The packet was correctly redirected and the entity correctly resolved — the DECODE was
+        // wrong. ClientboundMoveEntityPacket.Pos carries relative deltas, and the absolute position
+        // comes from the entity's VecDeltaCodec base (javap: handleMoveEntity reads
+        // Entity.getPositionCodec()). setPos does NOT touch that base, and vanilla only ever
+        // rebases it from ABSOLUTE packets (add-entity / position-sync / teleport). So an entity
+        // moved across dimensions here kept a base from the SOURCE dimension, and the destination
+        // tracker's first relative move decoded to source coordinates.
+        //
+        // Why it bites the ridden path specifically: an entity crossing on its own is RECREATED on
+        // the client from an absolute add-entity packet (fresh base), whereas a ridden vehicle is
+        // MOVED as the existing client object by this method — and IP's own add-entity guard
+        // (MixinClientPacketListener: skip when the existing entity has passengers) deliberately
+        // cancels the very packet that would otherwise have rebased it. That is exactly why empty
+        // and entity-ridden carts cross cleanly while a player-ridden cart does not.
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
+            entity.syncPacketPositionCodec(newPos.x, newPos.y, newPos.z);
+            // A teleport must not be interpolated from where the entity used to be. Same rule
+            // McHelper.adjustVehicle already applies at its own carry site; this method had no
+            // equivalent, and the trace above shows the interpolation actively lerping across the
+            // gap for several ticks after each bad packet.
+            net.minecraft.world.entity.InterpolationHandler interpolation = entity.getInterpolation();
+            if (interpolation != null) {
+                interpolation.cancel();
+            }
+        }
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.recordCarryBaseDrift(
+            entity, newPos.x, newPos.y, newPos.z);
+
         ((IEEntity) entity).ip_unsetRemoved();
         newWorld.addEntity(entity);
         Validate.isTrue(!entity.isRemoved());
@@ -747,24 +858,183 @@ public class ClientTeleportationManager {
         public static void updateEntityPos(
             ResourceKey<Level> dim,
             int entityId,
-            Vec3 pos
+            Vec3 pos,
+            ResourceKey<Level> portalDim,
+            int portalId
         ) {
             ClientLevel world = ClientWorldLoader.getWorld(dim);
-            
+
             Entity entity = world.getEntity(entityId);
-            
+
+            // UNFILTERED arrival line (2026-08-16 instrument round): the rider's RPC was
+            // invisible to every prior scan — from here on, absence-of-line means the packet
+            // never came, not that a filter dropped it.
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.rpc(
+                "updateEntityPos id=" + entityId + " dim=" + dim.identifier()
+                    + " pos=" + pos + " portalId=" + portalId
+                    + " entityFound=" + (entity != null));
+
             if (entity == null) {
                 Helper.err("cannot find entity to update position");
                 return;
             }
-            
-            // both of them are important for Minecart
-            entity.getPositionCodec().setBase(pos);
-            entity.snapTo(pos, entity.getYRot(), entity.getXRot());
-            InterpolationHandler interpolation = entity.getInterpolation();
-            if (interpolation != null) {
-                interpolation.cancel();
+
+            // F6 — REBASE, not snap, at a seam crossing (portalId != -1 iff the server took the
+            // conserved-arrival path). The old snap+cancel froze the cart for a tick and dropped
+            // the client's interpolation lag on the floor — the residual hiccup after F5. The
+            // rebase maps EVERY piece of stored visual state (position, last-tick position, the
+            // pending interpolation target, velocity) through the portal transform, so every
+            // frame-to-frame delta is preserved exactly and the on-screen path is continuous
+            // through the flip — the render-side analogue of the rs(e) VecDeltaCodec rebase
+            // rule. The codec base still takes the server's authoritative position: subsequent
+            // move deltas must decode against what the server actually uses.
+            boolean rebased = false;
+            boolean flipHandled = false;
+            qouteall.imm_ptl.core.portal.Portal crossingPortal = null;
+            if (portalId != -1) {
+                ClientLevel portalWorld = ClientWorldLoader.getWorld(portalDim);
+                if (portalWorld != null
+                    && portalWorld.getEntity(portalId)
+                        instanceof qouteall.imm_ptl.core.portal.Portal p) {
+                    crossingPortal = p;
+                    qouteall.imm_ptl.core.portal.Portal arrivalFace =
+                        qouteall.imm_ptl.core.portal.PortalManipulation
+                            .findArrivalFacingPortal(p);
+                    // ENGINE STAGE 2a — THE EPOCH-GUARDED UNIT-ATOMIC FLIP (design §3.2/3.3):
+                    // if the unit is already anchored at this crossing's arrival face, this RPC
+                    // is a duplicate / late / rider-echo application — the entire transition
+                    // no-ops structurally (only the codec base is taken). Otherwise the whole
+                    // unit flips in this one handler call: every member's visual rebased
+                    // (ATOMIC RIDER CARRY — 26.2 renders mid-packet; a frame in the vehicle↔
+                    // rider RPC gap drew the unbracket-ed rider, and a positionRider drag
+                    // winning the race let the rider's RPC double-transform an already-carried
+                    // visual, the 686.7-offset family), the anchor re-set, every member's
+                    // bracket re-seeded anchor-authorized.
+                    if (arrivalFace != null
+                        && com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                            .isAnchoredAt(entity, arrivalFace)) {
+                        com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
+                            "FLIP-NOOP (already anchored at " + arrivalFace.getId() + ")");
+                        flipHandled = true;
+                    }
+                    else {
+                        // ★ CART CROSS-DIM SMOOTHNESS (2026-08-24): a cross-dim crossing
+                        // recreated the client instance, so its visual history died with the
+                        // source-level REMOVE one packet earlier — the rebase's idempotency
+                        // guard then correctly reports "already carried" and the first rendered
+                        // frame is the arrival pop (round-7 log: REBASE-SKIP visual==server on
+                        // every cross-dim crossing). The carryover stashes the departing
+                        // instance's visual at removal and applies it here, transformed through
+                        // the crossing portal; same-dim (no removal → no stash) falls through
+                        // to the F6 rebase unchanged.
+                        if (!com.warwa.seamlessportals.passthrough.SeamVisualCarryover
+                                .applyIfStashed(entity, p, pos)) {
+                            applyRebaseVisual(entity, p, pos, portalId);
+                        }
+                        for (Entity rider : entity.getPassengers()) {
+                            if (!com.warwa.seamlessportals.passthrough.SeamVisualCarryover
+                                    .applyIfStashed(rider, p, pos)) {
+                                applyRebaseVisual(rider, p, pos, portalId);
+                            }
+                        }
+                        if (arrivalFace != null) {
+                            // Anchor first: the seeds below are anchor-authorized (mayBook (a)).
+                            com.warwa.seamlessportals.passthrough.SeamCrossingRule
+                                .flip(entity, arrivalFace);
+                            seedArrivalFace(entity, arrivalFace);
+                            for (Entity rider : entity.getPassengers()) {
+                                seedArrivalFace(rider, arrivalFace);
+                            }
+                            flipHandled = true;
+                        }
+                    }
+                    entity.getPositionCodec().setBase(pos);
+                    rebased = true;
+                }
             }
+            if (!rebased) {
+                // both of them are important for Minecart
+                entity.getPositionCodec().setBase(pos);
+                entity.snapTo(pos, entity.getYRot(), entity.getXRot());
+                InterpolationHandler interpolation = entity.getInterpolation();
+                if (interpolation != null) {
+                    interpolation.cancel();
+                }
+            }
+            // F5/F6 (the live "back half of the cart" pop + the flip blink): the arrived
+            // entity's render bracket must exist on its FIRST rendered frame, and it must be
+            // the ARRIVAL-FACING face chosen by the CROSSING — the eye-side geometric sweep
+            // picks the wrong co-located face (or none) while the rebased visual hasn't
+            // emerged yet, which drew the whole object on the wrong side of the portal and
+            // blanked it in portal views (2026-08-11 live). The grace registry keeps the
+            // entry alive across the eye-side prune until the visual catches up.
+            // Seeding is part of the FLIP above (anchor-first, unit-atomic); the sweep below
+            // remains the fallback for non-seam snaps and unresolvable arrival faces.
+            boolean seeded = flipHandled;
+            if (!seeded) {
+                PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                    entity, McHelper.getEyePos(entity), McHelper.getEyePos(entity), 1
+                );
+                com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity,
+                    "SNAP-SEED sweep colliding="
+                        + ((qouteall.imm_ptl.core.ducks.IEEntity) entity)
+                            .ip_isCollidingWithPortal());
+            }
+            qouteall.imm_ptl.core.render.CrossPortalEntityRenderer.onEntityTickClient(entity);
+        }
+
+        /**
+         * The REBASE with the IDEMPOTENCY GUARD (live round 2026-08-16 #6, log-caught): map the
+         * stored visual state through the portal transform ONLY if the visual is still on the
+         * departure side. The visual may ALREADY be at the arrival — a cross-dim client entity
+         * spawns there (the RPC then re-transformed it: {@code visual=(715.67,173,-128.49)
+         * server=(34.67,118,-59.49)}, the constant one-portal-offset garbage family), and a
+         * same-dim rider gets dragged there by {@code positionRider} when the drag wins the
+         * packet race (the flung rider then STOOD at a station for seconds — the
+         * "couple-seconds sighting"). The guard: whichever of {current, transformed} lands
+         * nearer the server's authoritative position is the truth; a second transform can never
+         * win that comparison, so double-application is structurally impossible.
+         */
+        private static void applyRebaseVisual(
+            Entity e, qouteall.imm_ptl.core.portal.Portal p, Vec3 serverPos, int portalId
+        ) {
+            Vec3 cur = e.position();
+            Vec3 mapped = p.transformPoint(cur);
+            if (cur.distanceToSqr(serverPos) <= mapped.distanceToSqr(serverPos)) {
+                // Already carried. Kill any cross-station lerp streak the drag left behind;
+                // otherwise leave the visual exactly where it is.
+                if (McHelper.lastTickPosOf(e).distanceToSqr(cur) > 64) {
+                    McHelper.setPosAndLastTickPos(e, cur, cur);
+                    McHelper.updateBoundingBox(e);
+                }
+                com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
+                    "REBASE-SKIP (already carried) via portal " + portalId
+                        + " visual=" + cur + " server=" + serverPos);
+                return;
+            }
+            Vec3 newLast = p.transformPoint(McHelper.lastTickPosOf(e));
+            McHelper.setPosAndLastTickPos(e, mapped, newLast);
+            McHelper.updateBoundingBox(e);
+            McHelper.setWorldVelocity(e, p.transformLocalVec(McHelper.getWorldVelocity(e)));
+            InterpolationHandler interp = e.getInterpolation();
+            if (interp != null && interp.hasActiveInterpolation()) {
+                interp.interpolateTo(
+                    p.transformPoint(interp.position()), interp.yRot(), interp.xRot());
+            }
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
+                "REBASE via portal " + portalId + " visual=" + mapped + " server=" + serverPos);
+        }
+
+        private static void seedArrivalFace(
+            Entity e, qouteall.imm_ptl.core.portal.Portal arrivalFace
+        ) {
+            ((qouteall.imm_ptl.core.ducks.IEEntity) e).ip_clearCollidingPortal();
+            // Stage 2a: the seed is ANCHOR-AUTHORIZED (the caller flips the anchor first;
+            // mayBook clause (a) admits the anchor face even wholly behind) — the ThreadLocal
+            // seed bracket is retired.
+            ((qouteall.imm_ptl.core.ducks.IEEntity) e).ip_notifyCollidingWithPortal(arrivalFace);
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
+                "SNAP-SEED arrival-face=" + arrivalFace.getId());
         }
     }
 }

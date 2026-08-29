@@ -192,10 +192,38 @@ public class PerEntityClipBracket {
     public static void submitMainPassEntityClipped(
         EntityRenderDispatcher dispatcher, EntityRenderState state,
         CameraRenderState cam, double camX, double camY, double camZ,
-        PoseStack poseStack, SubmitNodeStorage storage, Portal collidingPortal
+        PoseStack poseStack, SubmitNodeStorage storage, Portal collidingPortal,
+        int tintEntityId, String tintEntityName
+    ) {
+        submitMainPassEntityClipped(dispatcher, state, cam, camX, camY, camZ, poseStack,
+            storage, collidingPortal, tintEntityId, tintEntityName, null);
+    }
+
+    public static void submitMainPassEntityClipped(
+        EntityRenderDispatcher dispatcher, EntityRenderState state,
+        CameraRenderState cam, double camX, double camY, double camZ,
+        PoseStack poseStack, SubmitNodeStorage storage, Portal collidingPortal,
+        int tintEntityId, String tintEntityName,
+        @Nullable Vec3 orientKeptDirection
     ) {
         // IP's setupOuterClipping math via the S11-B bridge, WITHOUT touching the live store (design §1.2.2).
-        Snapshot outerPlane = FrontClipping.captureOuterClipping(collidingPortal, cam.viewRotationMatrix);
+        // ★ ANCHORED-BODY ORIENTATION (2026-08-24): a non-null orientKeptDirection (the caller
+        // passes the ANCHORED entity's direction of travel) orients the plane so the kept side
+        // is the side being crossed INTO, overriding the door shape's baked facing — whose
+        // convention differs between the two arrival doors of a seam cell (the source-b bleed;
+        // see captureOuterClippingOriented). Null keeps the baked orientation (all pre-flip and
+        // non-seam draws, and parked arrivals).
+        Snapshot outerPlane = orientKeptDirection != null
+            ? FrontClipping.captureOuterClippingOriented(
+                collidingPortal, cam.viewRotationMatrix, orientKeptDirection)
+            : FrontClipping.captureOuterClipping(collidingPortal, cam.viewRotationMatrix);
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): the CASE-1 main-pass real body paints RED in
+        // role mode; under -PseamTintPerEntity it paints the ENTITY's own colour instead, so the
+        // body and the projection of one entity share a hue and the seam stops being a colour
+        // boundary (round 38 — the role palette is confounded with the handoff it must measure).
+        // Null-safe (a null outer plane stays null → unclipped, untinted — non-seam shapes only).
+        outerPlane = com.warwa.seamlessportals.render.SeamTint.mainBody(
+            outerPlane, tintEntityId, tintEntityName);
 
         if (getMechanism() == Mechanism.ISOLATED_STORAGE_BRACKET) {
             deferIsolatedBracket(storage, dispatcher, state, cam, camX, camY, camZ, poseStack, outerPlane);
@@ -218,14 +246,25 @@ public class PerEntityClipBracket {
      * Verifier-1 P1). Coordinates are the camera-substituted projection position: {@code state.{x,y,z} -
      * newCameraPos} (identical to IP feeding newCameraPos into ip_myRenderEntity).
      */
-    public static void submitProjectedEntityClipped(
+    public static int submitProjectedEntityClipped(
         EntityRenderDispatcher dispatcher, EntityRenderState state,
         CameraRenderState cam, Vec3 newCameraPos,
-        PoseStack poseStack, SubmitNodeStorage storage, @Nullable Plane innerClipPlane
+        PoseStack poseStack, SubmitNodeStorage storage, @Nullable Plane innerClipPlane,
+        boolean seamBand, int tintEntityId, String tintEntityName
     ) {
+        // ★ CLIP FRAME — REVERTED TO THE REAL CAMERA (2026-08-24, the CLIPNUM verdict). The
+        // 2026-08-24 "root cause" change paired the plane with the SUBSTITUTED camera; the
+        // CLIPNUM numbers prove that wrong: the substitution CANCELS in the vertex values the
+        // shader sees (p_source − newCam == p_image − realCam), so the submitted geometry is
+        // already IMAGE-space relative to the REAL camera — exactly what the original
+        // real-camera equation paired against. With the substituted camera the anchor painter's
+        // test degenerated to keep-everything (w=67.72 → keep ⟺ p_src.z < 7.51, always true at
+        // z≈−59) — the side-view full-orange-cart bleed. The mis-fix was invisible from
+        // front/back because the window repaints that screen region.
         Snapshot innerPlane = innerClipPlane == null
             ? null
-            : FrontClipping.captureInnerClipping(innerClipPlane, cam.viewRotationMatrix);
+            : FrontClipping.captureInnerClipping(
+                innerClipPlane, cam.viewRotationMatrix, seamBand, null);
         if (innerPlane == null) {
             // No inner plane (isRendering branch always; else branch when getInnerClipping()/useFrontClipping
             // yields none): IP draws the projection UNCLIPPED (CrossPortalEntityRenderer :101 disableClipping,
@@ -235,16 +274,48 @@ public class PerEntityClipBracket {
             innerPlane = DISABLED_CLIP;
         }
 
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): CASE-2 projections paint ORANGE in the
+        // main pass, BLUE inside a portal pass. The colour is baked into the snapshot at SUBMIT
+        // time — the painter's identity, immune to the submit-vs-draw Ctx timing (design §1.3's
+        // latent trap). DISABLED_CLIP is shared and never mutated: the helper returns a tinted
+        // COPY (enabled=false preserved, so unclipped projections still attribute).
+        // ROUND 38: under -PseamTintPerEntity both branches resolve to the ENTITY's own colour, so
+        // one entity is a single flat hue across the seam and a hole in it is unambiguous.
+        innerPlane = qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()
+            ? com.warwa.seamlessportals.render.SeamTint.inPassProjection(
+                innerPlane, tintEntityId, tintEntityName)
+            : com.warwa.seamlessportals.render.SeamTint.mainPassProjection(
+                innerPlane, tintEntityId, tintEntityName);
+
         double x = state.x - newCameraPos.x;
         double y = state.y - newCameraPos.y;
         double z = state.z - newCameraPos.z;
 
-        if (getMechanism() == Mechanism.ISOLATED_STORAGE_BRACKET) {
-            deferIsolatedBracket(storage, dispatcher, state, cam, x, y, z, poseStack, innerPlane);
-            return;
+        // ★ CLIPNUM (2026-08-24, the full-orange-cart verdict): the same snapshot's TINT
+        // provably reaches these fragments while the PLANE does not cut, and the real-body cut
+        // through the identical phase machinery works — so the plane VALUES are the suspect.
+        // Print the captured view-space equation + the substituted camera + the relative submit
+        // position for offline verification against the seam plane. Probe-gated, unthrottled
+        // only while a projection actually submits (a handful of lines per crossing).
+        if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
+            && innerPlane != null && innerPlane.enabled) {
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.rpc(
+                "CLIPNUM ent=" + tintEntityId + "/" + tintEntityName
+                    + " nView=(" + innerPlane.x + ", " + innerPlane.y + ", "
+                    + innerPlane.z + ") w=" + innerPlane.w
+                    + " newCam=" + newCameraPos
+                    + " stateRel=(" + String.format("%.3f", x) + ", "
+                    + String.format("%.3f", y) + ", " + String.format("%.3f", z) + ")"
+                    + " clipPlane=" + (innerClipPlane == null ? "null"
+                        : innerClipPlane.pos() + "/" + innerClipPlane.normal()));
         }
 
-        submitToOwnOrderBand(dispatcher, state, cam, x, y, z, poseStack, storage, innerPlane);
+        if (getMechanism() == Mechanism.ISOLATED_STORAGE_BRACKET) {
+            deferIsolatedBracket(storage, dispatcher, state, cam, x, y, z, poseStack, innerPlane);
+            return -1;   // mechanism B: drawn later from its own storage
+        }
+
+        return submitToOwnOrderBand(dispatcher, state, cam, x, y, z, poseStack, storage, innerPlane);
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -257,7 +328,7 @@ public class PerEntityClipBracket {
      * register the (nullable) clip plane against exactly the collections the entity touched. Every submit
      * stays in its correct vanilla framegraph pass; the clip is scoped to the entity's own draw calls.
      */
-    private static void submitToOwnOrderBand(
+    private static int submitToOwnOrderBand(
         EntityRenderDispatcher dispatcher, EntityRenderState state, CameraRenderState cam,
         double x, double y, double z, PoseStack poseStack, SubmitNodeStorage storage,
         @Nullable Snapshot plane
@@ -272,6 +343,12 @@ public class PerEntityClipBracket {
                 registerPhases(collection, plane, st);
             }
         }
+        // ★ ROUND 36 v3: how many SubmitNodeCollections the geometry actually landed in. ZERO
+        // means nothing was submitted, so no phase can ever carry the clip/tint snapshot to the
+        // GPU — which is precisely the RenderDoc signature (0 ORANGE uniform uploads on a cut
+        // frame vs 4 on a good one). This is the outcome the probe should have been asserting
+        // all along; every earlier "DREW" line measured a call, not a submission.
+        return offset.touched.size();
     }
 
     /**
@@ -329,16 +406,75 @@ public class PerEntityClipBracket {
     }
 
     /**
+     * ★ ROUND 43 — a direct phase override for pass-level exemptions (the r42 outline regression):
+     * the pass-wide clip re-arm in {@code SecondaryWorldRenderCore} correctly clips particle/entity
+     * feature draws, but the block-selection outline lives ON the seam plane and fragment-fights
+     * the clip boundary (user-reported dest-side flicker). The draw sites register the storage's
+     * outline phases with a DISABLED snapshot around {@code renderAllFeatures}; the existing
+     * executePhase bracket then swaps to keep-all for exactly those draws. Callers must
+     * unregister in a finally (the registry is global and phase objects persist per storage).
+     */
+    public static void registerPhaseOverride(FeatureRenderPhase<?> phase, Snapshot snapshot) {
+        phaseRegistry.put(phase, snapshot);
+    }
+
+    public static void unregisterPhaseOverride(FeatureRenderPhase<?> phase) {
+        phaseRegistry.remove(phase);
+    }
+
+    /**
      * Mechanism A execute bracket (called by the S12 {@code executePhase} HEAD mixin, design §1.2.4). If
      * the phase is registered, captures the current store, pushes the registered plane, and returns the
      * captured previous snapshot for {@link #endPhase} to restore at RETURN. Returns {@code null} when the
      * phase is not registered (endPhase then no-ops) — the ambient store governs that phase's draws.
      */
+    /**
+     * ★ ROUND 36 v4 — THE LAST UNMEASURED LINK. Submits are proven healthy (touchedCollections=1
+     * on 5395/5395 frames, zero "NOTHING SUBMITTED"), yet RenderDoc shows the ORANGE tint uniform
+     * uploaded 0 times on a cut frame and 4 times on a good one. The uniform can only reach the
+     * GPU if the phase's snapshot is FOUND here at execute time. These counters answer, per frame:
+     * how many phases executed, how many were registered, and how many carried the main-pass
+     * projection's ORANGE snapshot. A frame with a healthy submit but orangeExecuted==0 proves
+     * the registry lookup MISSED — i.e. the FeatureRenderPhase identity that was registered is
+     * not the identity that executes (pooling/recreation), which is the one mechanism the
+     * bytecode trace could not exclude.
+     */
+    public static int phasesExecuted = 0;
+    public static int phasesRegisteredHit = 0;
+    /** Phases that reached execute carrying a seam-painted snapshot (round 40: any tint, not just orange). */
+    public static int orangePhasesExecuted = 0;
+
+    /**
+     * ★ ROUND 40 — THIS COUNTER WAS STRUCTURALLY ZERO UNDER PER-ENTITY TINT (instrument bug #8,
+     * the same shape as #5 and #7 earlier in this session).
+     *
+     * <p>It matched ORANGE specifically — the ROLE palette's main-pass-projection colour. Under
+     * {@code -PseamTintPerEntity} no painter ever emits orange (the hue keys on the entity), so
+     * the counter read 0 on all 16803 frames of the 2026-08-22 lap and the
+     * "SNAPSHOT NEVER FOUND AT EXECUTE" marker it drives fired on EVERY frame — including frames
+     * whose projection was demonstrably healthy. A marker that fires unconditionally carries no
+     * information, and a red banner that is always on is worse than none: it invites exactly the
+     * false diagnosis it was built to prevent.
+     *
+     * <p>The question the counter must answer is mode-independent: did a phase carrying a
+     * SEAM-PAINTED snapshot actually reach execute? So it now tests the tint's PRESENCE
+     * ({@code tintA > 0}) rather than one specific hue. Any tinted snapshot found at execute time
+     * proves the submit→register→execute chain closed for that draw.
+     */
+    private static boolean isSeamPaintedTint(Snapshot s) {
+        return s.tintA > 0.001f;
+    }
+
     @Nullable
     public static Snapshot beginPhaseIfRegistered(FeatureRenderPhase<?> phase) {
+        phasesExecuted++;
         Snapshot registered = phaseRegistry.get(phase);
         if (registered == null) {
             return null;
+        }
+        phasesRegisteredHit++;
+        if (isSeamPaintedTint(registered)) {
+            orangePhasesExecuted++;
         }
         Snapshot prev = com.warwa.seamlessportals.render.FrontClipping.capture();
         com.warwa.seamlessportals.render.FrontClipping.restore(registered);
@@ -410,6 +546,40 @@ public class PerEntityClipBracket {
             // Drop strands regardless of outcome (the S15 discipline) — a half-drawn list must
             // not be re-attempted by a later pass under a different camera.
             st.deferredBrackets.clear();
+        }
+    }
+
+    /**
+     * ENGINE STAGE 2b: immediate bracketed draw of ONE prepared scratch storage through the own
+     * dispatcher (the band painter's draw primitive). Same throw fence, same plane-store
+     * discipline as {@link #drawBracketedEntitiesIfAny}; the caller owns all raw GL state
+     * (stencil/color-mask) around this call.
+     */
+    public static boolean drawImmediateClipped(SubmitNodeStorage scratch, Snapshot plane) {
+        if (bracketThrowCount >= 3) {
+            return false;
+        }
+        try {
+            FeatureRenderDispatcher dispatcher = getOrCreateOwnDispatcher();
+            Snapshot prev = com.warwa.seamlessportals.render.FrontClipping.capture();
+            try {
+                com.warwa.seamlessportals.render.FrontClipping.restore(plane);
+                dispatcher.renderAllFeatures(scratch);
+            } finally {
+                com.warwa.seamlessportals.render.FrontClipping.restore(prev);
+            }
+            return true;
+        } catch (Throwable t) {
+            bracketThrowCount++;
+            ownDispatcher = null;
+            if (!bracketThrowLogged) {
+                bracketThrowLogged = true;
+                qouteall.q_misc_util.Helper.err(
+                    "[PerEntityClipBracket] immediate bracket draw swallowed (strike "
+                        + bracketThrowCount + "/3): " + t);
+                t.printStackTrace();
+            }
+            return false;
         }
     }
 

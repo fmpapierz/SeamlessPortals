@@ -53,9 +53,48 @@ public class MixinQuadParticleGroup {
         SingleQuadParticle particle, QuadParticleRenderState state, Camera camera, float partialTick,
         Operation<Void> original
     ) {
-        if (((IEParticle) particle).portal_getWorld() != Minecraft.getInstance().level) {
+        boolean probe = com.warwa.seamlessportals.render.SeamParticleProbe.armed();
+        if (probe) {
+            com.warwa.seamlessportals.render.SeamParticleProbe.onMainSeen();
+            com.warwa.seamlessportals.render.SeamParticleProbe.tickSummary();
+        }
+        IEParticle ie = (IEParticle) particle;
+        if (ie.portal_getWorld() != Minecraft.getInstance().level) {
+            if (probe) {
+                com.warwa.seamlessportals.render.SeamParticleProbe.onMainWorldDrop();
+            }
             return; // IP's world filter: wrong-world particles never extract into this pass
         }
-        original.call(particle, state, camera, partialTick);
+        // ★ THE WINDOW RULE (seam round 34, the user's rule with the user's anchor): "if the
+        // window is between player and PARTICLE, it does not show". Lives INSIDE this wrap
+        // because rounds 32-33 put it in a separate @Redirect on this same instruction, where it
+        // never demonstrably fired — one instruction, one owner. Main pass only; the isolated
+        // dest extract has its own seam filter.
+        if (com.warwa.seamlessportals.render.SeamParticleOcclusion.occluded(
+            camera.position(), ie.portal_getX(), ie.portal_getY(), ie.portal_getZ())) {
+            if (probe) {
+                com.warwa.seamlessportals.render.SeamParticleProbe.onMainWindowDrop(particle);
+            }
+            return;
+        }
+        // ★ ROUND 42 — the r36 BAND RULE is RETIRED here: it hid WHOLE near-plane particles from
+        // empty-side viewers to mask billboard poke, which over-hid the legitimately-visible
+        // owned-side portion. The plane-exact quad clip below replaces it — the billboard's
+        // geometry is cut AT the plane, so the poke cannot exist and the owned side stays whole
+        // (each layer one job: teleport = crossers, window rule = between-ness, CLIP = extent).
+        if (probe) {
+            com.warwa.seamlessportals.render.SeamParticleProbe.onMainExtracted();
+        }
+        // ★ ROUND 42 — plane-exact clip side-channel (SeamParticleQuadClip): park this particle's
+        // camera-relative seam plane so the state's add-hook records it alongside the quad; the
+        // build stage clips the quad against it. Keep-all when the cell carries no cut.
+        com.warwa.seamlessportals.render.SeamParticleQuadClip.computePendingPlane(
+            Minecraft.getInstance().level, camera.position(),
+            ie.portal_getX(), ie.portal_getY(), ie.portal_getZ());
+        try {
+            original.call(particle, state, camera, partialTick);
+        } finally {
+            com.warwa.seamlessportals.render.SeamParticleQuadClip.clearPendingPlane();
+        }
     }
 }

@@ -125,16 +125,32 @@ public abstract class MixinLevelRenderer_CrossPortalEntity {
             qouteall.imm_ptl.core.render.EntityVisibilityProbe.perEntitySubmits++;
         }
         Entity tagged = ((IEEntityRenderState) state).ip_getClipContextEntity();
+        // ★ CART ROUND 5 DIAGNOSTIC (log-only, unthrottled): the COMPLETE submit anatomy for
+        // every near-seam minecart state — tag, pass, outcome — so one crossing run carries the
+        // full per-frame story instead of another single-question probe.
+        boolean cartProbe = com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                .SEAM_CART_PROBE
+            && state instanceof net.minecraft.client.renderer.entity.state.MinecartRenderState
+            && com.warwa.seamlessportals.render.CartWindowProbe.nearSeam(state);
         if (tagged != null && output instanceof SubmitNodeStorage storage) {
             boolean handled = CrossPortalEntityRenderer.submitMainPassEntity(
                 dispatcher, state, cam, x, y, z, poseStack, storage, tagged
             );
+            if (cartProbe) {
+                com.warwa.seamlessportals.render.CartWindowProbe.onMinecartSubmit(
+                    state, "tagged:" + tagged.getId(),
+                    handled ? "seam-handled" : "fell-through-vanilla");
+            }
             if (handled) {
                 if (probeThis) {
                     qouteall.imm_ptl.core.render.EntityVisibilityProbe.perEntityHandled++;
                 }
                 return; // clipped submit performed by the seam; skip the vanilla submit
             }
+        }
+        else if (cartProbe) {
+            com.warwa.seamlessportals.render.CartWindowProbe.onMinecartSubmit(
+                state, tagged == null ? "UNTAGGED" : "tagged-no-storage", "vanilla");
         }
         original.call(dispatcher, state, cam, x, y, z, poseStack, output);
     }

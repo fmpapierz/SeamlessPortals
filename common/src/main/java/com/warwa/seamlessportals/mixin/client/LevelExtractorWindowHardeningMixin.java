@@ -40,7 +40,42 @@ public abstract class LevelExtractorWindowHardeningMixin {
 
     @Shadow private ClientLevel level;
 
+    @org.spongepowered.asm.mixin.Shadow
+    @org.spongepowered.asm.mixin.Final
+    private net.minecraft.client.renderer.state.level.LevelRenderState levelRenderState;
+
     private static boolean seamlessportals$reArmWarned = false;
+
+    /**
+     * ★ CART ROUND 3 DIAGNOSTIC (log-only, -PseamCartProbe): whether each seam-tracked cart made
+     * it into this extract's {@code entityRenderStates}. The crossing cart's main-pass submit
+     * went silent with the section gate VISIBLE and the entity still tracked — the remaining
+     * candidates all live between extraction and submit, and this line splits them: extracted
+     * but not submitted vs never extracted. javap-verified: {@code LevelExtractor.levelRenderState}
+     * (private final), {@code extract(DeltaTracker, Camera, float)}.
+     */
+    @Inject(method = "extract", at = @At("RETURN"))
+    private void seamlessportals$cartExtractPresence(CallbackInfo ci) {
+        com.warwa.seamlessportals.render.CartWindowProbe.onMainExtract(
+            this.level, this.levelRenderState);
+    }
+
+    /**
+     * ★ CART ROUND 7 DIAGNOSTIC (log-only, -PseamCartProbe): the full extraction verdict for
+     * near-seam carts, per extracting level — settles "main pass said false" vs "main pass never
+     * asked" (round 6's id-keyed change map could not tell them apart). javap-verified:
+     * {@code public boolean isEntityVisible(Entity, Frustum, double, double, double)}.
+     */
+    @Inject(method = "isEntityVisible", at = @At("RETURN"))
+    private void seamlessportals$cartVisibilityVerdict(
+        net.minecraft.world.entity.Entity entity,
+        net.minecraft.client.renderer.culling.Frustum frustum,
+        double camX, double camY, double camZ,
+        org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Boolean> cir
+    ) {
+        com.warwa.seamlessportals.render.CartWindowProbe.onIsEntityVisible(
+            this.level, entity, frustum, camX, camY, camZ, cir.getReturnValueZ());
+    }
 
     @Inject(
         method = "extract",

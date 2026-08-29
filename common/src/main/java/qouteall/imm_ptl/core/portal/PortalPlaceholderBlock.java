@@ -95,6 +95,44 @@ public class PortalPlaceholderBlock extends Block {
         }
     }
     
+    // RECORDED IP DEVIATION — RS PASSTHROUGH (a); revert with
+    // -Dseamlessportals.disableAperturePassthrough=true. IP-core edits 1 and 2 of
+    // migration/REDSTONE_A_SPEC.md §3.1.
+    //
+    // Blocker 1 of the three that make the aperture unbuildable today: this block has no
+    // .replaceable() in its Properties (:60-72), so BlockPlaceContext.canPlace() is false and
+    // BlockItem.place fails outright — you cannot put a rail, or anything else, into a portal
+    // opening. Making it hand-replaceable is what turns the aperture into ordinary building space.
+
+    /**
+     * ITEM placement may replace the placeholder (the whole point of sub-feature (a)).
+     *
+     * <p>Deliberately NOT delegating to {@code super}: {@code BlockBehaviour}'s default consults
+     * {@code state.canBeReplaced()}, which is driven by the block's own properties and would stay
+     * false. The lever check is the entire body so the disable path restores stock IP exactly.
+     */
+    @Override
+    protected boolean canBeReplaced(BlockState state, net.minecraft.world.item.context.BlockPlaceContext context) {
+        return !com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLED;
+    }
+
+    /**
+     * FLUIDS may NOT replace the placeholder, even with (a) active.
+     *
+     * <p>Adversarial-verifier finding (lens B, C4/F5): {@code canBeReplaced(BlockState, Fluid)} is a
+     * SEPARATE overload with its own default ({@code state.canBeReplaced() || !state.isSolid()} —
+     * REF BlockBehaviour.java:254-255). The placeholder is {@code noCollision}, so
+     * {@code !isSolid()} is already true and water or lava adjacent to a portal would flood the
+     * aperture and destroy the portal — with no player action at all. Overriding only the
+     * BlockPlaceContext form would have left that wide open. Under the disable lever this defers to
+     * stock behaviour so the deviation is fully reversible.
+     */
+    @Override
+    protected boolean canBeReplaced(BlockState state, net.minecraft.world.level.material.Fluid fluid) {
+        return com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLED
+            && super.canBeReplaced(state, fluid);
+    }
+
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
         builder.add(AXIS);

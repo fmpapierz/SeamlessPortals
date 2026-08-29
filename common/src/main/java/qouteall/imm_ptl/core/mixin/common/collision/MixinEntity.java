@@ -36,11 +36,42 @@ import qouteall.q_misc_util.Helper;
 import qouteall.q_misc_util.my_util.CountDownInt;
 
 @Mixin(Entity.class)
-public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
+public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension,
+    com.warwa.seamlessportals.passthrough.SeamCrossingHolder {
 
     @Nullable
     @Unique
     private PortalCollisionHandler ip_portalCollisionHandler;
+
+    // ENGINE STAGE 2a: the crossing anchor (SeamCrossingHolder). Plain defaults only —
+    // @Unique initializers run in the target ctor; cross-class static calls there deadlock
+    // class-init (the standing mixin rule).
+    @Nullable
+    @Unique
+    private Portal seamlessportals$anchorFace;
+
+    @Unique
+    private int seamlessportals$anchorEpoch;
+
+    @Override
+    public @Nullable Portal seamlessportals$getAnchorFace() {
+        return seamlessportals$anchorFace;
+    }
+
+    @Override
+    public void seamlessportals$setAnchorFace(@Nullable Portal face) {
+        seamlessportals$anchorFace = face;
+    }
+
+    @Override
+    public int seamlessportals$getAnchorEpoch() {
+        return seamlessportals$anchorEpoch;
+    }
+
+    @Override
+    public void seamlessportals$setAnchorEpoch(int epoch) {
+        seamlessportals$anchorEpoch = epoch;
+    }
 
     @Shadow
     private Level level;
@@ -290,6 +321,10 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
     public void ip_tickCollidingPortal() {
         Entity this_ = (Entity) (Object) this;
 
+        // ENGINE STAGE 2a: anchor maintenance BEFORE the prune — rider inheritance mirrors the
+        // unit root's anchor; CLOSE releases it; the prune's mustKeep then reads settled state.
+        com.warwa.seamlessportals.passthrough.SeamCrossingRule.tickAnchor(this_);
+
         if (ip_portalCollisionHandler != null) {
             ip_portalCollisionHandler.update(this_);
         }
@@ -309,7 +344,32 @@ public abstract class MixinEntity implements IEEntity, ImmPtlEntityExtension {
             ip_portalCollisionHandler = new PortalCollisionHandler();
         }
 
+        // Stage 0 (engine design §1.3): the behind-refusal + twin-refusal register gates live
+        // in the module as mayBook (a portal is entered from its FRONT; a booked face's
+        // co-located twin may not register mid-crossing; the arrival seed bypasses the
+        // behind-refusal — the rebased trail body is legitimately wholly behind the arrival
+        // face). Stage 2a replaces the seed ThreadLocal with anchor-authorized booking.
+        if (!com.warwa.seamlessportals.passthrough.SeamCrossingRule.mayBook(
+            this_, ip_portalCollisionHandler, (Portal) portal)) {
+            return;
+        }
+
         ip_portalCollisionHandler.notifyCollidingWithPortal(this_, ((Portal) portal));
+
+        // F5/F6 RIDER REGISTRATION FAN (live round 2026-08-17, log-nailed: "MAIN
+        // vanilla-unclipped (not in collidedEntities)" for the cow while its cart was clipped
+        // and projecting): registration happens on the Entity.move collision path, which
+        // PASSENGERS never run — so a rider had no entry until the arrival seed. Its
+        // through-portal image was missing from the whole emergence (the cowless ghost cart
+        // sliding out of the seam = the "couple-seconds sighting"; the cow "disappearing from
+        // the minecart" every return crossing) and its straddling body drew unclipped (the
+        // split-second bleed). The vehicle's registration now fans to its passengers — each
+        // through its own duck call, so the per-rider refuses-gate runs and stacked riders fan
+        // naturally. Their entries then live and prune through the existing per-tick passenger
+        // hooks, exactly like the vehicle's.
+        for (Entity rider : this_.getPassengers()) {
+            ((IEEntity) rider).ip_notifyCollidingWithPortal(portal);
+        }
     }
 
     @Override

@@ -1137,6 +1137,16 @@ public class SecondaryWorldRenderCore {
                         destChunks.renderGroup(ChunkSectionLayerGroup.OPAQUE, mainChunkSampler);
                     }
 
+                    // 10.6b SEAM CLIP dest arm (SEAM_CLIP_DESIGN.md §3): dest-level seam cells are
+                    // excluded from the section meshes and re-drawn here, inside the Step-10.5
+                    // armed inner clip (-ADJUSTMENT) and the live stencil. ONE line by design —
+                    // logic lives in SeamClipRenderer; it ASSUMES the current arming semantics
+                    // above. Deliberately NO twin call in renderDestWorldFullPipeline (M4 +
+                    // FullPipelineClipState defeat own-plane brackets there; the feature
+                    // self-gates OFF under sodium/iris anyway).
+                    com.warwa.seamlessportals.render.SeamClipRenderer
+                        .onDestPassAfterOpaqueTerrain(destViewMatrix);
+
                     // 10.7/10.8 dest lighting + entities. Cross-dim: the extracted dest LRS via the
                     // renderer's own submitFeatures/dispatcher (unchanged S14 path).
                     // S14.28 lever: debug_skip_portal_entities — the ONE in-bracket full-color-write
@@ -2562,6 +2572,31 @@ public class SecondaryWorldRenderCore {
             Matrix4fStack mv = RenderSystem.getModelViewStack();
             mv.pushMatrix();
             mv.mul(destViewMatrix);
+            // ★ RE-ARM THE INNER CLIP FOR THE FEATURE DRAWS (2026-08-10 research finding): the
+            // submitEntities TAIL above (MixinLevelRenderer_CrossPortalEntity →
+            // CrossPortalEntityRenderer.onEndRenderingEntitiesAndBlockEntities:171) calls
+            // FrontClipping.disableClipping() UNCONDITIONALLY — correct for IP 1.21.3, where the
+            // entity RENDER ended there, but on 26.2 the DRAWS happen below in renderAllFeatures,
+            // after the submit boundary. Without this re-arm every feature draw of the pass
+            // (entities, BEs, and the particle pass — whose core/particle shader IS clip-injected)
+            // ran with the keep-all plane, letting near-plane billboards paint past the portal
+            // plane inside the window. Same call as the Step-10.5 arm; the Step-10.5 finally
+            // still disarms after the pass.
+            FrontClipping.setupInnerClipping(
+                PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                destViewMatrix, -FrontClipping.ADJUSTMENT
+            );
+            // ★ ROUND 43 — OUTLINE EXEMPTION from the re-armed clip (user-reported dest-side
+            // outline flicker, r42 regression): the seam counterpart outline lives ON the plane
+            // and fragment-fights the clip boundary. The outline phases draw with keep-all, as
+            // they did pre-r42; everything else in the pass stays clipped.
+            var out0 = storage.order(0);
+            com.warwa.seamlessportals.render.FrontClipping.Snapshot noClip =
+                new com.warwa.seamlessportals.render.FrontClipping.Snapshot(0, 0, 0, 1, false);
+            qouteall.imm_ptl.core.render.PerEntityClipBracket
+                .registerPhaseOverride(out0.shapeOutlines, noClip);
+            qouteall.imm_ptl.core.render.PerEntityClipBracket
+                .registerPhaseOverride(out0.outline, noClip);
             try {
                 acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
                 // S18 Mechanism-B dest-pass draw site (PerEntityClipBracket design §2.1.3, decided):
@@ -2571,6 +2606,10 @@ public class SecondaryWorldRenderCore {
                 // Mechanism A (empty deferred list).
                 qouteall.imm_ptl.core.render.PerEntityClipBracket.drawBracketedEntitiesIfAny(storage);
             } finally {
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .unregisterPhaseOverride(out0.shapeOutlines);
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .unregisterPhaseOverride(out0.outline);
                 mv.popMatrix();
             }
         } catch (Throwable t) {
@@ -2610,10 +2649,16 @@ public class SecondaryWorldRenderCore {
      * {@code SubmitNodeCollector.submitShapeOutline} API into the pass's own storage. Exists
      * because the vanilla method carries Fabric API's injected BEFORE_BLOCK_OUTLINE handler, which
      * NPEs outside the real framegraph render (its per-frame context is null there) — see the
-     * call-site note. {@code afterTerrain} = {@code state.isTranslucent()} exactly as vanilla
-     * passes it (the LevelRendererBlockOutlineMixin re-bucket does not apply to this copy —
-     * irrelevant in-pass: both buckets drain in the same renderAllFeatures, verified
-     * wf_8a0f8152-4d8).
+     * call-site note. DEVIATION from vanilla (F2, 2026-08-10 live): {@code afterTerrain} is forced
+     * {@code false} instead of {@code state.isTranslucent()}. Vanilla's bucket choice routes
+     * translucent-MODEL targets (redstone dust is {@code force_translucent}, also slime/ice/honey)
+     * into the {@code afterTerrain} phase — but the r43 clip exemption brackets only
+     * {@code shapeOutlines} + {@code outline}, so an afterTerrain outline draws with the pass's
+     * re-armed inner clip while the lines shader's injected clip write is garbage for its NDC-space
+     * position math (per-frame flicker on the dest side). The bucket choice is order-irrelevant
+     * in-pass — both buckets drain in the same renderAllFeatures (verified wf_8a0f8152-4d8) — so
+     * every dest outline takes the exempted bucket. Do NOT instead exempt the afterTerrain phase:
+     * the window particle draws live there and the re-armed clip is what stops the r42 bleed.
      */
     private static void submitDestBlockOutline(
         LevelRenderState destLRS, SubmitNodeStorage storage
@@ -2633,7 +2678,7 @@ public class SecondaryWorldRenderCore {
             submitDestHitOutline(
                 poseStack, storage,
                 net.minecraft.client.renderer.rendertype.RenderTypes.secondaryBlockOutline(),
-                state, -16777216, 7.0F, state.isTranslucent());
+                state, -16777216, 7.0F, false);
         }
         int outlineColor = state.highContrast() ? -11010079 : ARGB.black(102);
         submitDestHitOutline(
@@ -2641,7 +2686,7 @@ public class SecondaryWorldRenderCore {
             net.minecraft.client.renderer.rendertype.RenderTypes.lines(),
             state, outlineColor,
             client.gameRenderer.gameRenderState().windowRenderState.appropriateLineWidth,
-            state.isTranslucent());
+            false);
         poseStack.popPose();
     }
 
@@ -2840,9 +2885,68 @@ public class SecondaryWorldRenderCore {
                         sameDimSubmitStorage, destCameraState);
                 }
 
+                // ★ SAME-DIM TARGETED-BLOCK OUTLINE (user order 2026-08-03 — the ledgered
+                // "same-dim passes stay outline-less" gap CLOSED). Two legitimate hits can want
+                // drawing in this pass: the through-window target (remotePointedDim equals this
+                // dimension for a same-dim pair) and the seam whole-object counterpart
+                // (SeamCounterpartOutline.farHit — the far half of a locally-targeted object).
+                // The extract invoker reads client.hitResult against the extractor's own level
+                // (the shared level here — exactly right), so swap it in for the extract's
+                // duration only; the invoker touches no one-shot state (entity/BE safety class).
+                {
+                    net.minecraft.world.phys.HitResult sameDimOutlineHit = null;
+                    if (qouteall.imm_ptl.core.block_manipulation.BlockManipulationClient
+                            .remotePointedDim == client.level.dimension()
+                        && qouteall.imm_ptl.core.block_manipulation.BlockManipulationClient
+                            .remoteHitResult != null) {
+                        sameDimOutlineHit = qouteall.imm_ptl.core.block_manipulation
+                            .BlockManipulationClient.remoteHitResult;
+                    } else if (com.warwa.seamlessportals.render.SeamCounterpartOutline.farDim
+                            == client.level.dimension()
+                        && com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit != null) {
+                        sameDimOutlineHit =
+                            com.warwa.seamlessportals.render.SeamCounterpartOutline.farHit;
+                    }
+                    boolean sameDimRenderOutline = sameDimOutlineHit != null
+                        && ((GameRendererAccessorMixin) client.gameRenderer)
+                            .seamlessportals$invokeShouldRenderBlockOutline();
+                    if (sameDimRenderOutline) {
+                        net.minecraft.world.phys.HitResult saved = client.hitResult;
+                        client.hitResult = sameDimOutlineHit;
+                        try {
+                            ((LevelExtractorAccessor) (Object) client.levelExtractor)
+                                .seamlessportals$invokeExtractBlockOutline(
+                                    newCamera, sameDimScratchLRS);
+                        } finally {
+                            client.hitResult = saved;
+                        }
+                        if (sameDimScratchLRS.blockOutlineRenderState != null) {
+                            submitDestBlockOutline(sameDimScratchLRS, sameDimSubmitStorage);
+                        }
+                    } else {
+                        sameDimScratchLRS.blockOutlineRenderState = null;
+                    }
+                }
+
                 Matrix4fStack mv = RenderSystem.getModelViewStack();
                 mv.pushMatrix();
                 mv.mul(destViewMatrix);
+                // ★ RE-ARM THE INNER CLIP FOR THE FEATURE DRAWS — same-dim twin of the
+                // renderPortalEntities re-arm (the submitEntities TAIL disarmed the store
+                // unconditionally; the draws below must run clipped or window particles paint
+                // past the plane). See the cross-dim site's comment for the full mechanism.
+                FrontClipping.setupInnerClipping(
+                    PortalRendering.isRendering() ? PortalRendering.getActiveClippingPlane() : null,
+                    destViewMatrix, -FrontClipping.ADJUSTMENT
+                );
+                // ★ ROUND 43 — outline exemption, same-dim twin (see renderPortalEntities).
+                var sdOut0 = sameDimSubmitStorage.order(0);
+                com.warwa.seamlessportals.render.FrontClipping.Snapshot sdNoClip =
+                    new com.warwa.seamlessportals.render.FrontClipping.Snapshot(0, 0, 0, 1, false);
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .registerPhaseOverride(sdOut0.shapeOutlines, sdNoClip);
+                qouteall.imm_ptl.core.render.PerEntityClipBracket
+                    .registerPhaseOverride(sdOut0.outline, sdNoClip);
                 try {
                     sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
                     // S18 Mechanism-B same-dim draw site (mirrors renderPortalEntities): drain the
@@ -2851,6 +2955,10 @@ public class SecondaryWorldRenderCore {
                     qouteall.imm_ptl.core.render.PerEntityClipBracket
                         .drawBracketedEntitiesIfAny(sameDimSubmitStorage);
                 } finally {
+                    qouteall.imm_ptl.core.render.PerEntityClipBracket
+                        .unregisterPhaseOverride(sdOut0.shapeOutlines);
+                    qouteall.imm_ptl.core.render.PerEntityClipBracket
+                        .unregisterPhaseOverride(sdOut0.outline);
                     mv.popMatrix();
                 }
             } finally {

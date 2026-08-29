@@ -1,6 +1,9 @@
 package com.warwa.seamlessportals.mixin;
 
 import com.warwa.seamlessportals.config.SeamlessPortalsConfig;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughLever;
+import com.warwa.seamlessportals.passthrough.SeamMirror;
+import com.warwa.seamlessportals.passthrough.SeamRegistry;
 import com.warwa.seamlessportals.network.ModPayloads;
 import com.warwa.seamlessportals.network.PlatformHelper;
 import com.warwa.seamlessportals.portal.PortalInfo;
@@ -75,6 +78,89 @@ public abstract class LevelChunkSetBlockStateMixin {
 
     @Shadow @Final
     Level level;
+
+    /**
+     * RS PASSTHROUGH (a) step 6 — THE MIRROR DRIVER.
+     *
+     * <p>Shares this site with the block-era hook below, and for the same reason already documented
+     * at {@code :36-72}: {@code LevelChunk.setBlockState} sits UPSTREAM of every filter in
+     * {@code Level.markAndNotifyBlock}, so it observes changes that never reach
+     * {@code sendBlockUpdated} — which is exactly how cross-dimension fluid flow was fixed. A seam
+     * must mirror every write, including the ~95% vanilla filters out.
+     *
+     * <p>Unlike the hook below this one is FLAG-ON: the seam registry only exists under entity portals.
+     */
+    @Inject(
+        method = "setBlockState(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Lnet/minecraft/world/level/block/state/BlockState;",
+        at = @At("RETURN"),
+        require = 0
+    )
+    private void seamlessportals$driveSeamMirror(
+            BlockPos pos, BlockState newState, int flags,
+            CallbackInfoReturnable<BlockState> cir) {
+        if (!SeamlessPortalsConfig.isEntityPortals()) return;
+        if (AperturePassthroughLever.DISABLED || AperturePassthroughLever.DISABLE_SEAM_MIRROR) return;
+        // CLIENT BRANCH — same-frame mirroring. The player's own block is predicted locally by
+        // MultiPlayerGameMode; without this the mirrored half cannot appear until the server's
+        // block-update packet arrives, which is the visible lag. SeamMirrorClient predicts it into
+        // the destination ClientLevel and files it with the prediction handler so the server's ack
+        // resolves it either way. Everything below is server-only, so this returns rather than
+        // falling through.
+        if (this.level instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
+            BlockState settledClient = cir.getReturnValue();
+            if (settledClient != null && SeamRegistry.sectionHasSeam(clientLevel, pos)) {
+                com.warwa.seamlessportals.passthrough.SeamMirrorClient.onSeamCellChanged(
+                    clientLevel, pos, clientLevel.getBlockState(pos));
+            }
+            return;
+        }
+        if (!(this.level instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
+        // Fast path first: one field read plus a contains() on a usually-empty set. This runs for
+        // EVERY block change in the game, so anything heavier here is a global tax.
+        BlockState oldState = cir.getReturnValue();
+        if (oldState == null || oldState == newState) return;
+        net.minecraft.server.MinecraftServer server = serverLevel.getServer();
+        if (server == null || !server.isSameThread()) return;
+
+        // APERTURE mirroring — gated on the section index, which is the hot-path fold.
+        //
+        // MIRROR THE LIVE STATE, NOT THE newState PARAMETER. LevelChunk.setBlockState calls
+        // state.onPlace(...) INSIDE its own body (REF LevelChunk.java:326-327), and for a rail that
+        // runs BaseRailBlock.onPlace -> updateState -> updateDir -> RailState.place, which at
+        // REF RailState.java:333 issues a NESTED level.setBlock(pos, resolvedShape, 3) to the SAME
+        // position. So the inner invocation's inject fires with the RESOLVED shape and mirrors it
+        // correctly, then the stack unwinds and THIS inject fires with its own parameter — the
+        // PRE-RESOLUTION shape — and overwrites the far side with it. Last write wins, and it is
+        // wrong. Reading the live state instead makes both invocations agree on the final state, so
+        // the redundant outer write is harmless.
+        //
+        // Found by the (b) design panel as a PRE-EXISTING (a) defect. It hid because the mirror gate
+        // asserted is(Blocks.RAIL) — the BLOCK — and never the SHAPE.
+        if (SeamRegistry.sectionHasSeam(serverLevel, pos)) {
+            BlockState settled = serverLevel.getBlockState(pos);
+            // SAME-BLOCK REFINEMENT: the block did not change, only its state did (a rail re-shaped
+            // by a neighbour's resolution, most commonly). SeamMirror lets these re-mirror past the
+            // player-only source policy when the pair already exists — see the shape-sync note there.
+            boolean refinement = !settled.isAir() && oldState.is(settled.getBlock());
+            SeamMirror.onSeamCellChanged(serverLevel, pos, settled, refinement);
+            // RS (c) D1 DISPATCH — a settled state change at a bound seam cell queues a
+            // neighborChanged for the counterpart cell across each binding, flushed at tick end.
+            // AFTER the mirror call on purpose: the mirror's own writes (its far half, the
+            // authority revert) run nested inside that call under the applying bracket, where
+            // SeamSignalContinuity skips itself — so exactly one dispatch per originating change.
+            com.warwa.seamlessportals.passthrough.SeamSignalContinuity
+                .onSeamCellChanged(serverLevel, pos, settled);
+        }
+
+        // FRAME mirroring — deliberately NOT behind sectionHasSeam. That index is derived from LIVE
+        // portals, and the case frame mirroring exists for is exactly the one where no portal is
+        // alive: both were torn down when the frame broke and the player is now repairing it. Gated
+        // instead on the persisted frame-link store, which is empty in any world that has never had
+        // a portal and is checked with one map read.
+        if (com.warwa.seamlessportals.passthrough.SeamFrameLink.hasAny(serverLevel)) {
+            SeamMirror.onFrameCellChanged(serverLevel, pos, newState);
+        }
+    }
 
     @Inject(
         method = "setBlockState(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Lnet/minecraft/world/level/block/state/BlockState;",

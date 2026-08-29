@@ -315,12 +315,23 @@ public class FrontClipping {
             return;
         }
         Vector3f nView = rotateClipNormalToViewSpace(beforeModelView, modelView);
-        com.warwa.seamlessportals.render.FrontClipping.restore(
+        com.warwa.seamlessportals.render.FrontClipping.Snapshot fed =
             new com.warwa.seamlessportals.render.FrontClipping.Snapshot(
                 nView.x, nView.y, nView.z,
                 viewSpacePlaneW(beforeModelView, modelView, nView), true
-            )
-        );
+            );
+        // TINT (SEAM_BAND_HANDOFF §4.1, diagnostic): a live-store arm during a portal pass IS
+        // the pass's ambient state — everything the pass draws under it through the vanilla
+        // per-draw chokepoint (in-pass vanilla body, block entities, particles) is "in-pass
+        // ambient content", painted GREEN. Cleared by the pass disarm (disableClipping →
+        // com.warwa disable() zeroes the tint), so it cannot outlive the pass. Main-pass arms
+        // (isRendering()==false) stay untinted. W term: dev-26.2's viewSpacePlaneW (carries
+        // the modelView TRANSLATION into c — the bob fix), kept through the tint wrap.
+        if (com.warwa.seamlessportals.render.SeamTint.ENABLED
+            && PortalRendering.isRendering()) {
+            fed = com.warwa.seamlessportals.render.SeamTint.inPassAmbient(fed);
+        }
+        com.warwa.seamlessportals.render.FrontClipping.restore(fed);
         isClippingEnabled = true;
     }
 
@@ -500,7 +511,57 @@ public class FrontClipping {
         if (clipEquationOuter == null) {
             return null;
         }
+        // F6 (user-confirmed contract 6a): the primary and its counterpart projection used to
+        // keep two >=0 half-spaces of the SAME plane — the shared boundary band was drawn by
+        // both (same geometry through different float-rounding paths), and the per-fragment
+        // fight was the thin line "washing over" a crossing entity. Partition instead: the
+        // primary RETREATS by ADJUSTMENT and the projection EXTENDS by it (captureInnerClipping
+        // below), so the later-drawn projection owns the band consistently. Render-capture path
+        // only — collision consumers of the same planes are untouched.
+        //
+        // (Band rounds v1 = round 12 and v2 = round 18 both REVERTED after live rounds. v2's
+        // failure is the decisive evidence: the window pass OVERDRAWS main-pass content inside
+        // the aperture, so the main body cannot own the plane band there no matter how the
+        // clips are arranged — the projections' extension is REQUIRED inside the window, and
+        // its two ~1cm costs (past-plane micro-bleed, stencil-confined tail sliver) are
+        // inherent to that ownership. A real fix needs a dedicated post-pass band painter —
+        // see the handoff known-opens. Keep the unconditional retreat.)
+        clipEquationOuter[3] -= ADJUSTMENT;
         return toViewSpaceSnapshot(clipEquationOuter, viewRotation);
+    }
+
+    /**
+     * ★ ANCHORED-BODY ORIENTATION (2026-08-24, "still bleeding to source b"). The outer plane's
+     * kept side is baked into the PORTAL SHAPE's own facing — and the two arrival doors of a
+     * seam cell carry OPPOSITE conventions relative to their arrival directions, so the booked
+     * CASE-1 draw of a just-arrived cart kept the DEPARTURE-image side on one of them, painting
+     * the carried behind-plane visual onto the other path's segment (the nether-side observer's
+     * source-b bleed; the OW side happened to be oriented correctly, which is why it looked
+     * fixed). This variant orients the SAME plane by an explicit kept direction — the caller
+     * passes the entity's direction of travel, so the kept side is the side being crossed INTO,
+     * convention-free for every door. The standard ADJUSTMENT retreat is preserved.
+     */
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureOuterClippingOriented(
+        Portal portal, Matrix4f viewRotation, Vec3 keptDirection
+    ) {
+        if (!IPCGlobal.useFrontClipping) {
+            return null;
+        }
+        @Nullable Plane outerClipping = portal.getPortalShape()
+            .getOuterClipping(portal.getThisSideState());
+        if (outerClipping == null) {
+            return null;
+        }
+        Vec3 planeNormal = outerClipping.normal();
+        if (planeNormal.dot(keptDirection) < 0) {
+            planeNormal = planeNormal.scale(-1);
+        }
+        Vec3 cameraPos = client.gameRenderer.mainCamera().position();
+        Vec3 portalPos = outerClipping.pos().subtract(cameraPos);
+        double c = planeNormal.scale(-1).dot(portalPos);
+        double[] eq = new double[]{planeNormal.x, planeNormal.y, planeNormal.z, c};
+        eq[3] -= ADJUSTMENT;
+        return toViewSpaceSnapshot(eq, viewRotation);
     }
 
     /**
@@ -515,14 +576,114 @@ public class FrontClipping {
     public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureInnerClipping(
         @Nullable Plane clipping, Matrix4f viewRotation
     ) {
+        return captureInnerClipping(clipping, viewRotation, false);
+    }
+
+    /**
+     * ENGINE STAGE 2b: EXACT plane→view-space snapshot (correction 0, no epsilon policy) — the
+     * band painter's slab faces are the policy; this is just the converter.
+     */
+    @Nullable
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureExactPlane(
+        Plane plane, Matrix4f viewRotation
+    ) {
+        if (!IPCGlobal.useFrontClipping) {
+            return null;
+        }
+        double[] eq = getClipEquationInner(plane.pos(), plane.normal(), 0);
+        return toViewSpaceSnapshot(eq, viewRotation);
+    }
+
+    /**
+     * {@code seamBand=true} — the projection belongs to a SEAM face: it always RETREATS, because
+     * at seams the MAIN body owns the plane band (captureOuterClipping extends there; live round
+     * 2026-08-17 #3, the trailing-edge slit — a projection is stencil-confined to its window's
+     * screen area, so a band it owned could fall outside the window by parallax exactly as the
+     * tail exits). {@code seamBand=false} keeps the earlier per-case logic for non-seam portals.
+     */
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureInnerClipping(
+        @Nullable Plane clipping, Matrix4f viewRotation, boolean seamBand
+    ) {
+        return captureInnerClipping(clipping, viewRotation, seamBand, null);
+    }
+
+    /**
+     * ★ XDIM GHOST ROOT CAUSE (2026-08-24) — the {@code drawCameraPos} overload. A projected
+     * entity's geometry is submitted relative to the SUBSTITUTED camera
+     * ({@code newCameraPos = entityInstantPos - imageInstantPos + realCameraPos}, the IP
+     * camera-pos trick), but {@code getClipEquationInner} builds the plane's {@code c} against
+     * {@code CHelper.getCurrentCameraPos()} — the REAL camera. The plane therefore misses the
+     * draw by exactly the portal offset (66 blocks of z at the nether seam; 13k at the same-dim
+     * fixture — which is why the same-dim wrong-side bleed family survived every painter-side
+     * audit: the projections were never clipped at all, just usually drawn where the error
+     * coincided with legitimate pixels). Live proof: pre-flip "PROJ via face 82
+     * clip=…/(0,0,1) main-pass" painted its ENTIRE keep-far-clipped image on the near rail.
+     * When {@code drawCameraPos} is non-null the plane equation is built against IT — the same
+     * frame the geometry is submitted in. The camera-SIDE visibility test above it stays on the
+     * real camera: it reasons about what the viewer sees, not about the draw frame.
+     */
+    public static com.warwa.seamlessportals.render.FrontClipping.Snapshot captureInnerClipping(
+        @Nullable Plane clipping, Matrix4f viewRotation, boolean seamBand,
+        @Nullable Vec3 drawCameraPos
+    ) {
         if (!IPCGlobal.useFrontClipping) {
             return null;
         }
         if (clipping == null) {
             return null;
         }
-        double[] clipEquationInner = getClipEquationInner(clipping.pos(), clipping.normal(), 0);
+        // F6 6a: EXTEND by ADJUSTMENT (negative correction moves the plane against its normal,
+        // growing the kept region) — the other half of the partition described in
+        // captureOuterClipping. Was correction 0 (exact shared plane; boundary-band fight).
+        //
+        // F6 CAMERA-SIDE SCOPE (live round 2026-08-16 #3 — the "tiny sliver right at the
+        // seam"): the extension pairs the projection against the RETREATED outer-clipped main
+        // body — a pairing the camera only sees from the plane's KEPT side. From the far side
+        // the main body is invisible and the extended band is a naked ADJUSTMENT-thick
+        // cross-section of the image poking through the seam plane (the hollow cart-hull
+        // outline and cow hairlines in the user's screenshots). Extend only when the camera
+        // is on the kept side; RETREAT otherwise, so the band hides exactly behind the plane.
+        // getClipEquationInner reads the live camera, so this stays correct inside portal
+        // passes (mainCamera IS the pass camera there).
+        // F6 PASS-CONTENT EXCEPTION (live round 2026-08-16 #5 — the transparent slit): inside
+        // a portal pass the projection IS window content, and its boundary must COVER the main
+        // pass's retreated outer cut (the pass-level terrain re-arm extends for the same
+        // reason) — so in-pass it always EXTENDS. The pass camera sits on the empty side of
+        // the window plane by construction, so the camera-side test below would retreat BOTH
+        // draws of a straddling entity, opening a see-through ~2·ADJUSTMENT slit across the
+        // model exactly at the seam (the user's cow/cart screenshot). The naked-sliver case
+        // the camera-side rule guards against is main-pass-only.
+        double correction;
+        if (seamBand) {
+            correction = ADJUSTMENT;
+        }
+        else if (qouteall.imm_ptl.core.render.context_management.PortalRendering.isRendering()) {
+            correction = -ADJUSTMENT;
+        }
+        else {
+            boolean cameraOnKeptSide = CHelper.getCurrentCameraPos()
+                .subtract(clipping.pos()).dot(clipping.normal()) > 0;
+            correction = cameraOnKeptSide ? -ADJUSTMENT : ADJUSTMENT;
+        }
+        double[] clipEquationInner = drawCameraPos == null
+            ? getClipEquationInner(clipping.pos(), clipping.normal(), correction)
+            : getClipEquationInnerFor(
+                clipping.pos(), clipping.normal(), correction, drawCameraPos);
         return toViewSpaceSnapshot(clipEquationInner, viewRotation);
+    }
+
+    /** {@link #getClipEquationInner} against an EXPLICIT camera — the draw frame's, not the live one. */
+    private static double[] getClipEquationInnerFor(
+        Vec3 clippingPoint, Vec3 clippingDirection, double correction, Vec3 cameraPos
+    ) {
+        Vec3 planeNormal = clippingDirection;
+        Vec3 portalPos = clippingPoint
+            .add(planeNormal.scale(correction))
+            .subtract(cameraPos);
+        double c = planeNormal.scale(-1).dot(portalPos);
+        return new double[]{
+            planeNormal.x, planeNormal.y, planeNormal.z, c
+        };
     }
 
     /**

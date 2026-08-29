@@ -618,6 +618,19 @@ public class ClientWorldLoader {
     }
 
     /**
+     * ★ A TRUE PEEK — returns the client world ONLY if it already exists, never creating one.
+     * Added 2026-08-03 (seam occupancy relog defect): {@link #getOptionalWorld} is NOT a peek — for
+     * any known server dimension it calls the CREATING {@link #getWorld}, and the seam sync's
+     * early-join apply/flush was thereby force-creating a parallel overworld and landing every
+     * persisted record on an instance that never became {@code mc.level}. Consumers that must not
+     * side-effect world creation use this.
+     */
+    @Nullable
+    public static ClientLevel peekWorld(ResourceKey<Level> dimension) {
+        return CLIENT_WORLD_MAP.get(dimension);
+    }
+
+    /**
      * Get the client world and create if missing.
      * If the dimension id is invalid, it will return null
      */

@@ -36,6 +36,7 @@
     "client.render.MixinBlockEntityRenderDispatcher",
     "client.render.MixinCamera",
     "client.render.MixinEntityRenderDispatcher",
+    "client.render.MixinEntityRenderer_ProjectionLight",
     "client.render.MixinEntityRenderState",
     "client.render.MixinFrustum_FixDeadLoop",
     "client.render.MixinGameRenderState",

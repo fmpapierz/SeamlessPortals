@@ -126,4 +126,16 @@ public interface LevelExtractorAccessor {
         net.minecraft.client.Camera camera,
         float deltaPartialTick,
         net.minecraft.client.renderer.state.level.LevelRenderState output);
+
+    /** SAME-DIM outline (user order 2026-08-03 — the ledgered "same-dim passes stay outline-less"
+     *  gap closed): vanilla's private {@code extractBlockOutline(Camera, LevelRenderState)}
+     *  (extract/LevelExtractor.java:336, bytecode-verified) — nulls the output's
+     *  blockOutlineRenderState then reads {@code minecraft.hitResult} against {@code this.level}
+     *  (the shared level for a same-dim pass — exactly right). Callers swap
+     *  {@code client.hitResult} to the through-window/counterpart hit for the duration; the method
+     *  touches no one-shot state, the entity/BE invoker safety class. */
+    @org.spongepowered.asm.mixin.gen.Invoker("extractBlockOutline")
+    void seamlessportals$invokeExtractBlockOutline(
+        net.minecraft.client.Camera camera,
+        net.minecraft.client.renderer.state.level.LevelRenderState output);
 }

@@ -306,10 +306,38 @@ public class McHelper {
      * {@link Entity#positionRider(Entity)}
      * TODO fix for non-default gravity
      */
+    /**
+     * The vector to add to a PASSENGER's position to get where its VEHICLE must sit — the exact
+     * inverse of vanilla's own rider placement.
+     *
+     * <p>RS (d) FIX, 2026-07-28, user-authorised. {@code Entity.positionRider} (26.2 Entity:2380)
+     * places a rider at
+     * {@code vehicle.getPassengerRidingPosition(passenger) - passenger.getVehicleAttachmentPoint(vehicle)},
+     * and {@code getPassengerRidingPosition} is the vehicle's position PLUS the vehicle's own
+     * passenger-attachment offset. Inverting that needs BOTH terms:
+     * <pre>  vehiclePos = passengerPos + passengerVehicleAttach - vehiclePassengerAttach</pre>
+     * This method previously returned only the first attachment, dropping the second — so every
+     * ridden vehicle carried through a portal was placed too HIGH by the vehicle's own passenger
+     * offset. Measured on a minecart: the rider's real offset from the cart is 0.4125, the
+     * returned attachment was 0.6, and every ridden arrival landed 0.1875 above rail riding
+     * height (user's live round, 2026-07-28: {@code y=…250} instead of {@code …063}, five out of
+     * five, both directions, cross-dim and same-dim alike). The cart then fell back onto the rail,
+     * which is why it read as a small hop rather than a break.
+     *
+     * <p>Not minecart-specific: the same omission shifted boats, horses and every other ridden
+     * vehicle by their own attachment offsets. Computed from the live entities rather than
+     * hard-coded, so it stays correct for entity types with different attachments.
+     */
     public static Vec3 getVehicleOffsetFromPassenger(Entity vehicle, Entity passenger) {
-        Vec3 vehicleAttachmentPoint = passenger.getVehicleAttachmentPoint(vehicle);
-        
-        return vehicleAttachmentPoint;
+        Vec3 passengerVehicleAttach = passenger.getVehicleAttachmentPoint(vehicle);
+        if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_SEAM_VEHICLE_ATTACH) {
+            return passengerVehicleAttach;   // lever: the pre-fix one-term offset
+        }
+        Vec3 vehiclePassengerAttach =
+            vehicle.getPassengerRidingPosition(passenger).subtract(vehicle.position());
+
+        return passengerVehicleAttach.subtract(vehiclePassengerAttach);
     }
     
     public static void adjustVehicle(Entity entity) {
@@ -336,9 +364,53 @@ public class McHelper {
         McHelper.setPosAndLastTickPos(
             vehicle, newVehiclePos, newVehicleLastTickPos
         );
-        
+
+        // (e) DEFECT B, SAME-DIM ARM — rebase the relative-move codec here too.
+        //
+        // This is the SAME-DIM carry site, and it is the one the cross-dim fix in
+        // moveClientEntityAcrossDimension does not reach: a same-dimension crossing never calls
+        // that method (ClientTeleportationManager.teleportPlayer gates it on
+        // fromDimension != toDimension), so the identical stale-base defect survived there.
+        //
+        // The cancel() above was already right and was already necessary — but it is not
+        // sufficient, because it only clears the interpolation that exists AT THIS INSTANT.
+        // Without a rebase, the next ClientboundMoveEntityPacket$Pos decodes its deltas against a
+        // VecDeltaCodec base from BEFORE the 40,000-block carry, and the resulting garbage position
+        // re-arms the interpolation that was just cancelled.
+        //
+        // Measured 2026-08-01, same-dim ridden crossing, cart id=1422:
+        //   t+464  adjustVehicle carries the cart to (10.87, 19.06, 40000.5)      [correct]
+        //   t+464  InterpolationHandler.interpolate -> (-33.20, 4.40, 53360.83)   [garbage]
+        //   t+466  Entity.snapTo (position sync) -> (149.07, 63.06, -80.5)
+        //   t+466  InterpolationHandler.interpolate -> (103.80, 48.40, 13279.83)
+        //   t+480..t+542  player FROZEN at (103.80, 47.98, 13279.83), mid-air, 13k blocks along
+        //                 the line between the two portal endpoints, until they used /kill.
+        // The player/vehicle delta stayed exactly (0, 0.4125, 0) throughout — the ride was never
+        // broken and no dismount was involved. The rider was simply carried to a nonsense
+        // interpolated position and stranded there.
+        //
+        // CLIENT ONLY, and the gate is meaning rather than safety. adjustVehicle runs on BOTH
+        // sides, but syncPacketPositionCodec writes Entity.packetPositionCodec, which is
+        // client-DECODE state: 26.2's ServerEntity keeps its own private VecDeltaCodec and never
+        // reads this one (javap; the only readers of Entity.getPositionCodec are
+        // ClientPacketListener and Entity itself). The server-side call was therefore inert — it
+        // read as if it did something and did not. The server needs no equivalent: when a carry
+        // pushes its own encoded delta outside the packet's short range, ServerEntity.sendChanges
+        // falls back to an absolute ClientboundEntityPositionSyncPacket by itself.
+        if (vehicle.level().isClientSide()
+            && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                .DISABLE_CROSS_DIM_POSITION_CODEC_SYNC) {
+            vehicle.syncPacketPositionCodec(
+                newVehiclePos.x(), newVehiclePos.y(), newVehiclePos.z());
+        }
+        // Latch the base drift HERE, at the carry. Read post-hoc it is meaningless — vanilla
+        // rebases the codec on every position packet — and a gate that sampled it 30 ticks later
+        // reported "the lever is dead code" while the defect was reproducing in the same run.
+        com.warwa.seamlessportals.passthrough.SeamRideProbe.recordCarryBaseDrift(
+            vehicle, newVehiclePos.x(), newVehiclePos.y(), newVehiclePos.z());
+
         vehicle.setDeltaMovement(currVelocity);
-        
+
     }
     
     public static LevelChunk getServerChunkIfPresent(

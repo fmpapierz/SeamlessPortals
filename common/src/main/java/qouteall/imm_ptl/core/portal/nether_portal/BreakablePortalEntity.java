@@ -26,6 +26,7 @@ import qouteall.q_misc_util.Helper;
 import qouteall.q_misc_util.my_util.DQuaternion;
 import qouteall.q_misc_util.my_util.LimitedLogger;
 import qouteall.q_misc_util.my_util.MyTaskList;
+import com.warwa.seamlessportals.passthrough.AperturePassthroughProbe;
 
 import java.util.List;
 import java.util.UUID;
@@ -46,6 +47,8 @@ public abstract class BreakablePortalEntity extends Portal {
     public boolean unbreakable = false;
     private boolean isNotified = true;
     private boolean shouldBreakPortal = false;
+    /** RS PASSTHROUGH probe: one-shot latch for the aperture census (diagnostic only). */
+    private boolean censusEmitted = false;
 
     @Nullable
     protected OverlayInfo overlayInfo;
@@ -125,6 +128,16 @@ public abstract class BreakablePortalEntity extends Portal {
     }
 
     private void breakPortalOnThisSide() {
+        // RS PASSTHROUGH probe: a portal vanishing mid-round must never be mistaken for a render bug.
+        AperturePassthroughProbe.teardown(
+            getId(), level().dimension().identifier().toString(), level().getGameTime()
+        );
+        // RECORDED IP DEVIATION — RS PASSTHROUGH (a) step 7, the frame-break rule (§0.8): the
+        // originally-placed block survives in its own dimension, its MIRROR is removed. Runs HERE,
+        // before the opening is wiped and before bindings are dropped — after either, the mapping
+        // needed to tell a player's block from a mirrored one is gone. Provenance is the only thing
+        // that distinguishes them, and this is the sole consumer of it.
+        com.warwa.seamlessportals.passthrough.SeamMirror.onPortalTornDown(this);
         blockPortalShape.area.forEach(
             blockPos -> {
                 if (level().getBlockState(blockPos).getBlock() == PortalPlaceholderBlock.instance) {
@@ -165,8 +178,11 @@ public abstract class BreakablePortalEntity extends Portal {
         else {
             if (!unbreakable) {
                 if (isNotified || level().getGameTime() % 233 == getId() % 233) {
+                    // RS PASSTHROUGH probe: capture WHICH trigger fired before the flag is cleared —
+                    // the placeholder-update notify path vs the 233-tick sweep (REDSTONE_RECON.md §5 Q1).
+                    boolean viaNotify = isNotified;
                     isNotified = false;
-                    checkPortalIntegrity();
+                    checkPortalIntegrity(viaNotify);
                 }
                 if (shouldBreakPortal) {
                     breakPortalOnThisSide();
@@ -176,7 +192,7 @@ public abstract class BreakablePortalEntity extends Portal {
 
     }
 
-    private void checkPortalIntegrity() {
+    private void checkPortalIntegrity(boolean viaNotify) {
         Validate.isTrue(!level().isClientSide());
 
         if (!isPortalValid()) {
@@ -184,7 +200,19 @@ public abstract class BreakablePortalEntity extends Portal {
             return;
         }
 
-        if (!isPortalIntactOnThisSide()) {
+        // RS PASSTHROUGH probe (DEFAULT-OFF): one-shot aperture census, emitting real /setblock
+        // targets for the live round. Placed after the validity gate so blockPortalShape is non-null.
+        if (!censusEmitted && blockPortalShape != null) {
+            censusEmitted = true;
+            AperturePassthroughProbe.census(
+                getId(), level().dimension().identifier().toString(), level(), blockPortalShape.area
+            );
+        }
+
+        boolean intact = isPortalIntactOnThisSide();
+        AperturePassthroughProbe.integrityCheck(getId(), level().getGameTime(), viaNotify, intact);
+
+        if (!intact) {
             markShouldBreak();
         }
         else if (!isPortalPaired()) {

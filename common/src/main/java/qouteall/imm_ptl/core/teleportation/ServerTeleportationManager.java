@@ -127,15 +127,19 @@ public class ServerTeleportationManager {
             return;
         }
         if (entity.getVehicle() != null || doesEntityClusterContainPlayer(entity)) {
+            cartProbe(entity, "TELEPORT-SKIP vehicle-or-player-cluster");
             return;
         }
         if (entity.isRemoved()) {
+            cartProbe(entity, "TELEPORT-SKIP removed");
             return;
         }
         if (!entity.canTeleport(entity.level(), portal.getDestinationWorld())) {
+            cartProbe(entity, "TELEPORT-SKIP canTeleport=false");
             return;
         }
         if (isJustTeleported(entity, 1)) {
+            cartProbe(entity, "TELEPORT-SKIP just-teleported");
             return;
         }
         //a new born entity may have last tick pos 0 0 0
@@ -143,11 +147,13 @@ public class ServerTeleportationManager {
             LOGGER.warn("Trying to teleport a fresh new entity {}", entity);
             return;
         }
-        
+
         double motion = McHelper.lastTickPosOf(entity).distanceToSqr(entity.position());
         if (motion > 20) {
+            cartProbe(entity, "TELEPORT-SKIP motion>20");
             return;
         }
+        cartProbe(entity, "TELEPORT-QUEUED (detected in Portal.tick; runs at END_SERVER_TICK)");
         ServerTaskList.of(portal.level().getServer()).addTask(() -> {
             try {
                 teleportRegularEntity(entity, portal);
@@ -157,6 +163,38 @@ public class ServerTeleportationManager {
             }
             return true;
         });
+    }
+
+    /**
+     * RS (d) minecart-crossing instrument — one line per teleport-path event for watched carts
+     * ({@code -Dseamlessportals.seamCartProbe=true}, DEFAULT-OFF; byte-inert otherwise). Exists
+     * so a cart that never crosses names the gate that stopped it instead of failing silently.
+     */
+    private static void cartProbe(Entity entity, String msg) {
+        if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
+            && entity instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart) {
+            com.warwa.seamlessportals.passthrough.SeamCartProbe.event(entity, msg);
+        }
+    }
+
+    /**
+     * RS (d): dump every term of the ridden-carry placement, because the arrival height is
+     * {@code player.position() + attachment} and nothing else — so when a ridden cart lands off
+     * the rail, exactly one of those two terms is wrong and this line says which. Probe-gated.
+     */
+    private static void cartCarryProbe(ServerPlayer player, Entity vehicle, String where) {
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
+            || !(vehicle instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart)) {
+            return;
+        }
+        Vec3 attach = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
+        LOGGER.info(
+            "[RS-CART] CARRY-TERMS {} playerPos={} playerEye={} eyeHeight={} pose={} riding={}"
+                + " attachment={} => vehiclePos would be {}",
+            where, player.position(), player.getEyePosition(), player.getEyeHeight(),
+            player.getPose(), player.getVehicle() != null, attach,
+            player.position().add(attach)
+        );
     }
     
     private static Stream<Entity> getEntitiesToTeleport(Portal portal) {
@@ -351,6 +389,11 @@ public class ServerTeleportationManager {
         ServerLevel fromWorld = (ServerLevel) player.level();
         ServerLevel toWorld = server.getLevel(dimensionTo);
         
+        if (player.getVehicle() != null) {
+            cartCarryProbe(player, player.getVehicle(), "before-player-move ("
+                + (player.level().dimension() == dimensionTo ? "same-dim" : "cross-dim") + ")");
+        }
+
         if (player.level().dimension() == dimensionTo) {
             McHelper.setEyePos(player, newEyePos, newEyePos);
             McHelper.updateBoundingBox(player);
@@ -358,16 +401,46 @@ public class ServerTeleportationManager {
         else {
             changePlayerDimension(player, fromWorld, toWorld, newEyePos);
         }
+
+        if (player.getVehicle() != null) {
+            cartCarryProbe(player, player.getVehicle(), "after-player-move/before-adjustVehicle");
+        }
         
         McHelper.adjustVehicle(player);
-        
+
+        // RS (d) instrument: the SAME-DIMENSION ridden crossing has no changePlayerDimension
+        // branch at all — the cart is carried purely by adjustVehicle above, which places it at
+        // player.position() + the passenger's ATTACHMENT vector (see the corrected note in
+        // changePlayerDimension: the cart's own position is discarded, so the arrival height is
+        // the player's arrival height plus the attachment, and nothing else).
+        if (player.getVehicle() != null) {
+            cartProbe(player.getVehicle(), "VEHICLE-CARRIED (player teleport, "
+                + (fromWorld == toWorld ? "same-dim via adjustVehicle" : "cross-dim") + ")");
+            cartCarryProbe(player, player.getVehicle(),
+                fromWorld == toWorld ? "same-dim/after-adjustVehicle" : "cross-dim/after-adjustVehicle");
+            // Always-on (not probe-gated): the placement itself, for gates to judge. Physics
+            // snaps an off-rail arrival back within a tick, so this is the only race-free record.
+            com.warwa.seamlessportals.passthrough.SeamCartContinuity.recordVehicleCarry(
+                player.getVehicle().getId(), player.getVehicle().position());
+        }
+
         // reset the "authentic" player position as the current position
         player.connection.resetPosition();
-        
+
         PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
             player, newEyePos, newEyePos, 1
         );
-        
+
+        if (player.getVehicle() != null) {
+            // F5: the carried vehicle needs the same immediate refresh the player just got —
+            // its straddling arrival relies on cross-portal collision (the not-yet-crossed
+            // half rides the far side's rail), and the END_SERVER_TICK sweep is a tick late.
+            Entity vehicle = player.getVehicle();
+            PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                vehicle, McHelper.getEyePos(vehicle), McHelper.getEyePos(vehicle), 1
+            );
+        }
+
         Profiler.get().pop();
     }
     
@@ -483,6 +556,16 @@ public class ServerTeleportationManager {
         toWorld.addDuringTeleport(player);
         
         if (vehicle != null) {
+            // RS (d) instrument: this is where a RIDDEN cart is carried. NOTE, corrected against
+            // the bytecode after a review caught the first version of this comment stating the
+            // opposite: getVehicleOffsetFromPassenger returns the PASSENGER'S ATTACHMENT VECTOR
+            // (McHelper:309-313 -> Entity.getVehicleAttachmentPoint -> the passenger's own
+            // EntityAttachment.VEHICLE), NOT a difference of live positions. The vehicle's
+            // near-level position is therefore DISCARDED, not carried: the cart is placed purely
+            // at player + attachment. A cart that derailed mid-crossing does not drag its
+            // corrupted Y across — but nor does a correct one contribute anything, which is why
+            // the arrival height is entirely the PLAYER's arrival height plus the attachment.
+            cartProbe(vehicle, "VEHICLE-CARRY-BEGIN (cross-dim; cart pos discarded, attachment used)");
             Vec3 offset = McHelper.getVehicleOffsetFromPassenger(vehicle, player);
             Vec3 vehiclePos = player.position().add(offset);
             vehicle = teleportVehicleAcrossDimensions(
@@ -497,6 +580,7 @@ public class ServerTeleportationManager {
             );
             ((IEServerPlayerEntity) player).ip_startRidingWithoutTeleportRequest(vehicle);
             McHelper.adjustVehicle(player);
+            cartProbe(vehicle, "VEHICLE-CARRY-DONE (cross-dim)");
         }
         
         if (IPConfig.getConfig().serverTeleportLogging) {
@@ -573,49 +657,117 @@ public class ServerTeleportationManager {
         
         Vec3 velocity = entity.getDeltaMovement();
         Vec3 oldPos = entity.position();
-        
+
         List<Entity> passengerList = entity.getPassengers();
-        
-        Vec3 newEyePos = getRegularEntityTeleportedEyePos(entity, portal);
-        
+
+        // F6 — CONSERVE THE CROSSING AT SEAMS. IP's arrival rewinds the overshoot to
+        // plane-hit + 0.05, which at rail speeds yanks the cart up to ~2 blocks BACKWARD at the
+        // flip (the live hiccup). A seam's far side is continuous terrain by contract, so the
+        // through-transform of the ACTUAL position is always a valid arrival — position, and
+        // with it the whole visual path, continues exactly. Non-seam portals keep IP's rewind
+        // (their far side is a portal frame, not a continuation). Guard: the eye must actually
+        // be past the plane — a queued-but-not-crossed edge case falls back to the rewind.
+        boolean seamConserve = com.warwa.seamlessportals.passthrough.SeamCartContinuity
+            .isSeamContinuous(portal)
+            && !portal.isInFrontOfPortal(McHelper.getEyePos(entity));
+        Vec3 newEyePos = seamConserve
+            ? portal.transformPoint(McHelper.getEyePos(entity))
+            : getRegularEntityTeleportedEyePos(entity, portal);
+
+        cartProbe(entity, "TELEPORT-RUN-BEGIN (pre-transform)");
+
         TeleportationUtil.transformEntityVelocity(
             portal, entity, TeleportationUtil.PortalPointVelocity.ZERO, oldPos
         );
         
         if (portal.getDestDim() != entity.level().dimension()) {
             entity = changeEntityDimension(entity, portal.getDestDim(), newEyePos, true);
-            
+
             Entity newEntity = entity;
-            
+
             passengerList.stream().map(
                 e -> changeEntityDimension(e, portal.getDestDim(), newEyePos, true)
             ).collect(Collectors.toList()).forEach(e -> {
                 e.startRiding(newEntity, true, false);
             });
         }
-        
+        else {
+            // F5 rider fix (live 2026-08-11: "entities riding still clip"): the same-dim branch
+            // never moved the PASSENGERS — passengerList is only consumed by the cross-dim
+            // recreate above, so a mob rider stayed at the source for a whole tick (dragged over
+            // by positionRider only on the vehicle's next tick) and its client lerped the jump
+            // with no collision bookkeeping. Carry each rider through the portal transform in
+            // the same tick as its vehicle; positionRider exacts the attachment next tick.
+            for (Entity p : passengerList) {
+                Vec3 pNewEye = portal.transformPoint(McHelper.getEyePos(p));
+                McHelper.setEyePos(p, pNewEye, pNewEye);
+                McHelper.updateBoundingBox(p);
+                cartProbe(p, "RIDER-CARRIED same-dim (transform applied)");
+            }
+        }
+
         McHelper.setEyePos(entity, newEyePos, newEyePos);
         McHelper.updateBoundingBox(entity);
         
         // living entities do position interpolation
         // it may interpolate into unloaded chunks and stuck
         // avoid position interpolation
+        // F6: at a seam (conserved arrival) the RPC also carries the portal, so the client can
+        // REBASE its visual state through the transform instead of snap+cancel — a non-seam
+        // crossing sends the -1 sentinel and keeps the snap.
         McHelper.sendToTrackers(
             entity,
             McRemoteProcedureCall.createPacketToSendToClient(
                 "qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.RemoteCallables.updateEntityPos",
                 entity.level().dimension(),
                 entity.getId(),
-                entity.position()
+                entity.position(),
+                portal.level().dimension(),
+                seamConserve ? portal.getId() : -1
             )
         );
-        
+
+        // F5 rider fix, part 2: each rider gets the same snap the vehicle gets — the client
+        // RPC kills its interpolation AND refreshes its collision bookkeeping (the seed inside
+        // updateEntityPos is entity-generic), so the rider is clipped and counterparted from
+        // its first arrived frame exactly like the cart. getPassengers() here holds the
+        // post-teleport objects on both branches (same-dim: the originals; cross-dim: the
+        // recreated, remounted ones).
+        cartProbe(entity, "RIDER-RPC fan: passengers=" + entity.getPassengers().size());
+        for (Entity p : entity.getPassengers()) {
+            cartProbe(p, "RIDER-RPC sent (5-arg updateEntityPos)");
+            McHelper.sendToTrackers(
+                p,
+                McRemoteProcedureCall.createPacketToSendToClient(
+                    "qouteall.imm_ptl.core.teleportation.ClientTeleportationManager.RemoteCallables.updateEntityPos",
+                    p.level().dimension(),
+                    p.getId(),
+                    p.position(),
+                    portal.level().dimension(),
+                    seamConserve ? portal.getId() : -1
+                )
+            );
+            PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+                p, McHelper.getEyePos(p), McHelper.getEyePos(p), 1
+            );
+        }
+
         portal.onEntityTeleportedOnServer(entity);
-        
+
         ScaleUtils.onServerEntityTeleported(entity, portal);
-        
+
+        // F5: refresh the arrived entity's portal-collision bookkeeping NOW instead of at the
+        // next END_SERVER_TICK sweep — the player paths do exactly this, regular entities never
+        // did. The arrival straddles the dest-side portal (eye + 0.05 past the plane), so for
+        // one tick its not-yet-crossed half depended on entries that didn't exist.
+        PortalCollisionHandler.updateCollidingPortalAfterTeleportation(
+            entity, McHelper.getEyePos(entity), McHelper.getEyePos(entity), 1
+        );
+
         // a new entity may be created
         this.lastTeleportGameTime.put(entity, currGameTime);
+
+        cartProbe(entity, "TELEPORT-RUN-DONE (post-move, post-transform)");
     }
     
     private static Vec3 getRegularEntityTeleportedEyePos(Entity entity, Portal portal) {

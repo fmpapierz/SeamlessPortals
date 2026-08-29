@@ -40,6 +40,9 @@ public class MixinEntityRenderDispatcher {
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (!CrossPortalEntityRenderer.shouldRenderEntityNow(entity_1)) {
+            // ★ CART ROUND 6 DIAGNOSTIC: name the IP-forced-false for near-seam carts.
+            com.warwa.seamlessportals.render.CartWindowProbe.onShouldRender(
+                entity_1, false, "ip-forced");
             // §2b probe: count the cross-portal hide vetoing entities during a DEST extract
             // (hid in the [ENT-PROBE] line — over-hiding here is a culprit candidate).
             if (qouteall.imm_ptl.core.render.EntityVisibilityProbe.ENABLED
@@ -48,6 +51,58 @@ public class MixinEntityRenderDispatcher {
             }
             cir.setReturnValue(false);
             cir.cancel();
+        }
+    }
+
+    /**
+     * ★ ROUND 31 (D2) — THE VANISHING SHADOW.
+     *
+     * <p>Vanilla only builds an entity shadow within 16 blocks of the camera
+     * ({@code EntityRenderer.extractShadow}: the shadow-piece loop runs only while
+     * {@code pow = (1 - distSq/256) * strength > 0}), and it measures {@code distSq} from the
+     * entity's REAL position. A seam PROJECTION is DRAWN at the transformed position but stamped
+     * with the real one — ~691 blocks away on a far seam, giving ~4.8e5 against a threshold of
+     * 256, i.e. ~1890x over. So every projected image arrives with an EMPTY
+     * {@code shadowPieces} list and {@code submitShadow} is skipped outright. That is why the
+     * user saw the WHOLE shadow disappear at the seam rather than the half-clip the body gets:
+     * the decal is never built, so there is nothing for the clip plane to cut.
+     *
+     * <p>While {@link CrossPortalEntityRenderer#projectionCameraDistanceSqOverride} is set — only
+     * across the projection's own {@code extractEntity} call, and cleared in a {@code finally} —
+     * answer with the distance to the position the image is actually DRAWN at.
+     *
+     * <p>javap-verified against the loom deobf jar before first launch (house rule):
+     * {@code public double distanceToSqr(net.minecraft.world.entity.Entity)}, not synthetic-bridged.
+     */
+    /**
+     * ★ CART ROUND 6 DIAGNOSTIC (log-only): the final {@code shouldRender} verdict for
+     * near-seam minecarts. The crossing cart's render state stopped reaching the extract list
+     * in the tip-touch window while vanilla's submit loop is unconditional — this method's
+     * verdict is the excluder, and this line splits vanilla-false from IP-forced-false.
+     */
+    @Inject(
+        method = "shouldRender(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDD)Z",
+        at = @At("RETURN")
+    )
+    private <E extends Entity> void seamlessportals$cartShouldRenderVerdict(
+        E entity, net.minecraft.client.renderer.culling.Frustum frustum,
+        double x, double y, double z, CallbackInfoReturnable<Boolean> cir
+    ) {
+        com.warwa.seamlessportals.render.CartWindowProbe.onShouldRender(
+            entity, cir.getReturnValueZ(), "final");
+    }
+
+    @Inject(
+        method = "distanceToSqr(Lnet/minecraft/world/entity/Entity;)D",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private void seamlessportals$projectionCameraDistance(
+        Entity entity, CallbackInfoReturnable<Double> cir
+    ) {
+        double override = CrossPortalEntityRenderer.projectionCameraDistanceSqOverride;
+        if (override >= 0.0) {
+            cir.setReturnValue(override);
         }
     }
 

@@ -69,21 +69,48 @@ public final class FrontClipping {
      * Snapshot of the current clip-plane state. Used by nested render
      * passes (FBO composite, slice pass) to push/pop their own plane
      * without clobbering the main-camera pass's plane.
+     *
+     * <p>TINT (SEAM_BAND_HANDOFF §4.1, diagnostic, default-off): the snapshot additionally
+     * carries a per-painter debug tint colour. It rides the exact capture/restore pairing the
+     * clip plane rides — every painter that brackets its draws with a Snapshot automatically
+     * gets its tint scoped to exactly those draws, with zero new delivery machinery. All-zero
+     * (the 5-arg constructor) = untinted; {@link SeamTint} is the only writer of nonzero tints.
      */
     public static final class Snapshot {
         public final float x, y, z, w;
         public final boolean enabled;
+        public final float tintR, tintG, tintB, tintA;
         public Snapshot(float x, float y, float z, float w, boolean enabled) {
+            this(x, y, z, w, enabled, 0f, 0f, 0f, 0f);
+        }
+        public Snapshot(float x, float y, float z, float w, boolean enabled,
+                        float tintR, float tintG, float tintB, float tintA) {
             this.x = x; this.y = y; this.z = z; this.w = w; this.enabled = enabled;
+            this.tintR = tintR; this.tintG = tintG; this.tintB = tintB; this.tintA = tintA;
         }
     }
 
+    // TINT store (diagnostic, §4.1): the live per-draw tint, uploaded beside the clip plane by
+    // GlCommandEncoderClipMixin. Written ONLY through restore(Snapshot) and the disable/suspend
+    // resets below, so it can never outlive the bracket that armed it.
+    private static float tintR;
+    private static float tintG;
+    private static float tintB;
+    private static float tintA;
+
+    public static float getTintR() { return tintR; }
+    public static float getTintG() { return tintG; }
+    public static float getTintB() { return tintB; }
+    public static float getTintA() { return tintA; }
+
     public static Snapshot capture() {
-        return new Snapshot(planeX, planeY, planeZ, planeW, glClipEnabled);
+        return new Snapshot(planeX, planeY, planeZ, planeW, glClipEnabled,
+            tintR, tintG, tintB, tintA);
     }
 
     public static void restore(Snapshot s) {
         planeX = s.x; planeY = s.y; planeZ = s.z; planeW = s.w;
+        tintR = s.tintR; tintG = s.tintG; tintB = s.tintB; tintA = s.tintA;
         if (s.enabled) enableGlClipDistance();
         else disableGlClipDistance();
     }
@@ -99,6 +126,8 @@ public final class FrontClipping {
         planeY = 0;
         planeZ = 0;
         planeW = 1.0f;
+        // TINT: cleared with the plane — a suspended pass must not leak its ambient tint.
+        tintR = 0; tintG = 0; tintB = 0; tintA = 0;
         disableGlClipDistance();
     }
 
@@ -224,6 +253,9 @@ public final class FrontClipping {
         planeY = 0;
         planeZ = 0;
         planeW = 1.0f;
+        // TINT: cleared with the plane — disableClipping() is the pass disarm path, and the
+        // in-pass ambient GREEN must die exactly when the pass's clip does.
+        tintR = 0; tintG = 0; tintB = 0; tintA = 0;
         disableGlClipDistance();
     }
 
