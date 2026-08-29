@@ -190,6 +190,16 @@ loom {
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // SAME-DIM WATER/CLOUDS stage census (2026-08-29 arc, DEFAULT-OFF): per portal pass,
+            // translucent draw/section accounting + cloud gate outcomes + GL stage snapshots.
+            // Log tag [STAGE CENSUS]. —
+            //   .\gradlew.bat :fabric:runClient -PstageCensus=true
+            if (project.findProperty('stageCensus') == 'true') { vmArg('-Dseamlessportals.stageCensus=true') }
+            // SAME-DIM WATER/CLOUDS fix A/B (DEFAULT-ON fix; lever disables): the dest-pass
+            // stage-target bracket — save+null the main renderer's framegraph stage handles for
+            // the pass so dest translucent/clouds route to the MAIN target (the cross-dim path).
+            //   .\gradlew.bat :fabric:runClient -PdisableDestTargetBracket=true
+            if (project.findProperty('disableDestTargetBracket') == 'true') { vmArg('-Dseamlessportals.disableDestTargetBracket=true') }
             // RS PASSTHROUGH (a) diagnose-first probes (migration/REDSTONE_RECON.md §5). DEFAULT-OFF.
             // The census dumps the live aperture cells and real /setblock targets. (The former
             // apertureSuppressTeardown lever was retired at step 3 — IP-core edit 3 makes the
@@ -451,6 +461,11 @@ loom {
             //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PshaderpackViews=true
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PshaderpackViews=true
             if (project.findProperty('shaderpackViews') == 'true') { vmArg('-Dseamlessportals.shaderpackViews=true') }
+            // SAME-DIM WATER/CLOUDS stage census (2026-08-29 arc, DEFAULT-OFF; mirror of the
+            // client run's row) — .\gradlew.bat :fabric:runClientSodium -PstageCensus=true
+            if (project.findProperty('stageCensus') == 'true') { vmArg('-Dseamlessportals.stageCensus=true') }
+            // SAME-DIM WATER/CLOUDS fix A/B (mirror of the client run's row).
+            if (project.findProperty('disableDestTargetBracket') == 'true') { vmArg('-Dseamlessportals.disableDestTargetBracket=true') }
             // IS3 clip discriminator probe (port-note IS-iris-shaders-on.md §4.7 discriminators
             // 1+2): 1Hz per-draw dump at the vanilla trySetup handler for the first N draws of a
             // full-pipeline pass (terrain->loc>=0/enabled, entity+sky->loc==-1/disabled) —

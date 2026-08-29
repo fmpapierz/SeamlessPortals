@@ -204,4 +204,19 @@ public interface LevelRendererAccessorMixin {
         com.mojang.blaze3d.vertex.PoseStack poseStack,
         LevelRenderState levelRenderState,
         net.minecraft.client.renderer.SubmitNodeCollector output);
+
+    /**
+     * The renderer's {@link net.minecraft.client.renderer.LevelTargetBundle} — the per-frame
+     * framegraph stage-target handles ({@code translucent/itemEntity/particles/weather/clouds}).
+     * javap-verified 26.2: {@code private final LevelTargetBundle targets} with PUBLIC mutable
+     * {@code ResourceHandle} fields. SAME-DIM WATER/CLOUDS fix (2026-08-29): the dest-pass
+     * stage-target bracket in {@code SecondaryWorldRenderCore.renderDestWorld} saves + nulls the
+     * stage handles for the pass duration so every dest draw's target probe
+     * ({@code ChunkSectionLayerGroup.outputTarget()}, {@code CloudRenderer.render}'s internal
+     * {@code cloudsTarget()}) falls back to the MAIN target — the environment cross-dim passes
+     * (secondary renderers, all handles null) always had. Read-only accessor: the FIELD is never
+     * reassigned; the bundle's public handle fields are what the bracket swaps.
+     */
+    @Accessor("targets")
+    net.minecraft.client.renderer.LevelTargetBundle seamlessportals$getTargets();
 }

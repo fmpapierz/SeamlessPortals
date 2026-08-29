@@ -6,6 +6,7 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
+import com.mojang.blaze3d.resource.ResourceHandle;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -26,6 +27,7 @@ import net.minecraft.client.SectionUpdateTracker;
 import net.minecraft.client.TextureFilteringMethod;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LevelTargetBundle;
 import net.minecraft.client.renderer.SectionOcclusionGraph;
 import net.minecraft.client.renderer.SkyRenderer;
 import net.minecraft.client.renderer.SubmitNodeStorage;
@@ -106,6 +108,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SecondaryWorldRenderCore {
 
     public static final Minecraft client = Minecraft.getInstance();
+
+    // SAME-DIM WATER/CLOUDS fix A/B lever (2026-08-29 arc): disables the dest-pass stage-target
+    // bracket (see renderDestWorld) to restore the round-1 broken behavior for attribution.
+    // -PdisableDestTargetBracket → -Dseamlessportals.disableDestTargetBracket=true. Default ON.
+    private static final boolean DISABLE_DEST_TARGET_BRACKET =
+        Boolean.getBoolean("seamlessportals.disableDestTargetBracket");
 
     // ===== §2.2 core-owned state (no com.warwa duplication) =====================================
     // The armed-discovery one-shot "already scheduled UNCOMPILED" guard, per dim (re-expresses
@@ -1078,6 +1086,55 @@ public class SecondaryWorldRenderCore {
             );
 
             GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
+
+            // ===== DEST-PASS STAGE-TARGET BRACKET (2026-08-29 same-dim water/clouds fix) =========
+            // MEASURED (round-1 [STAGE CENSUS], bare fabric, OW↔OW window over water): the same-dim
+            // pass prepared and emitted every translucent draw (190/190 drawable, idxNull=0) yet
+            // water stayed invisible, and every renderPortalClouds call THREW
+            // NullPointerException("Resource is not currently available") — swallowed by design.
+            // Mechanism (one root, both stages): 26.2 keeps the MAIN renderer's LevelTargetBundle
+            // stage handles LIVE during the main pass even NON-fabulous (census: fabulous=false,
+            // translTarget=true), so a same-dim dest pass — where mc.levelRenderer IS the main
+            // renderer — resolves its stage-output probes against the main frame's framegraph:
+            //   * 10.9 renderGroup(TRANSLUCENT) → ChunkSectionLayerGroup.outputTarget() →
+            //     translucentTarget() NON-NULL → the dest water blended into the framegraph's
+            //     offscreen translucent buffer (whose depth copy is the MAIN view's) instead of
+            //     the main target — never composited into the window;
+            //   * CloudRenderer.render's internal cloudsTarget() probe (javap: null-fallback to
+            //     gameRenderer.mainRenderTarget()) hit the registered-but-not-yet-live clouds
+            //     handle and ResourceHandle.get() threw — zero clouds, zero log.
+            // Cross-dim passes never saw either: a SECONDARY renderer's bundle handles are all
+            // null, so every stage probe fell back to the MAIN target — the engine's designed
+            // route (the 10.9 header note) and IP's model (dest passes render into the main
+            // framebuffer, full stop). Restore that invariant for EVERY dest pass: save + null
+            // the five stage handles for the pass duration; restore in the finally below.
+            // main + entityOutline stay untouched (not stage outputs of the dest draws; the
+            // outline tail owns them). No-op for cross-dim (already null). Reentrant under
+            // nesting (per-invocation locals; an inner pass saves the outer's nulls). Also
+            // covers the same-dim entity/particle feature draws between 10.6 and 10.9, whose
+            // itemEntity/particles probes were in the same not-yet-live class as clouds.
+            // A/B lever: -PdisableDestTargetBracket restores the round-1 behavior.
+            LevelTargetBundle destStageTargets = null;
+            ResourceHandle<RenderTarget> savedTranslucentHandle = null;
+            ResourceHandle<RenderTarget> savedItemEntityHandle = null;
+            ResourceHandle<RenderTarget> savedParticlesHandle = null;
+            ResourceHandle<RenderTarget> savedWeatherHandle = null;
+            ResourceHandle<RenderTarget> savedCloudsHandle = null;
+            if (!DISABLE_DEST_TARGET_BRACKET) {
+                destStageTargets = ((LevelRendererAccessorMixin) destRenderer)
+                    .seamlessportals$getTargets();
+                savedTranslucentHandle = destStageTargets.translucent;
+                savedItemEntityHandle = destStageTargets.itemEntity;
+                savedParticlesHandle = destStageTargets.particles;
+                savedWeatherHandle = destStageTargets.weather;
+                savedCloudsHandle = destStageTargets.clouds;
+                destStageTargets.translucent = null;
+                destStageTargets.itemEntity = null;
+                destStageTargets.particles = null;
+                destStageTargets.weather = null;
+                destStageTargets.clouds = null;
+            }
+
             // S14.38 lever: skip the dest fog INSTALL (dest draws use the ambient main fog — wrong
             // fog in the window while ON, expected) — attribution only.
             if (!IPGlobal.debugSkipDestFogInstall) {
@@ -1131,6 +1188,15 @@ public class SecondaryWorldRenderCore {
                     boolean canDraw = mainChunkSampler != null
                         && (destChunks.maxIndicesRequired() > 0 || sodiumArmed)
                         && !IPGlobal.debugSkipPortalTerrain;
+                    // STAGE CENSUS (2026-08-29 same-dim water/clouds arc, lever-gated, read-only):
+                    // per-pass stage accounting + GL stage snapshots — see StageCensusProbe header.
+                    int censusLayer = StageCensusProbe.ENABLED ? PortalRendering.getPortalLayer() : 0;
+                    if (StageCensusProbe.ENABLED) {
+                        StageCensusProbe.passStats(
+                            destDim, sharedState, censusLayer, destChunks, destRenderer,
+                            canDraw, sodiumArmed, mainChunkSampler != null, destCameraPos
+                        );
+                    }
                     if (canDraw) {
                         // 10.6 solid+cutout into the OPAQUE output (== the real main target), masked by
                         // the live stencil; LOAD, no clear.
@@ -1146,6 +1212,11 @@ public class SecondaryWorldRenderCore {
                     // self-gates OFF under sodium/iris anyway).
                     com.warwa.seamlessportals.render.SeamClipRenderer
                         .onDestPassAfterOpaqueTerrain(destViewMatrix);
+
+                    if (StageCensusProbe.ENABLED) {
+                        StageCensusProbe.glStage(destDim, sharedState, censusLayer,
+                            "A-afterOpaque", StageCensusProbe.glSnap());
+                    }
 
                     // 10.7/10.8 dest lighting + entities. Cross-dim: the extracted dest LRS via the
                     // renderer's own submitFeatures/dispatcher (unchanged S14 path).
@@ -1179,16 +1250,31 @@ public class SecondaryWorldRenderCore {
                         );
                     }
 
+                    if (StageCensusProbe.ENABLED) {
+                        StageCensusProbe.glStage(destDim, sharedState, censusLayer,
+                            "B-afterEntities", StageCensusProbe.glSnap());
+                    }
+
                     if (canDraw) {
                         // 10.9 dest translucent (dest translucent target is null → falls back to the
                         // main target, blended over the opaque dest terrain).
                         destChunks.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, mainChunkSampler);
                     }
 
+                    if (StageCensusProbe.ENABLED) {
+                        StageCensusProbe.glStage(destDim, sharedState, censusLayer,
+                            "C-afterTranslucent", StageCensusProbe.glSnap());
+                    }
+
                     // 10.10 nested portal layers — the driver-invoked re-expression of IP's per-pass
                     // translucent hook (what recursed nested portals in IP). PortalRendering.isRendering
                     // is true, so the post-pass branch runs setStencilStateForWorldRendering (§5).
                     IPCGlobal.renderer.onBeforeTranslucentRendering(destViewMatrix);
+
+                    if (StageCensusProbe.ENABLED) {
+                        StageCensusProbe.glStage(destDim, sharedState, censusLayer,
+                            "D-afterNested", StageCensusProbe.glSnap());
+                    }
 
                     // 10.11 dest clouds — RESTORED at S18.3 (the S13-J deviation CLOSED). The original
                     // hazard: the SHARED CloudRenderer's utb/ubo MappableRingBuffers rotated/fenced
@@ -1231,6 +1317,17 @@ public class SecondaryWorldRenderCore {
                     RendererUsingStencil.setStencilLimitation(PortalRendering.getPortalLayer());
                 }
             } finally {
+                // DEST-PASS STAGE-TARGET BRACKET restore (throw-safe; see the save above). Runs
+                // BEFORE control returns to the main-pass framegraph, so the main frame's later
+                // stages (translucent composite, particles, weather, clouds) see their handles
+                // exactly as vanilla left them.
+                if (destStageTargets != null) {
+                    destStageTargets.translucent = savedTranslucentHandle;
+                    destStageTargets.itemEntity = savedItemEntityHandle;
+                    destStageTargets.particles = savedParticlesHandle;
+                    destStageTargets.weather = savedWeatherHandle;
+                    destStageTargets.clouds = savedCloudsHandle;
+                }
                 if (savedShaderFog != null) {
                     RenderSystem.setShaderFog(savedShaderFog);
                 }
@@ -2371,23 +2468,45 @@ public class SecondaryWorldRenderCore {
     ) {
         var ors = client.gameRenderer.gameRenderState().optionsRenderState;
         CloudStatus cloudStatus = ors.cloudStatus;
+        // STAGE CENSUS (2026-08-29 arc): log which gate each call dies at (or DREW/THREW) —
+        // adjudicates the once-per-dim-cap and swallowed-throw cloud hypotheses. Read-only.
+        int censusLyr = StageCensusProbe.ENABLED ? PortalRendering.getPortalLayer() : 0;
         if (cloudStatus == CloudStatus.OFF) {
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "OFF", null);
+            }
             return;
         }
         if (ARGB.alpha(destLRS.cloudColor) <= 0) {
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "alpha0",
+                    "col=" + Integer.toHexString(destLRS.cloudColor));
+            }
             return;
         }
         if (destCameraState.pos == null) {
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "posNull", null);
+            }
             return;
         }
         if (mainCloudTexture == null) {
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "texNull", null);
+            }
             return; // session start only — mirrored at the first render TAIL that sees a loaded
                     // texture (a resource reload keeps the last-known record for the pre-TAIL frame)
         }
         if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "fabulous", null);
+            }
             return; // fabulous: cloudsTarget() is a framegraph-internal handle (see header)
         }
         if (!cloudsDrawnThisFrame.add(destDim)) {
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "dimCapHit", null);
+            }
             return; // once per dim per frame (ring-buffer rotation budget, see header)
         }
         net.minecraft.client.renderer.CloudRenderer cloudRenderer =
@@ -2403,8 +2522,17 @@ public class SecondaryWorldRenderCore {
                 destLRS.cloudColor, cloudStatus, destLRS.cloudHeight, ors.cloudRange,
                 destCameraState.pos, destLRS.gameTime, partialTick
             );
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "DREW",
+                    "col=" + Integer.toHexString(destLRS.cloudColor)
+                        + " h=" + destLRS.cloudHeight + " status=" + cloudStatus);
+            }
         } catch (Throwable t) {
             // Clouds are non-critical.
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.cloud(destDim, censusLyr, "THREW",
+                    t.getClass().getSimpleName() + ":" + t.getMessage());
+            }
         } finally {
             mv.popMatrix();
         }
@@ -2475,6 +2603,10 @@ public class SecondaryWorldRenderCore {
     private static int lastCloudRange = -1;
 
     public static void endCloudFrames() {
+        // STAGE CENSUS frame boundary (per-frame flag-ON walk — MyGameRenderer.endFramePooled).
+        if (StageCensusProbe.ENABLED) {
+            StageCensusProbe.endFrame();
+        }
         cloudsDrawnThisFrame.clear();
         if (client.levelRenderer != null) {
             var freshTexture =
