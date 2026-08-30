@@ -498,10 +498,59 @@ public class IPGlobal {
      * while the player is online</b>, which also disables the adaptive shrink that would otherwise
      * cancel the setting the moment it started working.
      *
-     * <p>Live value, written by {@code IPConfig.onConfigChanged}. Costs server memory in proportion
-     * to how much world stays resident.
+     * <p>ENGINE-INTERNAL since arc 2 (its IPConfig field was removed as a duplicate — same knob as
+     * the retention group's seconds in coarser units). The user knob is
+     * {@code portalChunkRetentionSeconds} below, folded in via
+     * {@code getEffectiveChunkUnloadDelayGenerations}. Costs server memory in proportion to how
+     * much world stays resident.
      */
     public static int chunkUnloadDelayGenerations = 4;
+
+    // ===== PORTAL CHUNK RETENTION (2026-08-29 arc 2) ============================================
+    // The user-facing retention group's engine values (written by IPConfig.onConfigChanged).
+    // The group packages the existing retention machinery behind human semantics and adds the
+    // client-only mode:
+    //   * off            — stock behavior: distance-graduated direct loaders capped by
+    //                      indirectLoadingRadiusCap, unload after chunkUnloadDelayGenerations.
+    //   * clientAndServer — the server keeps real chunk tickets: the direct portal's destination
+    //                      ring becomes a stable user-chosen radius, and the unload delay is
+    //                      raised to cover the configured seconds (never lowered below the raw
+    //                      generations setting). Chunks keep ticking; costs server memory/CPU.
+    //   * clientOnly     — the SERVER behaves stock; the CLIENT retains received chunks + meshes
+    //                      for the window (the client half of the feature; server side of this
+    //                      mode is final by construction — stock).
+    public static enum PortalChunkRetentionMode {
+        off,
+        clientOnly,
+        clientAndServer
+    }
+
+    public static PortalChunkRetentionMode portalChunkRetentionMode = PortalChunkRetentionMode.off;
+
+    /** Seconds chunks stay after nothing watches them; negative = forever while online. */
+    public static int portalChunkRetentionSeconds = 30;
+
+    /** Chunks from the portal destination; 0 = unlimited (follow the view distance). */
+    public static int portalChunkRetentionRadiusChunks = 0;
+
+    /**
+     * The EFFECTIVE unload delay in {@code ImmPtlChunkTracking.updateInterval} generations —
+     * the ONE resolver its consumer reads. {@code clientAndServer} RAISES (never lowers) the raw
+     * {@link #chunkUnloadDelayGenerations} to cover {@link #portalChunkRetentionSeconds}
+     * (13 ticks = 0.65 s per generation); forever (negative seconds) maps onto the existing
+     * negative=never-while-online path. A resolver rather than a second writer of the raw field —
+     * the config file's own history warns about two-writers-one-static arbitration.
+     */
+    public static int getEffectiveChunkUnloadDelayGenerations() {
+        if (portalChunkRetentionMode == PortalChunkRetentionMode.clientAndServer) {
+            if (portalChunkRetentionSeconds < 0) {
+                return -1;
+            }
+            int derived = (int) Math.ceil(portalChunkRetentionSeconds * 20.0 / 13.0);
+            return Math.max(chunkUnloadDelayGenerations, derived);
+        }
+        return chunkUnloadDelayGenerations;
+    }
 
     /** Above this, {@link #warnIfDeepRecursion} logs the VRAM arithmetic once per changed pair. */
     public static final int DEEP_RECURSION_WARN_AT = 8;

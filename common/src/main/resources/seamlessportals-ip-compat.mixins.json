@@ -32,7 +32,8 @@
     "iris.MixinIrisShadowCompositeRenderer_ActRenderAll",
     "iris.MixinIrisCompositeRenderer_Census",
     "iris.MixinIrisCompositeRenderer_CensusPostWrite",
-    "iris.MixinIrisProgram_Census"
+    "iris.MixinIrisProgram_Census",
+    "cloth.MixinClothTooltipListEntry_LabelHover"
   ],
   "injectors": {
     "defaultRequire": 1

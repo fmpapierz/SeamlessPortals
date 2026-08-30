@@ -116,17 +116,39 @@ public class IPConfig implements ConfigData {
     @ConfigEntry.Gui.Tooltip
     public boolean deepPortalLoadingReach = true;
 
+    // IS5-KEEP's chunkUnloadDelayGenerations config field REMOVED (arc 2, user-ordered dedupe):
+    // it was the same knob as portalChunkRetentionSeconds in coarser units. The stock engine value
+    // (4 generations ≈ 2.6 s) lives on as IPGlobal.chunkUnloadDelayGenerations, engine-internal;
+    // the retention group below is the ONE user control. A stale json key is ignored by gson and
+    // dropped on the next save.
+
     /**
-     * IS5-KEEP — how long portal-loaded chunks stay resident after nothing is watching them, in
-     * units of 13 ticks. Default 4 (~2.6 s), IP's original. Negative = never unload while the player
-     * is online.
-     *
-     * <p>Unbounded in the GUI on purpose so Cloth renders a TYPED field rather than a slider — the
-     * useful range spans "a couple of seconds" to "indefinite" and no slider covers that sensibly.
+     * PORTAL CHUNK RETENTION (arc 2) — the master mode of the retention group. See
+     * {@code IPGlobal.PortalChunkRetentionMode} for the three modes' engine semantics; the two
+     * knobs below only take effect when this is not {@code off}.
      */
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
-    public int chunkUnloadDelayGenerations = 4;
+    @ConfigEntry.Gui.EnumHandler(option = ConfigEntry.Gui.EnumHandler.EnumDisplayOption.BUTTON)
+    public IPGlobal.PortalChunkRetentionMode portalChunkRetentionMode =
+        IPGlobal.PortalChunkRetentionMode.off;
+
+    /**
+     * PORTAL CHUNK RETENTION — keep time in SECONDS; {@code -1} = forever while online. Unbounded
+     * in the GUI (typed field, not a slider); clamped -1..3600 on apply.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int portalChunkRetentionSeconds = 30;
+
+    /**
+     * PORTAL CHUNK RETENTION — keep radius in CHUNKS around the portal destination; {@code 0} =
+     * unlimited (follow the view distance). Applies to the DIRECT portal you are at; deep-chain
+     * loaders keep following {@link #indirectLoadingRadiusCap}. Clamped 0..32 on apply.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public int portalChunkRetentionRadius = 0;
     @ConfigEntry.Category("client")
     @ConfigEntry.Gui.Tooltip
     // DEFAULT FLIPPED TO FALSE (2026-08-02, user decision). When this engages it clamps portal
@@ -343,7 +365,19 @@ public class IPConfig implements ConfigData {
         portalWindowRenderDistance = Mth.clamp(portalWindowRenderDistance, 0, 32);
         IPGlobal.portalWindowRenderDistance = portalWindowRenderDistance;
         IPGlobal.deepPortalLoadingReach = deepPortalLoadingReach;
-        IPGlobal.chunkUnloadDelayGenerations = chunkUnloadDelayGenerations;
+        // PORTAL CHUNK RETENTION (arc 2): null-guard the enum (the AutoConfig deserialize-null
+        // idiom above), clamp in place (the typed-field idiom — GUI, json, and engine agree),
+        // then publish the engine values. The seconds knob feeds the engine through
+        // IPGlobal.getEffectiveChunkUnloadDelayGenerations (a resolver, not a second writer of
+        // chunkUnloadDelayGenerations).
+        if (portalChunkRetentionMode == null) {
+            portalChunkRetentionMode = IPGlobal.PortalChunkRetentionMode.off;
+        }
+        portalChunkRetentionSeconds = Mth.clamp(portalChunkRetentionSeconds, -1, 3600);
+        portalChunkRetentionRadius = Mth.clamp(portalChunkRetentionRadius, 0, 32);
+        IPGlobal.portalChunkRetentionMode = portalChunkRetentionMode;
+        IPGlobal.portalChunkRetentionSeconds = portalChunkRetentionSeconds;
+        IPGlobal.portalChunkRetentionRadiusChunks = portalChunkRetentionRadius;
         IPGlobal.warnIfDeepRecursion(maxPortalLayer, IPGlobal.irisMaxPortalLayer);
         IPGlobal.lagAttackProof = lagAttackProof;
         IPGlobal.portalRenderLimit = portalRenderLimit;

@@ -327,7 +327,9 @@ public class ImmPtlChunkTracking {
      * delayUnloadGenerations} test above: raising this keeps portal-destination chunks resident
      * after you look away, so glancing back and forth does not re-stream them.
      *
-     * <p>IS5-KEEP — now configurable ({@code IPGlobal.chunkUnloadDelayGenerations}):
+     * <p>IS5-KEEP, arc-2 retention: driven by
+     * {@code IPGlobal.getEffectiveChunkUnloadDelayGenerations} (stock 4, or the retention group's
+     * seconds/forever). Tiering below unchanged:
      * <ul>
      *   <li><b>negative</b> = never unload while the player is online. The adaptive shrink below is
      *       skipped entirely, because it would otherwise defeat the setting the moment retention did
@@ -340,7 +342,9 @@ public class ImmPtlChunkTracking {
      */
     // unload chunks earlier if the player loads many chunks
     private static int getDelayUnloadGenerationForPlayer(ServerPlayer player) {
-        int configured = IPGlobal.chunkUnloadDelayGenerations;
+        // PORTAL CHUNK RETENTION (arc 2): the resolver folds the retention group's seconds-based
+        // knob in (clientAndServer raises, never lowers; forever -> the negative path below).
+        int configured = IPGlobal.getEffectiveChunkUnloadDelayGenerations();
 
         if (configured < 0) {
             // Indefinite. Not Integer.MAX_VALUE: generationCounter is an int that increments every

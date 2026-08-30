@@ -123,12 +123,38 @@ public class ChunkVisibility {
         else {
             int loadDistance = McHelper.getPlayerLoadDistance(player);
             double distance = portal.getDistanceToNearestPointInPortal(player.position());
-            
+
             // load more for up scaling portal
             if (portal.getScaling() > 2 && distance < 5) {
                 loadDistance = (int) ((portal.getDestAreaRadiusEstimation() * 1.4) / 16);
             }
-            
+
+            // PORTAL CHUNK RETENTION (arc 2, clientAndServer): the direct portal's destination
+            // ring becomes a STABLE user-chosen radius — no distance graduation, no
+            // indirectLoadingRadiusCap (that cap keeps governing INDIRECT/deep-chain loaders,
+            // where unlimited would fan out) — because the group's promise is "X chunks around
+            // the portal stay loaded", not "shrinks as you walk away". 0 = follow the view
+            // distance. The perf-level degradation still wins when it is WORSE (the IS5-WDIST
+            // precedent): a struggling client/server falls back to the stock path below rather
+            // than having its protection overridden upward.
+            if (IPGlobal.portalChunkRetentionMode
+                == IPGlobal.PortalChunkRetentionMode.clientAndServer
+                && ImmPtlChunkTracking.getPlayerInfo(player).performanceLevel
+                == PerformanceLevel.good
+            ) {
+                int configuredRadius = IPGlobal.portalChunkRetentionRadiusChunks;
+                int retentionRadius = configuredRadius <= 0
+                    ? loadDistance
+                    : Math.min(configuredRadius, loadDistance);
+                return new ChunkLoader(
+                    new DimensionalChunkPos(
+                        portal.getDestDim(),
+                        ChunkPos.containing(BlockPos.containing(portal.getDestPos()))
+                    ),
+                    retentionRadius
+                );
+            }
+
             return new ChunkLoader(
                 new DimensionalChunkPos(
                     portal.getDestDim(),

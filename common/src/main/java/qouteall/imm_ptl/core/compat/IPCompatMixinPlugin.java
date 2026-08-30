@@ -82,6 +82,7 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
 
     private static volatile Boolean sodiumPresent = null;
     private static volatile Boolean irisPresent = null;
+    private static volatile Boolean clothPresent = null;
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -113,6 +114,11 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         }
         else if (mixinClassName.contains("Sodium")) {
             gate1 = isSodiumPresent();
+        }
+        else if (mixinClassName.contains("Cloth")) {
+            // Cloth Config (2026-08-30, tooltip hover-scope mixin). A hard flag-ON dependency in
+            // practice, but keep the presence gate honest — a cloth-absent boot must not weave.
+            gate1 = isClothPresent();
         }
         else {
             // Default-off: a compat class that names no target mod (the footgun) is never woven.
@@ -165,6 +171,17 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         }
         boolean detected = detectMod("iris");
         irisPresent = detected;
+        return detected;
+    }
+
+    private static boolean isClothPresent() {
+        Boolean cached = clothPresent;
+        if (cached != null) {
+            return cached;
+        }
+        // Fabric id "cloth-config" (jar-verified 26.2.155); NF historically "cloth_config".
+        boolean detected = detectMod("cloth-config") || detectMod("cloth_config");
+        clothPresent = detected;
         return detected;
     }
 
