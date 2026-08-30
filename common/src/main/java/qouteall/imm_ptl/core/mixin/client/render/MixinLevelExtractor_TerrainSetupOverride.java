@@ -91,6 +91,15 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
             return;
         }
 
+        // X-RAY fix (2026-08-30): whether THIS is the first armed frame (the teleport/promote
+        // frame), captured before the decrement. The S14.48 keep-vanilla shortcut below stays
+        // valid ONLY there; on the FOLLOWING window frames the vanilla fill can be the stale
+        // warm tree (NF rings #2-5: mid-size 1300-2000 fills that draw distant/underground
+        // sections without the arrival's near occluders — the cave-x-ray flash), so those
+        // frames always take the discovery flood (the flood frames were the visually-clean
+        // ones, rings #1/#6).
+        boolean firstArmedFrame = MyGameRenderer.vanillaTerrainSetupOverride
+            >= MyGameRenderer.vanillaTerrainSetupOverrideWindowSize;
         if (MyGameRenderer.vanillaTerrainSetupOverride > 0) {
             MyGameRenderer.vanillaTerrainSetupOverride--;
         }
@@ -134,7 +143,8 @@ public abstract class MixinLevelExtractor_TerrainSetupOverride {
                 && Math.abs(Math.floor(camPos.y / 8.0) - sogAcc.seamlessportals$getPrevCamY()) <= 2
                 && Math.abs(Math.floor(camPos.z / 8.0) - sogAcc.seamlessportals$getPrevCamZ()) <= 2;
         }
-        if (vanillaYield > 32 && originNear && !IPGlobal.alwaysOverrideTerrainSetup) {
+        if (vanillaYield > 32 && originNear && firstArmedFrame
+            && !IPGlobal.alwaysOverrideTerrainSetup) {
             return;
         }
 

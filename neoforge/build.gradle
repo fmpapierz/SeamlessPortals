@@ -40,6 +40,11 @@ neoForge {
             // 2026-08-02). One dontinline on the leaf, same as fabric/build.gradle's default
             // c2JitArgs branch. Single-quoted so nothing interpolates.
             jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
+            // STAGE CENSUS lever (2026-08-30, NF x-ray-flash round): mirror of the fabric rows.
+            //   .\gradlew.bat :neoforge:runClient -PstageCensus=true
+            if (project.findProperty('stageCensus') == 'true') {
+                jvmArgument '-Dseamlessportals.stageCensus=true'
+            }
         }
         server {
             server()
@@ -75,6 +80,10 @@ neoForge {
             }
             if (project.findProperty('shaderpackViewsProbe') == 'true') {
                 jvmArgument '-Dseamlessportals.shaderpackViewsProbe=true'
+            }
+            // STAGE CENSUS lever (mirror of the client run's row).
+            if (project.findProperty('stageCensus') == 'true') {
+                jvmArgument '-Dseamlessportals.stageCensus=true'
             }
         }
     }

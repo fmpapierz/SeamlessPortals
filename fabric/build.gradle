@@ -200,6 +200,38 @@ loom {
             // the pass so dest translucent/clouds route to the MAIN target (the cross-dim path).
             //   .\gradlew.bat :fabric:runClient -PdisableDestTargetBracket=true
             if (project.findProperty('disableDestTargetBracket') == 'true') { vmArg('-Dseamlessportals.disableDestTargetBracket=true') }
+            // ROUND-TRIP chunk census (2026-08-29 arc 1 round 0, DEFAULT-OFF): promote/demote mesh
+            // censuses, invalidate/purge/preset events, 12s post-swap sampler. Tag [ROUND TRIP]. —
+            //   .\gradlew.bat :fabric:runClient -ProundTripProbe=true
+            if (project.findProperty('roundTripProbe') == 'true') { vmArg('-Dseamlessportals.roundTripProbe=true') }
+            // CLOUD OUTERMOST-FIRST A/B (DEFAULT-ON fix; lever restores the post-recursion cloud
+            // slot where the deepest nested pass wins the per-dim budget).
+            //   .\gradlew.bat :fabric:runClient -PdisableCloudOutermostFirst=true
+            if (project.findProperty('disableCloudOutermostFirst') == 'true') { vmArg('-Dseamlessportals.disableCloudOutermostFirst=true') }
+            // SAME-DIM SKY RE-SAMPLE A/B (DEFAULT-ON defect-3 fix; lever restores the
+            // source-biome sky bleed through same-dim windows).
+            //   .\gradlew.bat :fabric:runClient -PdisableSameDimSkyResample=true
+            if (project.findProperty('disableSameDimSkyResample') == 'true') { vmArg('-Dseamlessportals.disableSameDimSkyResample=true') }
+            // SAME-DIM PROBE SNAP A/B (DEFAULT-ON defect-3 residual fix; lever restores the
+            // split-second sky lerp at same-dim crossings).
+            //   .\gradlew.bat :fabric:runClient -PdisableSameDimProbeSnap=true
+            if (project.findProperty('disableSameDimProbeSnap') == 'true') { vmArg('-Dseamlessportals.disableSameDimProbeSnap=true') }
+            // SAME-DIM CROSSING ENTITY GRACE A/B (DEFAULT-ON entity-blink fix; lever restores
+            // the crossing-frame entity cull + post-arrival trickle).
+            //   .\gradlew.bat :fabric:runClient -PdisableSameDimCrossingEntityGrace=true
+            if (project.findProperty('disableSameDimCrossingEntityGrace') == 'true') { vmArg('-Dseamlessportals.disableSameDimCrossingEntityGrace=true') }
+            // RECURSIVE-CLOUDS A/B (DEFAULT-ON fix: per-(dim,layer) cloud instances at the
+            // outermost-first slot; lever collapses to one draw per dim — nested windows cloudless).
+            //   .\gradlew.bat :fabric:runClient -PdisableCloudPerLayer=true
+            if (project.findProperty('disableCloudPerLayer') == 'true') { vmArg('-Dseamlessportals.disableCloudPerLayer=true') }
+            // PORTAL REPOSITION FASTPATH A/B (DEFAULT-ON recursion-lag fix; lever restores the
+            // super-syncing per-pass reposition — the ping-pong full-grid recenter).
+            //   .\gradlew.bat :fabric:runClient -PdisablePortalRepositionFastpath=true
+            if (project.findProperty('disablePortalRepositionFastpath') == 'true') { vmArg('-Dseamlessportals.disablePortalRepositionFastpath=true') }
+            // BLANK-FLASH TERRAIN WINDOW A/B (DEFAULT-ON fix; lever restores the 1-frame arm —
+            // the intermittent post-teleport blank frames).
+            //   .\gradlew.bat :fabric:runClient -PdisableTeleportTerrainWindow=true
+            if (project.findProperty('disableTeleportTerrainWindow') == 'true') { vmArg('-Dseamlessportals.disableTeleportTerrainWindow=true') }
             // RS PASSTHROUGH (a) diagnose-first probes (migration/REDSTONE_RECON.md §5). DEFAULT-OFF.
             // The census dumps the live aperture cells and real /setblock targets. (The former
             // apertureSuppressTeardown lever was retired at step 3 — IP-core edit 3 makes the
@@ -466,6 +498,22 @@ loom {
             if (project.findProperty('stageCensus') == 'true') { vmArg('-Dseamlessportals.stageCensus=true') }
             // SAME-DIM WATER/CLOUDS fix A/B (mirror of the client run's row).
             if (project.findProperty('disableDestTargetBracket') == 'true') { vmArg('-Dseamlessportals.disableDestTargetBracket=true') }
+            // ROUND-TRIP chunk census (mirror of the client run's row).
+            if (project.findProperty('roundTripProbe') == 'true') { vmArg('-Dseamlessportals.roundTripProbe=true') }
+            // CLOUD OUTERMOST-FIRST A/B (mirror of the client run's row).
+            if (project.findProperty('disableCloudOutermostFirst') == 'true') { vmArg('-Dseamlessportals.disableCloudOutermostFirst=true') }
+            // SAME-DIM SKY RE-SAMPLE A/B (mirror of the client run's row).
+            if (project.findProperty('disableSameDimSkyResample') == 'true') { vmArg('-Dseamlessportals.disableSameDimSkyResample=true') }
+            // SAME-DIM PROBE SNAP A/B (mirror of the client run's row).
+            if (project.findProperty('disableSameDimProbeSnap') == 'true') { vmArg('-Dseamlessportals.disableSameDimProbeSnap=true') }
+            // SAME-DIM CROSSING ENTITY GRACE A/B (mirror of the client run's row).
+            if (project.findProperty('disableSameDimCrossingEntityGrace') == 'true') { vmArg('-Dseamlessportals.disableSameDimCrossingEntityGrace=true') }
+            // RECURSIVE-CLOUDS A/B (mirror of the client run's row).
+            if (project.findProperty('disableCloudPerLayer') == 'true') { vmArg('-Dseamlessportals.disableCloudPerLayer=true') }
+            // PORTAL REPOSITION FASTPATH A/B (mirror of the client run's row).
+            if (project.findProperty('disablePortalRepositionFastpath') == 'true') { vmArg('-Dseamlessportals.disablePortalRepositionFastpath=true') }
+            // BLANK-FLASH TERRAIN WINDOW A/B (mirror of the client run's row).
+            if (project.findProperty('disableTeleportTerrainWindow') == 'true') { vmArg('-Dseamlessportals.disableTeleportTerrainWindow=true') }
             // IS3 clip discriminator probe (port-note IS-iris-shaders-on.md §4.7 discriminators
             // 1+2): 1Hz per-draw dump at the vanilla trySetup handler for the first N draws of a
             // full-pipeline pass (terrain->loc>=0/enabled, entity+sky->loc==-1/disabled) —

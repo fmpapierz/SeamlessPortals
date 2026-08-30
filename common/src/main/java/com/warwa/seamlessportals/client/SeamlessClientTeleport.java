@@ -586,6 +586,13 @@ public final class SeamlessClientTeleport {
             PortalWorldManager.demoteFromMain(oldDim, oldRenderer, oldLevel);
         }
 
+        // ROUND-TRIP probe (2026-08-29 arc 1 round 0, lever-gated): post-swap census of the
+        // installed main renderer + arm the 12-second per-second retention sampler.
+        if (qouteall.imm_ptl.core.render.RoundTripProbe.ENABLED) {
+            qouteall.imm_ptl.core.render.RoundTripProbe.onSwapComplete(
+                oldDim, destDim, mc.levelRenderer);
+        }
+
         // 4. Replay minimal mc.setLevel side-effects (match HandleRespawnMixin).
         mc.particleEngine.setLevel(promotion.level());
         mc.gameRenderer.setLevel(promotion.level());

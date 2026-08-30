@@ -1030,6 +1030,11 @@ public class PortalWorldManager {
         initializeIfNeeded();
         LevelRenderer renderer = renderers.remove(dim);
         ClientLevel level = levels.remove(dim);
+        // ROUND-TRIP probe (2026-08-29 arc 1 round 0, lever-gated): compiled-mesh census of the
+        // cached renderer at the moment it is promoted.
+        if (qouteall.imm_ptl.core.render.RoundTripProbe.ENABLED && renderer != null) {
+            qouteall.imm_ptl.core.render.RoundTripProbe.onPromote(dim, renderer);
+        }
         // The dim is becoming primary — its cached per-dest particle engine is
         // obsolete (the global mc.particleEngine handles the active dim). Drop it.
         ParticleEngine promotedEngine = particleEngines.remove(dim);
@@ -1628,6 +1633,10 @@ public class PortalWorldManager {
             ResourceKey<Level> dim,
             LevelRenderer renderer,
             ClientLevel level) {
+        // ROUND-TRIP probe (lever-gated): census of the outgoing renderer BEFORE demote mutations.
+        if (qouteall.imm_ptl.core.render.RoundTripProbe.ENABLED) {
+            qouteall.imm_ptl.core.render.RoundTripProbe.onDemote(dim, renderer);
+        }
         LevelRenderState demotedState = new LevelRenderState();
         ((LevelRendererAccessorMixin) renderer)
             .seamlessportals$setLevelRenderState(demotedState);

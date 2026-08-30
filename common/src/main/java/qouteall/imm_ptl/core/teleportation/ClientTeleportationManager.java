@@ -65,7 +65,32 @@ public class ClientTeleportationManager {
     private static final Logger LOGGER = LogUtils.getLogger();
     
     public static final Minecraft client = Minecraft.getInstance();
-    
+
+    // SAME-DIM SKY/FOG PROBE SNAP A/B lever (defect-3 residual fix, 2026-08-30): restores the
+    // split-second same-dim crossing sky lerp for attribution. Default ON = the snap.
+    private static final boolean DISABLE_SAMEDIM_PROBE_SNAP =
+        Boolean.getBoolean("seamlessportals.disableSameDimProbeSnap");
+
+    // SAME-DIM CROSSING ENTITY GRACE (entity-blink fix, 2026-08-30 — ring-probe convicted:
+    // every same-dim crossing frame extracted a near-empty entity set, then arrivals trickled
+    // in over ~300ms). For this window after a same-dim crossing, the MAIN extract's
+    // isSectionCompiledAndVisible resolves by EXACT unbounded lookup + compiled-only (see
+    // LevelRendererEntityVisibilityMixin's grace branch) instead of the wrap-aliased preset
+    // lookup + uploadedTime fade. A/B lever below; default ON = the fix.
+    private static final boolean DISABLE_SAMEDIM_ENTITY_GRACE =
+        Boolean.getBoolean("seamlessportals.disableSameDimCrossingEntityGrace");
+
+    // BLANK-FLASH windowed terrain-override arm A/B lever (2026-08-30): restores the 1-frame
+    // arm (the intermittent post-teleport blank frames) for attribution. Default ON = the window.
+    private static final boolean DISABLE_TELEPORT_TERRAIN_WINDOW =
+        Boolean.getBoolean("seamlessportals.disableTeleportTerrainWindow");
+    private static final long SAMEDIM_ENTITY_GRACE_MILLIS = 1000L;
+    private static long sameDimCrossingGraceUntilMillis = 0;
+
+    public static boolean isInSameDimCrossingGrace() {
+        return net.minecraft.util.Util.getMillis() < sameDimCrossingGraceUntilMillis;
+    }
+
     public static long tickTimeForTeleportation = 0;
     private static long lastTeleportGameTime = 0;
     private static long teleportTickTimeLimit = 0;
@@ -421,6 +446,35 @@ public class ClientTeleportationManager {
                 + " vehiclePos=" + (player.getVehicle() == null
                     ? "-" : player.getVehicle().position().toString()));
 
+        // SAME-DIM SKY/FOG PROBE SNAP (defect-3 residual, 2026-08-30): vanilla's
+        // EnvironmentAttributeProbe (javap: reset(), tick(Level, Vec3)) lerps fog/sky attributes
+        // over ~1 tick WITHIN a level — a LEVEL CHANGE yields a fresh probe, which is why
+        // cross-dim crossings never flashed. A same-dim crossing keeps the level, so the probe
+        // lerped source-biome -> dest-biome color for a split second after the crossing (the
+        // user-visible flash; the window itself already shows dest colors via Step 4.5-SD).
+        // Apply the PROVEN 2026-04-24 snap (SeamlessClientTeleport's cross-dim flash fix,
+        // dormant on this path): reset + immediately re-tick at the DESTINATION position so the
+        // first post-crossing frame reads pure dest values (reset alone leaves probe.level null
+        // -> default-value flash, per that fix's own note). Same-dim only; A/B lever
+        // -PdisableSameDimProbeSnap.
+        if (fromDimension == toDimension && !DISABLE_SAMEDIM_PROBE_SNAP) {
+            try {
+                net.minecraft.client.Camera mainCamera = client.gameRenderer.mainCamera();
+                if (mainCamera != null) {
+                    mainCamera.attributeProbe().reset();
+                    mainCamera.attributeProbe().tick(player.level(), McHelper.getEyePos(player));
+                }
+            } catch (Throwable t) {
+                LOGGER.warn("same-dim attributeProbe snap failed: {}", t.toString());
+            }
+        }
+
+        // SAME-DIM CROSSING ENTITY GRACE arm (see the field's note).
+        if (fromDimension == toDimension && !DISABLE_SAMEDIM_ENTITY_GRACE) {
+            sameDimCrossingGraceUntilMillis =
+                net.minecraft.util.Util.getMillis() + SAMEDIM_ENTITY_GRACE_MILLIS;
+        }
+
         //because the teleportation may happen before rendering
         //but after pre render info being updated
         RenderStates.updatePreRenderInfo(partialTick);
@@ -455,10 +509,19 @@ public class ClientTeleportationManager {
             );
         }
         
+        // ENTITY-BLINK probe marker (lever-gated): tag the crossing so the census ring dumps
+        // the surrounding frames' entity counts.
+        qouteall.imm_ptl.core.render.StageCensusProbe.markTeleport(
+            fromDimension == toDimension ? "same-dim" : "cross-dim");
+
         isTeleportingTick = true;
         isTeleportingFrame = true;
         
-        MyGameRenderer.armVanillaTerrainSetupOverride(); // S14.9: + SOG frustum force (same-frame consumption, IP contract)
+        // S14.9 SOG frustum force + BLANK-FLASH windowed arm (2026-08-30): 8 frames covers the
+        // measured 1-3 blank frames with margin; converged frames keep vanilla's fill at zero
+        // cost (the override mixin's S14.48 branch). Lever restores the 1-frame arm.
+        MyGameRenderer.armVanillaTerrainSetupOverride(
+            DISABLE_TELEPORT_TERRAIN_WINDOW ? 1 : 8);
     }
     
     
@@ -487,7 +550,11 @@ public class ClientTeleportationManager {
         lastPlayerEyePos = null;
         
         RenderStates.updatePreRenderInfo(RenderStates.getPartialTick());
-        MyGameRenderer.armVanillaTerrainSetupOverride(); // S14.9: + SOG frustum force (same-frame consumption, IP contract)
+        // S14.9 SOG frustum force + BLANK-FLASH windowed arm (2026-08-30): 8 frames covers the
+        // measured 1-3 blank frames with margin; converged frames keep vanilla's fill at zero
+        // cost (the override mixin's S14.48 branch). Lever restores the 1-frame arm.
+        MyGameRenderer.armVanillaTerrainSetupOverride(
+            DISABLE_TELEPORT_TERRAIN_WINDOW ? 1 : 8);
     }
     
     /**

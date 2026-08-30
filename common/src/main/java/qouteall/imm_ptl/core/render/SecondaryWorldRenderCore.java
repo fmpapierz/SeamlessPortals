@@ -115,6 +115,39 @@ public class SecondaryWorldRenderCore {
     private static final boolean DISABLE_DEST_TARGET_BRACKET =
         Boolean.getBoolean("seamlessportals.disableDestTargetBracket");
 
+    // CLOUD OUTERMOST-FIRST A/B lever (2026-08-30 cloud round): restores the post-recursion
+    // cloud slot (deepest pass wins the per-dim budget) for attribution. Default ON = the fix.
+    private static final boolean DISABLE_CLOUD_OUTERMOST_FIRST =
+        Boolean.getBoolean("seamlessportals.disableCloudOutermostFirst");
+
+    // SAME-DIM SKY RE-SAMPLE A/B lever (defect-3 fix, 2026-08-30): restores the source-biome
+    // sky bleed for attribution. Default ON = the fix (see Step 4.5-SD).
+    private static final boolean DISABLE_SAMEDIM_SKY_RESAMPLE =
+        Boolean.getBoolean("seamlessportals.disableSameDimSkyResample");
+
+    // PORTAL REPOSITION FASTPATH A/B lever (recursion-lag fix, 2026-08-30): restores the
+    // super-syncing per-pass reposition (the ping-pong full-grid recenter) for attribution.
+    // Default ON = the fastpath.
+    private static final boolean DISABLE_PORTAL_REPOSITION_FASTPATH =
+        Boolean.getBoolean("seamlessportals.disablePortalRepositionFastpath");
+
+    /** Step 4.5-SD helper: field-copy a SkyRenderState (all 13 public fields; javap-verified). */
+    private static void copySkyRenderState(SkyRenderState from, SkyRenderState to) {
+        to.skybox = from.skybox;
+        to.shouldRenderDarkDisc = from.shouldRenderDarkDisc;
+        to.sunAngle = from.sunAngle;
+        to.moonAngle = from.moonAngle;
+        to.starAngle = from.starAngle;
+        to.rainBrightness = from.rainBrightness;
+        to.starBrightness = from.starBrightness;
+        to.sunriseAndSunsetColor = from.sunriseAndSunsetColor;
+        to.moonPhase = from.moonPhase;
+        to.skyColor = from.skyColor;
+        to.endFlashIntensity = from.endFlashIntensity;
+        to.endFlashXAngle = from.endFlashXAngle;
+        to.endFlashYAngle = from.endFlashYAngle;
+    }
+
     // ===== §2.2 core-owned state (no com.warwa duplication) =====================================
     // The armed-discovery one-shot "already scheduled UNCOMPILED" guard, per dim (re-expresses
     // MOD:PortalContextSwitch.portalCompileScheduled).
@@ -539,6 +572,17 @@ public class SecondaryWorldRenderCore {
         // S14.49: many-portal cost accounting (dp= in the flash-probe row).
         TeleportFlashProbe.destPassesThisFrame++;
 
+        // PASS-TIMING probe (recursion-lag round A, lever-gated): step brackets reported in the
+        // Step-10.13 finally; aggregated 1Hz in StageCensusProbe.
+        long censusPassT0 = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
+        int censusLayerAtHead = StageCensusProbe.ENABLED ? PortalRendering.getPortalLayer() : 0;
+        long censusExtractNs = 0;
+        long censusDiscoveryNs = 0;
+        long censusPrepareNs = 0;
+        long censusEntitiesNs = 0;
+        long censusCloudsNs = 0;
+        long censusDrawSeqNs = 0;
+
         DrawCallTrace.record(">>> renderDestWorld dim=" + destDim.identifier()
             + " layer=" + PortalRendering.getPortalLayer() + " " + DrawCallTrace.mvTop());
         // S14.33 (v3): dest-side + main-side sky state at portal-pass entry (pollution timing:
@@ -561,6 +605,7 @@ public class SecondaryWorldRenderCore {
         // ONLY it uses CLIENT.levelExtractor; every other dim (incl. an outer dest dim under nesting) uses
         // its construction-bound WORLD_EXTRACTOR_MAP instance (memory nether-block-freeze-orphaned-
         // extractor). With correct routing the :below coherence re-point is a genuine no-op by construction.
+        long censusSetupT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
         LevelExtractor destExtractor;
         if (destDim == RenderStates.originalPlayerDimension) {
             destExtractor = mc.levelExtractor;
@@ -677,7 +722,16 @@ public class SecondaryWorldRenderCore {
         // via the D1 swapped context.
         if (!sharedState && viewArea != null) {
             SectionPos camSec = SectionPos.of(destCameraPos);
-            viewArea.repositionCamera(camSec);
+            // RECURSION-LAG fix (2026-08-30, TIMING-probe convicted): the portal-pass fastpath
+            // swaps the coord-pinned preset WITHOUT the super RotatingSectionStorage recenter +
+            // SOG invalidate — the per-pass ping-pong between far-apart pass cameras made the
+            // full-grid super recenter run twice per frame (~27-42ms per pass; the from-nether
+            // lag). See repositionCameraForPortalPass. A/B lever restores the old call.
+            if (DISABLE_PORTAL_REPOSITION_FASTPATH) {
+                viewArea.repositionCamera(camSec);
+            } else {
+                viewArea.repositionCameraForPortalPass(camSec);
+            }
         }
 
         // ===== Step 4 — dispatcher camera + camera render state =================================
@@ -704,6 +758,30 @@ public class SecondaryWorldRenderCore {
             destCameraState = destLRS.cameraRenderState;
         }
 
+        // ===== Step 4.5-SD — SAME-DIM dest SKY re-sample (defect-3 fix, 2026-08-30) =============
+        // PROBE-CONVICTED (round A, [STAGE CENSUS] sky rows): shared-state passes reused the MAIN
+        // extract's skyRenderState — sampled at the SOURCE camera's biome — so an OW↔OW window
+        // across different-sky biomes rendered the source sky color (stored=ff70a0 vs
+        // destSampled=ff60b0, 34 rows + the mirrored 3), and crossing then SNAPPED the main sky
+        // to the color the window should have shown all along. IP re-entered the full renderLevel
+        // per pass, re-sampling sky at the DEST camera; re-express that here: save the main
+        // state's CONTENTS aside (the field is public FINAL — javap — so contents, not the
+        // reference; a per-invocation copy keeps nesting safe) and refill it in place with the
+        // PORTAL camera via SkyRenderer.extractRenderState — the S14.23 extraction idiom.
+        // Restored in the Step-10.13 finally. Cross-dim passes already re-extract per pass.
+        // Skips (stock behavior) while the main skyRenderer is not yet constructed (first
+        // frames) or under the A/B lever -PdisableSameDimSkyResample.
+        SkyRenderState savedSameDimSkyCopy = null;
+        if (sharedState && !DISABLE_SAMEDIM_SKY_RESAMPLE) {
+            SkyRenderer mainSkyRenderer = destRenderer.skyRenderer();
+            if (mainSkyRenderer != null) {
+                savedSameDimSkyCopy = new SkyRenderState();
+                copySkyRenderState(destLRS.skyRenderState, savedSameDimSkyCopy);
+                mainSkyRenderer.extractRenderState(
+                    destLevel, partialTick, newCamera, destLRS.skyRenderState);
+            }
+        }
+
         newCamera.extractRenderState(destCameraState, partialTick);
         // dest-pass R13k analog: apply the transform onto the state AFTER extract, never by wrapping
         // the cached Camera.getViewRotationMatrix (consumed downstream by PerEntityClipBracket/R3).
@@ -722,6 +800,8 @@ public class SecondaryWorldRenderCore {
         FogData savedFogData = destCameraState.fogData;
         FogType savedFogType = destCameraState.fogType;
 
+        long censusSetupNs = StageCensusProbe.ENABLED ? System.nanoTime() - censusSetupT : 0;
+
         // Pre-capture SOURCE state for the Globals-UBO restore (§1 Step 8) BEFORE any dest work.
         // V1-M2 fix (S13-H verifier 1): capture the IMMEDIATE OUTER context (the shell's pre-swap
         // sourceCamera / sourceLevel), NOT the layer-0 RenderStates.originalCamera/originalPlayerDimension.
@@ -739,6 +819,7 @@ public class SecondaryWorldRenderCore {
             // ===== Step 5 — dest EXTRACT + SOG delta feed + compileSections drain [cross-dim] =====
             // S14.38 lever: skipping the extract shows STALE dest content in the window (expected)
             // — attribution only.
+            long censusStep5T = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
             if (!sharedState && !IPGlobal.debugSkipDestExtract) {
                 try {
                     // S14.39: state fingerprint around the CONFIRMED corruptor (capture-only).
@@ -877,6 +958,10 @@ public class SecondaryWorldRenderCore {
                 }
             }
 
+            if (StageCensusProbe.ENABLED) {
+                censusExtractNs = System.nanoTime() - censusStep5T;
+            }
+
             // S14.23 (live-defect hunt, sky-state track): dest SKY extraction for never-main dims.
             // LevelExtractor.extract fills skyRenderState ONLY while levelRenderer.skyRenderer() is
             // non-null (mc262 LevelExtractor:182-186), and only vanilla's addSkyPass ever constructs
@@ -896,6 +981,7 @@ public class SecondaryWorldRenderCore {
             }
 
             // ===== Step 6 — dest FOG (R9): compute-only probe + core-owned standalone buffer =====
+            long censusFogT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
             FogRenderer fr =
                 ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getFogRenderer();
             // S14-A FIX-6 (M6, CUTOVER_SPEC §3 item 3 — finally implemented): setupFog is
@@ -947,6 +1033,8 @@ public class SecondaryWorldRenderCore {
             // Write the fog UBO to a CORE-OWNED standalone GpuBuffer (never fr.updateBuffer — that
             // corrupts the main WORLD slot: dark clipping artifacts across the whole world).
             GpuBufferSlice destFogBuffer = writeFogSlice(destFogData);
+            long censusFogNs = StageCensusProbe.ENABLED ? System.nanoTime() - censusFogT : 0;
+            long censusUboT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
 
             // ===== Step 7 — dest PROJECTION set (inside the shell's save/restore bracket) =========
             // S14.38 lever guard applies below at the install.
@@ -980,6 +1068,13 @@ public class SecondaryWorldRenderCore {
                     == TextureFilteringMethod.RGSS
             );
 
+            long censusUboNs = StageCensusProbe.ENABLED ? System.nanoTime() - censusUboT : 0;
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.passSubTiming(
+                    destDim, censusLayerAtHead, sharedState,
+                    censusSetupNs, censusFogNs, censusUboNs);
+            }
+
             // ===== Step 9 — dest terrain visibility: ARMED discovery / sodium drive =============
             // C2-1b sodium yield (IgnoringViewArea — sodium owns terrain): the WHOLE armed-
             // discovery block is vanilla-terrain machinery and yields under Sodium — IP's own
@@ -995,6 +1090,7 @@ public class SecondaryWorldRenderCore {
             // re-read is kept as the second wall for the presence-without-invoker corners
             // (D11 feed-only + config-gated layer-0 callers — those states have NO drive and
             // NO arm, so their dest passes stay yielded-empty exactly as C2-1b shipped them).
+            long censusStep9T = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
             if (!SodiumInterface.invoker.isSodiumPresent()) {
                 ObjectArrayList<SectionRenderDispatcher.RenderSection> resultList =
                     ((IEWorldRenderer) destRenderer).portal_getChunkInfoList();
@@ -1080,10 +1176,17 @@ public class SecondaryWorldRenderCore {
             // context's renderLists. Un-armed (base/feed-only invoker, or the null-RSM degrade):
             // sodiumArmed=false and the un-armed dummy falls through to the vanilla body over the
             // empty map — the C2-1b yielded-empty envelope, crash-safe.
+            if (StageCensusProbe.ENABLED) {
+                censusDiscoveryNs = System.nanoTime() - censusStep9T;
+            }
+            long censusPrepT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
             ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix);
             boolean sodiumArmed = SodiumInterface.invoker.ip_armDestChunkRenders(
                 destChunks, destDrawProjection, destViewMatrix, destCameraPos, destFogData
             );
+            if (StageCensusProbe.ENABLED) {
+                censusPrepareNs = System.nanoTime() - censusPrepT;
+            }
 
             GpuBufferSlice savedShaderFog = RenderSystem.getShaderFog();
 
@@ -1140,6 +1243,7 @@ public class SecondaryWorldRenderCore {
             if (!IPGlobal.debugSkipDestFogInstall) {
                 RenderSystem.setShaderFog(destFogBuffer);
             }
+            long censusDrawT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
             try {
                 // 10.3 Row-16 background fill: the driver-invoked re-expression of IP's redirectClearing
                 // anchor (the decomposition has no clear to replace). RendererUsingStencil already
@@ -1196,6 +1300,35 @@ public class SecondaryWorldRenderCore {
                             destDim, sharedState, censusLayer, destChunks, destRenderer,
                             canDraw, sodiumArmed, mainChunkSampler != null, destCameraPos
                         );
+                        // SKY-COLOR probe (2026-08-30 defect-3 round A): the pass's STORED sky
+                        // color (same-dim = the main extract's, sampled at the SOURCE camera
+                        // biome) vs a fresh dest-camera sample into a probe-owned scratch state
+                        // (SkyRenderer.extractRenderState is a state-fill — the S14.23 usage
+                        // precedent), plus the per-pass dest fog color. Low nibbles masked so
+                        // time-of-day drift doesn't flood the change-log. Read-only.
+                        try {
+                            SkyRenderer censusSr = destRenderer.skyRenderer();
+                            String destSampled = "srNull";
+                            if (censusSr != null) {
+                                if (censusScratchSkyState == null) {
+                                    censusScratchSkyState = new SkyRenderState();
+                                }
+                                censusScratchSkyState.reset();
+                                censusSr.extractRenderState(
+                                    destLevel, partialTick, newCamera, censusScratchSkyState);
+                                destSampled = Integer.toHexString(
+                                    censusScratchSkyState.skyColor & 0xFFF0F0F0);
+                            }
+                            StageCensusProbe.sky(destDim, censusLayer, sharedState,
+                                "stored=" + (destLRS.skyRenderState != null
+                                    ? Integer.toHexString(destLRS.skyRenderState.skyColor & 0xFFF0F0F0)
+                                    : "null")
+                                + " destSampled=" + destSampled
+                                + " fog=" + String.format("%.2f,%.2f,%.2f",
+                                    destFogData.color.x, destFogData.color.y, destFogData.color.z));
+                        } catch (Throwable censusT) {
+                            // probe-only; never let the census break the pass
+                        }
                     }
                     if (canDraw) {
                         // 10.6 solid+cutout into the OPAQUE output (== the real main target), masked by
@@ -1236,6 +1369,7 @@ public class SecondaryWorldRenderCore {
                     // camera + submit through a core-owned dispatcher trio (no shared PreparedFrame,
                     // no main-state mutation). IP parity: IP's nested renderLevel just runs vanilla
                     // entity rendering per pass at every layer with no layer gate.
+                    long censusEntT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
                     if (!sharedState && !IPGlobal.debugSkipPortalEntities) {
                         MyGameRenderer.resetDiffuseLighting(); // mc.level == dest here
                         diffuseChangedToDest = true;
@@ -1248,6 +1382,9 @@ public class SecondaryWorldRenderCore {
                             destRenderer, destViewMatrix, newCamera, destFrustum,
                             deltaTracker, destCameraState
                         );
+                    }
+                    if (StageCensusProbe.ENABLED) {
+                        censusEntitiesNs = System.nanoTime() - censusEntT;
                     }
 
                     if (StageCensusProbe.ENABLED) {
@@ -1266,6 +1403,31 @@ public class SecondaryWorldRenderCore {
                             "C-afterTranslucent", StageCensusProbe.glSnap());
                     }
 
+                    // 10.9.5 dest clouds, OUTERMOST-FIRST (2026-08-30 cloud round). The 26.2
+                    // once-per-dim-per-frame budget (renderPortalClouds header) means only ONE
+                    // pass per dest dim draws clouds each frame; drawn at the old post-recursion
+                    // slot the DEEPEST nested pass always claimed it first (census: L2/L3 DREW,
+                    // L1 dimCapHit) — the window the player actually looks through stayed
+                    // cloudless, and the deep through-portal camera's cloud-cell churn thrashed
+                    // the shared instance's mesh rebuild (the reported lag). IP (CloudContext,
+                    // ported-inert) drew clouds in EVERY pass from a per-context buffer pool — no
+                    // budget existed to allocate; under our forced budget, the outermost pass is
+                    // the perceptually-correct owner. Drawing BEFORE the 10.10 recursion gives it
+                    // first claim; nested same-dim windows draw no clouds (small apertures, the
+                    // narrowed residual) and their apertures carve into these cloud pixels
+                    // correctly (depth-cleared + repainted like every other outer-content pixel).
+                    // Same stencil/clip bracket as the old slot (10.5 arm still active here).
+                    // A/B lever: -PdisableCloudOutermostFirst restores the post-recursion slot.
+                    if (!DISABLE_CLOUD_OUTERMOST_FIRST) {
+                        long censusCldT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
+                        renderPortalClouds(
+                            destDim, destLRS, destCameraState, destViewMatrix, partialTick
+                        );
+                        if (StageCensusProbe.ENABLED) {
+                            censusCloudsNs += System.nanoTime() - censusCldT;
+                        }
+                    }
+
                     // 10.10 nested portal layers — the driver-invoked re-expression of IP's per-pass
                     // translucent hook (what recursed nested portals in IP). PortalRendering.isRendering
                     // is true, so the post-pass branch runs setStencilStateForWorldRendering (§5).
@@ -1276,18 +1438,18 @@ public class SecondaryWorldRenderCore {
                             "D-afterNested", StageCensusProbe.glSnap());
                     }
 
-                    // 10.11 dest clouds — RESTORED at S18.3 (the S13-J deviation CLOSED). The original
-                    // hazard: the SHARED CloudRenderer's utb/ubo MappableRingBuffers rotated/fenced
-                    // mid-submit ("Cannot wait on a fence for the current submit", the deterministic
-                    // crash-2026-07-16_11.50/11.58 class). Solved by ISOLATION — mod-owned per-dest-dim
-                    // CloudRenderer instances that never touch the main renderer's ring buffers (the
-                    // fog-buffer/DimensionRenderHelper pattern; details + the once-per-dim-per-frame cap,
-                    // fabulous skip, texture mirror, endFrame walk, and close lifecycle at
-                    // renderPortalClouds' header below). Draws under the live stencil + armed clip into
-                    // the main target, at the decomposition's designed Step-10.11 slot.
-                    renderPortalClouds(
-                        destDim, destLRS, destCameraState, destViewMatrix, partialTick
-                    );
+                    // 10.11 dest clouds — RESTORED at S18.3 (the S13-J deviation CLOSED); since the
+                    // 2026-08-30 cloud round the DEFAULT draw slot is 10.9.5 above (outermost-first
+                    // budget allocation) and this post-recursion slot runs only under the
+                    // -PdisableCloudOutermostFirst A/B lever. Original hazard + isolation notes at
+                    // renderPortalClouds' header below (per-dest-dim instances, once-per-dim cap,
+                    // fabulous skip, texture mirror, endFrame walk, close lifecycle). Draws under
+                    // the live stencil + armed clip into the main target.
+                    if (DISABLE_CLOUD_OUTERMOST_FIRST) {
+                        renderPortalClouds(
+                            destDim, destLRS, destCameraState, destViewMatrix, partialTick
+                        );
+                    }
 
                     // 10.12 dest weather — RESTORED at S18.7 (window rain, the S14-step-6 item;
                     // vanilla order: clouds then weather). CROSS-DIM ONLY (verify fold
@@ -1331,6 +1493,9 @@ public class SecondaryWorldRenderCore {
                 if (savedShaderFog != null) {
                     RenderSystem.setShaderFog(savedShaderFog);
                 }
+                if (StageCensusProbe.ENABLED) {
+                    censusDrawSeqNs = System.nanoTime() - censusDrawT;
+                }
             }
         } finally {
             // ===== Step 10.13 finally — restore everything the core changed =====================
@@ -1368,12 +1533,25 @@ public class SecondaryWorldRenderCore {
             // + dispatcher camera position (the main frame's later passes must not inherit the dest).
             if (sharedState) {
                 destLRS.cameraRenderState = savedSharedCameraState;
+                // Step 4.5-SD restore: put the MAIN extract's sky contents back (per-invocation
+                // copy — nesting-safe; the next main extract refills it anyway).
+                if (savedSameDimSkyCopy != null) {
+                    copySkyRenderState(savedSameDimSkyCopy, destLRS.skyRenderState);
+                }
                 if (dispatcher != null && savedDispatcherCamPos != null) {
                     dispatcher.setCameraPosition(savedDispatcherCamPos);
                 }
             } else {
                 destCameraState.fogData = savedFogData;
                 destCameraState.fogType = savedFogType;
+            }
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.passTiming(
+                    destDim, censusLayerAtHead, sharedState,
+                    censusExtractNs, censusDiscoveryNs, censusPrepareNs,
+                    censusEntitiesNs, censusCloudsNs, censusDrawSeqNs,
+                    System.nanoTime() - censusPassT0
+                );
             }
             DrawCallTrace.record("<<< renderDestWorld dim=" + destDim.identifier()
                 + " " + DrawCallTrace.mvTop());
@@ -1464,6 +1642,12 @@ public class SecondaryWorldRenderCore {
         ResourceKey<Level> destDim = destLevel.dimension();
         Vec3 destCameraPos = newCamera.position();
         TeleportFlashProbe.destPassesThisFrame++;
+
+        // PASS-TIMING probe, full-pipeline twin (fabric-sodium-lag round A, lever-gated):
+        // TOTAL only — the shaders-ON comparison row against NF's; sub-brackets land later
+        // if this names the pipeline at all.
+        long censusFpT0 = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
+        int censusFpLayer = StageCensusProbe.ENABLED ? PortalRendering.getPortalLayer() : 0;
 
         DrawCallTrace.record(">>> renderDestWorldFullPipeline dim=" + destDim.identifier()
             + " layer=" + PortalRendering.getPortalLayer() + " " + DrawCallTrace.mvTop());
@@ -2135,6 +2319,12 @@ public class SecondaryWorldRenderCore {
             } catch (Throwable t) {
                 // fog restore is best-effort; the shader-fog slice restore above already ran
             }
+            if (StageCensusProbe.ENABLED) {
+                StageCensusProbe.passTiming(
+                    destDim, censusFpLayer, false,
+                    0, 0, 0, 0, 0, 0, System.nanoTime() - censusFpT0
+                );
+            }
             DrawCallTrace.record("<<< renderDestWorldFullPipeline dim=" + destDim.identifier()
                 + " " + DrawCallTrace.mvTop());
         }
@@ -2434,11 +2624,13 @@ public class SecondaryWorldRenderCore {
     // main renderer's utb/ubo MappableRingBuffers, so the main clouds pass's currentBuffer() never
     // sees a mod-rotated fence ("Cannot wait on a fence for the current submit" —
     // crash-2026-07-16_11.50/11.58 class). Constraints honored:
-    //  * ONE draw per dim per frame (cloudsDrawnThisFrame): a CloudRenderer.render whose camera cell
-    //    changed rotates its utb — two same-frame rotations on one instance re-create the same-frame
-    //    fence hazard on OUR buffer. Residual (recorded): the 2nd+ window to the SAME dim in one
-    //    frame draws no clouds — a 26.2-forced cap (IP 1.21.3 rebuilt immediate-mode per pass; no
-    //    fences existed).
+    //  * ONE draw per INSTANCE per frame (cloudsDrawnThisFrame): a CloudRenderer.render whose
+    //    camera cell changed rotates its utb — two same-frame rotations on one instance re-create
+    //    the same-frame fence hazard on OUR buffer. RECURSIVE-CLOUDS: instances are keyed
+    //    (dim, LAYER) — every pass draws (IP parity); see the CloudInstanceKey header for the
+    //    probe-backed ordering story. Residual (narrowed): the 2nd+ window to the SAME dim at
+    //    the SAME layer in one frame draws no clouds — a 26.2-forced cap (IP 1.21.3 rebuilt
+    //    immediate-mode per pass; no fences existed).
     //  * texture is mirrored from the reload-registered MAIN instance once per frame at the render
     //    TAIL (endCloudFrames — client.levelRenderer is the true main there, no swap active); mod
     //    instances are not reload listeners so their own texture would stay null forever (the exact
@@ -2457,10 +2649,31 @@ public class SecondaryWorldRenderCore {
     //    bleeding through. Our Step-10.5 arm + the patched clouds shader (rendertype_clouds.vsh
     //    matches the canonical pattern) clip them at the portal plane — MORE clipping than IP,
     //    same class as the S11-R3 §1.3 tighter-clip-scope registered improvement.
-    private static final Map<ResourceKey<Level>, net.minecraft.client.renderer.CloudRenderer>
+    // RECURSIVE-CLOUDS (2026-08-30, second landing — this time probed): isolation key is
+    // (dim, LAYER) so EVERY pass draws its own clouds — IP's per-pass semantics (CloudContext,
+    // ported-inert) realized against the ring-buffer model. The first landing of this key was
+    // REVERTED for "different-view clouds across the window": the census's L2 stencil snapshots
+    // (bad-fix session, D-afterNested sf=514/2) later PROVED nested draws were correctly
+    // confined — the artifact was the OLD post-recursion draw slot, where the OUTER pass's
+    // ref-1 clouds stomped the finished nested aperture. At the outermost-first slot (10.9.5,
+    // pre-recursion) the stomp is impossible by construction: parents draw before children
+    // carve; children overwrite parent clouds inside their apertures; nothing draws over a
+    // completed child. Budget stays once per INSTANCE per frame (the real fence hazard).
+    // Residual (narrowed): a 2nd+ window to the SAME dim at the SAME layer in one frame skips.
+    // A/B lever: -PdisableCloudPerLayer collapses the key's layer to 0 (one draw per dim —
+    // the outermost window only, nested windows cloudless).
+    private record CloudInstanceKey(ResourceKey<Level> dim, int layer) {}
+
+    private static final boolean DISABLE_CLOUD_PER_LAYER =
+        Boolean.getBoolean("seamlessportals.disableCloudPerLayer");
+    private static final Map<CloudInstanceKey, net.minecraft.client.renderer.CloudRenderer>
         destCloudRenderers = new java.util.HashMap<>();
-    private static final Set<ResourceKey<Level>> cloudsDrawnThisFrame = new HashSet<>();
+    private static final Set<CloudInstanceKey> cloudsDrawnThisFrame = new HashSet<>();
     private static net.minecraft.client.renderer.CloudRenderer.TextureData mainCloudTexture;
+    // CLOUD-CHURN probe state (lever-gated writers only): last drawn cloud cell per dim.
+    private static final Map<ResourceKey<Level>, Long> censusLastCloudCell = new java.util.HashMap<>();
+    // SKY-COLOR probe scratch (defect-3 round A; lever-gated writers only).
+    private static SkyRenderState censusScratchSkyState;
 
     private static void renderPortalClouds(
         ResourceKey<Level> destDim, LevelRenderState destLRS,
@@ -2468,9 +2681,11 @@ public class SecondaryWorldRenderCore {
     ) {
         var ors = client.gameRenderer.gameRenderState().optionsRenderState;
         CloudStatus cloudStatus = ors.cloudStatus;
-        // STAGE CENSUS (2026-08-29 arc): log which gate each call dies at (or DREW/THREW) —
-        // adjudicates the once-per-dim-cap and swallowed-throw cloud hypotheses. Read-only.
-        int censusLyr = StageCensusProbe.ENABLED ? PortalRendering.getPortalLayer() : 0;
+        // RECURSIVE-CLOUDS: the isolation/budget key carries the portal layer (declaration
+        // header); the lever collapses it to the old one-draw-per-dim shape.
+        int censusLyr = PortalRendering.getPortalLayer();
+        CloudInstanceKey cloudKey =
+            new CloudInstanceKey(destDim, DISABLE_CLOUD_PER_LAYER ? 0 : censusLyr);
         if (cloudStatus == CloudStatus.OFF) {
             if (StageCensusProbe.ENABLED) {
                 StageCensusProbe.cloud(destDim, censusLyr, "OFF", null);
@@ -2503,15 +2718,15 @@ public class SecondaryWorldRenderCore {
             }
             return; // fabulous: cloudsTarget() is a framegraph-internal handle (see header)
         }
-        if (!cloudsDrawnThisFrame.add(destDim)) {
+        if (!cloudsDrawnThisFrame.add(cloudKey)) {
             if (StageCensusProbe.ENABLED) {
-                StageCensusProbe.cloud(destDim, censusLyr, "dimCapHit", null);
+                StageCensusProbe.cloud(destDim, censusLyr, "layerCapHit", null);
             }
-            return; // once per dim per frame (ring-buffer rotation budget, see header)
+            return; // once per (dim,layer) instance per frame (ring-buffer rotation budget)
         }
         net.minecraft.client.renderer.CloudRenderer cloudRenderer =
             destCloudRenderers.computeIfAbsent(
-                destDim, d -> new net.minecraft.client.renderer.CloudRenderer());
+                cloudKey, k -> new net.minecraft.client.renderer.CloudRenderer());
         ((qouteall.imm_ptl.core.mixin.client.accessor.IECloudRenderer_Accessor) cloudRenderer)
             .ip_setTexture(mainCloudTexture);
         Matrix4fStack mv = RenderSystem.getModelViewStack();
@@ -2523,9 +2738,21 @@ public class SecondaryWorldRenderCore {
                 destCameraState.pos, destLRS.gameTime, partialTick
             );
             if (StageCensusProbe.ENABLED) {
+                // CLOUD-CHURN probe (2026-08-30 round): log the drawing camera's cloud cell and
+                // whether it moved since this DIM's last draw — a cell change is what rotates the
+                // instance's utb (the rebuild-thrash indicator for the shared-instance lag
+                // hypothesis). Coarse 12-block cells mirror the CloudRenderer cadence closely
+                // enough to read churn.
+                long cellKey = (((long) Math.floor(destCameraState.pos.x / 12.0)) << 32)
+                    ^ (((long) Math.floor(destCameraState.pos.z / 12.0)) & 0xFFFFFFFFL);
+                Long lastCell = censusLastCloudCell.put(destDim, cellKey);
+                boolean cellChanged = lastCell == null || lastCell != cellKey;
                 StageCensusProbe.cloud(destDim, censusLyr, "DREW",
                     "col=" + Integer.toHexString(destLRS.cloudColor)
-                        + " h=" + destLRS.cloudHeight + " status=" + cloudStatus);
+                        + " h=" + destLRS.cloudHeight + " status=" + cloudStatus
+                        + " cell=" + (long) Math.floor(destCameraState.pos.x / 12.0)
+                        + "," + (long) Math.floor(destCameraState.pos.z / 12.0)
+                        + " chg=" + (cellChanged ? 1 : 0));
             }
         } catch (Throwable t) {
             // Clouds are non-critical.
@@ -2607,7 +2834,36 @@ public class SecondaryWorldRenderCore {
         if (StageCensusProbe.ENABLED) {
             StageCensusProbe.endFrame();
         }
+        // ROUND-TRIP probe frame driver (same walk; lever-gated).
+        if (RoundTripProbe.ENABLED) {
+            RoundTripProbe.endFrame();
+        }
         cloudsDrawnThisFrame.clear();
+        // MAIN-CLOUD census row (2026-08-30 no-clouds-anywhere report): the main sky's cloud
+        // gates sampled at the frame tail, where client.levelRenderer is the true main (header
+        // note). A fresh world runs NO dest machinery, so this row is the only observable that
+        // can convict a main-view cloud kill. Change-logged; read-only.
+        if (StageCensusProbe.ENABLED && client.level != null && client.levelRenderer != null) {
+            try {
+                var mainOrs = client.gameRenderer.gameRenderState().optionsRenderState;
+                LevelRenderState mainLrs = client.gameRenderer.gameRenderState().levelRenderState;
+                // (ENTITY-BLINK ring sample MOVED to MixinGameRenderer.onExtractEnded — the
+                // frame tail reads 0 every frame; the main pass consumes+clears the list.)
+                boolean mainTexNull =
+                    ((qouteall.imm_ptl.core.mixin.client.accessor.IECloudRenderer_Accessor)
+                        client.levelRenderer.cloudRenderer()).ip_getTexture() == null;
+                StageCensusProbe.mainClouds(
+                    "dim=" + client.level.dimension().identifier().getPath()
+                        + " status=" + mainOrs.cloudStatus
+                        + " col=" + Integer.toHexString(mainLrs.cloudColor)
+                        + " h=" + mainLrs.cloudHeight
+                        + " fabulous="
+                        + client.gameRenderer.gameRenderState().useShaderTransparency()
+                        + " texNull=" + mainTexNull);
+            } catch (Throwable t) {
+                // probe-only; never let the census break the frame tail
+            }
+        }
         if (client.levelRenderer != null) {
             var freshTexture =
                 ((qouteall.imm_ptl.core.mixin.client.accessor.IECloudRenderer_Accessor)

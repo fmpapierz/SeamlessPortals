@@ -136,6 +136,13 @@ public class MixinLevelRenderer implements IEWorldRenderer {
         // trailing captured method param of invalidateCompiledGeometry(ClientLevel, Options, Camera, BlockColors)
         ClientLevel level
     ) {
+        // ROUND-TRIP probe (2026-08-29 arc 1 round 0, lever-gated): this redirect fires exactly
+        // once per invalidateCompiledGeometry execution (the construction site lives inside it),
+        // so it is the natural tap for "a ViewArea full wipe/replace happened" — log the OLD
+        // viewArea's mesh census + caller attribution before the replacement constructs.
+        if (qouteall.imm_ptl.core.render.RoundTripProbe.ENABLED) {
+            qouteall.imm_ptl.core.render.RoundTripProbe.onInvalidate(level, viewArea);
+        }
         if (!IPCGlobal.useHackedChunkRenderDispatcher) {
             return new ViewArea(
                 dispatcher, minY, maxY, minSectionY, maxSectionY, renderDistance, occlusionGraph

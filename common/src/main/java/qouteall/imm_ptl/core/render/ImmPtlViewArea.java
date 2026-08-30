@@ -169,10 +169,19 @@ public class ImmPtlViewArea extends ViewArea {
         // current-preset array — folds into the ctor. repositionCamera replaces it each frame.
         int num = this.sectionGridSizeX * this.sectionGridSizeY * this.sectionGridSizeZ;
         this.sections = new RenderSection[num];
+
+        // ROUND-TRIP probe (2026-08-29 arc 1 round 0, lever-gated): a NEW viewArea replaces a
+        // discarded one — creation is a wipe-adjacent event worth timestamping.
+        if (RoundTripProbe.ENABLED) {
+            RoundTripProbe.onViewAreaCreated(world, getViewDistance());
+        }
     }
 
     @Override
     public void releaseAllBuffers() {
+        if (RoundTripProbe.ENABLED) {
+            RoundTripProbe.onReleaseAllBuffers(level, ip_probeCensus());
+        }
         Set<RenderSection> allActiveBuiltChunks = getAllActiveBuiltChunks();
         allActiveBuiltChunks.forEach(
             RenderSection::reset  // 26.2: RenderSection.releaseBuffers() -> reset() (C27)
@@ -204,18 +213,76 @@ public class ImmPtlViewArea extends ViewArea {
 
         // 26.2: ChunkPos is a record; asLong(int,int)->pack(int,int) and the instance toLong() is
         // gone. pack + the surviving getX(long)/getZ(long) are the matched pack/unpack family.
+        // ROUND-TRIP probe: track preset creation vs reuse (lever-gated; the flag write inside
+        // the lambda is behavior-inert).
+        boolean[] probePresetCreated = RoundTripProbe.ENABLED ? new boolean[1] : null;
         Preset preset = presets.computeIfAbsent(
             ChunkPos.pack(cameraChunkX, cameraChunkZ),
             whatever -> {
+                if (probePresetCreated != null) {
+                    probePresetCreated[0] = true;
+                }
                 return createPresetByChunkPos(cameraChunkX, cameraChunkZ);
             }
         );
         preset.lastActiveTime = System.nanoTime();
 
+        if (RoundTripProbe.ENABLED && currentPreset != preset) {
+            RoundTripProbe.onPresetSwap(
+                level, cameraSectionPos,
+                probePresetCreated != null && probePresetCreated[0], this
+            );
+        }
         this.sections = preset.data;
         this.currentPreset = preset;
 
         boolean moved = super.repositionCamera(cameraSectionPos);
+
+        Profiler.get().pop();
+        return moved;
+    }
+
+    /**
+     * PORTAL-PASS reposition (2026-08-30 recursion-lag fix — [STAGE CENSUS] TIMING convicted):
+     * the per-pass cross-dim reposition ping-pongs ONE dest viewArea between far-apart pass
+     * cameras (L1 vs nested L2, ~40km apart at the fixture), and every move made
+     * {@code super.repositionCamera} do a FULL RotatingSectionStorage recenter (~all grid slots
+     * re-noded + reset — javap: repositionCenter, plus SectionOcclusionGraph.invalidate() on
+     * every move) — measured 250-400ms/s per pass key (~27-42ms PER PASS), the "from the nether
+     * it's super laggy" defect; from OW the same-dim passes skip repositioning entirely, which
+     * is why that side was fine. A portal pass needs only the coord-pinned PRESET swap
+     * (discovery reads rawFetch, draws read visibleSections, the entity gate reads the preset) —
+     * IP's own updateCameraPosition never called super. The super store's center/occlusion
+     * coherence is a MAIN-flow concern; its callers (vanilla extract, promote/respawn seeds)
+     * keep using {@link #repositionCamera}.
+     */
+    public boolean repositionCameraForPortalPass(SectionPos cameraSectionPos) {
+        Profiler.get().push("built_section_storage_portal");
+
+        int cameraChunkX = cameraSectionPos.x();
+        int cameraChunkZ = cameraSectionPos.z();
+
+        boolean[] probePresetCreated = RoundTripProbe.ENABLED ? new boolean[1] : null;
+        Preset preset = presets.computeIfAbsent(
+            ChunkPos.pack(cameraChunkX, cameraChunkZ),
+            whatever -> {
+                if (probePresetCreated != null) {
+                    probePresetCreated[0] = true;
+                }
+                return createPresetByChunkPos(cameraChunkX, cameraChunkZ);
+            }
+        );
+        preset.lastActiveTime = System.nanoTime();
+
+        boolean moved = currentPreset != preset;
+        if (RoundTripProbe.ENABLED && moved) {
+            RoundTripProbe.onPresetSwap(
+                level, cameraSectionPos,
+                probePresetCreated != null && probePresetCreated[0], this
+            );
+        }
+        this.sections = preset.data;
+        this.currentPreset = preset;
 
         Profiler.get().pop();
         return moved;
@@ -353,7 +420,11 @@ public class ImmPtlViewArea extends ViewArea {
     private void purge() {
         Profiler.get().push("my_built_section_storage_purge");
 
-        long dropTime = Helper.secondToNano(GcMonitor.isMemoryNotEnough() ? 3 : 20);
+        // ROUND-TRIP probe: hoisted (same call, same value) so the drop log can report the mode.
+        boolean memPressure = GcMonitor.isMemoryNotEnough();
+        long dropTime = Helper.secondToNano(memPressure ? 3 : 20);
+        int probePresetsBefore = RoundTripProbe.ENABLED ? presets.size() : 0;
+        int probeColumnsBefore = RoundTripProbe.ENABLED ? columnMap.size() : 0;
 
         long currentTime = System.nanoTime();
 
@@ -410,7 +481,62 @@ public class ImmPtlViewArea extends ViewArea {
             });
         }
 
+        if (RoundTripProbe.ENABLED) {
+            int presetsDropped = probePresetsBefore - presets.size();
+            int columnsDropped = probeColumnsBefore - columnMap.size();
+            if (presetsDropped != 0 || columnsDropped != 0) {
+                RoundTripProbe.onPurge(
+                    level, memPressure, presetsDropped, columnsDropped,
+                    toDelete.size(), ip_probeCensus()
+                );
+            }
+        }
+
         Profiler.get().pop();
+    }
+
+    /**
+     * ROUND-TRIP probe census (read-only; callers are lever-gated). Compiled = the section's mesh
+     * reference is not the UNCOMPILED sentinel (the SeamlessClientTeleport 2b idiom); renderable
+     * additionally has draw layers (air-only compiles excluded).
+     */
+    public String ip_probeCensus() {
+        int columns = columnMap.size();
+        int total = 0;
+        int compiled = 0;
+        int renderable = 0;
+        for (Column column : columnMap.values()) {
+            for (RenderSection section : column.sections) {
+                if (section == null) {
+                    continue;
+                }
+                total++;
+                net.minecraft.client.renderer.chunk.SectionMesh mesh = section.sectionMesh.get();
+                if (mesh != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
+                    compiled++;
+                    if (mesh.hasRenderableLayers()) {
+                        renderable++;
+                    }
+                }
+            }
+        }
+        int presetCompiled = 0;
+        int presetTotal = 0;
+        if (currentPreset != null) {
+            for (RenderSection section : currentPreset.data) {
+                if (section == null) {
+                    continue;
+                }
+                presetTotal++;
+                if (section.sectionMesh.get()
+                    != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
+                    presetCompiled++;
+                }
+            }
+        }
+        return "cols=" + columns + " sect=" + total + " compiled=" + compiled
+            + " renderable=" + renderable + " preset=" + presetCompiled + "/" + presetTotal
+            + " presets=" + presets.size();
     }
 
     private boolean shouldDropPreset(long dropTime, long currentTime, Preset preset) {

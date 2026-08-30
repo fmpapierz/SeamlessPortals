@@ -76,6 +76,7 @@ public final class StageCensusProbe {
         frameIndex++;
         passOrdinal = 0;
         cloudOrdinal = 0;
+        tickTimingWindow();
     }
 
     /** The per-pass census line. Call AFTER prepareChunkRenders + canDraw are computed. */
@@ -211,6 +212,173 @@ public final class StageCensusProbe {
             return;
         }
         emit("gl " + shortDim(destDim) + " L" + layer + (sharedState ? " SD " : " XD ") + stage, snap);
+    }
+
+    // ===== ENTITY-BLINK ring (2026-08-30 defect: distant mobs flash at crossings) ===============
+    // Per-frame samples of the MAIN extract's entity count + camera, dumped ±ringside around a
+    // teleport (markTeleport). A count DIP at/after the marked frame convicts an extraction/
+    // culling dropout; a flat count pushes the blink downstream (submit/draw/fade).
+    private static final int ENTITY_RING = 40;
+    private static final long[] ringFrame = new long[ENTITY_RING];
+    private static final int[] ringEntities = new int[ENTITY_RING];
+    private static final int[] ringVisibleSections = new int[ENTITY_RING];
+    private static final boolean[] ringTeleport = new boolean[ENTITY_RING];
+    private static final int[] ringCamX = new int[ENTITY_RING];
+    private static final int[] ringCamZ = new int[ENTITY_RING];
+    private static int ringWritePos = 0;
+    private static boolean teleportMarkPending = false;
+    private static String teleportMarkLabel = "";
+    private static long entityRingDumpAtFrame = -1;
+
+    /** Called at the client teleport tail (lever-gated call site) — marks the next frame row. */
+    public static void markTeleport(String label) {
+        if (!ENABLED) {
+            return;
+        }
+        teleportMarkPending = true;
+        teleportMarkLabel = label;
+    }
+
+    /** Per-frame ring write (post-extract hook). Rows print as ent/vs pairs; * = the teleport
+     *  frame — a blank-flash crossing should show vs collapsing there (visibility side); a
+     *  healthy vs on a crossing the user SAW flash convicts the draw/framebuffer side instead. */
+    public static void entityRingSample(
+        int entityCount, int visibleSectionCount, double camX, double camZ
+    ) {
+        if (!ENABLED) {
+            return;
+        }
+        ringFrame[ringWritePos] = frameIndex;
+        ringEntities[ringWritePos] = entityCount;
+        ringVisibleSections[ringWritePos] = visibleSectionCount;
+        ringTeleport[ringWritePos] = teleportMarkPending;
+        ringCamX[ringWritePos] = (int) camX;
+        ringCamZ[ringWritePos] = (int) camZ;
+        ringWritePos = (ringWritePos + 1) % ENTITY_RING;
+        if (teleportMarkPending) {
+            teleportMarkPending = false;
+            entityRingDumpAtFrame = frameIndex + (ENTITY_RING / 2);
+        }
+        if (entityRingDumpAtFrame >= 0 && frameIndex >= entityRingDumpAtFrame) {
+            entityRingDumpAtFrame = -1;
+            StringBuilder sb = new StringBuilder("ENTITY RING (" + teleportMarkLabel + "): ");
+            for (int i = 0; i < ENTITY_RING; i++) {
+                int idx = (ringWritePos + i) % ENTITY_RING;
+                if (ringFrame[idx] == 0) {
+                    continue;
+                }
+                sb.append(ringTeleport[idx] ? "*" : "")
+                    .append(ringEntities[idx]).append('/').append(ringVisibleSections[idx])
+                    .append(' ');
+            }
+            int idxLast = (ringWritePos + ENTITY_RING - 1) % ENTITY_RING;
+            sb.append("| cam=").append(ringCamX[idxLast]).append(',').append(ringCamZ[idxLast]);
+            LOGGER.info(P + "f" + frameIndex + " " + sb);
+        }
+    }
+
+    // ===== PASS-TIMING aggregation (2026-08-30 recursion-lag round A) ===========================
+    // Per-(dim,layer,shared) accumulators of the dest pass's step nanos, dumped 1Hz with the
+    // frame-time average — names the hot step (or exonerates the passes entirely when fps is low
+    // while pass totals are small, pushing the hunt outside renderDestWorld).
+    private static final Map<String, long[]> passTimingByKey = new HashMap<>();
+    private static long timingWindowStartMillis = 0;
+    private static long frameTimeAccumNanos = 0;
+    private static int frameTimeCount = 0;
+    private static long lastFrameNanos = 0;
+
+    /** Accumulate one dest pass's step timings (all nanos; called under ENABLED only). */
+    public static void passTiming(
+        ResourceKey<Level> dim, int layer, boolean sharedState,
+        long extractNs, long discoveryNs, long prepareNs,
+        long entitiesNs, long cloudsNs, long drawSeqNs, long totalNs
+    ) {
+        if (!ENABLED) {
+            return;
+        }
+        String key = shortDim(dim) + " L" + layer + (sharedState ? " SD" : " XD");
+        long[] acc = passTimingByKey.computeIfAbsent(key, k -> new long[11]);
+        acc[0]++;
+        acc[1] += extractNs;
+        acc[2] += discoveryNs;
+        acc[3] += prepareNs;
+        acc[4] += entitiesNs;
+        acc[5] += cloudsNs;
+        acc[6] += drawSeqNs;
+        acc[7] += totalNs;
+    }
+
+    /** Round-B sub-brackets over the previously-unaccounted span (setup 2-4 / fog 6 / ubo 7-8). */
+    public static void passSubTiming(
+        ResourceKey<Level> dim, int layer, boolean sharedState,
+        long setupNs, long fogNs, long uboNs
+    ) {
+        if (!ENABLED) {
+            return;
+        }
+        String key = shortDim(dim) + " L" + layer + (sharedState ? " SD" : " XD");
+        long[] acc = passTimingByKey.computeIfAbsent(key, k -> new long[11]);
+        acc[8] += setupNs;
+        acc[9] += fogNs;
+        acc[10] += uboNs;
+    }
+
+    private static void tickTimingWindow() {
+        long nowNanos = System.nanoTime();
+        if (lastFrameNanos != 0) {
+            frameTimeAccumNanos += nowNanos - lastFrameNanos;
+            frameTimeCount++;
+        }
+        lastFrameNanos = nowNanos;
+        long nowMillis = System.currentTimeMillis();
+        if (timingWindowStartMillis == 0) {
+            timingWindowStartMillis = nowMillis;
+            return;
+        }
+        if (nowMillis - timingWindowStartMillis < 1000) {
+            return;
+        }
+        timingWindowStartMillis = nowMillis;
+        double avgFrameMs = frameTimeCount == 0
+            ? 0 : frameTimeAccumNanos / 1.0e6 / frameTimeCount;
+        frameTimeAccumNanos = 0;
+        int frames = frameTimeCount;
+        frameTimeCount = 0;
+        if (passTimingByKey.isEmpty()) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("TIMING 1s frame=%.1fms(%d) ", avgFrameMs, frames));
+        for (Map.Entry<String, long[]> e : passTimingByKey.entrySet()) {
+            long[] a = e.getValue();
+            sb.append("| ").append(e.getKey())
+                .append(" n=").append(a[0])
+                .append(String.format(
+                    " tot=%.1f ext=%.1f disc=%.1f prep=%.1f ent=%.1f cld=%.1f draw=%.1f"
+                        + " setup=%.1f fog=%.1f ubo=%.1f",
+                    a[7] / 1.0e6, a[1] / 1.0e6, a[2] / 1.0e6, a[3] / 1.0e6,
+                    a[4] / 1.0e6, a[5] / 1.0e6, a[6] / 1.0e6,
+                    a[8] / 1.0e6, a[9] / 1.0e6, a[10] / 1.0e6))
+                .append(' ');
+        }
+        passTimingByKey.clear();
+        LOGGER.info(P + "f" + frameIndex + " " + sb);
+    }
+
+    /** Sky-color row per dest pass (defect-3 round A): stored vs dest-sampled sky + pass fog. */
+    public static void sky(ResourceKey<Level> dim, int layer, boolean sharedState, String content) {
+        if (!ENABLED) {
+            return;
+        }
+        emit("sky " + shortDim(dim) + " L" + layer + (sharedState ? " SD" : " XD"), content);
+    }
+
+    /** Main-view cloud gate row (frame tail, change-logged) — the fresh-world observable. */
+    public static void mainClouds(String content) {
+        if (!ENABLED) {
+            return;
+        }
+        emit("mainClouds", content);
     }
 
     /** renderPortalClouds outcome — every call logs which gate fired (or DREW/THREW). */

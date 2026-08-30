@@ -272,6 +272,21 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         qouteall.imm_ptl.core.compat.iris_compatibility.IrisBobSync.onExtractBaseViewCaptured(
             cameraRenderState.viewRotationMatrix
         );
+        // ENTITY-BLINK / BLANK-FLASH ring sample (2026-08-30, lever-gated): POST-EXTRACT is the
+        // only honest read of the frame's extracted entity count — the frame-tail attempt read 0
+        // every frame because the main pass consumes+clears the list (the probe-scoping trap,
+        // round 1). visibleSections is the terrain-visibility twin for the blank-flash hunt.
+        if (qouteall.imm_ptl.core.render.StageCensusProbe.ENABLED
+            && cameraRenderState.pos != null) {
+            net.minecraft.client.Minecraft probeMc = net.minecraft.client.Minecraft.getInstance();
+            int probeVs = probeMc.levelRenderer != null
+                ? ((qouteall.imm_ptl.core.ducks.IEWorldRenderer) probeMc.levelRenderer)
+                    .portal_getChunkInfoList().size()
+                : -1;
+            qouteall.imm_ptl.core.render.StageCensusProbe.entityRingSample(
+                gameRenderState().levelRenderState.entityRenderStates.size(), probeVs,
+                cameraRenderState.pos.x, cameraRenderState.pos.z);
+        }
     }
 
     // S13-H P3(d) LIFECYCLE TAIL (S13H-driver-core-design.md §3 row (d) / IP

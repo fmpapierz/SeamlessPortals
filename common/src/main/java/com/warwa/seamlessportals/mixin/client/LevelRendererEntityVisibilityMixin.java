@@ -68,6 +68,36 @@ public class LevelRendererEntityVisibilityMixin {
     @Inject(method = "isSectionCompiledAndVisible", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$showEntitiesInPortalView(
             BlockPos blockPos, CallbackInfoReturnable<Boolean> cir) {
+        // SAME-DIM CROSSING GRACE (2026-08-30 entity-blink fix; ring-probe convicted — every
+        // same-dim crossing frame extracted ~0 entities, then arrivals trickled in over ~300ms).
+        // The MAIN extract on/after the crossing frame fails this gate twice over: (1) the
+        // wrap-aliased preset lookup — the grid recenters a frame LATE, so dest-position queries
+        // alias onto unrelated source-side sections (the :551-553 wrap hazard, the same DEFECT-A
+        // shape fixed below for dest extracts); (2) the uploadedTime fade term — sections the
+        // portal view kept re-uploading carry perpetually fresh uploadedTime, culling their
+        // entities for fadeDuration*0.3 after arrival. During the crossing grace window resolve
+        // exactly like the dest-extract fix: EXACT unbounded coord-pinned lookup + compiled-only
+        // (floating-entity protection preserved; only the cosmetic fade is bypassed). Sodium's
+        // foreign viewArea fails the instanceof and keeps its vanilla path. Lever rides
+        // -PdisableSameDimCrossingEntityGrace (the grace never arms).
+        if (!PortalContextSwitch.isRenderingPortal
+            && !qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting
+            && qouteall.imm_ptl.core.teleportation.ClientTeleportationManager
+                .isInSameDimCrossingGrace()) {
+            net.minecraft.client.renderer.ViewArea graceViewArea =
+                ((LevelRendererAccessorMixin) this).seamlessportals$getViewArea();
+            if (graceViewArea instanceof qouteall.imm_ptl.core.render.ImmPtlViewArea ipViewArea) {
+                net.minecraft.client.renderer.chunk.SectionRenderDispatcher.RenderSection exact =
+                    ipViewArea.rawGet(
+                        net.minecraft.core.SectionPos.blockToSectionCoord(blockPos.getX()),
+                        net.minecraft.core.SectionPos.blockToSectionCoord(blockPos.getY()),
+                        net.minecraft.core.SectionPos.blockToSectionCoord(blockPos.getZ()));
+                cir.setReturnValue(exact != null
+                    && exact.getSectionMesh()
+                        != net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED);
+                return;
+            }
+        }
         // Block-era key (flag OFF) OR the flag-ON dest-extract bracket (S15): the ported IP
         // path's extracts run under SecondaryWorldRenderCore.isDestExtracting and need the same
         // fade-gate bypass this mixin has always given the block-era path — a portal pass's

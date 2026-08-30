@@ -127,6 +127,12 @@ public class MyGameRenderer {
     // when the player teleports through a portal, on the first frame it will not work normally
     // so use IP's non-multi-threaded algorithm at the first frame
     public static int vanillaTerrainSetupOverride = 0;
+    // X-RAY fix (2026-08-30): the armed window's size, so the override consumer can tell the
+    // FIRST armed frame (the promote/teleport frame — S14.48 keep-vanilla stays, warm rapid
+    // crossings keep their hitch protection) from the FOLLOWING window frames (always flood —
+    // the NF rings showed those frames keeping a stale-origin warm-tree fill: distant/under-
+    // ground sections without the arrival's near-field occluders = the cave-x-ray flash).
+    public static int vanillaTerrainSetupOverrideWindowSize = 1;
 
     /**
      * S14.9 (final verify round, MINOR — both agents' verbatim prescription): arm the override AND
@@ -138,7 +144,21 @@ public class MyGameRenderer {
      * force is an idempotent AtomicBoolean set (survives waitAndReset — bytecode-verified).
      */
     public static void armVanillaTerrainSetupOverride() {
-        vanillaTerrainSetupOverride = 1;
+        armVanillaTerrainSetupOverride(1);
+    }
+
+    /**
+     * BLANK-FLASH fix (2026-08-30, ring-probe convicted — rings 6/8/14/25: the teleport frame
+     * fills ~24k sections, then 1-3 FOLLOWING frames re-run applyFrustum against the
+     * invalidated SOG's not-yet-rebuilt graph and fill EMPTY → a fully blank frame, the
+     * intermittent teleport flash). The 1-frame arm covered only the teleport frame; a WINDOWED
+     * arm lets each following armed frame's RETURN hook replace a blank-ish vanilla fill, while
+     * the S14.48 keep-vanilla branch makes armed-but-converged frames cost nothing — the window
+     * drains harmlessly once the async BFS lands.
+     */
+    public static void armVanillaTerrainSetupOverride(int frames) {
+        vanillaTerrainSetupOverride = Math.max(vanillaTerrainSetupOverride, frames);
+        vanillaTerrainSetupOverrideWindowSize = vanillaTerrainSetupOverride;
         if (client.levelRenderer != null) {
             var sog = client.levelRenderer.sectionOcclusionGraph();
             if (sog != null) {
