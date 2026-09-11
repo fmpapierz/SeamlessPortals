@@ -127,6 +127,44 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableCrossPortalEntityHit");
 
     /**
+     * Reverts the SEAM CRUMB BIRTH REST fix — {@code -Dseamlessportals.disableSeamCrumbBirthRest
+     * =true}. 2026-09-10 live report: breaking a seam block left its crumbs clumped at the cell
+     * center for a frame or two, then gone — no spread. Mechanism (code-proven): the break
+     * clears occupancy before the engine's add-drain, so the burst evaluates in an OPEN bi-faced
+     * cell where round 41's age&le;1 spawn-scatter inference marks EVERY position "crossed at
+     * birth" (each point is past one of the two planes) and the F1 TerrainParticle rule then
+     * consumes the whole burst — native and mirrored — at first drain. The fix exempts
+     * TerrainParticle from the round-41 birth inference: break crumbs REST and play to
+     * completion (the F1 contract), the quad clip owns their at-plane visibility, and a genuine
+     * later drift through the plane still consumes them.
+     */
+    public static final boolean DISABLE_SEAM_CRUMB_BIRTH_REST =
+        Boolean.getBoolean("seamlessportals.disableSeamCrumbBirthRest");
+
+    /**
+     * Restores the SECOND per-tick particle-engine tick — {@code -Dseamlessportals
+     * .disableParticleSingleTick=true}. 2026-09-11 live report: with a portal within ~10 blocks
+     * of the player, EVERY particle animated ~2x too fast (lifetime halved, motion doubled).
+     * Mechanism: the ported IP "nether particles through portal" pass
+     * (ClientWorldLoader.tickRemoteWorldRandomTicksClient) called {@code particleEngine.tick()}
+     * once per nearby-portal dest world ON TOP of vanilla's own engine tick — and the engine is
+     * ONE shared multi-world pool, so every live particle ticked twice. The fix drops the extra
+     * tick; the pass's animateTick spawns only needed the swapped CAMERA (the spawn-distance
+     * gate) and drain into groups on the next vanilla engine tick.
+     */
+    public static final boolean DISABLE_PARTICLE_SINGLE_TICK =
+        Boolean.getBoolean("seamlessportals.disableParticleSingleTick");
+
+    // ★ SEAM CRUMB REPLAY: attempted 2026-09-11 (client-side transformed re-spawn of the
+    // destroy burst into each binding's dest world, driven from addDestroyBlockEffect) and
+    // REVERTED SAME DAY on the user's live verdict: dest-side crumbs STILL did not show, and it
+    // introduced an unacceptable regression — placing a block on source side A while another
+    // same-dim window (side B) was in view flashed the ENTIRE seam block from A to B for a
+    // split second. The dest-side-crumb defect (SeamMirror's sendParticles burst never reaches
+    // the breaker looking through a cross-dim window) remains a KNOWN OPEN; any new attempt
+    // must first explain the placement-flash coupling this one produced.
+
+    /**
      * Disables FRAME mirroring only — {@code -Dseamlessportals.disableFrameMirror=true}. Frame
      * mirroring (breaking obsidian on one side breaks the other; repairing one repairs the other) is
      * separable from aperture mirroring and reaches outside the opening, so it gets its own lever:

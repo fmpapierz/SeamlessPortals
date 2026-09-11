@@ -285,7 +285,19 @@ public class ClientWorldLoader {
                 );
             }
 
-            CLIENT.particleEngine.tick();
+            // ★ SECOND ENGINE TICK REMOVED (2026-09-11 live report: with a portal within ~10
+            // blocks — this pass's own getClientNearbyPortals(10) gate — EVERY particle animated
+            // ~2x too fast: lifetime halved, motion doubled). The engine is ONE shared
+            // multi-world pool (SeamDestAmbience's header states the invariant); vanilla already
+            // ticks it once per client tick, and this ported-IP extra tick re-ticked every live
+            // particle once more per nearby-portal dest world. The animateTick spawns above only
+            // needed the swapped CAMERA (the spawn-distance gate reads it at addParticle time);
+            // they drain into render groups on the next vanilla engine tick — one tick of added
+            // latency, invisible. Revert with -Dseamlessportals.disableParticleSingleTick=true.
+            if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                    .DISABLE_PARTICLE_SINGLE_TICK) {
+                CLIENT.particleEngine.tick();
+            }
 
             ((IECamera) camera).portal_setPos(oldCameraPos);
         });

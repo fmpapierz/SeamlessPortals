@@ -135,8 +135,26 @@ public final class SeamParticleTeleport {
                     // binding's plane crossed at birth: consume via that binding, once. age<=1
                     // is true exactly once per particle (every funnel pass runs tick() first),
                     // so arrivals — age 2+ by their next pass — can never re-trigger it.
+                    //
+                    // ★ SEAM CRUMB BIRTH REST (2026-09-10 live report: breaking a seam block
+                    // left its crumbs clumped at the cell center for a frame or two, then gone
+                    // — no spread; revert with -Dseamlessportals.disableSeamCrumbBirthRest=
+                    // true). TerrainParticle is EXEMPT from this birth inference: the break
+                    // clears occupancy before the engine's add-drain, so the burst evaluates
+                    // HERE, in an open BI-FACED cell where every position is past one of the
+                    // two planes — the inference marked every crumb of both bursts (native +
+                    // SeamMirror's counterpart send) a birth-crosser, and the F1 rule below
+                    // consumed the lot at first drain. Break crumbs are not scatter-spawned
+                    // ambience: the burst is deliberately full-volume, F1's contract is that it
+                    // "plays at full density for its half, at normal speed, to completion", the
+                    // quad clip owns at-plane visibility (contract point 4), and a crumb that
+                    // later GENUINELY drifts through the plane still transitions below and is
+                    // consumed by F1.
                     if (ie.portal_getAge() <= 1
-                        && particleHalf != SeamOccupancy.halfOf(b.srcFacing())) {
+                        && particleHalf != SeamOccupancy.halfOf(b.srcFacing())
+                        && !(particle instanceof net.minecraft.client.particle.TerrainParticle
+                            && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                                .DISABLE_SEAM_CRUMB_BIRTH_REST)) {
                         binding = b;
                         break;
                     }
