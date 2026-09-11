@@ -311,12 +311,18 @@ public class NeoForgePlatformHelper implements PlatformHelper {
         registerClientboundPayload(ModPayloads.RemoteEntityDataPayload.TYPE, ModPayloads.RemoteEntityDataPayload.STREAM_CODEC);
         registerClientboundPayload(ModPayloads.RemoteEntityEquipmentPayload.TYPE, ModPayloads.RemoteEntityEquipmentPayload.STREAM_CODEC);
         registerClientboundPayload(ModPayloads.PortalUnregisterPayload.TYPE, ModPayloads.PortalUnregisterPayload.STREAM_CODEC);
+        // ★ SEAM OCCUPANCY (RS passthrough, flag-ON feature; NF-PARITY 2026-08-30). Registered
+        // unconditionally like every type here — types are flag-neutral, the senders self-gate.
+        // Missing on NeoForge until now: every SeamOccupancy sendToClient threw NeoForge's
+        // checkPacket UnsupportedOperationException INSIDE the senders' swallow-all try/catch,
+        // so seams silently never bound on NF ("standard old IP behavior") instead of crashing.
+        registerClientboundPayload(ModPayloads.SeamOccupancyPayload.TYPE, ModPayloads.SeamOccupancyPayload.STREAM_CODEC);
         registerServerboundPayload(ModPayloads.RequestPortalDataPayload.TYPE, ModPayloads.RequestPortalDataPayload.STREAM_CODEC);
         registerServerboundPayload(ModPayloads.ClientPortalCrossingPayload.TYPE, ModPayloads.ClientPortalCrossingPayload.STREAM_CODEC);
         registerServerboundPayload(ModPayloads.RedirectedChunkAckPayload.TYPE, ModPayloads.RedirectedChunkAckPayload.STREAM_CODEC);
 
         SeamlessPortalsConstants.LOGGER.info(
-            "NeoForge network payloads queued (19 block-era types; drained at RegisterPayloadHandlersEvent)");
+            "NeoForge network payloads queued (20 types: 19 block-era + seam occupancy; drained at RegisterPayloadHandlersEvent)");
     }
 
     public static void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {

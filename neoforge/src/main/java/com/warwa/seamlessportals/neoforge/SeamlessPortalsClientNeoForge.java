@@ -74,6 +74,24 @@ public class SeamlessPortalsClientNeoForge {
                 ? qouteall.imm_ptl.core.platform_specific.IPConfigGUI.createClothConfigScreen(parent)
                 : new SeamlessConfigScreen(parent));
 
+        // ★ SEAM OCCUPANCY RECEIVER — UNCONDITIONAL, deliberately ABOVE the flag branch (the
+        // exact Fabric placement + rationale: the seam is a flag-ON feature, so its receiver
+        // cannot live in the flag-OFF handler set; harmless flag-OFF — occupancy never
+        // arrives). Routed through the PlatformHelper seam: the NF payload-drain dispatcher
+        // already hops handlers onto the client main thread (context.enqueueWork), matching
+        // Fabric's context.client().execute threading. NF-PARITY 2026-08-30.
+        com.warwa.seamlessportals.network.PlatformHelper.getInstance().registerClientPayloadHandler(
+            com.warwa.seamlessportals.network.ModPayloads.SeamOccupancyPayload.TYPE,
+            (payload, client) -> com.warwa.seamlessportals.passthrough.SeamOccupancyClient.apply(
+                payload.dimensionId(), payload.packedPos(), (byte) payload.mask(),
+                payload.secondaryStateId(), (byte) payload.secondaryHalf()));
+        // ★ PENDING flush driver (the live-relog fix, Fabric twin): the JOIN burst lands before
+        // the joining client's level exists and parks in the PENDING stash — which would
+        // otherwise only drain on the NEXT packet, i.e. never after a quiet relog. One branch
+        // per tick when empty.
+        NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) ->
+            com.warwa.seamlessportals.passthrough.SeamOccupancyClient.flushPendingTick());
+
         if (SeamlessPortalsConfig.isEntityPortals()) {
             // ===== WIRE 3: flag-ON render DISPATCH ========================================
             // Byte-mirrors SeamlessPortalsClientFabric's AFTER_TRANSLUCENT_TERRAIN driver,
@@ -100,9 +118,26 @@ public class SeamlessPortalsClientNeoForge {
                 IPCGlobal.renderer.onBeforeTranslucentRendering(modelView);
                 IPCGlobal.renderer.finishRendering();
             });
-            // The BEFORE_TRANSLUCENT_TERRAIN clip-bracket site has NO NeoForge event in the
-            // gap — driven by the NEOFORGE_ONLY mixin
-            // MixinLevelRenderer_ClipBracketMainPassNeoForge instead (W21).
+            // ENGINE STAGE 2b — the band painter's hook (Fabric twin, NF-PARITY 2026-08-30):
+            // the SECOND AfterTranslucentBlocks registration, immediately after the portal
+            // driver's — the NF bus invokes same-priority listeners in registration order, so
+            // this runs AFTER every portal pass of the frame, and it runs EVERY frame
+            // regardless of whether any pass executed (the design PROHIBITS the doRenderPortal
+            // epilogue). Thin timing driver only; all logic is common-side.
+            NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterTranslucentBlocks event) ->
+                qouteall.imm_ptl.core.render.SeamBandPainter.onAfterPortalPasses());
+            // The BEFORE_TRANSLUCENT_TERRAIN clip-bracket + seam-clip sites have NO NeoForge
+            // event in the gap — driven by the NEOFORGE_ONLY mixin
+            // MixinLevelRenderer_ClipBracketMainPassNeoForge instead (W21), which calls BOTH
+            // in Fabric's registration order (PerEntityClipBracket, then SeamClipRenderer).
+            // ===== SEAM DEST-END AMBIENCE (stitched-space contract item 3) — Fabric twin. ====
+            // Same-dim portal destinations are display-tick dead by construction (vanilla
+            // samples ±31 blocks around the PLAYER); this display-ticks nearby mirrorable
+            // portals' dest regions with the camera-distance gate defeated. ClientTickEvent
+            // .Post = the END_CLIENT_TICK slot (after vanilla's animateTick + engine tick);
+            // queued spawns drain next engine tick. Logic is common-side (SeamDestAmbience).
+            NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post event) ->
+                com.warwa.seamlessportals.render.SeamDestAmbience.tick(Minecraft.getInstance()));
         } else {
             // ===== BLOCK-ERA client driver set (flag-OFF, the legacy opt-out) =============
             // The stencil composite + per-tick pumps, mirroring Fabric's else-branch (same

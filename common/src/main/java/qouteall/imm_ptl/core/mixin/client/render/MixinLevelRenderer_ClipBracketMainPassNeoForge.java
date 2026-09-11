@@ -52,5 +52,10 @@ public class MixinLevelRenderer_ClipBracketMainPassNeoForge {
     )
     private void ip_onMainPassBeforeTranslucentTerrain(CallbackInfo ci) {
         PerEntityClipBracket.onMainPassBeforeTranslucentTerrain();
+        // SEAM CLIP main-pass draw site (NF-PARITY 2026-08-30) — Fabric's SECOND
+        // BEFORE_TRANSLUCENT_TERRAIN registration rides the same injection, in the same
+        // registration order (bracket first, seam clip second). Self-guarded: active() +
+        // PortalRendering.isRendering() + null-level early returns — inert flag-OFF/lever-OFF.
+        com.warwa.seamlessportals.render.SeamClipRenderer.onMainPassBeforeTranslucentTerrain();
     }
 }

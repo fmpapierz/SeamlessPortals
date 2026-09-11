@@ -255,12 +255,17 @@ public abstract class MixinRailStateSeam implements SeamShadowHolder {
         return s.writeLocal(p, st, flags);
     }
 
-    // ── THE SHADOW HANDOFF. @At("RETURN") catches every return site — FOUR in bytecode, not the
-    //    three the source shows: the :109 ternary compiles to two areturns (rail / null). The
-    //    child's constructor has already run updateConnections, which is pure BlockPos arithmetic
-    //    and needs no shadow. Stamped against the CHILD's pos, not the queried one — getRail may
-    //    have found the rail at queried.above() or .below(). ──
-    @Inject(method = "getRail", at = @At("RETURN"), require = 4, allow = 4)
+    // ── THE SHADOW HANDOFF. @At("RETURN") catches every return site — a PER-LOADER count:
+    //    Fabric's loom jar has FOUR areturns (the :109 ternary compiles to two — rail / null);
+    //    NeoForge's patched recompile folds that ternary to one, leaving THREE (javap'd
+    //    minecraft-patched-26.2.0.1-beta: areturns at 31/66/105 — and the old require=4 was a
+    //    2026-09-10 live crash at first rail placement on NF, "(3/4) succeeded"). The contract is
+    //    "stamp EVERY return", which @At("RETURN") guarantees regardless of count; the bounds are
+    //    the per-loader witness envelope. The child's constructor has already run
+    //    updateConnections, which is pure BlockPos arithmetic and needs no shadow. Stamped
+    //    against the CHILD's pos, not the queried one — getRail may have found the rail at
+    //    queried.above() or .below(). ──
+    @Inject(method = "getRail", at = @At("RETURN"), require = 3, allow = 4)
     private void seamlessportals$stamp(BlockPos queried, CallbackInfoReturnable<RailState> cir) {
         RailState child = cir.getReturnValue();
         if (child == null) {

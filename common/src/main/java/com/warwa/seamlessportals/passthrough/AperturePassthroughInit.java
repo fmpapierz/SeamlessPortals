@@ -118,9 +118,13 @@ public final class AperturePassthroughInit {
         // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
         // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was
         // not possible at the time.
-        // END_SERVER_TICK, iterating levels — the event ServerTaskList.java:11 already proves
-        // available in this module (there is no END_WORLD_TICK in this Fabric API version).
-        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(server -> {
+        // End-of-server-tick via the LOADER-NEUTRAL Platform seam (W9) — the exact slot
+        // ServerTaskList.init uses, so the ordering note below keeps meaning on both loaders
+        // (both registrations land on the same underlying event in registration order:
+        // ServerTaskList during IPModMain.init, then this one). NF-PARITY 2026-08-30: this
+        // line used to register on Fabric's ServerTickEvents directly — a NoClassDefFoundError
+        // at NeoForge's RegisterEvent dispatch, and the reason NF never ran the seam engine.
+        com.warwa.seamlessportals.platform.Platform.get().onServerTickEnd(server -> {
             if (AperturePassthroughLever.DISABLED) {
                 return;
             }

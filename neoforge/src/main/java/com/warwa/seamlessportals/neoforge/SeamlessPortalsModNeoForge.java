@@ -151,6 +151,42 @@ public class SeamlessPortalsModNeoForge {
             qouteall.q_misc_util.MiscNetworking.init();
             qouteall.q_misc_util.dimension.DimensionIntId.init();
             qouteall.imm_ptl.core.IPModMain.init();
+            // RS PASSTHROUGH NF-PARITY (2026-08-30): the same two flag-ON passthrough pieces
+            // Fabric wires at this exact slot (SeamlessPortalsModFabric). Everything else of
+            // the passthrough system is common-side (mixins in seamlessportals-common.mixins
+            // .json, e.g. ServerPlayerSeamResendMixin for the world-change re-send) and was
+            // already active on NeoForge — these two registrations plus the payload type row
+            // in NeoForgePlatformHelper were the whole gap.
+            //
+            // (1) Seam registry ← portal lifecycle signals. MUST run after IPModMain.init,
+            // which is where the Portal entity type and its signal Events are created. Self-
+            // gates on the master lever (registers listeners that immediately return when
+            // -Dseamlessportals.disableAperturePassthrough=true).
+            com.warwa.seamlessportals.passthrough.AperturePassthroughInit.init();
+            // (2) ★ FRACTIONAL OCCUPANCY JOIN SYNC (FRACTIONAL_DESIGN.md §3) — the NF twin of
+            // Fabric's ServerPlayConnectionEvents.JOIN registration. PlayerLoggedInEvent fires
+            // from the same funnel (PlayerList.placeNewPlayer). Occupancy is the one piece of
+            // seam state a client cannot derive; a joining player gets every persisted entry of
+            // every level — all dims deliberately, matching the broadcast's own policy, with
+            // the client's PENDING stash absorbing dims whose ClientLevel does not exist yet.
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                (net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent joinEvent) -> {
+                    if (com.warwa.seamlessportals.passthrough.AperturePassthroughLever.DISABLED) {
+                        return;
+                    }
+                    if (!(joinEvent.getEntity()
+                        instanceof net.minecraft.server.level.ServerPlayer player)) {
+                        return;
+                    }
+                    net.minecraft.server.MinecraftServer server = player.level().getServer();
+                    if (server == null) {
+                        return;
+                    }
+                    for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
+                        com.warwa.seamlessportals.passthrough.SeamOccupancySavedData
+                            .sendAllTo(level, player);
+                    }
+                });
             qouteall.imm_ptl.peripheral.PeripheralModMain.init();
             SeamlessPortalsConstants.LOGGER.info(
                 "Seamless Portals: entity-portal engine initialized (NeoForge server/common, in-window)");
