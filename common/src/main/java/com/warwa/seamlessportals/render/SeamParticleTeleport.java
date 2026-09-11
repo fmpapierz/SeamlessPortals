@@ -42,6 +42,45 @@ public final class SeamParticleTeleport {
 
     private SeamParticleTeleport() {}
 
+    /**
+     * ★ SEAM-BORN TAGGING (2026-09-11, near-seam crossing feature): the crumb governance —
+     * F1 consume, margin consume, axis-exit consume — exists because a seam-block break is
+     * "already represented at the far end" (each end fires its own burst), so its crumbs must
+     * never ALSO teleport. That is true of exactly the crumbs BORN inside a governed seam
+     * cell (native burst, SeamMirror's counterpart send, and the replay all birth there — a
+     * different block cannot occupy a governed cell). A TerrainParticle born anywhere else
+     * (a block broken NEAR the portal) is represented nowhere else: it skips all three
+     * consume rules and takes the standard particle teleport below (the proven flame/smoke
+     * path) when it crosses inside the aperture — and flies vanilla in the margins, where
+     * the plane has no portal. Weak identity set: dead crumbs drop with GC.
+     */
+    private static final java.util.Set<Particle> SEAM_BORN =
+        java.util.Collections.newSetFromMap(
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>()));
+
+    /** Whether the crumb governance applies — the revert lever restores consume-for-all. */
+    private static boolean seamBornGoverned(Particle particle) {
+        return com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_SEAM_CRUMB_CROSSING
+            || SEAM_BORN.contains(particle);
+    }
+
+    /** Probe visibility (tint discriminator): whether this crumb carries the seam-born tag. */
+    public static boolean isSeamBorn(Particle particle) {
+        return SEAM_BORN.contains(particle);
+    }
+
+    /**
+     * ★ CLEAR-RESTED (2026-09-11, the both-sides-occupied break): crumbs granted the sided
+     * birth rest in a SINGLE-OWNED cell — the broken half's own burst when the opposite
+     * half is still occupied. The open-cell rest persists by the transition gate alone, but
+     * the singleOwned continuation branch grabs every empty-half occupant every tick, so
+     * the rest there must be remembered for the crumb's LIFETIME. Weak identity set.
+     */
+    private static final java.util.Set<Particle> CLEAR_RESTED =
+        java.util.Collections.newSetFromMap(
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>()));
+
     public static void maybeTeleport(Particle particle) {
         if (!SeamFractional.active() || !particle.isAlive()) {
             return;
@@ -65,10 +104,13 @@ public final class SeamParticleTeleport {
         // within the plane slab, never leaving the axis span, so the window burst keeps
         // playing; lateral drifts along the aperture lattice equally keep their axis
         // coordinate in-span of their own column only when they exit — an adjacent aperture
-        // cell shares the axis span, so in-lattice movement never trips this).
+        // cell shares the axis span, so in-lattice movement never trips this). SEAM-BORN
+        // crumbs only (2026-09-11): a near-seam crumb — or a teleported arrival leaving the
+        // counterpart cell on the dest side — exits governed cells freely.
         if (particle instanceof net.minecraft.client.particle.TerrainParticle
             && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
-                .DISABLE_SEAM_CRUMB_AXIS_EXIT_CONSUME) {
+                .DISABLE_SEAM_CRUMB_AXIS_EXIT_CONSUME
+            && seamBornGoverned(particle)) {
             double exo = ie.portal_getXo(), eyo = ie.portal_getYo(), ezo = ie.portal_getZo();
             BlockPos prevCell = BlockPos.containing(exo, eyo, ezo);
             if (!prevCell.equals(cell)) {
@@ -98,6 +140,28 @@ public final class SeamParticleTeleport {
             }
         }
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
+        // Birth inside a governed cell marks the crumb seam-born (see SEAM_BORN). While
+        // age<=1, xo/yo/zo still hold the BIRTH position (the ctor sets them and the first
+        // tick copies them before moving), so the birth cell — not the current cell — decides:
+        // a fast near-seam crumb that already entered the aperture on its first tick stays
+        // untagged, and a teleported arrival (xo rewritten to the landing point at age>=1's
+        // pass, checked at age 2+) can never self-tag. Tagged before any crossing branch can
+        // select a binding, so the birth governance sees every burst crumb.
+        if (particle instanceof net.minecraft.client.particle.TerrainParticle
+            && ie.portal_getAge() <= 1) {
+            BlockPos birthCell = BlockPos.containing(
+                ie.portal_getXo(), ie.portal_getYo(), ie.portal_getZo());
+            SeamRegistry.SeamCell birthSeam = birthCell.equals(cell) ? seam
+                : SeamRegistry.lookup(level, birthCell);
+            if (birthSeam != null) {
+                for (SeamRegistry.SeamBinding b : birthSeam.bindings()) {
+                    if (b != null && b.isMirrorable() && b.cut() != null) {
+                        SEAM_BORN.add(particle);
+                        break;
+                    }
+                }
+            }
+        }
         BlockPos baseCell = cell;
         if (seam == null) {
             // ★ F7 RULING (user, 2026-08-10, superseding r46's margin fallback here): teleport
@@ -122,10 +186,13 @@ public final class SeamParticleTeleport {
             // ungoverned here. A crumb that genuinely TRANSITIONS the governing plane inside
             // the margin ring is consumed — the F1 doctrine ("already represented at the far
             // end"). Same margin index the quad clip consults; one map get on cells that miss.
-            // Revert with -Dseamlessportals.disableSeamCrumbMarginConsume=true.
+            // Revert with -Dseamlessportals.disableSeamCrumbMarginConsume=true. SEAM-BORN
+            // crumbs only (2026-09-11): outside the aperture the plane extension is ordinary
+            // same-world space — a near-seam crumb crossing it there flies vanilla.
             if (particle instanceof net.minecraft.client.particle.TerrainParticle
                 && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
                     .DISABLE_SEAM_CRUMB_MARGIN_CONSUME
+                && seamBornGoverned(particle)
                 && level instanceof com.warwa.seamlessportals.passthrough.SeamIndexHolder holder
             ) {
                 long base = holder.seamlessportals$particleMargin()
@@ -196,6 +263,39 @@ public final class SeamParticleTeleport {
                         SeamParticleProbe.tickSummary();
                     }
                     return;   // in the material: it belongs here
+                }
+                // ★ SIDED BIRTH REST, singleOwned form (2026-09-11, the both-sides-occupied
+                // break): with the opposite half still occupied the broken cell stays
+                // singleOwned after the break, so the burst crumbs in the freshly-cleared
+                // half hit the continuation grab below at ADD and were consumed by F1 —
+                // "opposite side seam block blocks my side's break particles". The
+                // just-cleared half is stashed (SeamOccupancyClient records partial clears
+                // too); a crumb in that half is the break's own burst and rests there for
+                // its LIFETIME (CLEAR_RESTED — no age gate, because the counterpart's
+                // occupancy update and the replay's crumbs can land a tick apart).
+                if (particle instanceof net.minecraft.client.particle.TerrainParticle
+                    && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                        .DISABLE_SEAM_CRUMB_BIRTH_REST) {
+                    if (CLEAR_RESTED.contains(particle)) {
+                        return;
+                    }
+                    byte clearedMask = com.warwa.seamlessportals.passthrough
+                        .SeamOccupancyClient.recentClearedMask(level, cell.asLong());
+                    // ★ CRUMB-REST probe (both-sides instrument round): the decision inputs
+                    // for every young crumb reaching the singleOwned branch — a crumb that
+                    // falls through to the grab is about to be F1-consumed.
+                    if (probe && ie.portal_getAge() <= 3) {
+                        qouteall.q_misc_util.Helper.log(String.format(
+                            "[CRUMB-REST] id=%08x age=%d pos=%.3f,%.3f,%.3f cell=%s owned=%d"
+                                + " particleHalf=%d clearedMask=%d rest=%b",
+                            System.identityHashCode(particle), ie.portal_getAge(), x, y, z,
+                            cell, owned, particleHalf, clearedMask,
+                            clearedMask != 0 && particleHalf == clearedMask));
+                    }
+                    if (clearedMask != 0 && particleHalf == clearedMask) {
+                        CLEAR_RESTED.add(particle);
+                        return;
+                    }
                 }
                 // No transition requirement here: an empty-half occupant must not EXIST locally
                 // (r35 — "no particle ever exists past the seam locally"), so residents and
@@ -304,7 +404,14 @@ public final class SeamParticleTeleport {
         // the binding. Crumbs that stay in their own half are now never touched — the burst
         // plays at full density for its half, at normal speed, to completion. Flame/smoke keep
         // their teleports (closed, live-confirmed arc).
-        if (particle instanceof net.minecraft.client.particle.TerrainParticle) {
+        //
+        // ★ 2026-09-11 AMENDMENT — SEAM-BORN crumbs only: "already represented at the far end"
+        // is a property of seam-block bursts, which are exactly the crumbs born in governed
+        // cells (SEAM_BORN). A crumb from a block broken NEAR the portal is represented
+        // nowhere else, so it falls through to the standard teleport below and crosses into
+        // dest like flame/smoke. Revert with -Dseamlessportals.disableSeamCrumbCrossing=true.
+        if (particle instanceof net.minecraft.client.particle.TerrainParticle
+            && seamBornGoverned(particle)) {
             if (probe) {
                 SeamParticleProbe.onConsumed(false);
                 SeamParticleProbe.tickSummary();
@@ -378,6 +485,16 @@ public final class SeamParticleTeleport {
         ie.portal_setYd(vy);
         ie.portal_setZd(nvz);
         if (probe) {
+            // ★ CRUMB-XING: every TERRAIN teleport named. During a pure seam-block break this
+            // must be silent (burst crumbs are tagged → F1); any line during one names a
+            // tagging gap, and tagged=true here is impossible by construction.
+            if (particle instanceof net.minecraft.client.particle.TerrainParticle) {
+                qouteall.q_misc_util.Helper.log(String.format(
+                    "[CRUMB-XING] terrain teleported tagged=%b age=%d %s %s -> %s %s",
+                    SEAM_BORN.contains(particle), ie.portal_getAge(),
+                    level.dimension().identifier(), cell,
+                    destLevel.dimension().identifier(), dest));
+            }
             // The per-crossing line lives in the probe now, BUDGETED (10/s) — under the suspected
             // ping-pong it would fire hundreds of times per second and starve the summaries.
             SeamParticleProbe.onTeleport(particle, level, destLevel, cell, dest, openCell);

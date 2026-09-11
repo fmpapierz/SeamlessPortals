@@ -1459,10 +1459,20 @@ public final class SeamFractional {
         level.playSound(null, pos, sndType.getBreakSound(),
             net.minecraft.sounds.SoundSource.BLOCKS,
             (sndType.getVolume() + 1.0F) / 2.0F, sndType.getPitch() * 0.8F);
-        level.sendParticles(
-            new net.minecraft.core.particles.BlockParticleOption(
-                net.minecraft.core.particles.ParticleTypes.BLOCK, sec.state()),
-            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, 20, 0.25, 0.25, 0.25, 0.05);
+        // ★ The BREAKER is excluded from the near scatter burst (2026-09-11): their client
+        // synthesizes the proper seam burst at prediction time (densified broken-half grid +
+        // dest replay — MultiPlayerGameModeSecondaryBreakMixin), so the server copy would
+        // double-serve them. Other nearby players keep this burst.
+        var crumbOption = new net.minecraft.core.particles.BlockParticleOption(
+            net.minecraft.core.particles.ParticleTypes.BLOCK, sec.state());
+        for (net.minecraft.server.level.ServerPlayer p : level.players()) {
+            if (p == player) {
+                continue;
+            }
+            level.sendParticles(p, crumbOption, false, false,
+                pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
+                20, 0.25, 0.25, 0.25, 0.05);
+        }
         if (binding != null && binding.destPos() != null) {
             net.minecraft.server.level.ServerLevel dest =
                 level.getServer().getLevel(binding.destDim());

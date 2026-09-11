@@ -77,9 +77,22 @@ public abstract class MultiPlayerGameModeSecondaryBreakMixin {
                 }
             }
             if (sec != null && playerHalf == sec.half()) {
+                // ★ STASH BEFORE REMOVAL (2026-09-11, "opposite side seam block blocks my side
+                // break particles"): a secondary removal never shrinks the occupancy MASK, so
+                // the mask-diff stash in SeamOccupancyClient.put cannot see it — record the
+                // broken half explicitly so the sided crumb rest holds this break's burst.
+                com.warwa.seamlessportals.passthrough.SeamOccupancyClient.stashClearedHalf(
+                    mc.level, pos.asLong(), sec.half());
                 // Predict the SECONDARY's removal only. The vanilla path below this cancel would
                 // have removed the primary's blockstate and cascaded into the dest client level.
                 SeamOccupancy.setSecondary(mc.level, pos, null);
+                // ★ THE SECONDARY BREAK'S BURST (same round): a side-table removal runs no
+                // vanilla destroy, so addDestroyBlockEffect never fires — synthesize the seam
+                // burst (densified local grid + reflected dest replay) from the removed
+                // object's exact state and half. The server's own scatter burst excludes the
+                // breaker (SeamFractional.breakSecondary), so this is the breaker's only one.
+                com.warwa.seamlessportals.render.SeamCrumbReplay.secondaryBurst(
+                    mc.level, pos, sec.state(), sec.half());
                 // ★ Predict the COUNTERPART fragment's removal too (live round 10, "break
                 // mirror has a tiny lag"): the far half otherwise lingers one round-trip until
                 // the server broadcast lands. Same-dim: this level; cross-dim: the secondary
@@ -91,6 +104,15 @@ public abstract class MultiPlayerGameModeSecondaryBreakMixin {
                         mc.level.dimension().equals(binding.destDim()) ? mc.level
                             : qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(binding.destDim());
                     if (farClient != null) {
+                        // The far fragment's own half gets the same stash so the replay's
+                        // crumbs (born in the far cleared half) rest there too.
+                        SeamOccupancy.Secondary farSec =
+                            SeamOccupancy.secondaryOf(farClient, binding.destPos());
+                        if (farSec != null) {
+                            com.warwa.seamlessportals.passthrough.SeamOccupancyClient
+                                .stashClearedHalf(farClient, binding.destPos().asLong(),
+                                    farSec.half());
+                        }
                         SeamOccupancy.setSecondary(farClient, binding.destPos(), null);
                     }
                 }

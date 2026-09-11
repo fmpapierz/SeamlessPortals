@@ -201,13 +201,20 @@ public final class SeamOccupancyClient {
         // the cut's two), and the crumb birth-rest exemption kept the wrong-half births alive.
         // The cleared mask is the missing side reference: remember it briefly so the birth
         // rest can be SIDED (SeamParticleTeleport consults recentClearedMask).
+        //
+        // ★ PARTIAL CLEARS STASH TOO (2026-09-11, the both-sides-occupied break): breaking
+        // one half of a BOTH cell shrinks the mask to the remaining half — the cell stays
+        // singleOwned and the old full-clear-only stash recorded nothing, so the burst in
+        // the freshly-cleared half had no side reference (its crumbs were seized by the
+        // singleOwned continuation grab, and the burst shape resolver had no answer). Any
+        // transition that REMOVES exactly one half stashes that half.
+        byte old = SeamOccupancy.occupancyOf(level, pos);
+        byte removed = (byte) (old & ~mask
+            & (SeamOccupancy.HALF_POSITIVE | SeamOccupancy.HALF_NEGATIVE));
+        if (removed == SeamOccupancy.HALF_POSITIVE || removed == SeamOccupancy.HALF_NEGATIVE) {
+            stashClearedHalf(level, pos.asLong(), removed);
+        }
         if (mask == 0) {
-            byte old = SeamOccupancy.occupancyOf(level, pos);
-            if (old == SeamOccupancy.HALF_POSITIVE || old == SeamOccupancy.HALF_NEGATIVE) {
-                RECENT_CLEARS.computeIfAbsent(level,
-                        k -> new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap())
-                    .put(pos.asLong(), (level.getGameTime() << 8) | (old & 0xFF));
-            }
             SeamOccupancy.clear(level, pos);
         } else {
             SeamOccupancy.set(level, pos, mask);
@@ -220,6 +227,22 @@ public final class SeamOccupancyClient {
         RECENT_CLEARS = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     private static final long RECENT_CLEAR_TTL_TICKS = 20;
+
+    /**
+     * ★ Record a cleared half directly — for the break paths whose occupancy update never
+     * shrinks the MASK (2026-09-11, the SECONDARY break: a side-table removal only nulls the
+     * Secondary record, the mask stays the primary's half, so the mask-diff stash above never
+     * fires — and its burst crumbs were consumed unrested, "break particles do not show").
+     * The secondary-break prediction knows the broken half exactly and stashes it here.
+     */
+    public static void stashClearedHalf(Level level, long cellLong, byte half) {
+        if (half != SeamOccupancy.HALF_POSITIVE && half != SeamOccupancy.HALF_NEGATIVE) {
+            return;
+        }
+        RECENT_CLEARS.computeIfAbsent(level,
+                k -> new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap())
+            .put(cellLong, (level.getGameTime() << 8) | (half & 0xFF));
+    }
 
     /**
      * The single-owned mask this cell held just before a recent clear, or 0 when none (no clear

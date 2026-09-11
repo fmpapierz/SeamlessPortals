@@ -10,20 +10,25 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * ★ SEAM CRUMB REPLAY driver (attempt #2, 2026-09-11) — the destroy-burst funnel:
+ * ★ SEAM CRUMB BURST driver (2026-09-11) — the destroy-burst funnel:
  * {@code addDestroyBlockEffect(BlockPos, BlockState)} is where every break burst spawns
- * (levelEvent 2001 → 26.2 LevelEventHandler:305-315; javap-verified identical on the loom and
- * NeoForge-patched jars). TAIL so the native burst has fully spawned; the replay itself
- * re-checks vanilla's own air/shouldSpawnTerrainParticles gates and fast-exits on non-seam
- * cells (one map lookup). Logic is common-side in {@link SeamCrumbReplay}.
+ * (levelEvent 2001 → 26.2 LevelEventHandler:305-315; javap-verified identical on the loom
+ * and NeoForge-patched jars). HEAD, cancellable: for a governed seam cell the handler fires
+ * the dest-side replay AND spawns the local grid at full-block density (cut-axis spacing
+ * halved — the density ruling), cancelling vanilla's sparse half-shape grid; for every
+ * other cell it returns false and vanilla runs untouched. With the density lever off the
+ * handler replays only and vanilla keeps the local burst.
  */
 @Mixin(ClientLevel.class)
 public abstract class ClientLevelDestroyEffectSeamMixin {
 
-    @Inject(method = "addDestroyBlockEffect", at = @At("TAIL"), require = 1)
-    private void seamlessportals$replayAcrossSeam(
+    @Inject(method = "addDestroyBlockEffect", at = @At("HEAD"), cancellable = true,
+        require = 1)
+    private void seamlessportals$seamBurst(
         BlockPos pos, BlockState blockState, CallbackInfo ci
     ) {
-        SeamCrumbReplay.onDestroyBurst((ClientLevel) (Object) this, pos, blockState);
+        if (SeamCrumbReplay.onDestroyBurst((ClientLevel) (Object) this, pos, blockState)) {
+            ci.cancel();
+        }
     }
 }

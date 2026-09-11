@@ -356,6 +356,8 @@ loom {
             if (project.findProperty('seamSupportUnion') == 'true') { vmArg('-Dseamlessportals.seamSupportUnion=true') }
             if (project.findProperty('seamFractionalProbe') == 'true') { vmArg('-Dseamlessportals.seamFractionalProbe=true') }
             if (project.findProperty('disableSeamCrumbReplay') == 'true') { vmArg('-Dseamlessportals.disableSeamCrumbReplay=true') }
+            if (project.findProperty('disableSeamCrumbCrossing') == 'true') { vmArg('-Dseamlessportals.disableSeamCrumbCrossing=true') }
+            if (project.findProperty('disableSeamCrumbDensity') == 'true') { vmArg('-Dseamlessportals.disableSeamCrumbDensity=true') }
             // TP-XDIM FRAME CENSUS (2026-07-28; log-only, DEFAULT OFF): classifies every in-world
             // frame by what renderCrossPortalView() did (11 codes) plus three independently-woven
             // witnesses of what actually ran (renderLevel / IS0 anchor / AFTER_TRANSLUCENT_TERRAIN) —
@@ -1093,6 +1095,8 @@ loom {
             if (project.findProperty('seamSupportUnion') == 'true') { vmArg('-Dseamlessportals.seamSupportUnion=true') }
             if (project.findProperty('seamFractionalProbe') == 'true') { vmArg('-Dseamlessportals.seamFractionalProbe=true') }
             if (project.findProperty('disableSeamCrumbReplay') == 'true') { vmArg('-Dseamlessportals.disableSeamCrumbReplay=true') }
+            if (project.findProperty('disableSeamCrumbCrossing') == 'true') { vmArg('-Dseamlessportals.disableSeamCrumbCrossing=true') }
+            if (project.findProperty('disableSeamCrumbDensity') == 'true') { vmArg('-Dseamlessportals.disableSeamCrumbDensity=true') }
             // IS5-P phantom fix A/B (2026-07-22): the iris temporal-target guard is DEFAULT-ON; pass this to
             // force it OFF and reproduce the whole-screen phantom overlay (attribution proof) —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableIrisTemporalGuard=true

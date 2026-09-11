@@ -32,6 +32,20 @@ public abstract class ParticleSeamTeleportMixin {
             com.warwa.seamlessportals.render.SeamParticleProbe.maybeCensus(
                 com.warwa.seamlessportals.client.SeamParticleCensus::walkGlobalEngine);
             com.warwa.seamlessportals.render.SeamParticleProbe.tickSummary();
+            // ★ TINT DISCRIMINATOR, density round (2026-09-11; probe-armed only, per the
+            // color-debug-first rule): GREEN = seam-born (governed), RED = untagged. A red
+            // crumb inside a seam-block burst names a tagging gap; an all-green thinner burst
+            // means the density is the half-shape grid, not a leak.
+            if (particle instanceof net.minecraft.client.particle.TerrainParticle
+                && particle instanceof net.minecraft.client.particle.SingleQuadParticle sq
+                && ((qouteall.imm_ptl.core.mixin.client.particle.IEParticle) particle)
+                    .portal_getAge() <= 3) {
+                if (SeamParticleTeleport.isSeamBorn(particle)) {
+                    sq.setColor(0.15f, 1.0f, 0.15f);
+                } else {
+                    sq.setColor(1.0f, 0.15f, 0.15f);
+                }
+            }
         }
         SeamParticleTeleport.maybeTeleport(particle);
     }
@@ -66,6 +80,18 @@ public abstract class ParticleSeamTeleportMixin {
         // for capacity/reservoir rejects without appending).
         if (!particle.isAlive()) {
             cir.setReturnValue(false);
+            return;
+        }
+        // ★ TINT DISCRIMINATOR at the door (density round): color BEFORE the first rendered
+        // frame — the corpse arc's lesson that pre-first-tick frames escape a tick-side tint.
+        if (com.warwa.seamlessportals.render.SeamParticleProbe.armed()
+            && particle instanceof net.minecraft.client.particle.TerrainParticle
+            && particle instanceof net.minecraft.client.particle.SingleQuadParticle sq) {
+            if (SeamParticleTeleport.isSeamBorn(particle)) {
+                sq.setColor(0.15f, 1.0f, 0.15f);
+            } else {
+                sq.setColor(1.0f, 0.15f, 0.15f);
+            }
         }
     }
 }

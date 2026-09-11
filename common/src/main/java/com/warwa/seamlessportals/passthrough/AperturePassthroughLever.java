@@ -205,6 +205,35 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamCrumbAxisExitConsume");
 
     /**
+     * Disables NEAR-SEAM CRUMB CROSSING —
+     * {@code -Dseamlessportals.disableSeamCrumbCrossing=true}: restores the pre-2026-09-11
+     * rule that EVERY break crumb reaching a seam plane is consumed. Default behavior keys
+     * the crumb governance (F1 consume, margin consume, axis-exit consume) to SEAM-BORN
+     * crumbs only — crumbs born inside a governed seam cell (native burst, counterpart send,
+     * replay), exactly the population "already represented at the far end". A crumb from a
+     * block broken NEAR the portal is represented nowhere else: it takes the standard
+     * particle teleport (the flame/smoke path) when it crosses inside the aperture, and
+     * flies vanilla in the margins.
+     */
+    public static final boolean DISABLE_SEAM_CRUMB_CROSSING =
+        Boolean.getBoolean("seamlessportals.disableSeamCrumbCrossing");
+
+    /**
+     * Disables the SEAM CRUMB FULL-DENSITY grid —
+     * {@code -Dseamlessportals.disableSeamCrumbDensity=true}: seam-block bursts fall back
+     * to vanilla's shape-driven counts, where a half-shape burst carries only half a
+     * block's crumbs (the "sparse" look ruled against 2026-09-11 after an all-green tint
+     * round proved nothing was being consumed). Default ON: for governed cells vanilla's
+     * grid is cancelled and replaced by the identical loop with the CUT axis's crumb
+     * spacing halved (0.25 → 0.125), so each end's half-shape burst carries a full block's
+     * count; the dest-side replay uses the same rule so both ends match. (A later "crossing
+     * model" experiment that reverted this was itself rolled back by user order 2026-09-11 —
+     * "go all the way back to when we just doubled the particle count".)
+     */
+    public static final boolean DISABLE_SEAM_CRUMB_DENSITY =
+        Boolean.getBoolean("seamlessportals.disableSeamCrumbDensity");
+
+    /**
      * Disables the SEAM DROP-SIDE CLAMP —
      * {@code -Dseamlessportals.disableSeamDropSideClamp=true}. A real survival-mode defect
      * found (and briefly mis-blamed for the particle stray — the user's creative-mode tests
