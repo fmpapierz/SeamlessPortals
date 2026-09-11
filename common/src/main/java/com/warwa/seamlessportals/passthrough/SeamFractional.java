@@ -226,6 +226,74 @@ public final class SeamFractional {
     }
 
     /**
+     * ★ SEAM DROP-SIDE CLAMP (2026-09-11): vanilla {@code Block.popResource} spawns drops at
+     * cell center ± 0.25 per axis (26.2 Block.java:391-397) and a seam cell's center IS the
+     * cut plane, so about half of all seam-block drops spawn past the plane — a real,
+     * bouncing, pickup-magnet item on the wrong side in survival. (Found during the crumb arc
+     * and briefly mis-blamed for the visible stray; the user's creative-mode tests refuted
+     * that — the stray was the dead-at-add corpse, see ParticleSeamTeleportMixin. The defect
+     * itself is real and the clamp stays.) The drop belongs to the breaking side ("only the
+     * side the player actually broke yields an item" — SeamMirror's own rule), so the
+     * player-break bracket stashes the breaker's position here and the popResource funnel
+     * clamps a wrong-side drop's seam-axis coordinate to the breaker's side of the plane.
+     * Post-spawn physics stays vanilla — an item genuinely knocked through the portal
+     * afterwards teleports like any entity.
+     */
+    public static final ThreadLocal<net.minecraft.world.phys.Vec3> BREAKING_PLAYER_POS =
+        new ThreadLocal<>();
+
+    /** Item half-width (0.125) + slack: the clamped drop sits clear of the plane. */
+    private static final double DROP_SIDE_MARGIN = 0.2;
+
+    public static void clampDropToBreakerSide(net.minecraft.world.entity.item.ItemEntity item) {
+        if (!active() || AperturePassthroughLever.DISABLE_SEAM_DROP_SIDE_CLAMP) {
+            return;
+        }
+        net.minecraft.world.phys.Vec3 breaker = BREAKING_PLAYER_POS.get();
+        if (breaker == null) {
+            return;   // not a player break (explosion, piston...) — vanilla stands
+        }
+        net.minecraft.world.level.Level level = item.level();
+        BlockPos cell = BlockPos.containing(item.getX(), item.getY(), item.getZ());
+        SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
+        if (seam == null) {
+            return;
+        }
+        for (SeamRegistry.SeamBinding b : seam.bindings()) {
+            if (b == null || !b.isMirrorable() || b.cut() == null) {
+                continue;
+            }
+            net.minecraft.core.Direction.Axis axis = b.srcFacing().getAxis();
+            double off = b.cut().srcPlaneOffset();
+            byte breakerHalf = SeamOccupancy.halfFromHit(breaker, cell, axis, off);
+            byte itemHalf = SeamOccupancy.halfFromHit(
+                new net.minecraft.world.phys.Vec3(item.getX(), item.getY(), item.getZ()),
+                cell, axis, off);
+            if (itemHalf == breakerHalf) {
+                continue;
+            }
+            double sign = breakerHalf == SeamOccupancy.HALF_POSITIVE ? 1.0 : -1.0;
+            switch (axis) {
+                case X -> item.setPos(
+                    cell.getX() + off + sign * DROP_SIDE_MARGIN, item.getY(), item.getZ());
+                case Y -> item.setPos(
+                    item.getX(), cell.getY() + off + sign * DROP_SIDE_MARGIN, item.getZ());
+                default -> item.setPos(
+                    item.getX(), item.getY(), cell.getZ() + off + sign * DROP_SIDE_MARGIN);
+            }
+        }
+    }
+
+    // (particleHiddenFromFarSide lived here for rounds 6-18 of the 2026-09-11 crumb arc — a
+    // viewer-relative hide that grew from cell scope to margin ring to a neighbor probe, and in
+    // its final form over-hid the legitimate far-half burst; REVERTED WHOLESALE on the user's
+    // "far side particles totally gone, all wrong". The out-of-plane escapee class it chased is
+    // ledgered in the seam-crumb arc memory with the complete mechanism map: a material-half
+    // crumb exits the aperture cell's far face into the unindexed z-deeper column and rests in
+    // view around the window. Any future attempt should be a WORLD rule at the funnel, not a
+    // render filter — and must keep both ends' legitimate bursts alive.)
+
+    /**
      * ★ ROUND 36 — THE BAND RULE (the flicker after the teleport landed): a particle whose
      * CENTRE sits within quad-reach (0.12) of the cut plane pokes its billboard past it for the
      * few frames before it crosses or drifts clear — the resident neck flame permanently. The

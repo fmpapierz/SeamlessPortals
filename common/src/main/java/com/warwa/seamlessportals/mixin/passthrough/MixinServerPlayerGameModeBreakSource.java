@@ -30,6 +30,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ServerPlayerGameMode.class)
 public abstract class MixinServerPlayerGameModeBreakSource {
 
+    @org.spongepowered.asm.mixin.Shadow
+    @org.spongepowered.asm.mixin.Final
+    protected net.minecraft.server.level.ServerPlayer player;
+
     @Unique
     private Object[] seamlessportals$saved = null;
 
@@ -39,6 +43,11 @@ public abstract class MixinServerPlayerGameModeBreakSource {
             return;
         }
         seamlessportals$saved = SeamWriteContext.push(SeamWriteSource.PLAYER_BREAK, pos);
+        // ★ SEAM DROP-SIDE CLAMP (2026-09-11): the drop spawns inside this bracket
+        // (dropResources runs within destroyBlock), and the breaker's position is the side the
+        // drop belongs on — see SeamFractional.clampDropToBreakerSide.
+        com.warwa.seamlessportals.passthrough.SeamFractional.BREAKING_PLAYER_POS
+            .set(this.player.position());
     }
 
     @Inject(method = "destroyBlock", at = @At("RETURN"))
@@ -47,5 +56,6 @@ public abstract class MixinServerPlayerGameModeBreakSource {
             SeamWriteContext.pop(seamlessportals$saved);
             seamlessportals$saved = null;
         }
+        com.warwa.seamlessportals.passthrough.SeamFractional.BREAKING_PLAYER_POS.remove();
     }
 }

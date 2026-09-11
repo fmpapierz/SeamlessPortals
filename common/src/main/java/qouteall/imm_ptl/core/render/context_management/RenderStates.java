@@ -414,11 +414,21 @@ public class RenderStates {
     // inside it (a mirrored torch's flame sits AT the plane; smoke rises parallel to it), so the
     // window extracted literally zero particles across three instrumented runs (19.6k
     // shouldRenderDrops/s, extracted=0, live-confirmed by the user). For lattice-mirrorable
-    // (seam-bearing) portals the valve relaxes to -0.12 — one billboard reach PAST the plane —
-    // and correctness stays with the armed hardware inner clip, which trims wrong-side fragments
-    // per-pixel (the same division of labor the isolated extract's own notes record). Non-seam
-    // portals keep IP's 0.5 untouched. Single-entry cache: this runs per particle per pass, and
-    // the geometry answer is a property of the portal, not the particle.
+    // (seam-bearing) portals the valve relaxes — and correctness stays with the armed hardware
+    // inner clip, which trims wrong-side fragments per-pixel (the same division of labor the
+    // isolated extract's own notes record). Non-seam portals keep IP's 0.5 untouched.
+    // Single-entry cache: this runs per particle per pass, and the geometry answer is a
+    // property of the portal, not the particle.
+    //
+    // ★ SEAM CRUMB arc, attempt #2 (2026-09-11, probe round 2): the r41 value of -0.12 (one
+    // billboard reach) was still an entire-burst killer for BREAK CRUMBS — the counterpart seam
+    // cell's material half lies up to a full cell BEHIND the inner clip plane, and the probe
+    // convicted this exact clause (9486 valveDrops vs 11 frustumDrops per round; zero
+    // TerrainParticle ever DEST_EXTRACTED while nether ambience extracted by the thousands).
+    // The mirrorable valve widens to -1.13 — full cell depth + billboard reach — which by
+    // construction admits every position inside a counterpart seam cell; anything it now
+    // over-admits sits in a ≤1.13-block shell behind the window whose fragments the armed
+    // hardware clip discards per-pixel, exactly the r41 doctrine.
     private static Portal seamValvePortal;
     private static double seamValve = 0.5;
 
@@ -431,7 +441,7 @@ public class RenderStates {
             if (renderingPortal != seamValvePortal) {
                 seamValvePortal = renderingPortal;
                 seamValve = com.warwa.seamlessportals.passthrough.SeamMap
-                    .isMirrorable(renderingPortal) ? -0.12 : 0.5;
+                    .isMirrorable(renderingPortal) ? -1.13 : 0.5;
             }
             Vec3 particlePos = particle.getBoundingBox().getCenter();
             return renderingPortal.isOnDestinationSide(particlePos, seamValve);

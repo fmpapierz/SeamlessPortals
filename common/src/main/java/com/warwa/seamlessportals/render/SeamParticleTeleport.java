@@ -53,6 +53,50 @@ public final class SeamParticleTeleport {
         }
         double x = ie.portal_getX(), y = ie.portal_getY(), z = ie.portal_getZ();
         BlockPos cell = BlockPos.containing(x, y, z);
+        // ★ AXIS-EXIT CONSUME — the WORLD rule for the 18-round escapee (2026-09-11; revert
+        // with -Dseamlessportals.disableSeamCrumbAxisExitConsume=true). F3-correlated
+        // mechanism: a legitimate material-half break crumb leaves its aperture cell through a
+        // SEAM-AXIS face (past the cell's far face into the unindexed deeper column, resting
+        // visible around the window, ~1 per break). Every viewer-relative hide over-reached
+        // ("far side particles totally gone"); this is viewer- and mask-independent: on the
+        // tick a TerrainParticle's cell changes, if it CAME FROM a governed aperture cell and
+        // its seam-axis coordinate now lies outside that cell's axis span, it exited through an
+        // axis face — consume (the far end's own burst is untouched: its crumbs fall DOWN
+        // within the plane slab, never leaving the axis span, so the window burst keeps
+        // playing; lateral drifts along the aperture lattice equally keep their axis
+        // coordinate in-span of their own column only when they exit — an adjacent aperture
+        // cell shares the axis span, so in-lattice movement never trips this).
+        if (particle instanceof net.minecraft.client.particle.TerrainParticle
+            && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                .DISABLE_SEAM_CRUMB_AXIS_EXIT_CONSUME) {
+            double exo = ie.portal_getXo(), eyo = ie.portal_getYo(), ezo = ie.portal_getZo();
+            BlockPos prevCell = BlockPos.containing(exo, eyo, ezo);
+            if (!prevCell.equals(cell)) {
+                SeamRegistry.SeamCell prevSeam = SeamRegistry.lookup(level, prevCell);
+                if (prevSeam != null) {
+                    for (SeamRegistry.SeamBinding pb : prevSeam.bindings()) {
+                        if (pb == null || !pb.isMirrorable() || pb.cut() == null) {
+                            continue;
+                        }
+                        double axisCoord;
+                        int axisBase;
+                        switch (pb.srcFacing().getAxis()) {
+                            case X -> { axisCoord = x; axisBase = prevCell.getX(); }
+                            case Y -> { axisCoord = y; axisBase = prevCell.getY(); }
+                            default -> { axisCoord = z; axisBase = prevCell.getZ(); }
+                        }
+                        if (axisCoord < axisBase || axisCoord >= axisBase + 1) {
+                            if (SeamParticleProbe.armed()) {
+                                SeamParticleProbe.onConsumed(false);
+                                SeamParticleProbe.tickSummary();
+                            }
+                            particle.remove();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         SeamRegistry.SeamCell seam = SeamRegistry.lookup(level, cell);
         BlockPos baseCell = cell;
         if (seam == null) {
@@ -66,6 +110,57 @@ public final class SeamParticleTeleport {
             // billboards keep their plane-exact cut (the bleed standard, contract point 4).
             // If lateral-wander bleed (the r46 driver) resurfaces live, the recorded principled
             // alternative is birth-side tagging — a decision for the user, with evidence first.
+            // ★ CRUMB MARGIN CONSUME, RE-LANDED (2026-09-11 round 10 — first landed, then
+            // undone on a live verdict that round 9's axis correction later proved
+            // CONTAMINATED: the analysis had measured "wrong side" against the wrong axis. The
+            // per-crumb life trace then convicted this exact class with a full trajectory:
+            // id=6366861b, born own-side in the seam cell, drifted OUT of the cell in X into an
+            // unbound neighbor, crossed the plane extension at the cut plane, rested 33 ticks
+            // on the wrong side — precisely the crossing this consume governs.) TerrainParticle
+            // ONLY: crumbs are ballistic and short-lived; the sinusoidal oscillator classes the
+            // F7 ruling protected (19 Hz leaf ping-pong) are not terrain crumbs and stay
+            // ungoverned here. A crumb that genuinely TRANSITIONS the governing plane inside
+            // the margin ring is consumed — the F1 doctrine ("already represented at the far
+            // end"). Same margin index the quad clip consults; one map get on cells that miss.
+            // Revert with -Dseamlessportals.disableSeamCrumbMarginConsume=true.
+            if (particle instanceof net.minecraft.client.particle.TerrainParticle
+                && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                    .DISABLE_SEAM_CRUMB_MARGIN_CONSUME
+                && level instanceof com.warwa.seamlessportals.passthrough.SeamIndexHolder holder
+            ) {
+                long base = holder.seamlessportals$particleMargin()
+                    .getOrDefault(cell.asLong(), Long.MIN_VALUE);
+                if (base != Long.MIN_VALUE) {
+                    SeamRegistry.SeamCell governing =
+                        SeamRegistry.lookup(level, BlockPos.of(base));
+                    if (governing != null) {
+                        BlockPos governingCell = BlockPos.of(base);
+                        double gx = ie.portal_getX(), gy = ie.portal_getY(),
+                            gz = ie.portal_getZ();
+                        double gpx = ie.portal_getXo(), gpy = ie.portal_getYo(),
+                            gpz = ie.portal_getZo();
+                        for (SeamRegistry.SeamBinding b : governing.bindings()) {
+                            if (b == null || !b.isMirrorable() || b.cut() == null) {
+                                continue;
+                            }
+                            byte cur = SeamOccupancy.halfFromHit(
+                                new net.minecraft.world.phys.Vec3(gx, gy, gz), governingCell,
+                                b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
+                            byte prev = SeamOccupancy.halfFromHit(
+                                new net.minecraft.world.phys.Vec3(gpx, gpy, gpz), governingCell,
+                                b.srcFacing().getAxis(), b.cut().srcPlaneOffset());
+                            if (cur != prev) {
+                                if (SeamParticleProbe.armed()) {
+                                    SeamParticleProbe.onConsumed(false);
+                                    SeamParticleProbe.tickSummary();
+                                }
+                                particle.remove();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
             return;
         }
         // ★ ROUND 37 — OCCUPANCY IS NOT THE GATE (the smoke miss: flames hug the torch's own
@@ -150,11 +245,36 @@ public final class SeamParticleTeleport {
                     // quad clip owns at-plane visibility (contract point 4), and a crumb that
                     // later GENUINELY drifts through the plane still transitions below and is
                     // consumed by F1.
+                    //
+                    // ★★ THE REST IS SIDED (2026-09-11, crumb probe round 8 — the wrong-side
+                    // stray's root cause, read from the per-crumb life log): the occupancy
+                    // CLEAR races the destroy burst, and when the clear lands first the shape
+                    // hook returns the WHOLE block — vanilla then births crumbs in BOTH halves
+                    // (four grid columns measured vs the cut's two), and the blanket exemption
+                    // kept the wrong-half births alive: born past the plane, arcing onto the
+                    // far ground, resting in plain sight. The just-cleared mask is the side
+                    // reference (SeamOccupancyClient stashes it for one burst lifetime): a
+                    // birth crumb rests only in the half that HELD MATERIAL; a wrong-half
+                    // birth falls through to the consume, exactly as before the arc. No stash
+                    // (cut-shape burst, or a genuinely open cell) → rest, unchanged.
+                    boolean crumbRest = false;
+                    if (particle instanceof net.minecraft.client.particle.TerrainParticle
+                        && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+                            .DISABLE_SEAM_CRUMB_BIRTH_REST) {
+                        byte clearedMask = com.warwa.seamlessportals.passthrough
+                            .SeamOccupancyClient.recentClearedMask(level, cell.asLong());
+                        // ★ ROUND 9 COMPLETION (gate data: the residual bleed was exactly the
+                        // clearedMask=0 rows — ~95 unsided rests, while sided rests and
+                        // wrong-half consumes both worked): NO STASH → NO REST. A break with no
+                        // recent mask has no side reference, and blanket-resting it revives
+                        // wrong-half births; the round-41 consume applies there instead — the
+                        // pre-arc behavior for unmasked cells, while every masked seam-pair
+                        // break (the case the birth rest exists for) keeps the sided rest.
+                        crumbRest = clearedMask != 0 && particleHalf == clearedMask;
+                    }
                     if (ie.portal_getAge() <= 1
                         && particleHalf != SeamOccupancy.halfOf(b.srcFacing())
-                        && !(particle instanceof net.minecraft.client.particle.TerrainParticle
-                            && !com.warwa.seamlessportals.passthrough.AperturePassthroughLever
-                                .DISABLE_SEAM_CRUMB_BIRTH_REST)) {
+                        && !crumbRest) {
                         binding = b;
                         break;
                     }

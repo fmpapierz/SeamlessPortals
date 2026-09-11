@@ -48,11 +48,24 @@ public abstract class ParticleSeamTeleportMixin {
      * closes the gap: the particle enters the renderable set already on its correct side.
      * Idempotent with the per-tick driver above (a resident re-check is a cheap no-op).
      */
-    @org.spongepowered.asm.mixin.injection.Inject(method = "add", at = @At("HEAD"))
+    @org.spongepowered.asm.mixin.injection.Inject(
+        method = "add", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$crossAtBirth(
         Particle particle,
         org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Boolean> cir
     ) {
         SeamParticleTeleport.maybeTeleport(particle);
+        // ★ ROUND 21 — REFUSE THE CORPSE (the 20-round "tiny bleed", closed by the tint
+        // discriminator + javap): when the birth governance above removes a particle, vanilla
+        // add STILL appends it — and the queue's only sweep is tickParticles' post-tick
+        // isAlive check, while QuadParticleGroup.extractRenderState iterates the raw queue
+        // with NO isAlive test (bytecode: iterator → pointInFrustum → extract). The engine
+        // drains particlesToAdd AFTER the group tick, so a dead-at-add particle would be
+        // EXTRACTED AND DRAWN for the whole inter-tick window (~2-3 frames) — never ticked,
+        // never governed again. Refusing the add is vanilla-shaped (add already returns false
+        // for capacity/reservoir rejects without appending).
+        if (!particle.isAlive()) {
+            cir.setReturnValue(false);
+        }
     }
 }

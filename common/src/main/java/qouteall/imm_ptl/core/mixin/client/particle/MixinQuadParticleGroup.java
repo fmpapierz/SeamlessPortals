@@ -77,6 +77,11 @@ public class MixinQuadParticleGroup {
             }
             return;
         }
+        // (Rounds 6-18 of the 2026-09-11 crumb arc grew a far-side viewer hide here — cell,
+        // then margin-ring, then neighbor-probe scoped — and the final form over-hid the
+        // legitimate far-half burst ("far side particles totally gone, all wrong" — user).
+        // REVERTED WHOLESALE to the state the user rated best. The residual escapee class is
+        // ledgered in the seam-crumb memory with the full mechanism map.)
         // ★ ROUND 42 — the r36 BAND RULE is RETIRED here: it hid WHOLE near-plane particles from
         // empty-side viewers to mask billboard poke, which over-hid the legitimately-visible
         // owned-side portion. The plane-exact quad clip below replaces it — the billboard's

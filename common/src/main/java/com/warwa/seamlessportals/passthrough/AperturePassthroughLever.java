@@ -155,14 +155,66 @@ public final class AperturePassthroughLever {
     public static final boolean DISABLE_PARTICLE_SINGLE_TICK =
         Boolean.getBoolean("seamlessportals.disableParticleSingleTick");
 
-    // ★ SEAM CRUMB REPLAY: attempted 2026-09-11 (client-side transformed re-spawn of the
-    // destroy burst into each binding's dest world, driven from addDestroyBlockEffect) and
-    // REVERTED SAME DAY on the user's live verdict: dest-side crumbs STILL did not show, and it
-    // introduced an unacceptable regression — placing a block on source side A while another
-    // same-dim window (side B) was in view flashed the ENTIRE seam block from A to B for a
-    // split second. The dest-side-crumb defect (SeamMirror's sendParticles burst never reaches
-    // the breaker looking through a cross-dim window) remains a KNOWN OPEN; any new attempt
-    // must first explain the placement-flash coupling this one produced.
+    /**
+     * Disables the SEAM CRUMB REPLAY — {@code -Dseamlessportals.disableSeamCrumbReplay=true}.
+     * The dest-side half of "break particles show on both sides": SeamMirror's server burst
+     * ({@code sendParticles}) only reaches players standing IN the dest level near the
+     * counterpart, never the breaker looking through a cross-dim window, so the replay
+     * re-spawns the shape-driven destroy grid CLIENT-side, transformed through each binding
+     * into the dest world (dest-tagged, engine-direct — the isolated dest extract renders
+     * those through windows).
+     *
+     * <p>HISTORY: attempt #1 (2026-09-11) was reverted the same day under a double charge —
+     * dest crumbs did not show, AND a placement whole-block flash was co-blamed. The flash
+     * charge was CLEARED post-revert (it survived the revert and was root-caused to the
+     * prediction writing the far block without its occupancy claim — fixed separately).
+     * Attempt #2 probed the invisibility to two causes and LANDED, user-verified: the position
+     * transform must REFLECT across the cut plane (mapDir alone preserves the side — see
+     * SeamCrumbReplay), and the mirrorable dest-extract valve must admit counterpart-cell
+     * depth (RenderStates, −1.13).
+     */
+    public static final boolean DISABLE_SEAM_CRUMB_REPLAY =
+        Boolean.getBoolean("seamlessportals.disableSeamCrumbReplay");
+
+    /**
+     * Disables the CRUMB MARGIN CONSUME —
+     * {@code -Dseamlessportals.disableSeamCrumbMarginConsume=true}. Landed, undone on a
+     * contaminated live verdict (the round-9 axis correction showed the analysis had measured
+     * the wrong plane), then RE-LANDED with a full-trajectory conviction: a break crumb can
+     * drift OUT of the seam cell sideways and only then cross the plane extension in the
+     * ungoverned margin ring, resting on the wrong side. TerrainParticle-only crossing consume
+     * over the margin index the quad clip already uses; the F7-protected oscillator classes
+     * stay ungoverned there.
+     */
+    public static final boolean DISABLE_SEAM_CRUMB_MARGIN_CONSUME =
+        Boolean.getBoolean("seamlessportals.disableSeamCrumbMarginConsume");
+
+    // (DISABLE_SEAM_FAR_SIDE_PARTICLE_HIDE gated the rounds 6-18 far-side viewer hide,
+    // reverted wholesale 2026-09-11 — the final neighbor-probe form over-hid the legitimate
+    // far-half burst. The escapee class it chased is ledgered in the seam-crumb arc memory.)
+
+    /**
+     * Disables the CRUMB AXIS-EXIT CONSUME —
+     * {@code -Dseamlessportals.disableSeamCrumbAxisExitConsume=true}. The world rule that
+     * replaced every viewer-relative hide (round 19): a break crumb leaving its aperture cell
+     * through a SEAM-AXIS face (its axis coordinate exits the cell's span on the tick its cell
+     * changes) is consumed — the 18-round escapee died there; lateral and downward bounces
+     * keep their axis coordinate in-span, so both ends' legitimate bursts play unchanged.
+     */
+    public static final boolean DISABLE_SEAM_CRUMB_AXIS_EXIT_CONSUME =
+        Boolean.getBoolean("seamlessportals.disableSeamCrumbAxisExitConsume");
+
+    /**
+     * Disables the SEAM DROP-SIDE CLAMP —
+     * {@code -Dseamlessportals.disableSeamDropSideClamp=true}. A real survival-mode defect
+     * found (and briefly mis-blamed for the particle stray — the user's creative-mode tests
+     * refuted that identity) during the crumb arc: vanilla spawns drops at cell center ± 0.25
+     * and a seam cell's center IS the cut plane, so ~half of seam-block drops spawn past it. A
+     * player-break's drop is clamped to the BREAKER's side of the plane at the popResource
+     * funnel; non-player drops and post-spawn physics stay vanilla.
+     */
+    public static final boolean DISABLE_SEAM_DROP_SIDE_CLAMP =
+        Boolean.getBoolean("seamlessportals.disableSeamDropSideClamp");
 
     /**
      * Disables FRAME mirroring only — {@code -Dseamlessportals.disableFrameMirror=true}. Frame

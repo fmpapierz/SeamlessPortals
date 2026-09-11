@@ -135,6 +135,9 @@ public class MixinParticleEngine implements IEParticleManager {
             com.warwa.seamlessportals.render.SeamParticleProbe.onDestCall();
             com.warwa.seamlessportals.render.SeamParticleProbe.tickSummary();
         }
+        // (Rounds 11-15 of the 2026-09-11 crumb arc grew a dest-pass aperture cull here; its
+        // final inset form trimmed legitimate window content and never touched the user's
+        // residual — REVERTED.)
         for (net.minecraft.client.particle.ParticleRenderType type : RENDER_ORDER) {
             net.minecraft.client.particle.ParticleGroup<?> group = particles.get(type);
             if (group == null) {

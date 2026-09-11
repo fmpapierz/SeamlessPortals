@@ -194,12 +194,51 @@ public final class SeamOccupancyClient {
 
     private static void put(Level level, BlockPos pos, byte mask,
         @org.jetbrains.annotations.Nullable SeamOccupancy.Secondary secondary) {
+        // ★ RECENT-CLEAR STASH (2026-09-11 crumb round 8 — the wrong-side stray's ROOT CAUSE,
+        // read from the per-crumb life log): the occupancy CLEAR races the levelEvent-2001
+        // destroy burst, and when the clear applies first the shape hook returns the WHOLE
+        // block — vanilla then sprays crumbs into BOTH halves (four grid columns measured vs
+        // the cut's two), and the crumb birth-rest exemption kept the wrong-half births alive.
+        // The cleared mask is the missing side reference: remember it briefly so the birth
+        // rest can be SIDED (SeamParticleTeleport consults recentClearedMask).
         if (mask == 0) {
+            byte old = SeamOccupancy.occupancyOf(level, pos);
+            if (old == SeamOccupancy.HALF_POSITIVE || old == SeamOccupancy.HALF_NEGATIVE) {
+                RECENT_CLEARS.computeIfAbsent(level,
+                        k -> new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap())
+                    .put(pos.asLong(), (level.getGameTime() << 8) | (old & 0xFF));
+            }
             SeamOccupancy.clear(level, pos);
         } else {
             SeamOccupancy.set(level, pos, mask);
         }
         SeamOccupancy.setSecondary(level, pos, secondary);
+    }
+
+    /** Cell → (gameTime << 8 | oldMask) of masks cleared within the last few ticks. */
+    private static final java.util.Map<Level, it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap>
+        RECENT_CLEARS = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    private static final long RECENT_CLEAR_TTL_TICKS = 20;
+
+    /**
+     * The single-owned mask this cell held just before a recent clear, or 0 when none (no clear
+     * recorded, or older than the TTL — one crumb-burst lifetime).
+     */
+    public static byte recentClearedMask(Level level, long cellLong) {
+        it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap m = RECENT_CLEARS.get(level);
+        if (m == null) {
+            return 0;
+        }
+        long packed = m.getOrDefault(cellLong, Long.MIN_VALUE);
+        if (packed == Long.MIN_VALUE) {
+            return 0;
+        }
+        long when = packed >> 8;
+        if (level.getGameTime() - when > RECENT_CLEAR_TTL_TICKS) {
+            return 0;
+        }
+        return (byte) (packed & 0xFF);
     }
 
     /** A stashed packet for a dimension whose ClientLevel does not exist yet. */
