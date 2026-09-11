@@ -114,6 +114,19 @@ public final class AperturePassthroughLever {
         Boolean.getBoolean("seamlessportals.disableSeamTargeting");
 
     /**
+     * Disables CROSS-PORTAL ENTITY HITTING — {@code -Dseamlessportals.disableCrossPortalEntityHit
+     * =true}. New 2026-09-10 feature (a recorded DEVIATION from upstream IP, whose cross-portal
+     * interaction is block-only): the through-portal pick gains an entity leg in the destination
+     * world, and the attack packet is re-wrapped into a dimension-tagged RPC the way block
+     * action/use packets already are — so mobs can be attacked and minecarts broken through a
+     * portal window. OFF restores the block-only behavior on both client (no entity ever picked
+     * through a portal) and the routing that depends on it; the server acceptor stays registered
+     * but is only ever invoked by clients with the feature on.
+     */
+    public static final boolean DISABLE_CROSS_PORTAL_ENTITY_HIT =
+        Boolean.getBoolean("seamlessportals.disableCrossPortalEntityHit");
+
+    /**
      * Disables FRAME mirroring only — {@code -Dseamlessportals.disableFrameMirror=true}. Frame
      * mirroring (breaking obsidian on one side breaks the other; repairing one repairs the other) is
      * separable from aperture mirroring and reaches outside the opening, so it gets its own lever:

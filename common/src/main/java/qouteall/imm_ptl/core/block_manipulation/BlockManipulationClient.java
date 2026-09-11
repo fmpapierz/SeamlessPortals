@@ -30,6 +30,15 @@ public class BlockManipulationClient {
     
     public static ResourceKey<Level> remotePointedDim;
     public static HitResult remoteHitResult;
+    /**
+     * ★ CROSS-PORTAL ENTITY HIT (2026-09-10): the portal the current through-portal targeting
+     * went THROUGH — set exactly where {@code remotePointedDim} is set, cleared where it is
+     * cleared. The attack RPC sends its UUID so the server can knock the target back in the
+     * portal-transformed frame instead of the attacker's raw one (the round-1 wrong-way
+     * knockback verdict).
+     */
+    @Nullable
+    public static Portal remotePointedPortal;
     
     public static boolean isPointingToPortal() {
         return remotePointedDim != null;
@@ -63,7 +72,8 @@ public class BlockManipulationClient {
         
         remotePointedDim = null;
         remoteHitResult = null;
-        
+        remotePointedPortal = null;
+
         if (!BlockManipulationServer.canDoCrossPortalInteractionEvent.invoker().test(client.player)) {
             return;
         }
@@ -244,14 +254,108 @@ public class BlockManipulationClient {
                 ((BlockHitResult) remoteHitResult).isInside()
             );
         }
-        
+
+        // ★ CROSS-PORTAL ENTITY HIT (2026-09-10; RECORDED DEVIATION from upstream IP, whose
+        // cross-portal interaction is BLOCK-only — revert with
+        // -Dseamlessportals.disableCrossPortalEntityHit=true). The entity leg of the through-portal
+        // pick, mirroring vanilla's crosshair pick (mc262-ref LocalPlayer.java:1265-1284): the ray
+        // runs in the DEST world over the same transformed segment as the block leg, budgeted by the
+        // ENTITY interaction range along the camera ray (segment construction carries the
+        // through-portal reach exactly like the block leg above, portal scale included), and is
+        // OCCLUDED by the remote block hit (an entity behind the wall you see is not a target).
+        // An entity hit engages pointing-to-portal even over open air — the block-only tail below
+        // requires a non-air block hit, which a mob standing in a field never produces. startAttack
+        // under the switched context then sees the EntityHitResult and attacks; the outgoing
+        // ServerboundAttackPacket is re-wrapped into the dimension-tagged RPC by
+        // MixinMultiPlayerGameMode.ip_redirectPacket, and BlockManipulationServer's acceptor
+        // validates portal-aware reach server-side.
+        if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever
+            .DISABLE_CROSS_PORTAL_ENTITY_HIT
+        ) {
+            double entityReach = client.player.entityInteractionRange();
+            if (entityReach > beginDistance) {
+                Vec3 entityTo = portal.transformPoint(
+                    cameraPos.add(viewVector.scale(entityReach)));
+                double blockDistSq = remoteHitResult.getType() != HitResult.Type.MISS
+                    ? remoteHitResult.getLocation().distanceToSqr(from)
+                    : Double.MAX_VALUE;
+                double maxDistSq = Math.min(blockDistSq, from.distanceToSqr(entityTo));
+                net.minecraft.world.phys.EntityHitResult entityHit = pickEntityInWorld(
+                    world, client.player, from, entityTo,
+                    new net.minecraft.world.phys.AABB(from, entityTo).inflate(1.0),
+                    net.minecraft.world.entity.EntitySelector.CAN_BE_PICKED, maxDistSq);
+                if (entityHit != null) {
+                    remoteHitResult = entityHit;
+                    client.hitResult = createMissedHitResult(from, to);
+                    remotePointedDim = portal.getDestDim();
+                    remotePointedPortal = portal;
+                    return;
+                }
+            }
+        }
+
         if (remoteHitResult != null) {
             if (!world.getBlockState(((BlockHitResult) remoteHitResult).getBlockPos()).isAir()) {
                 client.hitResult = createMissedHitResult(from, to);
                 remotePointedDim = portal.getDestDim();
+                remotePointedPortal = portal;
             }
         }
-        
+
+    }
+
+    /**
+     * Vanilla-copy of {@code ProjectileUtil.getEntityHitResult(Entity, Vec3, Vec3, AABB,
+     * Predicate, double)} (mc262-ref ProjectileUtil.java:97-131) with ONE substitution: the
+     * level is an explicit argument instead of {@code except.level()} — the dest world of a
+     * cross-dim portal is not the excluder's level. The excluder is still passed for identity
+     * exclusion ({@code getEntities} handles an entity absent from the level vacuously) and for
+     * the root-vehicle tie-break, which cross-dim can never match — both faithful.
+     */
+    @qouteall.imm_ptl.core.miscellaneous.IPVanillaCopy
+    @Nullable
+    private static net.minecraft.world.phys.EntityHitResult pickEntityInWorld(
+        Level level,
+        net.minecraft.world.entity.Entity except,
+        Vec3 from, Vec3 to,
+        net.minecraft.world.phys.AABB box,
+        java.util.function.Predicate<net.minecraft.world.entity.Entity> matching,
+        double maxValue
+    ) {
+        double nearest = maxValue;
+        net.minecraft.world.entity.Entity hovered = null;
+        Vec3 hoveredPos = null;
+
+        for (net.minecraft.world.entity.Entity entity : level.getEntities(except, box, matching)) {
+            net.minecraft.world.phys.AABB bb =
+                entity.getBoundingBox().inflate(entity.getPickRadius());
+            java.util.Optional<Vec3> clipPoint = bb.clip(from, to);
+            if (bb.contains(from)) {
+                if (nearest >= 0.0 && entity.canBePickedFromInside()) {
+                    hovered = entity;
+                    hoveredPos = clipPoint.orElse(from);
+                    nearest = 0.0;
+                }
+            } else if (clipPoint.isPresent()) {
+                Vec3 location = clipPoint.get();
+                double dd = from.distanceToSqr(location);
+                if (dd < nearest || nearest == 0.0) {
+                    if (entity.getRootVehicle() == except.getRootVehicle()) {
+                        if (nearest == 0.0) {
+                            hovered = entity;
+                            hoveredPos = location;
+                        }
+                    } else {
+                        hovered = entity;
+                        hoveredPos = location;
+                        nearest = dd;
+                    }
+                }
+            }
+        }
+
+        return hovered == null ? null
+            : new net.minecraft.world.phys.EntityHitResult(hovered, hoveredPos);
     }
     
     /**

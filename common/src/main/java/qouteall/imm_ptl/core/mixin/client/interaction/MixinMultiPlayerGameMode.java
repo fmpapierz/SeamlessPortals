@@ -150,6 +150,22 @@ public abstract class MixinMultiPlayerGameMode implements IEClientPlayerInteract
         return ip_redirectPacket(packet);
     }
 
+    // ★ CROSS-PORTAL ENTITY HIT (2026-09-10, deviation — see BlockManipulationClient's entity
+    // leg). 26.2 attack is its own tiny packet, ServerboundAttackPacket(int entityId), sent from
+    // the ONE ClientPacketListener.send site in MultiPlayerGameMode.attack (javap'd: offset 19,
+    // between ensureHasSentCarriedItem and the player.attack client prediction). Same re-wrap
+    // route as the block action/use sends above.
+    @ModifyArg(
+        method = "attack",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/multiplayer/ClientPacketListener;send(Lnet/minecraft/network/protocol/Packet;)V"
+        )
+    )
+    private Packet redirectSendInAttack(Packet packet) {
+        return ip_redirectPacket(packet);
+    }
+
     private static Packet<?> ip_redirectPacket(Packet<?> packet) {
         if (ClientWorldLoader.getIsWorldSwitched()) {
             ResourceKey<Level> dimension = Minecraft.getInstance().level.dimension();
@@ -173,6 +189,32 @@ public abstract class MixinMultiPlayerGameMode implements IEClientPlayerInteract
                     "qouteall.imm_ptl.core.block_manipulation.BlockManipulationServer.RemoteCallables.processUseItemOnPacket",
                     dimension,
                     IPMcHelper.bufToBytes(buf)
+                );
+            }
+            // ★ CROSS-PORTAL ENTITY HIT: the attack packet, dimension-tagged like the two above,
+            // plus the UUID of the portal the pick went through — the server needs the exact
+            // window to compute knockback in the transformed frame (round-1 verdict: raw-frame
+            // knockback pulled targets TOWARD the attacker). Lever-gated at the SOURCE (the
+            // pick's entity leg) — with the lever pulled no EntityHitResult ever reaches
+            // startAttack through a portal, so this branch only sees packets the feature itself
+            // produced.
+            else if (packet instanceof net.minecraft.network.protocol.game.ServerboundAttackPacket attackPacket) {
+                qouteall.imm_ptl.core.portal.Portal viaPortal =
+                    qouteall.imm_ptl.core.block_manipulation.BlockManipulationClient.remotePointedPortal;
+                if (viaPortal == null) {
+                    // Defensive: no known window — let vanilla routing handle it (the server
+                    // will no-op on an unresolvable entity rather than attack frame-blind).
+                    return packet;
+                }
+                FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
+                net.minecraft.network.protocol.game.ServerboundAttackPacket.STREAM_CODEC
+                    .encode(buf, attackPacket);
+
+                return McRemoteProcedureCall.createPacketToSendToServer(
+                    "qouteall.imm_ptl.core.block_manipulation.BlockManipulationServer.RemoteCallables.processAttackEntityPacket",
+                    dimension,
+                    IPMcHelper.bufToBytes(buf),
+                    viaPortal.getUUID()
                 );
             }
             // ServerboundUseItemPacket is not redirected

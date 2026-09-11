@@ -51,6 +51,17 @@ public class BlockManipulationServer {
     
     public static final ThreadLocal<Context> REDIRECT_CONTEXT =
         ThreadLocal.withInitial(() -> null);
+
+    /**
+     * ★ CROSS-PORTAL ENTITY HIT (2026-09-10): the portal a cross-portal attack came THROUGH,
+     * armed only around the acceptor's single synchronous {@code player.attack} call on the
+     * server thread. {@code MixinPlayer_CrossPortalKnockback} reads it to move the knockback
+     * frame (damage-source position + yaw-derived directions) into the destination frame — the
+     * round-1 live verdict was knockback pulling targets TOWARD the attacker, because a
+     * facing-linked portal pair flips the attacker's raw frame 180°.
+     */
+    public static final ThreadLocal<Portal> CROSS_PORTAL_ATTACK_CONTEXT =
+        ThreadLocal.withInitial(() -> null);
     
     /**
      * Use this event to conditionally disable cross portal block interaction.
@@ -72,13 +83,24 @@ public class BlockManipulationServer {
         ServerPlayer player,
         BlockPos requestPos
     ) {
+        return canPlayerReachPos(dimension, player, Vec3.atCenterOf(requestPos));
+    }
+
+    // ★ CROSS-PORTAL ENTITY HIT (2026-09-10): the reach core, extracted UNCHANGED from
+    // canPlayerReach so the entity acceptor can gate on a Vec3 (an entity's AABB center) with
+    // the exact constants and portal-transform shape the block path has always used — one
+    // reach policy for every cross-portal interaction.
+    private static boolean canPlayerReachPos(
+        ResourceKey<Level> dimension,
+        ServerPlayer player,
+        Vec3 pos
+    ) {
         if (!canDoCrossPortalInteractionEvent.invoker().test(player)) {
             return false;
         }
-        
+
         double playerScale = ScaleUtils.computeBlockReachScale(player);
-        
-        Vec3 pos = Vec3.atCenterOf(requestPos);
+
         Vec3 playerPos = player.position();
         double distanceSquare = 6 * 6 * 4 * 4 * playerScale * playerScale;
         if (player.level().dimension() == dimension) {
@@ -230,7 +252,7 @@ public class BlockManipulationServer {
         ) {
             FriendlyByteBuf buf = IPMcHelper.bytesToBuf(packetBytes);
             ServerboundUseItemOnPacket packet = ServerboundUseItemOnPacket.STREAM_CODEC.decode(buf);
-            
+
             ServerLevel world = player.server.getLevel(dimension);
             Validate.notNull(world, "missing %s", dimension.identifier());
 
@@ -238,6 +260,32 @@ public class BlockManipulationServer {
                 new Context(world, packet.getHitResult()),
                 () -> {
                     doProcessUseItemOn(world, player, packet);
+                }
+            );
+        }
+
+        /**
+         * ★ CROSS-PORTAL ENTITY HIT (2026-09-10; deviation from upstream IP — block-only there).
+         * {@link qouteall.imm_ptl.core.mixin.client.interaction.MixinMultiPlayerGameMode#ip_redirectPacket}
+         */
+        @SuppressWarnings("JavadocReference")
+        public static void processAttackEntityPacket(
+            ServerPlayer player,
+            ResourceKey<Level> dimension,
+            byte[] packetBytes,
+            java.util.UUID portalId
+        ) {
+            FriendlyByteBuf buf = IPMcHelper.bytesToBuf(packetBytes);
+            net.minecraft.network.protocol.game.ServerboundAttackPacket packet =
+                net.minecraft.network.protocol.game.ServerboundAttackPacket.STREAM_CODEC.decode(buf);
+
+            ServerLevel world = player.server.getLevel(dimension);
+            Validate.notNull(world, "missing %s", dimension.identifier());
+
+            withRedirect(
+                new Context(world, null),
+                () -> {
+                    doProcessAttackEntity(world, player, packet, portalId);
                 }
             );
         }
@@ -356,6 +404,89 @@ public class BlockManipulationServer {
         }
     }
     
+    /**
+     * ★ CROSS-PORTAL ENTITY HIT acceptor — {@code @IPVanillaCopy} of
+     * {@code ServerGamePacketListenerImpl.handleAttack} (mc262-ref
+     * ServerGamePacketListenerImpl.java:1812-1838) with four substitutions:
+     * <ul>
+     *   <li>the level comes from the DIMENSION ARGUMENT, not {@code player.level()} — the whole
+     *       point;</li>
+     *   <li>the reach gate is the portal-aware {@link #canPlayerReachPos} against the target's
+     *       AABB center instead of {@code isWithinAttackRange} (which measures from the player's
+     *       raw position and can never pass through a portal, same substitution the block path
+     *       makes for {@code canInteractWithBlock});</li>
+     *   <li>the invalid-target branch LOGS AND RETURNS instead of disconnecting — vanilla may
+     *       assume a vanilla client never sends these, but this RPC races real state changes (the
+     *       picked entity can become an item drop between client frame and server tick), so a kick
+     *       would punish latency;</li>
+     *   <li>{@code Portal} entities are rejected — the pick's CAN_BE_PICKED already excludes them
+     *       (portals are not pickable), so a portal id here is a forged or garbage packet.</li>
+     * </ul>
+     * The PIERCING_WEAPON refusal, {@code isItemEnabled}, {@code cannotAttackWithItem(item, 5)}
+     * and the final {@code player.attack(target)} are verbatim. Cross-level {@code attack} is
+     * sound: damage flows through {@code Entity.hurtOrSimulate}, which resolves the TARGET's own
+     * level (mc262-ref Entity.java:1919-1921), so deaths and drops land in the target's dimension;
+     * the attacker-side sound/exhaustion run in the attacker's level as vanilla intends.
+     */
+    @IPVanillaCopy
+    private static void doProcessAttackEntity(
+        ServerLevel world, ServerPlayer player,
+        net.minecraft.network.protocol.game.ServerboundAttackPacket packet,
+        java.util.UUID portalId
+    ) {
+        if (player.isSpectator()) {
+            return;
+        }
+        net.minecraft.world.entity.Entity target = world.getEntityOrPart(packet.entityId());
+        player.resetLastActionTime();
+        if (target == null || !world.getWorldBorder().isWithinBounds(target.blockPosition())) {
+            return;
+        }
+        ItemStack mainHandItem = player.getMainHandItem();
+        if (!canPlayerReachPos(
+            world.dimension(), player, target.getBoundingBox().getCenter())
+        ) {
+            LOGGER.error("Reject cross-portal attack {} {} {}", player, world, target);
+            return;
+        }
+        // ★ KNOCKBACK FRAME: resolve the portal the CLIENT says the hit went through (it lives
+        // in the attacker's own level) and validate it independently of the coarse reach gate
+        // above — dest must match and the portal must be interactable. An invalid id is a forged
+        // or stale packet: reject rather than attack in the wrong frame.
+        if (!(player.level().getEntity(portalId) instanceof Portal viaPortal)
+            || viaPortal.getDestDim() != world.dimension()
+            || !viaPortal.isInteractableBy(player)
+        ) {
+            LOGGER.error("Reject cross-portal attack via invalid portal {} {} {}",
+                player, world, portalId);
+            return;
+        }
+        if (mainHandItem.has(net.minecraft.core.component.DataComponents.PIERCING_WEAPON)) {
+            return;
+        }
+        if (target instanceof net.minecraft.world.entity.item.ItemEntity
+            || target instanceof net.minecraft.world.entity.ExperienceOrb
+            || target == player
+            || target instanceof Portal
+            || target instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow arrow
+                && !arrow.isAttackable()
+        ) {
+            LOGGER.warn("Player {} tried to attack an invalid entity cross-portal", player.getPlainTextName());
+            return;
+        }
+        if (mainHandItem.isItemEnabled(world.enabledFeatures())) {
+            if (!player.cannotAttackWithItem(mainHandItem, 5)) {
+                CROSS_PORTAL_ATTACK_CONTEXT.set(viaPortal);
+                try {
+                    player.attack(target);
+                }
+                finally {
+                    CROSS_PORTAL_ATTACK_CONTEXT.remove();
+                }
+            }
+        }
+    }
+
     public static boolean validateReach(Player player, Level targetWorld, BlockPos targetPos) {
         PortalUtils.PortalAwareRaytraceResult result = PortalUtils.portalAwareRayTrace(
             player.level(),
