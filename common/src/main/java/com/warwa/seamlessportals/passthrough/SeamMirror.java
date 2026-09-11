@@ -586,6 +586,39 @@ public final class SeamMirror {
         // UPDATE_NEIGHBORS is deliberately KEPT: the destination's neighbours must still be notified,
         // so a track on the far side reacts. Only the mirrored block's own self-resolution is
         // suppressed.
+        // ★ OCCUPANCY BEFORE THE BLOCK (2026-09-11 live report, survived the crumb-replay revert
+        // so it is its own defect: placing on source side A with side B's window in view flashed
+        // the ENTIRE seam block at B for a split second before it cut to its half). Mechanism:
+        // this method used to claim the crossing half AFTER setBlock, so the client always
+        // received B's vanilla block update FIRST and the occupancy payload second — the first
+        // remesh drew the block WHOLE ("the shape hook, correctly refusing to guess, draws the
+        // cell WHOLE" — the steady-state version of this was the live 2026-08-02 full-block bug)
+        // and only the occupancy-triggered second remesh cut it. Claiming and broadcasting
+        // BEFORE the write puts the mask on the wire first (one ordered connection), so whenever
+        // the client meshes the new block the cut is already known: no whole-block frame exists.
+        // claimCrossingHalf reads only the SOURCE occupancy (already recorded — it is what this
+        // claim has always keyed off) and the binding, never the destination state, so it is
+        // write-order independent; occupancy-on-air is a normal transient the client already
+        // handles (breaks clear occupancy late). Both the claim and the provenance mark were and
+        // remain unconditional on setBlock's result.
+        if (!refinementOnly) {
+            // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player.
+            // The user's break rule ("frame break clears the destination half") is undecidable
+            // without it. PROVENANCE IS NEVER TOUCHED BY A REFINEMENT — a refinement neither
+            // creates nor removes, so it must not change which half owns the block. (Panel
+            // finding, 2026-07-27; on the refinement path the destination is already
+            // provenance-marked — the refinement guard above requires it.)
+            holder.seamlessportals$mirrorCreatedCells().add(destKey);
+            SeamOccupancySavedData.persistMirrorCreated(dest, destKey, true);
+            // ★ THE CROSSING HALF (FRACTIONAL_DESIGN.md §2a.0). The mirror writes a whole
+            // BlockState — Minecraft has no other way to put material in a cell — so "half a
+            // block" is expressed by recording WHICH half this object owns here. WHICH half: the
+            // one that makes the object CONTINUOUS — the source keeps the material on its owned
+            // side, so what crosses extends from the plane in the OPPOSITE direction, mapped
+            // through the portal's own rotation: the side you emerge on walking through, per the
+            // user's decision.
+            SeamFractional.claimCrossingHalf(sourceLevel, sourcePos, dest, destPos, binding);
+        }
         traceBegin(dest, destPos, rotated, sourceLevel, sourcePos, "aperture-mirror");
         // (c) D1 IDENTITY: name the exact cell this write targets, so the cross-seam dispatch
         // skips only OUR write's driver echo — cascade flips at other seam cells inside this
@@ -620,30 +653,9 @@ public final class SeamMirror {
         // no-op when nothing moved; a second writer outside it ping-ponged 1.9M flips through
         // its own update fans in one live session).
         SeamWireBridge.refreshSecondary(dest, destPos);
-        // PROVENANCE: this cell's occupant was created by mirroring, not placed by a player. The
-        // user's break rule ("frame break clears the destination half") is undecidable without it.
-        // PROVENANCE IS NEVER TOUCHED BY A REFINEMENT — a refinement neither creates nor removes,
-        // so it must not change which half owns the block. The first build's unconditional add here
-        // stamped mirror-created onto the PLAYER's half whenever a far-side rewrite synced back,
-        // after which a frame break deleted the player's own rail. (Panel finding, 2026-07-27;
-        // three lenses independently.) On this path the destination is already provenance-marked —
-        // the refinement guard above requires it — so skipping the add loses nothing.
-        if (!refinementOnly) {
-            holder.seamlessportals$mirrorCreatedCells().add(destKey);
-            SeamOccupancySavedData.persistMirrorCreated(dest, destKey, true);
-            // ★ THE CROSSING HALF (FRACTIONAL_DESIGN.md §2a.0). The mirror writes a whole BlockState
-            // — Minecraft has no other way to put material in a cell — so "half a block" is
-            // expressed by recording WHICH half this object owns here. Without this claim the
-            // destination cell has no owner and the shape hook correctly leaves it WHOLE, which is
-            // exactly the live 2026-08-02 report: the source half was right while the destination
-            // showed a full block from both of its sides.
-            //
-            // WHICH half: the one that makes the object CONTINUOUS. The source keeps the material on
-            // its owned side, so what crosses extends from the plane in the OPPOSITE direction; map
-            // that direction through the portal's own rotation and it names the destination side the
-            // material arrives on — the side you emerge on walking through, per the user's decision.
-            SeamFractional.claimCrossingHalf(sourceLevel, sourcePos, dest, destPos, binding);
-        }
+        // (Provenance mark + crossing-half claim moved ABOVE the setBlock — see the OCCUPANCY
+        // BEFORE THE BLOCK note there: the claim's broadcast must reach the client before the
+        // block update or the first remesh draws the mirrored block whole for a split second.)
         mirroredWrites++;
         probe("mirrored to", destPos, dest, sourcePos, sourceLevel);
     }

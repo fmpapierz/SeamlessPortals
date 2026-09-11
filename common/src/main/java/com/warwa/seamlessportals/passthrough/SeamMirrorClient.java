@@ -141,6 +141,24 @@ public final class SeamMirrorClient {
                     declinedNoDestLevel++;
                     continue;
                 }
+                // ★ PREDICT THE CROSSING HALF TOO (2026-09-11 live report, the whole-block
+                // flash at the far cell that survived both the crumb-replay revert AND the
+                // server-side occupancy-before-block reorder — because it is CLIENT-LOCAL: this
+                // prediction wrote the far BLOCK in the same frame but never the occupancy
+                // claim, so the shape hook — correctly refusing to guess — drew the predicted
+                // block WHOLE for the full server round-trip until the authoritative mask
+                // arrived and the recut remesh landed. The same claim the server mirror makes,
+                // made here for the same reason the block itself is predicted; its inputs are
+                // client-ready by construction (recordPlacement claims the SOURCE half at
+                // BlockItem.place HEAD — the ordering MixinBlockItemPlaceSource fought for —
+                // and this driver runs inside that call), its broadcasts are ServerLevel-gated
+                // no-ops, and on the ack the server's own broadcast REPLACES the mask either
+                // way. Gated to genuine placements into an empty far cell: a refused placement
+                // then leaves at worst a stale mask on AIR (invisible, replaced by the next
+                // authoritative broadcast), never a wrongly-cut existing block.
+                if (!newState.isAir() && dest.getBlockState(destPos).isAir()) {
+                    SeamFractional.claimCrossingHalf(level, pos, dest, destPos, binding);
+                }
                 predictOne(dest, destPos, newState.rotate(binding.stateRotation()), mc);
             }
         }
