@@ -28,6 +28,51 @@ public class MixinIrisHandDrawState_GlCommandEncoder {
         require = 0
     )
     private void ip_handDrawStateDump(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        // 26.3: this seam now also carries a FIX, not only the dump — the crossing-window hand bracket picks its remap
+        // direction from the depth function of the hand draw that is about to issue (the convention flipped LEQUAL ->
+        // GEQUAL between 26.2 and 26.3; full story on IrisHandSeamDepthBracket). Runs BEFORE the dump so a dump row shows
+        // the range the draw really runs under. One static boolean read for every draw that is not a crossing-window hand
+        // draw; the iris reference only executes while the bracket is armed (iris present by construction).
+        if (qouteall.imm_ptl.core.compat.iris_compatibility.IrisHandSeamDepthBracket.isArmedNow()
+            && !qouteall.imm_ptl.core.render.IrisCompatPaste.STAMP_DRAWING) {
+            try {
+                net.irisshaders.iris.pathways.HandRenderer bracketHr =
+                    net.irisshaders.iris.pathways.HandRenderer.INSTANCE;
+                if (bracketHr != null && bracketHr.isActive()) {
+                    qouteall.imm_ptl.core.compat.iris_compatibility.IrisHandSeamDepthBracket.onHandDrawSetup();
+                }
+            }
+            catch (Throwable ignored) {
+                // iris drifted: the bracket keeps its provisional direction
+            }
+        }
+        // 26.3: IS5-HAND-TP — count the real hand draws of each frame around a client teleport (default-off probe; after the
+        // bracket above so the recorded depth range is the one the draw runs under).
+        if (com.warwa.seamlessportals.render.SeamHandTeleportProbe.ENABLED
+            && !qouteall.imm_ptl.core.render.IrisCompatPaste.STAMP_DRAWING) {
+            try {
+                net.irisshaders.iris.pathways.HandRenderer probeHr =
+                    net.irisshaders.iris.pathways.HandRenderer.INSTANCE;
+                if (probeHr != null && probeHr.isActive()) {
+                    com.warwa.seamlessportals.render.SeamHandTeleportProbe.onHandDraw();
+                }
+            }
+            catch (Throwable ignored) {
+                // iris drifted: the probe simply records no draws
+            }
+        }
+        // 26.3: the portal stamp's depth-guard direction is read from the depth function its own draw executes (the
+        // convention flipped LEQUAL -> GEQUAL between 26.2 and 26.3, exactly like the hand's; full story on
+        // portal_area_sample_ceil.fsh / IrisCompatPaste.onStampDrawSetup). Always on: one glGetInteger per stamp draw.
+        if (qouteall.imm_ptl.core.render.IrisCompatPaste.STAMP_DRAWING) {
+            try {
+                qouteall.imm_ptl.core.render.IrisCompatPaste.onStampDrawSetup(
+                    org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_DEPTH_FUNC));
+            }
+            catch (Throwable ignored) {
+                // never let the measurement touch the encoder path; the stamp keeps its previous direction
+            }
+        }
         if (!HandDrawStateDump.ENABLED) {
             return;
         }

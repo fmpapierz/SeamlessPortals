@@ -273,6 +273,59 @@ public class IPGlobal {
     public static final boolean DEST_CHUNK_PREP_FLAVOUR_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableDestChunkPrepFlavour");
 
+    // 26.3 / SODIUM 0.9.2 OUTER-VIEW RE-PREPARE (SodiumInterface.OnSodiumPresent#ip_onPortalLayerPopped) — DEFAULT ON.
+    // Sodium 0.9.2 split DefaultChunkRenderer.render into prepare (fills the per-region batches for all three passes and
+    // writes a new per-renderer shouldDraw[]) and a render that only draws. On a renderer shared with a portal view
+    // (same-dim portal, A->B->A nesting) the dest pass's prepare overwrites both for the outer view, whose later draws
+    // then obey the portal view's shouldDraw[] and read cleared batches: on the improved-transparency path that is the
+    // main view's whole translucent terrain (measured: every main translucent draw skipped while a portal with no
+    // translucent geometry renders; the user's "water/translucent flickering like crazy" with sodium). The fix re-runs
+    // the outer view's own prepare when a portal layer is popped. Pass this to REPRODUCE the defect —
+    //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisableSodiumOuterReprepare=true
+    public static final boolean SODIUM_OUTER_REPREPARE_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableSodiumOuterReprepare");
+
+    /** Confirm-counter: outer-view sodium re-prepares actually run (render-thread int; RunConfigReport [2/3] surfaces
+     *  it). Zero with sodium + a same-dim portal in view means the fix is NOT live — read it before adjudicating. */
+    public static int sodiumOuterReprepareCount = 0;
+
+    // 26.3 / SODIUM 0.9.2 + IRIS 1.11.6 ARENA BATCH CLEAR (MixinSodiumRenderRegion HOOKS 5-7) — DEFAULT ON. Sodium 0.9.2's
+    // ArenaAggregator moves section data and invalidates a region's cached draw batches through five RenderRegion
+    // methods; iris @Redirects the invalidation call inside every one of them to its own routine, which never reaches
+    // the hooks that keep this mod's per-portal-layer batches in step. Those batches then draw from stale buffer
+    // offsets — the user's flickering "ghost terrain / xray caves / terrain in sky" inside portal views, Fabric+Iris and
+    // Quilt+Iris only. The fix injects on the five METHODS. Pass this to REPRODUCE the defect —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSodiumArenaBatchClear=true
+    public static final boolean SODIUM_ARENA_BATCH_CLEAR_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableSodiumArenaBatchClear");
+
+    /** Confirm-counter: still-FILLED per-portal-layer batches that HOOKS 5-7 cleared, i.e. batches nothing else had
+     *  invalidated and that would have drawn stale. Expected: &gt; 0 with iris installed, 0 without (sodium's own
+     *  invalidation already cleared them). */
+    public static int sodiumArenaLayerBatchesClearedCount = 0;
+
+    /** Lever-OFF twin: still-filled per-portal-layer batches LEFT in place after a geometry/index move — each one is a
+     *  batch drawn from stale offsets until its layer's list next changes. */
+    public static int sodiumArenaLayerBatchesLeftStaleCount = 0;
+
+    // 26.3 / SODIUM 0.9.2 + IRIS SHADERS ON — SCOPED LIST CLEAR (MixinSodiumRenderRegion HOOKS 2/3) — DEFAULT ON. A list
+    // change clears only the per-portal-layer batches of the scope that is rendering (shadow vs camera), the way
+    // sodium+iris clear only the map iris has swapped in. The 26.2 mirror cleared both scopes; on 0.9.2 a view's frame
+    // runs camera prepare -> shadow pass -> camera draws, so a shadow-list change (any pan) wiped the camera batches
+    // between their prepare and their draw: the user's rapid "xray cave" flicker of the portal window under a shaderpack.
+    // Pass this to REPRODUCE it —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSodiumScopedListClear=true
+    public static final boolean SODIUM_SCOPED_LIST_CLEAR_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableSodiumScopedListClear");
+
+    /** Confirm-counter: FILLED other-scope per-portal-layer batches a list change was about to wipe and the scoped
+     *  clear SPARED. &gt; 0 under a shaderpack while panning with a portal in view = the fix is live and needed. */
+    public static int sodiumOtherScopeLayerBatchesSparedCount = 0;
+
+    /** Lever-OFF twin: filled other-scope batches a list change WIPED — each one a region the portal view then fails to
+     *  draw this frame. */
+    public static int sodiumOtherScopeLayerBatchesWipedCount = 0;
+
     // TP-XDIM ESCAPE HATCH — DEFAULT OFF. Decline the cross-portal view entirely while a shaderpack
     // is running: vanilla renderLevel renders the frame and the third-person camera sees the SOURCE
     // world from inside the portal wall (IP's pre-cross-view behaviour — clipping, never
@@ -912,6 +965,25 @@ public class IPGlobal {
     public static final boolean HAND_SEAM_DEPTH_BRACKET_DISABLED_LEVER =
         Boolean.getBoolean("seamlessportals.disableHandSeamDepthBracket");
 
+    // 26.3 IS5-HAND DIRECTION — the bracket above now reads GL_DEPTH_FUNC at every crossing-window hand draw and remaps
+    // the hand to whichever end of the depth range WINS under it (26.2 / iris 1.11.2 measured LEQUAL; 26.3 / iris 1.11.6
+    // measures GEQUAL, under which the fixed 26.2 remap made the hand vanish for the frames spent inside the crossing
+    // window — the user's "hand disappearing/reappearing when teleporting with shaders enabled"). Pass this to force the
+    // fixed 26.2 remap back and REPRODUCE that —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandBracketLegacyLequal=true
+    public static final boolean HAND_BRACKET_LEGACY_LEQUAL_LEVER =
+        Boolean.getBoolean("seamlessportals.handBracketLegacyLequal");
+
+    // 26.3 STAMP DEPTH-GUARD DIRECTION — the shaderpack portal stamp (IrisCompatPaste) keeps its window BEHIND the hand at
+    // a crossing with a per-fragment depth guard: the 26.2 FLOOR max(z, 0.001) is right for a LEQUAL draw; 26.3's stamp
+    // draw executes GEQUAL, so the shipped stamp now picks the mirrored CEILING min(z, 0.999) from the depth function its
+    // own draw measured. Without it the portal view painted over the hand in the last 1-2 frames before every crossing
+    // (the user's same-dim "hand disappears/reappears for a split second when teleporting" with shaders on). Pass this
+    // to keep the 26.2 floor and REPRODUCE that —
+    //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampFloorLegacyLequal=true
+    public static final boolean STAMP_FLOOR_LEGACY_LEQUAL_LEVER =
+        Boolean.getBoolean("seamlessportals.stampFloorLegacyLequal");
+
     // IS5-HAND-FUNC (2026-07-28, DEFAULT OFF — premise REFUTED by the draw-time dump: the
     // hand draws re-apply their own LEQUAL per draw, so the HEAD force is inert for them and
     // LEQUAL is the hand pass's NORMAL convention, not a leak. Kept as an opt-in experiment
@@ -959,6 +1031,8 @@ public class IPGlobal {
     // The survival table caught the stamp overpainting the hand between the anchor and the
     // blit-back; the hand pass's measured convention is small-is-near/LEQUAL, so the shipped
     // GEQUAL lets the aperture beat everything NEARER than it. A/B: -PstampLequal.
+    // 26.3: that premise is 26.2-only — on 26.3 the hand AND the stamp draws both measure GEQUAL (large-is-near; ledger
+    // §4L/§4M), so under this lever the LEQUAL sibling now inverts the shipped occlusion. Diagnostic history, not a fix.
     public static final boolean STAMP_LEQUAL_LEVER =
         Boolean.getBoolean("seamlessportals.stampLequal");
 

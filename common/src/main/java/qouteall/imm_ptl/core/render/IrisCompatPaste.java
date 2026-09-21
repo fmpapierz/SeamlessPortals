@@ -101,6 +101,17 @@ import java.util.OptionalDouble;
 public class IrisCompatPaste {
 
     private static RenderPipeline PORTAL_AREA_SAMPLE;
+    /** 26.3: the shipped stamp with the depth guard mirrored for a GEQUAL-executing draw (see portal_area_sample_ceil.fsh).
+     *  Chosen instead of {@link #PORTAL_AREA_SAMPLE} while {@link #stampDepthIsGreaterFamily}. */
+    private static RenderPipeline PORTAL_AREA_SAMPLE_CEIL;
+    /**
+     * 26.3: the direction of the depth test the stamp's draw last EXECUTED (read at {@code GlCommandEncoder.setupDraw}
+     * RETURN by {@code MixinIrisHandDrawState_GlCommandEncoder} → {@link #onStampDrawSetup}). 26.2 / iris 1.11.2 measured
+     * LEQUAL; 26.3 / iris 1.11.6 measures GEQUAL — the default is the latter, so the first stamp of a session is right on
+     * 26.3; every later one follows the measurement (a change of convention costs at most one draw).
+     */
+    private static volatile boolean stampDepthIsGreaterFamily = true;
+    private static boolean stampDirectionAnnounced = false;
     /** IS5-MB attribution sibling: identical but depth WRITE off. Selected only by the lever. */
     private static RenderPipeline PORTAL_AREA_SAMPLE_NO_DEPTH_WRITE;
     /** IS5-SEAM §2d sibling: identical but the depth state is fully DISABLED (Optional.empty()).
@@ -115,7 +126,9 @@ public class IrisCompatPaste {
      *  The survival table (2026-07-28) caught the stamp overpainting the hand between the anchor
      *  and the blit-back; the hand pass's measured convention is small-is-near/LEQUAL, so the
      *  shipped GEQUAL (a reversed-Z assumption) lets the aperture beat everything NEARER than
-     *  it — including the hand. Selected only by -PstampLequal. */
+     *  it — including the hand. Selected only by -PstampLequal.
+     *  26.3: the premise is 26.2-only — the stamp's draw now EXECUTES GEQUAL and so does the hand's; the shipped guard
+     *  follows that (see {@link #PORTAL_AREA_SAMPLE_CEIL}). */
     private static RenderPipeline PORTAL_AREA_SAMPLE_LEQUAL;
 
     /** IS5-STAMP-EAT: true only while the stamp's drawIndexed is executing — lets the encoder
@@ -227,6 +240,30 @@ public class IrisCompatPaste {
                 .withCull(false)
                 .build();
             PORTAL_AREA_SAMPLE = (RenderPipeline) registerMethod.invoke(null, portalAreaSample);
+
+            // 26.3: the shipped stamp's twin for a GEQUAL-executing draw — identical except the fragment stage carries the
+            // CEILING (portal_area_sample_ceil.fsh: min(z, 0.999)) instead of the LEQUAL-era FLOOR. Only meaningful when
+            // the fragment-stage guard is the one in force; on the lever legs that move or drop it, the twin is the SAME
+            // pipeline object (no second registration). Selected per draw by selectStampPipeline from the depth function
+            // the previous stamp draw executed — see onStampDrawSetup.
+            if (fragmentFloorActive()) {
+                RenderPipeline portalAreaSampleCeil = RenderPipeline.builder()
+                    .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/portal_area_sample_ceil"))
+                    .withVertexShader(stampVertexShaderId())
+                    .withFragmentShader(Identifier.fromNamespaceAndPath("seamlessportals", "core/portal_area_sample_ceil"))
+                    .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                    .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
+                    .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
+                    .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
+                    .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                    .withColorTargetState(com.mojang.renderpearl.api.pipeline.ColorTargetState.DEFAULT)
+                    .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true))
+                    .withCull(false)
+                    .build();
+                PORTAL_AREA_SAMPLE_CEIL = (RenderPipeline) registerMethod.invoke(null, portalAreaSampleCeil);
+            } else {
+                PORTAL_AREA_SAMPLE_CEIL = PORTAL_AREA_SAMPLE;
+            }
 
             // IS5-MB DIAGNOSTIC SIBLING — identical except depth WRITE is off. Purpose: attribute the
             // Motion-Blur portal-window blur. MEASURED so far: every uniform input to composite4's
@@ -703,6 +740,31 @@ public class IrisCompatPaste {
     private record StampSelection(RenderPipeline pipeline, String name, String warnings) {}
 
     /**
+     * 26.3: called at {@code GlCommandEncoder.setupDraw} RETURN for every stamp draw ({@link #STAMP_DRAWING} set), with the
+     * GL depth function that draw is about to run under. Records its direction for the NEXT stamp's pipeline choice
+     * ({@code ALWAYS}/{@code EQUAL}/{@code NEVER} keep the previous one — nothing to guard). One once-only line names what
+     * was read. Never throws into the encoder (the caller also catches).
+     */
+    public static void onStampDrawSetup(int glDepthFunc) {
+        boolean greater;
+        if (glDepthFunc == org.lwjgl.opengl.GL11.GL_GEQUAL || glDepthFunc == org.lwjgl.opengl.GL11.GL_GREATER) {
+            greater = true;
+        } else if (glDepthFunc == org.lwjgl.opengl.GL11.GL_LEQUAL || glDepthFunc == org.lwjgl.opengl.GL11.GL_LESS) {
+            greater = false;
+        } else {
+            return;
+        }
+        stampDepthIsGreaterFamily = greater;
+        if (!stampDirectionAnnounced) {
+            stampDirectionAnnounced = true;
+            Helper.LOGGER.info("[Seamless Portals] stamp depth guard DIRECTION (once-only, measured at the stamp draw):"
+                + " GL_DEPTH_FUNC=0x{} -> {} (A/B: -PstampFloorLegacyLequal keeps the 26.2 floor).",
+                Integer.toHexString(glDepthFunc),
+                greater ? "CEILING min(z, 0.999) — near is large" : "FLOOR max(z, 0.001) — near is small");
+        }
+    }
+
+    /**
      * IS5-SEAM / IS5-MB — the ONE place the stamp pipeline is chosen; also consumed by the census
      * so every 1 Hz row names the pipeline in force. Two orthogonal diagnostic axes:
      * <ul>
@@ -768,8 +830,15 @@ public class IrisCompatPaste {
             name = "SAMPLE+LEQUAL";
         }
         else {
-            intended = PORTAL_AREA_SAMPLE;
-            name = "SAMPLE(default)";
+            // 26.3: the shipped stamp's depth guard follows the depth test the stamp's draw executes — the LEQUAL-era
+            // FLOOR or its GEQUAL mirror, the CEILING (portal_area_sample_ceil.fsh). The lever keeps the floor
+            // unconditionally and reproduces the hand vanishing in the last frames before a crossing under a shaderpack.
+            //   (26.2) intended = PORTAL_AREA_SAMPLE; name = "SAMPLE(default)";
+            boolean ceil = stampDepthIsGreaterFamily && fragmentFloorActive()
+                && !qouteall.imm_ptl.core.IPGlobal.STAMP_FLOOR_LEGACY_LEQUAL_LEVER
+                && PORTAL_AREA_SAMPLE_CEIL != null;
+            intended = ceil ? PORTAL_AREA_SAMPLE_CEIL : PORTAL_AREA_SAMPLE;
+            name = ceil ? "SAMPLE(default, GEQUAL ceiling)" : "SAMPLE(default)";
         }
         if (intended == null) {
             w.append(" THE REQUESTED PIPELINE (").append(name).append(") FAILED TO REGISTER —"

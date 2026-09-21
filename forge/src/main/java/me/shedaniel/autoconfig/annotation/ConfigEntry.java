@@ -11,6 +11,12 @@ import java.lang.annotation.RetentionPolicy;
  * GUI-layout hints in Cloth; the shipped Gson serializer ignores them (IPConfig's own onConfigChanged()
  * does the value clamping the BoundedDiscrete bounds describe). No {@code @Target} is set so the shell
  * never conflicts with a usage context.
+ *
+ * <p>FORGE 26.3: on Forge they are GUI hints again, for this module's own screen —
+ * {@code me.shedaniel.autoconfig.gui.NativeConfigOption#scan} reads {@link Category}, {@link BoundedDiscrete},
+ * {@link Gui.Tooltip} and {@link Gui.Excluded} reflectively at runtime ({@link Gui.EnumHandler} is not consulted:
+ * every enum gets a cycle button). That makes the {@code RUNTIME} retention below load-bearing — without it the
+ * screen would show every field, excluded ones included, on one page with no tooltips and no sliders.
  */
 public class ConfigEntry {
     private ConfigEntry() {

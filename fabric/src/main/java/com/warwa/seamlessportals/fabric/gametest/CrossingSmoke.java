@@ -369,6 +369,109 @@ public class CrossingSmoke implements FabricClientGameTest {
             // §2.7 shot 2 — the converged frame (150 ticks): portal D's window is the
             // decisive pixel pair (sodium row = the obsidian WALL; plain row = sky).
             maybeScreenshot(context, "is1-leg7-samedim-ground-dest-converged");
+            // 26.3 FIXTURE LEVER (-PgametestPanLeg; DEFAULT OFF, inert for the default gate): PAN with the portal row in view.
+            // Every hold in this suite keeps the camera still, and a still camera never changes iris's shadow lists — the
+            // user's shaderpack flicker ("the portal window flickers LIKE CRAZY especially when i pan", 2026-09-21) was
+            // therefore out of this fixture's reach. 100 ticks of +-3 degrees of yaw per tick around the facing-north pose
+            // (the row stays on screen: sweep = +-30 degrees), one screenshot mid-sweep, pose restored after. Evidence only —
+            // asserts nothing; the [SODIUM PREPARE PROBE] line's CAMERA-DRAW HOLES column is the measurement.
+            if (Boolean.getBoolean("seamlessportals.gametest.panLeg")) {
+                SeamlessPortalsConstants.LOGGER.info(LOG + "fixture lever: PAN LEG start (100 ticks, +-30 degrees about yaw 180)");
+                for (int panTick = 0; panTick < 100; panTick++) {
+                    final int t = panTick;
+                    context.runOnClient(mc -> {
+                        // triangle wave: 0 -> +30 -> -30 -> 0 over 40 ticks, 3 degrees per tick
+                        int phase = t % 40;
+                        float offset = phase < 10 ? phase * 3f : phase < 30 ? (20 - phase) * 3f : (phase - 40) * 3f;
+                        mc.player.setYRot(180f + offset);
+                        mc.player.setXRot(0f);
+                    });
+                    context.waitTicks(1);
+                    if (panTick == 45) {
+                        maybeScreenshot(context, "pan-leg-mid-sweep");
+                    }
+                }
+                context.runOnClient(mc -> {
+                    mc.player.setYRot(180f);
+                    mc.player.setXRot(0f);
+                });
+                context.waitTicks(5);
+                maybeScreenshot(context, "pan-leg-after");
+                SeamlessPortalsConstants.LOGGER.info(LOG + "fixture lever: PAN LEG end");
+            }
+            // 26.3 FIXTURE LEVER (-PgametestCrossingWindowHand; DEFAULT OFF, inert for the default gate): hold the camera INSIDE a
+            // portal's crossing window. No leg in this suite ever puts the camera within 0.35 of a portal plane (the player
+            // stands 8 blocks south of the row and teleports by pearl), so the shaderpack hand bracket
+            // (IrisHandSeamDepthBracket) never armed here and its direction was never exercised — the user's "hand
+            // disappearing/reappearing when teleporting with shaders enabled" (2026-09-21) was out of this fixture's reach.
+            // The player is placed 0.2 blocks south of same-dim portal A's plane, facing it, and held 30 ticks (no motion:
+            // the plane is never crossed); one screenshot in the window, one after stepping back. Evidence only — the hand
+            // region of the two shots and the IS5-HAND-DRAW [WINDOW] rows are the measurement.
+            if (Boolean.getBoolean("seamlessportals.gametest.crossingWindowHand")) {
+                runCommands(context, List.of(
+                    "tp @p " + (px + 0.5) + " " + py + " " + (planeZ + 0.2) + " 180 0"
+                ));
+                context.waitTicks(30);
+                maybeScreenshot(context, "hand-in-crossing-window");
+                runCommands(context, List.of(
+                    "tp @p " + (px + 0.5) + " " + py + " " + (pz + 0.5) + " 180 0"
+                ));
+                context.waitTicks(20);
+                maybeScreenshot(context, "hand-after-stepping-back");
+                SeamlessPortalsConstants.LOGGER.info(LOG + "fixture lever: crossing-window hand hold done");
+            }
+            // 26.3 FIXTURE LEVER (-PgametestSameDimWalk; DEFAULT OFF, inert for the default gate): WALK the player through a
+            // same-dim, bi-way portal pair three times (forward key held — the client-initiated crossing a player makes; no
+            // leg of this suite walks the player through any portal). The user's report it serves (2026-09-21, shaderpack
+            // ON): "on same dim portals … a tiny split second when telporting ow-ow where the hand reloads/disapear/reapear".
+            // Pair E: plane z = pz+0.5 at x = px+20.5 (away from the portal row), dest 40 blocks south on the same flat
+            // ground, reverse portal added the way a player's bi-way portal has one. Evidence only — pair it with
+            // -PhandTeleportProbe, whose per-frame block around each "Client Teleported" is the measurement.
+            if (Boolean.getBoolean("seamlessportals.gametest.sameDimWalk")) {
+                int ex = px + 20;
+                Vec3 originE = new Vec3(ex + 0.5, py + 1.5, pz + 0.5);
+                Vec3 destE = new Vec3(ex + 0.5, py + 1.5, pz + 40.5);
+                runCommands(context, List.of(
+                    "forceload add " + (ex - 8) + " " + (pz - 8) + " " + (ex + 8) + " " + (pz + 48),
+                    "fill " + (ex - 3) + " " + py + " " + (pz - 3) + " " + (ex + 3) + " " + (py + 3) + " " + (pz + 6)
+                        + " minecraft:air",
+                    "fill " + (ex - 3) + " " + py + " " + (pz + 32) + " " + (ex + 3) + " " + (py + 3) + " " + (pz + 44)
+                        + " minecraft:air"
+                ));
+                runOnServer(context, server -> {
+                    ServerLevel ow = server.getLevel(Level.OVERWORLD);
+                    Portal portalE = Portal.ENTITY_TYPE.create(ow, EntitySpawnReason.COMMAND);
+                    if (portalE == null) throw new AssertionError(LOG + "same-dim walk: portal create returned null");
+                    portalE.setOriginPos(originE);
+                    portalE.setDestinationDimension(Level.OVERWORLD);
+                    portalE.setDestination(destE);
+                    portalE.setOrientationAndSize(new Vec3(1, 0, 0), new Vec3(0, 1, 0), 3, 3);
+                    McHelper.spawnServerEntity(portalE);
+                    qouteall.imm_ptl.core.portal.PortalManipulation.completeBiWayPortal(portalE, Portal.ENTITY_TYPE);
+                });
+                context.waitTicks(60);
+                for (int lap = 1; lap <= 3; lap++) {
+                    runCommands(context, List.of(
+                        "tp @p " + (ex + 0.5) + " " + py + " " + (pz + 4.5) + " 180 0"
+                    ));
+                    context.waitTicks(20);
+                    context.getInput().holdKey(options -> options.keyUp);
+                    context.waitTicks(40);
+                    context.getInput().releaseKey(options -> options.keyUp);
+                    context.waitTicks(10);
+                    final int lapNo = lap;
+                    String where = context.computeOnClient(mc -> String.format("(%.2f, %.2f, %.2f)",
+                        mc.player.getX(), mc.player.getY(), mc.player.getZ()));
+                    SeamlessPortalsConstants.LOGGER.info(
+                        LOG + "fixture lever: same-dim walk lap {} ended at {} (crossed = z near {})",
+                        lapNo, where, pz + 36);
+                }
+                runCommands(context, List.of(
+                    "tp @p " + (px + 0.5) + " " + py + " " + (pz + 0.5) + " 180 0"
+                ));
+                context.waitTicks(20);
+                SeamlessPortalsConstants.LOGGER.info(LOG + "fixture lever: same-dim walk done");
+            }
             String leg7State = context.computeOnClient(mc -> {
                 if (mc.player == null || mc.level == null) return "player/level null";
                 if (mc.player.level() != mc.level) return "player/level incoherent";

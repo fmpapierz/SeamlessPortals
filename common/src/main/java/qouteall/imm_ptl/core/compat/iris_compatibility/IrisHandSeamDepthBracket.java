@@ -74,6 +74,22 @@ public final class IrisHandSeamDepthBracket {
      */
     private static final double WIN_HI = 0.0005;
 
+    // 26.3: THE CONVENTION FLIPPED AGAIN — the remap direction is now MEASURED PER HAND DRAW, not a constant.
+    // User report 2026-09-21 (Fabric+Sodium+Iris 1.11.6, Complementary ON): "player hand is disapearing/reapearing when
+    // teleporting with shaders enabled". Draw-time dump on 26.3 (-PhandDrawDump, crossing gametest under the same pack):
+    // 57/57 ambient hand rows `func=GEQUAL` — where 26.2 / iris 1.11.2 measured 45/45 LEQUAL (the SIGN CORRECTION above).
+    // Under GEQUAL the [0.0, WIN_HI] remap is the guaranteed total in-window loss that comment describes, mirrored: a hand
+    // at depth ~0 passes `>=` against nothing but cleared sky, so the hand vanished for exactly the frames the camera spent
+    // inside the crossing window and came back after. This bracket has now been wrong-way twice, both times because the
+    // direction was a constant derived from a measurement taken on ANOTHER version. The hand's depth function lives in
+    // its pipeline and is applied per draw, so it cannot be read at begin(); it IS readable at the per-draw seam
+    // (GlCommandEncoder.setupDraw RETURN — MixinIrisHandDrawState_GlCommandEncoder, the dump's own seam), where
+    // onHandDrawSetup() reads GL_DEPTH_FUNC and sends the hand to the end of the range that wins under THAT function.
+    // begin() applies the last measured direction provisionally (first frame: GEQUAL, 26.3's measured convention) so the
+    // range is never left neutral inside the window. A/B lever -PhandBracketLegacyLequal restores the fixed 26.2 remap.
+    private static boolean handDepthIsGreaterFamily = true;
+    private static boolean directionAnnounced = false;
+
     private static boolean armed = false;
     private static boolean announced = false;
     private static boolean disarmedForSession = false;
@@ -144,17 +160,22 @@ public final class IrisHandSeamDepthBracket {
             if (!inWindow) {
                 return;
             }
-            GL11.glDepthRange(0.0, WIN_HI);
+            // 26.3: provisional direction = the last one measured at a hand draw (see the field comment); every hand draw
+            // inside this pass then re-measures and re-applies in onHandDrawSetup().
+            //   (26.2) GL11.glDepthRange(0.0, WIN_HI);
+            applyRange(IPGlobal.HAND_BRACKET_LEGACY_LEQUAL_LEVER ? false : handDepthIsGreaterFamily);
             armed = true;
             if (!announced) {
                 announced = true;
-                LOGGER.info("[Seamless Portals] IS5-HAND depth bracket ARMED (once-only,"
-                    + " SIGN-CORRECTED 2026-07-28): iris hand passes draw at glDepthRange(0.0,"
-                    + " {}) while the camera is within {} of a crossable portal — under the"
-                    + " hand pass's MEASURED LEQUAL convention (draw-time dump) the remapped"
-                    + " hand now WINS against the seam's grazing shell and all window content."
-                    + " A/B: -PdisableHandSeamDepthBracket.",
-                    WIN_HI, WINDOW);
+                // 26.3: the line no longer names a fixed direction — it is measured per draw (DIRECTION line below it in
+                // the log). (26.2 text: "... draw at glDepthRange(0.0, {}) ... under the hand pass's MEASURED LEQUAL
+                // convention (draw-time dump) the remapped hand now WINS ...".)
+                LOGGER.info("[Seamless Portals] IS5-HAND depth bracket ARMED (once-only): while the camera is"
+                    + " within {} of a crossable portal, iris's hand passes draw in a {}-wide slice at the WINNING"
+                    + " end of the depth range — which end is read from GL_DEPTH_FUNC at each hand draw (26.2"
+                    + " measured LEQUAL, 26.3 measures GEQUAL). A/B: -PdisableHandSeamDepthBracket;"
+                    + " -PhandBracketLegacyLequal forces the fixed 26.2 remap.",
+                    WINDOW, WIN_HI);
             }
         }
         catch (Throwable t) {
@@ -167,6 +188,58 @@ public final class IrisHandSeamDepthBracket {
             }
             armed = false;
             LOGGER.warn("[Seamless Portals] IS5-HAND depth bracket threw — DISARMED for this"
+                + " session (hand rendering unaffected beyond losing the fix)", t);
+        }
+    }
+
+    /** The winning end of the depth range for a hand pass whose depth test is of the given family. */
+    private static void applyRange(boolean greaterFamily) {
+        if (greaterFamily) {
+            GL11.glDepthRange(1.0 - WIN_HI, 1.0); // GEQUAL / GREATER (reversed-Z): larger wins
+        } else {
+            GL11.glDepthRange(0.0, WIN_HI);       // LEQUAL / LESS: smaller wins
+        }
+    }
+
+    /**
+     * 26.3: per REAL hand draw, at {@code GlCommandEncoder.setupDraw} RETURN (state fully applied, the GL draw call is
+     * next) — called by {@code MixinIrisHandDrawState_GlCommandEncoder} only while iris's {@code HandRenderer} is active.
+     * No-op unless the bracket is armed (camera inside a crossing window), so the {@code glGetInteger} costs nothing
+     * outside those frames. Reads the depth function the draw will actually run under and applies the matching remap;
+     * {@code ALWAYS} / {@code EQUAL} / {@code NEVER} keep the provisional range (no direction to win in).
+     */
+    public static void onHandDrawSetup() {
+        if (!armed || disarmedForSession || IPGlobal.HAND_BRACKET_LEGACY_LEQUAL_LEVER) {
+            return;
+        }
+        try {
+            int func = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
+            boolean greater;
+            if (func == GL11.GL_GEQUAL || func == GL11.GL_GREATER) {
+                greater = true;
+            } else if (func == GL11.GL_LEQUAL || func == GL11.GL_LESS) {
+                greater = false;
+            } else {
+                return;
+            }
+            handDepthIsGreaterFamily = greater;
+            applyRange(greater);
+            if (!directionAnnounced) {
+                directionAnnounced = true;
+                LOGGER.info("[Seamless Portals] IS5-HAND depth bracket DIRECTION (once-only, measured at the hand draw):"
+                    + " GL_DEPTH_FUNC=0x{} -> hand remapped to the {} of the depth range for crossing-window frames.",
+                    Integer.toHexString(func), greater ? "TOP [1-" + WIN_HI + ", 1]" : "BOTTOM [0, " + WIN_HI + "]");
+            }
+        }
+        catch (Throwable t) {
+            disarmedForSession = true;
+            try {
+                GL11.glDepthRange(0.0, 1.0);
+            }
+            catch (Throwable ignored) {
+            }
+            armed = false;
+            LOGGER.warn("[Seamless Portals] IS5-HAND depth bracket (per-draw direction) threw — DISARMED for this"
                 + " session (hand rendering unaffected beyond losing the fix)", t);
         }
     }

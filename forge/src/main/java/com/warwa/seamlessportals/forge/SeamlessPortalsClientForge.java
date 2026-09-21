@@ -80,7 +80,9 @@ public class SeamlessPortalsClientForge {
         // Screen, Screen>), registered through ModContainer.registerExtensionPoint(Class, Supplier) — so the factory
         // is wrapped in a supplier and its first lambda parameter is the Minecraft instance, not the mod container.
         // On Forge createClothConfigScreen resolves against this module's own me.shedaniel.autoconfig shim (Cloth
-        // Config has no Forge build) and hands the PARENT screen back.
+        // Config has no Forge build), whose AutoConfigClient builds the module's NATIVE config screen
+        // (me.shedaniel.autoconfig.gui.NativeConfigScreen — vanilla widgets, driven by the same annotations). Until
+        // 2026-09-21 the shim handed the PARENT screen back, so this button did nothing (user report).
         context.getContainer().registerExtensionPoint(ConfigScreenHandler.ConfigScreenFactory.class,
             () -> new ConfigScreenHandler.ConfigScreenFactory((minecraft, parent) -> EntityPortalsFlag.isOn()
                 ? qouteall.imm_ptl.core.platform_specific.IPConfigGUI.createClothConfigScreen(parent)

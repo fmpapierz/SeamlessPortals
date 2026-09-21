@@ -42,6 +42,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Minecraft.class)
 public abstract class MinecraftFramePumpMixin {
 
+    // 26.3: IS5-HAND-TP end-of-frame sample (SeamHandTeleportProbe; DEFAULT OFF — one static boolean read per frame when
+    // off). The frame is complete in the main render target here, so this is where the probe reads what the player sees.
+    @Inject(method = "renderFrame(Z)V", at = @At("RETURN"))
+    private void seamlessportals$handTeleportProbeEndOfFrame(boolean advanceGameTime, CallbackInfo ci) {
+        if (com.warwa.seamlessportals.render.SeamHandTeleportProbe.ENABLED) {
+            com.warwa.seamlessportals.render.SeamHandTeleportProbe.endOfFrame();
+        }
+    }
+
     @Inject(
         method = "renderFrame(Z)V",
         at = @At(

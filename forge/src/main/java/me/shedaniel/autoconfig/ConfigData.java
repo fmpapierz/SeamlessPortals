@@ -14,6 +14,13 @@
 // NOT loaded at all when entityPortals is OFF (nothing references it until IP init is wired flag-ON),
 // so shipping it is inert for the block-era baseline. Deleted with the migration scaffolding at S20,
 // when the real Cloth-Config dependency (if any) replaces it.
+//
+// FORGE 26.3: the surface list above ends in getConfigScreen, and that part is no longer a shell. Cloth Config has no
+// MinecraftForge build for any 26.x version, so on Forge this package is the ONLY AutoConfig there will be, and its
+// screen is a native one: me.shedaniel.autoconfig.gui (NativeConfigScreen, its option list and its reflection model),
+// reached only through AutoConfigClient. That sub-package is the one client-side part of the shim — AutoConfig,
+// ConfigManager, ConfigHolder, ConfigData and the serializer package, which a dedicated server DOES load, still name
+// no GUI class (AutoConfig keeps its single Supplier<Screen> descriptor, nothing more).
 package me.shedaniel.autoconfig;
 
 /**

@@ -35,7 +35,13 @@ final class ConfigManager<T extends ConfigData> implements ConfigHolder<T> {
 
     @Override
     public boolean save() {
-        serializer.serialize(config);
+        // FORGE 26.3: listeners FIRST, then the file — real Cloth's ConfigManager.save() order (cloth-config 26.x: the
+        // save-event loop runs, then serializer.serialize). This shim used to write the file first, which nothing
+        // could observe while no screen existed. With the native config screen it can: IPConfig.onConfigChanged (the
+        // save listener) clamps typed fields IN PLACE precisely so that "the GUI box and immersive_portals.json agree
+        // with what the engine actually runs" (its own words, on portalWindowRenderDistance) — serializing before it
+        // ran would persist a typed 50 as 50 while the engine and the reopened screen both say 32. No new reference
+        // of any kind; a listener's return value is still ignored, as before.
         for (SaveEvent<T> listener : saveListeners) {
             try {
                 listener.onSave(this, config);
@@ -44,6 +50,7 @@ final class ConfigManager<T extends ConfigData> implements ConfigHolder<T> {
                 // a misbehaving listener must not break persistence
             }
         }
+        serializer.serialize(config);
         return true;
     }
 

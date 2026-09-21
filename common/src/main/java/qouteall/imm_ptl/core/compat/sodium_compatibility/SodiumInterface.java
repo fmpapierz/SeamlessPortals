@@ -134,6 +134,18 @@ public class SodiumInterface {
         public void ip_onDestTerrainDrawsFinished() {
 
         }
+
+        /**
+         * 26.3 / sodium 0.9.2 — called by {@code PortalRendering.popPortalLayer} right after a portal layer is popped, i.e.
+         * when control is back in the OUTER view (the sodium context swapped out, {@code mc.levelRenderer} restored, the
+         * layer key the per-layer batches resolve by back to the outer layer). Re-runs the outer view's sodium prepare
+         * when an inner pass overwrote it on a SHARED renderer — see the {@code OnSodiumPresent} body. Base/feed-only: no-op.
+         *
+         * @param outerLayer the portal layer now current ({@code 0} = the main view)
+         */
+        public void ip_onPortalLayerPopped(int outerLayer) {
+
+        }
     }
 
     public static Invoker invoker = new Invoker();
@@ -516,6 +528,61 @@ public class SodiumInterface {
             if (ubm != null) {
                 ubm.prepareFrame();
             }
+        }
+
+        /**
+         * 26.3 / sodium 0.9.2 — THE OUTER-VIEW RE-PREPARE (the 0.9.2 twin of the UniformBufferManager latch restore above:
+         * per-view state sodium keeps on a renderer that a same-renderer dest pass overwrites, put back for the outer view).
+         *
+         * <p><b>What changed (javap, sodium-mc26.2-0.9.1 vs sodium-mc26.3-0.9.2, {@code DefaultChunkRenderer}).</b> 0.9.1's
+         * {@code render(..)} filled every listed region's cached {@code MultiDrawBatch} that was not {@code isFilled} and
+         * then drew, per call — so whatever an inner pass did to the shared batches, the outer view's next {@code render}
+         * healed itself. 0.9.2 split that into {@code prepare(lists, camera, flag)} — the fill loop for all three passes,
+         * plus a NEW per-renderer {@code boolean[] shouldDraw} — and a {@code render(..)} that opens with
+         * {@code if (!shouldDraw[passIndex]) return;} and only DRAWS. {@code prepare} runs once per view
+         * ({@code SodiumWorldRenderer.prepareChunkRendering}: sodium's own {@code getRenderState} wrap for the main view,
+         * {@link #ip_armDestChunkRenders} for a dest pass).
+         *
+         * <p><b>The defect.</b> On a SHARED renderer (same-dim portal; A-&gt;B-&gt;A nesting) a dest pass's prepare rewrites
+         * {@code shouldDraw[]} for ITS view, and a portal-layer {@code ChunkRenderList.prepareForRender} that sees a changed
+         * list calls {@code RenderRegion.clearAllCachedBatches()}, emptying the region-own batches the outer view filled.
+         * Every outer draw that follows then obeys the inner view's {@code shouldDraw[]} and reads batches nothing refills.
+         * On the improved-transparency path the portal driver runs at {@code executeOit} HEAD — BEFORE the main view's
+         * translucent terrain — so that is the main view's whole translucent layer. MEASURED 2026-09-20 (crossing gametest,
+         * sodium, improved transparency, stained glass in the main view, {@code -PsodiumPrepareProbe}): ~357 main-view
+         * translucent draws per second ran on a portal view's prepare and ALL of them were skipped although the main
+         * view's own prepare said draw (the glass is absent from the screenshot; present on the classic path, where the
+         * driver runs after the main view's last terrain draw); 3-15 listed batches per second had been cleared. The
+         * user's report: water / translucent terrain flickering wildly with sodium.
+         *
+         * <p><b>The port.</b> When a layer is popped, re-run the now-current view's own prepare with the arguments it used
+         * ({@code MixinSodiumWorldRenderer_OuterReprepare} records them per layer): {@code shouldDraw[]} is recomputed for
+         * that view and exactly the cleared batches are refilled (the {@code isFilled} gate skips the rest). Safe here for
+         * the same reason the dest pass's own prepare is: the portal driver's slot has no render pass open (prepare may
+         * grow the shared index buffer). Cross-dim passes use their own renderer and never trip the "prepared by another
+         * layer" test, so this is a no-op for them. A/B lever {@code -PdisableSodiumOuterReprepare}.
+         *
+         * <p><b>Why a re-prepare and not a second array.</b> Iris 1.11.6 meets the same two-views-one-renderer hazard for
+         * its shadow view and solves it with a second array: {@code iris compat.sodium.mixin.MixinDefaultChunkRenderer
+         * .change} is a {@code @Redirect} of every {@code shouldDraw} field access in {@code prepare} and {@code render}
+         * to {@code shouldDrawShadow} while shadows render (javap, iris-1.11.6+26.3-fabric.jar). A per-portal-layer array
+         * here would need a redirect of those SAME field accesses — two redirects cannot share a site, so it would break
+         * whenever iris is installed — and it would still leave the cleared batches unfilled.
+         */
+        @Override
+        public void ip_onPortalLayerPopped(int outerLayer) {
+            if (qouteall.imm_ptl.core.IPGlobal.SODIUM_OUTER_REPREPARE_DISABLED_LEVER) {
+                return;
+            }
+            net.minecraft.client.renderer.LevelRenderer levelRenderer = Minecraft.getInstance().levelRenderer;
+            if (levelRenderer == null) {
+                return;
+            }
+            SodiumWorldRenderer swr = ((LevelRendererExtension) levelRenderer).sodium$getWorldRenderer();
+            if (swr == null) {
+                return;
+            }
+            ((IPSodiumOuterReprepare) swr).ip_reprepareIfPreparedByAnotherLayer(outerLayer);
         }
     }
 

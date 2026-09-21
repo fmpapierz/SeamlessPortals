@@ -33,6 +33,7 @@ public class MixinIrisHandRenderer_SubmitTap {
         // Probes FIRST (pristine pre-pass state; the locator's full-frame pre snapshot), then
         // the IS5-HAND-FUNC fix (forces the declared GEQUAL for the pass — the measured leak).
         SeamHandSubmitTap.beginSolid();
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.beginPass(0); // 26.3: per-frame teleport record (default-off)
         com.warwa.seamlessportals.render.SeamHandLocator.preSolid();
         qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.begin();
     }
@@ -40,6 +41,7 @@ public class MixinIrisHandRenderer_SubmitTap {
     @Inject(method = "renderSolid", at = @At("RETURN"), require = 0)
     private void ip_tapEndSolid(CallbackInfo ci) {
         SeamHandSubmitTap.endSolid();
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.endPass(); // 26.3
         com.warwa.seamlessportals.render.SeamHandLocator.postSolid();
         qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.end();
     }
@@ -47,12 +49,14 @@ public class MixinIrisHandRenderer_SubmitTap {
     @Inject(method = "renderTranslucent", at = @At("HEAD"), require = 0)
     private void ip_tapBeginTranslucent(CallbackInfo ci) {
         SeamHandSubmitTap.beginTranslucent();
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.beginPass(1); // 26.3
         qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.begin();
     }
 
     @Inject(method = "renderTranslucent", at = @At("RETURN"), require = 0)
     private void ip_tapEndTranslucent(CallbackInfo ci) {
         SeamHandSubmitTap.endTranslucent();
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.endPass(); // 26.3
         qouteall.imm_ptl.core.compat.iris_compatibility.SeamHandDepthFuncFix.end();
     }
 
@@ -61,6 +65,7 @@ public class MixinIrisHandRenderer_SubmitTap {
         Camera camera, GameRenderer gameRenderer, CallbackInfoReturnable<Boolean> cir
     ) {
         SeamHandSubmitTap.onCanRender(camera, cir.getReturnValueZ());
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.onCanRender(cir.getReturnValueZ()); // 26.3
     }
 
     // RETURN (not HEAD): setupGlState has no early return (bytecode-verified), so body-entry
@@ -75,5 +80,6 @@ public class MixinIrisHandRenderer_SubmitTap {
         CallbackInfoReturnable<com.mojang.blaze3d.vertex.PoseStack> cir
     ) {
         SeamHandSubmitTap.onBodyEntered(cameraState, modelMatrix, cir.getReturnValue());
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.onBodyEntered(); // 26.3
     }
 }

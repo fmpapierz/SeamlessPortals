@@ -513,6 +513,9 @@ public class ClientTeleportationManager {
         // the surrounding frames' entity counts.
         qouteall.imm_ptl.core.render.StageCensusProbe.markTeleport(
             fromDimension == toDimension ? "same-dim" : "cross-dim");
+        // 26.3: IS5-HAND-TP marker (lever-gated, default off): the per-frame first-person-hand record around this crossing.
+        com.warwa.seamlessportals.render.SeamHandTeleportProbe.markTeleport(
+            fromDimension == toDimension ? "same-dim" : "cross-dim");
 
         isTeleportingTick = true;
         isTeleportingFrame = true;

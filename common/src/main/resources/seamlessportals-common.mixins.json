@@ -31,6 +31,7 @@
     "client.GameRendererLightmapMixin",
     "client.GameRendererPortalPrepareMixin",
     "client.MinecraftFramePumpMixin",
+    "client.MinecraftWindowTitleTagMixin",
     "client.GameRendererHandLightMixin",
     "client.LevelRendererAccessorMixin",
     "client.LevelRendererBlockOutlineMixin",

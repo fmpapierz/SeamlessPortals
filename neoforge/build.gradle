@@ -40,6 +40,8 @@ neoForge {
             // 2026-08-02). One dontinline on the leaf, same as fabric/build.gradle's default
             // c2JitArgs branch. Single-quoted so nothing interpolates.
             jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
+            // 26.3 MULTI-LOADER DEV AID (mirror of fabric/build.gradle's row) — window title tag "[NeoForge + Sodium]".
+            jvmArgument '-Dseamlessportals.windowTitleTag=true'
             // STAGE CENSUS lever (2026-08-30, NF x-ray-flash round): mirror of the fabric rows.
             //   .\gradlew.bat :neoforge:runClient -PstageCensus=true
             if (project.findProperty('stageCensus') == 'true') {
@@ -61,6 +63,8 @@ neoForge {
             client()
             gameDirectory = file('runs/client-sodium')
             jvmArgument '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
+            // 26.3 MULTI-LOADER DEV AID (mirror of fabric/build.gradle's row) — window title tag "[NeoForge + Sodium]".
+            jvmArgument '-Dseamlessportals.windowTitleTag=true'
             // DEV-ONLY GlRenderPass.VALIDATION (gated on IS_RUNNING_IN_IDE — never runs in
             // production) blindly indexes getVertexFormatBindings()[i<16], and an
             // iris-wrapped translucent pipeline carries a compact (length-1) bindings array
@@ -185,3 +189,25 @@ var generateModMetadata = tasks.register("generateModMetadata", ProcessResources
 }
 sourceSets.main.resources.srcDir generateModMetadata
 neoForge.ideSyncTask generateModMetadata
+
+// ===== 26.3: the clientSodium run's mods folder ==================================================================
+// FML scans <gameDir>/mods in dev, and the first-party -neoforge Sodium jar has to arrive there as a MOD (never on the
+// compile/runtime classpath — see the compileOnly note above). Until now it was placed by hand; this resolves the
+// pinned artifact (gradle.properties: sodium_neoforge_version) from the Modrinth maven and copies it in before
+// :neoforge:runClientSodium. A Copy, not a Sync: jars someone placed there by hand are never deleted.
+// Iris: there is NO -neoforge Iris build for 26.3 (Modrinth, 2026-09-20: fabric only), so the NeoForge shaders leg
+// cannot run on this version yet; when one is published, pin it in iris_neoforge_version and add it here.
+configurations {
+    clientSodiumMods {
+        canBeConsumed = false
+        transitive = false
+    }
+}
+dependencies {
+    clientSodiumMods "maven.modrinth:sodium:${project.sodium_neoforge_version}"
+}
+def prepareClientSodiumMods = tasks.register('prepareClientSodiumMods', Copy) {
+    from configurations.clientSodiumMods
+    into layout.projectDirectory.dir('runs/client-sodium/mods')
+}
+tasks.matching { it.name == 'runClientSodium' }.configureEach { dependsOn prepareClientSodiumMods }

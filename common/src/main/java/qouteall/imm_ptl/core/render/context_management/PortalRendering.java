@@ -46,6 +46,13 @@ public class PortalRendering {
     public static void popPortalLayer() {
         portalLayers.pop();
         updateCache();
+        // 26.3 / sodium 0.9.2: control is back in the OUTER view. Sodium 0.9.2 keeps per-view prepared state on the
+        // renderer (DefaultChunkRenderer.shouldDraw[] + the filled region batches, written by the new prepare step) that
+        // a same-renderer dest pass has just overwritten; put the outer view's back before it draws again. The ONE
+        // choke point every renderer's push/pop bracket shares; a facade no-op when sodium is absent/inactive. Defect,
+        // measurement and port: SodiumInterface.OnSodiumPresent#ip_onPortalLayerPopped.
+        qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumInterface.invoker
+            .ip_onPortalLayerPopped(getPortalLayer());
     }
 
     private static void updateCache() {

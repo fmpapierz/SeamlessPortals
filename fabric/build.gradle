@@ -188,6 +188,10 @@ loom {
             // at the top of this file. Default: one dontinline on the leaf. Levers:
             // -Pc2LegacyExcludes (the historical six), -Pc2NoProtection (reproduce), -Pc2Inlining.
             c2JitArgs().each { vmArg(it) }
+            // 26.3 MULTI-LOADER DEV AID (MinecraftWindowTitleTagMixin): the window title gains "[<loader> + Sodium + Iris]"
+            // as the RUNNING game reports them, so the four loaders' dev windows can be told apart. Dev runs only — a
+            // shipped jar never sets the property. Every dev client run config in the repo carries this row.
+            vmArg('-Dseamlessportals.windowTitleTag=true')
             // IS1 shaderpack-views renderer lever (IRIS_SHADERS_ON_DESIGN.md §1 IS1 deliverable
             // 5/6): arms the lever-only compat renderer for the plain proof rows —
             //   .\gradlew.bat :fabric:runClient -PshaderpackViews=true
@@ -373,6 +377,32 @@ loom {
             // crash ("Vertex buffer at slot 1 has been closed!") —
             //   .\gradlew.bat :fabric:runClient -PdisableDestChunkPrepFlavour=true
             if (project.findProperty('disableDestChunkPrepFlavour') == 'true') { vmArg('-Dseamlessportals.disableDestChunkPrepFlavour=true') }
+            // 26.3 / SODIUM 0.9.2 PREPARE PROBE — DEFAULT OFF, LOG-ONLY (MixinSodiumDefaultChunkRenderer_PrepareProbe): 0.9.2
+            // split DefaultChunkRenderer.render into prepare (fill + shouldDraw[]) and render (draw only). One 1 Hz line
+            // counting outer-view terrain draws that ran on an inner (portal) view's prepare, how many were wrongly skipped,
+            // and how many listed batches were cleared since their own prepare (inert here: sodium is not on this run) —
+            //   .\gradlew.bat :fabric:runClient -PsodiumRuntime=true -PsodiumPrepareProbe=true
+            if (project.findProperty('sodiumPrepareProbe') == 'true') { vmArg('-Dseamlessportals.sodiumPrepareProbe=true') }
+            // 26.3 / SODIUM 0.9.2 OUTER-VIEW RE-PREPARE — DEFAULT ON (SodiumInterface.OnSodiumPresent#ip_onPortalLayerPopped):
+            // after a portal layer is popped the outer view's sodium prepare is re-run, because 0.9.2's new prepare step
+            // keeps per-view state (shouldDraw[] + the filled region batches) on the renderer a same-dim dest pass shares.
+            // Pass this to REPRODUCE the defect (main-view translucent terrain skipped / flickering on the
+            // improved-transparency path while a portal renders) —
+            //   .\gradlew.bat :fabric:runClient -PsodiumRuntime=true -PdisableSodiumOuterReprepare=true
+            if (project.findProperty('disableSodiumOuterReprepare') == 'true') { vmArg('-Dseamlessportals.disableSodiumOuterReprepare=true') }
+            // 26.3 / SODIUM 0.9.2 + IRIS 1.11.6 ARENA BATCH CLEAR — DEFAULT ON (MixinSodiumRenderRegion HOOKS 5-7): iris
+            // redirects every batch-invalidation call sodium 0.9.2 makes when its arena moves section data, so the
+            // per-portal-layer batches were never cleared and drew from stale offsets (flickering ghost terrain in
+            // portal views, iris installed only). Pass this to REPRODUCE it (inert here: sodium/iris are not on this run) —
+            //   .\gradlew.bat :fabric:runClient -PirisRuntime=true -PdisableSodiumArenaBatchClear=true
+            if (project.findProperty('disableSodiumArenaBatchClear') == 'true') { vmArg('-Dseamlessportals.disableSodiumArenaBatchClear=true') }
+            // 26.3 / SODIUM 0.9.2 + IRIS SHADERS ON — SCOPED LIST CLEAR — DEFAULT ON (MixinSodiumRenderRegion HOOKS 2/3): a list
+            // change clears only the portal-layer batches of the scope that is rendering (shadow vs camera), as sodium+iris
+            // do for their own maps. The 26.2 mirror cleared both, and on 0.9.2 a view runs camera prepare -> shadow pass ->
+            // camera draws, so every shadow-list change (any pan) wiped camera batches nothing refills. Pass this to
+            // REPRODUCE the rapid x-ray flicker of the portal window under a shaderpack (inert here: no iris on this run) —
+            //   .\gradlew.bat :fabric:runClient -PirisRuntime=true -PdisableSodiumScopedListClear=true
+            if (project.findProperty('disableSodiumScopedListClear') == 'true') { vmArg('-Dseamlessportals.disableSodiumScopedListClear=true') }
             // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
             // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
             // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
@@ -487,6 +517,8 @@ loom {
             // at the top of this file. Default: one dontinline on the leaf. Levers:
             // -Pc2LegacyExcludes (the historical six), -Pc2NoProtection (reproduce), -Pc2Inlining.
             c2JitArgs().each { vmArg(it) }
+            // 26.3 MULTI-LOADER DEV AID (mirror) — window title tag; see the client run's row.
+            vmArg('-Dseamlessportals.windowTitleTag=true')
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -718,6 +750,21 @@ loom {
             // line before adjudicating any leg. Pass this to force it OFF and reproduce —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
             if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // 26.3 IS5-HAND DIRECTION — DEFAULT: the bracket reads GL_DEPTH_FUNC at each crossing-window hand draw and remaps
+            // the hand to the end of the depth range that WINS under it (26.2 measured LEQUAL, 26.3 measures GEQUAL). Pass
+            // this to force the fixed 26.2 [0, 0.0005] remap back and REPRODUCE the hand vanishing while crossing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandBracketLegacyLequal=true
+            if (project.findProperty('handBracketLegacyLequal') == 'true') { vmArg('-Dseamlessportals.handBracketLegacyLequal=true') }
+            // 26.3 IS5-HAND-TP PROBE — DEFAULT OFF, LOG-ONLY (SeamHandTeleportProbe): every frame from 4 before to 12 after
+            // each client teleport — iris hand passes called / canRender / body / hand draws + depth state, the extracted
+            // first-person state, and the mean colour of the finished frame's hand region (the outcome) — one block each —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandTeleportProbe=true
+            if (project.findProperty('handTeleportProbe') == 'true') { vmArg('-Dseamlessportals.handTeleportProbe=true') }
+            // 26.3 STAMP DEPTH-GUARD DIRECTION — DEFAULT: the shaderpack portal stamp's depth guard follows the depth test its
+            // draw executes (26.2 LEQUAL -> floor max(z, 0.001); 26.3 GEQUAL -> ceiling min(z, 0.999)). Pass this to keep
+            // the 26.2 floor and REPRODUCE the hand vanishing for 1-2 frames before a crossing under a shaderpack —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampFloorLegacyLequal=true
+            if (project.findProperty('stampFloorLegacyLequal') == 'true') { vmArg('-Dseamlessportals.stampFloorLegacyLequal=true') }
             // IS5-HAND-FUNC (2026-07-28, DEFAULT OFF — premise REFUTED by the draw-time dump:
             // hand draws re-apply their own LEQUAL per draw; the HEAD force is inert for them.
             // Opt-in experiment lever only) —
@@ -824,6 +871,18 @@ loom {
             // row is inert here and kept for lever-row parity) —
             //   .\gradlew.bat :fabric:runClientSodium -PdisableDestChunkPrepFlavour=true
             if (project.findProperty('disableDestChunkPrepFlavour') == 'true') { vmArg('-Dseamlessportals.disableDestChunkPrepFlavour=true') }
+            // 26.3 / SODIUM 0.9.2 PREPARE PROBE (mirror; DEFAULT OFF, LOG-ONLY) — see the client run's row —
+            //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PsodiumPrepareProbe=true
+            if (project.findProperty('sodiumPrepareProbe') == 'true') { vmArg('-Dseamlessportals.sodiumPrepareProbe=true') }
+            // 26.3 / SODIUM 0.9.2 OUTER-VIEW RE-PREPARE A/B (mirror; DEFAULT ON) — see the client run's row —
+            //   .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PdisableSodiumOuterReprepare=true
+            if (project.findProperty('disableSodiumOuterReprepare') == 'true') { vmArg('-Dseamlessportals.disableSodiumOuterReprepare=true') }
+            // 26.3 / SODIUM 0.9.2 + IRIS 1.11.6 ARENA BATCH CLEAR A/B (mirror; DEFAULT ON) — see the client run's row —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSodiumArenaBatchClear=true
+            if (project.findProperty('disableSodiumArenaBatchClear') == 'true') { vmArg('-Dseamlessportals.disableSodiumArenaBatchClear=true') }
+            // 26.3 / SODIUM 0.9.2 + IRIS SHADERS ON — SCOPED LIST CLEAR A/B (mirror; DEFAULT ON) — see the client run's row —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableSodiumScopedListClear=true
+            if (project.findProperty('disableSodiumScopedListClear') == 'true') { vmArg('-Dseamlessportals.disableSodiumScopedListClear=true') }
             // TP-XDIM CROSS-VIEW FULL-PIPELINE ROUTE — DEFAULT ON (2026-07-28). The measured
             // third-person + shaderpack whole-screen terrain explosion is the D23 decomposed driver
             // running as a FRAME-REPLACING render: no LevelRenderer.render => none of iris's
@@ -1251,6 +1310,21 @@ loom {
             // line before adjudicating any leg. Pass this to force it OFF and reproduce —
             //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PdisableHandSeamDepthBracket=true
             if (project.findProperty('disableHandSeamDepthBracket') == 'true') { vmArg('-Dseamlessportals.disableHandSeamDepthBracket=true') }
+            // 26.3 IS5-HAND DIRECTION — DEFAULT: the bracket reads GL_DEPTH_FUNC at each crossing-window hand draw and remaps
+            // the hand to the end of the depth range that WINS under it (26.2 measured LEQUAL, 26.3 measures GEQUAL). Pass
+            // this to force the fixed 26.2 [0, 0.0005] remap back and REPRODUCE the hand vanishing while crossing —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandBracketLegacyLequal=true
+            if (project.findProperty('handBracketLegacyLequal') == 'true') { vmArg('-Dseamlessportals.handBracketLegacyLequal=true') }
+            // 26.3 IS5-HAND-TP PROBE — DEFAULT OFF, LOG-ONLY (SeamHandTeleportProbe): every frame from 4 before to 12 after
+            // each client teleport — iris hand passes called / canRender / body / hand draws + depth state, the extracted
+            // first-person state, and the mean colour of the finished frame's hand region (the outcome) — one block each —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PhandTeleportProbe=true
+            if (project.findProperty('handTeleportProbe') == 'true') { vmArg('-Dseamlessportals.handTeleportProbe=true') }
+            // 26.3 STAMP DEPTH-GUARD DIRECTION — DEFAULT: the shaderpack portal stamp's depth guard follows the depth test its
+            // draw executes (26.2 LEQUAL -> floor max(z, 0.001); 26.3 GEQUAL -> ceiling min(z, 0.999)). Pass this to keep
+            // the 26.2 floor and REPRODUCE the hand vanishing for 1-2 frames before a crossing under a shaderpack —
+            //   .\gradlew.bat :fabric:runClientSodium -PirisRuntime=true -PstampFloorLegacyLequal=true
+            if (project.findProperty('stampFloorLegacyLequal') == 'true') { vmArg('-Dseamlessportals.stampFloorLegacyLequal=true') }
             // IS5-HAND-FUNC (2026-07-28, DEFAULT OFF — premise REFUTED by the draw-time dump:
             // hand draws re-apply their own LEQUAL per draw; the HEAD force is inert for them.
             // Opt-in experiment lever only) —
@@ -1339,6 +1413,32 @@ loom {
             // reproduces the storage flip-flop / improved-transparency crash in the suite —
             //   .\gradlew.bat :fabric:runCrossingGametest -PdisableDestChunkPrepFlavour=true
             if (project.findProperty('disableDestChunkPrepFlavour') == 'true') { vmArg('-Dseamlessportals.disableDestChunkPrepFlavour=true') }
+            // 26.3 / SODIUM 0.9.2 PREPARE PROBE (mirror; DEFAULT OFF, LOG-ONLY) — see the client run's row —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PsodiumRuntime=true -PsodiumPrepareProbe=true
+            if (project.findProperty('sodiumPrepareProbe') == 'true') { vmArg('-Dseamlessportals.sodiumPrepareProbe=true') }
+            // 26.3 / SODIUM 0.9.2 OUTER-VIEW RE-PREPARE A/B (mirror; DEFAULT ON) — see the client run's row —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PsodiumRuntime=true -PdisableSodiumOuterReprepare=true
+            if (project.findProperty('disableSodiumOuterReprepare') == 'true') { vmArg('-Dseamlessportals.disableSodiumOuterReprepare=true') }
+            // 26.3 / SODIUM 0.9.2 + IRIS 1.11.6 ARENA BATCH CLEAR A/B (mirror; DEFAULT ON) — see the client run's row —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PirisRuntime=true -PdisableSodiumArenaBatchClear=true
+            if (project.findProperty('disableSodiumArenaBatchClear') == 'true') { vmArg('-Dseamlessportals.disableSodiumArenaBatchClear=true') }
+            // 26.3 / SODIUM 0.9.2 + IRIS SHADERS ON — SCOPED LIST CLEAR A/B (mirror; DEFAULT ON) — see the client run's row —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PirisRuntime=true -PdisableSodiumScopedListClear=true
+            if (project.findProperty('disableSodiumScopedListClear') == 'true') { vmArg('-Dseamlessportals.disableSodiumScopedListClear=true') }
+            // 26.3 FIXTURE LEVER — DEFAULT OFF: a PAN LEG. While the same-dim portal row is in view the camera yaws a few degrees
+            // per tick for 100 ticks (the user's "especially when i pan"), with a screenshot mid-pan. Panning is what makes
+            // iris's shadow lists change every frame; the static hold this suite otherwise uses never does —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PirisRuntime=true -PgametestPanLeg=true
+            if (project.findProperty('gametestPanLeg') == 'true') { vmArg('-Dseamlessportals.gametest.panLeg=true') }
+            // 26.3 FIXTURE LEVER — DEFAULT OFF: hold the camera INSIDE a portal's crossing window (0.2 blocks from same-dim
+            // portal A's plane, 30 ticks, screenshot, step back, screenshot). The only leg that arms the shaderpack hand
+            // bracket — without it the bracket's direction is never exercised by this suite —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PirisRuntime=true -PgametestCrossingWindowHand=true -PhandDrawDump=true
+            if (project.findProperty('gametestCrossingWindowHand') == 'true') { vmArg('-Dseamlessportals.gametest.crossingWindowHand=true') }
+            // 26.3 FIXTURE LEVER — DEFAULT OFF: WALK the player (forward key held) through a same-dim bi-way portal pair three
+            // times — the only leg of this suite that makes a client-initiated crossing on foot. Pair with -PhandTeleportProbe —
+            //   .\gradlew.bat :fabric:runCrossingGametest -PirisRuntime=true -PgametestSameDimWalk=true -PhandTeleportProbe=true
+            if (project.findProperty('gametestSameDimWalk') == 'true') { vmArg('-Dseamlessportals.gametest.sameDimWalk=true') }
             // 26.3 FIXTURE LEVER — DEFAULT OFF: stage a stained-glass wall in the MAIN view. The default staging is
             // superflat obsidian with NO translucent terrain, so the main view's translucent chunk layer has no
             // draw groups and vanilla's DrawIndirect never binds its per-section vertex buffer — which is exactly
@@ -1441,6 +1541,18 @@ processResources {
     }
 }
 
+// ===== 26.3 QUILT — the jar =====================================================================================
+// There is no separate Quilt BUILD (see the block below for why): the jar Quilt users install is this module's Fabric
+// jar, unchanged. So that every supported loader has a file with its own name to hand out, each assemble also writes a
+// BYTE-IDENTICAL copy of that jar as <mod_id>-quilt-<version>.jar. It deliberately carries NO quilt.mod.json — with one
+// present, Quilt Loader would treat the mod as Quilt-native and run every mixin at its assumed 0.10.0 compatibility.
+def quiltJar = tasks.register('quiltJar', Copy) {
+    from tasks.named('jar').flatMap { it.archiveFile }
+    into layout.buildDirectory.dir('libs')
+    rename { "${project.mod_id}-quilt-${project.mod_version}.jar" }
+}
+tasks.named('assemble') { dependsOn quiltJar }
+
 // ===== 26.3 QUILT — production-style smoke run of THIS module's jar (opt-in: -Penable_quilt_run=true) =============
 // Quilt support on 26.x IS the Fabric jar (migration/MC_26_3_VERSION_DELTA.md §5.2): Quilt Loader >= 0.30 runs
 // unobfuscated 26.x and loads fabric.mod.json mods through its Fabric plugin; QSL/QFAPI are retired as of 26.1 (plain
@@ -1495,6 +1607,19 @@ if (providers.gradleProperty('enable_quilt_run').getOrElse('false') == 'true') {
         quiltLoaderRuntime 'org.ow2.asm:asm-util:9.10.1'
         // The REAL Fabric API mod jar (the fat jar with its modules nested) — what a Quilt player installs.
         quiltSmokeMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+        // 26.3: Mod Menu, always — the Fabric dev runs have it (the `implementation` dependency near the top of this file)
+        // and under Quilt it is the only way to reach the mod list and this mod's config screen from the title screen
+        // (user request 2026-09-21). Same artifact and version as that dependency — keep the two literals in step. Its
+        // fabric.mod.json asks for fabricloader >=0.19.2 and four Fabric API modules, all of which the jar above provides;
+        // it nests placeholder-api itself, so `transitive = false` on this configuration loses nothing.
+        quiltSmokeMods "com.terraformersmc:modmenu:21.0.0-beta.1"
+        // -Pquilt_with_sodium_iris=true — also drop Sodium + Iris into <gameDir>/mods. Neither publishes a Quilt-tagged
+        // build for 26.3 (Modrinth, 2026-09-20: fabric + neoforge only); a Quilt player installs the FABRIC jars, so
+        // that is what goes in — the same two artifacts the :fabric module already compiles against.
+        if (providers.gradleProperty('quilt_with_sodium_iris').getOrElse('false') == 'true') {
+            quiltSmokeMods "maven.modrinth:sodium:${project.sodium_version}"
+            quiltSmokeMods "maven.modrinth:iris:${project.iris_version}"
+        }
     }
 
     tasks.register('prepareQuiltSmokeMods', Sync) {
@@ -1553,6 +1678,9 @@ if (providers.gradleProperty('enable_quilt_run').getOrElse('false') == 'true') {
         // Same C2 inlining guard every other run config in this repo carries.
         jvmArgs c2JitArgs()
         jvmArgs '-XX:-OmitStackTraceInFastThrow'
+        // 26.3 MULTI-LOADER DEV AID (mirror) — window title tag; see the Fabric client run's row. Under Quilt Loader the tag
+        // reads "Quilt": it is taken from the brand the running loader patches in, not from this build script.
+        jvmArgs '-Dseamlessportals.windowTitleTag=true'
         if (project.findProperty('quilt_gametest') == 'true') {
             // The crossing suite is a Fabric API client-gametest entrypoint inside the shipped jar; Fabric API's
             // gametest module is part of the real Fabric API jar — so the same suite runs under Quilt Loader.

@@ -39,6 +39,8 @@ minecraft {
         }
         register('client') {
             workingDir = layout.projectDirectory.dir('runs/client')
+            // FORGE 26.3: MULTI-LOADER DEV AID (mirror of fabric/build.gradle's row) — window title tag "[Forge]".
+            jvmArgs '-Dseamlessportals.windowTitleTag=true'
             // Dev-run convenience, opt-in: -Pforge_quickplay="<save folder name>" drops the client straight into that
             // singleplayer world (vanilla's own --quickPlaySingleplayer), so a world-join check — the configuration
             // handshake, the first play packets — can be run without anyone at the keyboard.
@@ -91,8 +93,9 @@ dependencies {
     compileOnly "maven.modrinth:iris:${project.iris_version}"
 
     // Cloth Config has NO MinecraftForge build for any 26.x version. The `me.shedaniel.autoconfig` API the mod's config
-    // code uses is supplied by THIS module's own sources (the repo's F21 functional shim, recovered byte-exact from
-    // git 18b23b34^, plus AutoConfigClient). The one remaining reference — the compat mixin on Cloth's
+    // code uses is supplied by THIS module's own sources (the repo's F21 functional shim, recovered from git 18b23b34^,
+    // plus AutoConfigClient and — since 2026-09-21 — a native config screen under me.shedaniel.autoconfig.gui, because
+    // without one the mod-list Config button had nothing to open). The one remaining reference — the compat mixin on Cloth's
     // TooltipListEntry — only has to COMPILE; its target class never loads on Forge, so that mixin never applies.
     compileOnly("me.shedaniel.cloth:cloth-config-neoforge:${project.cloth_config_version}") {
         transitive = false
