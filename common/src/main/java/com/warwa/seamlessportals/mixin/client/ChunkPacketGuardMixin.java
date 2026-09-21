@@ -35,38 +35,40 @@ import java.util.function.Consumer;
  *
  * <p>Only catches {@code IndexOutOfBoundsException}. Other exceptions
  * (OOM, NPE, etc.) propagate and fail loudly.
+ *
+ * <p><b>26.3 PORT.</b> javap on the 26.3 merged jar: the private
+ * {@code ClientPacketListener.updateLevelChunk} is GONE — vanilla inlined it, and the ONE remaining
+ * {@code invokevirtual ClientChunkCache.replaceWithPacketData} now sits in
+ * {@code handleLevelChunkWithLight} with the folded descriptor
+ * {@code (IILnet/minecraft/network/protocol/game/ClientboundLevelChunkPacketData;)Lnet/minecraft/world/level/chunk/LevelChunk;}
+ * (was {@code (IILFriendlyByteBuf;LMap;LConsumer;)} in {@code updateLevelChunk}). Same single call,
+ * same guard, new home — pinned {@code require = allow = 1}.
  */
 @Mixin(ClientPacketListener.class)
 public abstract class ChunkPacketGuardMixin {
 
-    @Redirect(method = "updateLevelChunk",
+    @Redirect(method = "handleLevelChunkWithLight",
         at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/multiplayer/ClientChunkCache;"
                 + "replaceWithPacketData("
-                + "IILnet/minecraft/network/FriendlyByteBuf;"
-                + "Ljava/util/Map;"
-                + "Ljava/util/function/Consumer;"
-                + ")Lnet/minecraft/world/level/chunk/LevelChunk;"))
+                + "IILnet/minecraft/network/protocol/game/ClientboundLevelChunkPacketData;"
+                + ")Lnet/minecraft/world/level/chunk/LevelChunk;"),
+        require = 1, allow = 1)
     private LevelChunk seamlessportals$guardChunkDecode(
             ClientChunkCache cache,
-            int chunkX, int chunkZ, FriendlyByteBuf buf,
-            Map<Heightmap.Types, long[]> heightmaps,
-            Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> blockEntitiesConsumer) {
+            int chunkX, int chunkZ, ClientboundLevelChunkPacketData chunkData) {
         try {
-            return cache.replaceWithPacketData(chunkX, chunkZ, buf, heightmaps, blockEntitiesConsumer);
+            return cache.replaceWithPacketData(chunkX, chunkZ, chunkData);
         } catch (IndexOutOfBoundsException e) {
             SeamlessPortalsConstants.LOGGER.warn(
                 "[SEAMLESS GUARD] Dropped stale chunk packet [{}, {}] — "
                     + "section-count mismatch with this.level ({}). Server will resend.",
                 chunkX, chunkZ, e.getMessage());
-            // Mark the buffer fully consumed so downstream packet processing
-            // sees a clean state rather than a half-read buffer.
-            try {
-                ByteBuf b = buf;
-                if (b.readerIndex() < b.writerIndex()) {
-                    b.readerIndex(b.writerIndex());
-                }
-            } catch (Throwable ignored) {}
+            // 26.2 marked the half-read buffer fully consumed here. 26.3 has no such buffer to mark:
+            // the read buffer is no longer an argument — LevelChunk.replaceWithPacketData builds its own
+            // throwaway one per call from chunkData.getReadBuffer() = new FriendlyByteBuf(
+            // Unpooled.wrappedBuffer(byte[])) (mc263-ref LevelChunk.java:519,
+            // ClientboundLevelChunkPacketData.java:106-108), so nothing downstream can see a half-read state.
             return null;
         }
     }

@@ -103,7 +103,10 @@ public class CHelper {
             (result) -> {
                 if (result) {
                     try {
-                        Util.getPlatform().openUri(new URI(link));
+                        // 26.3: Util.OS.openUri is gone (GLFW -> SDL3). Vanilla's own
+                        // ConfirmLinkScreen.confirmLinkNow made this exact substitution
+                        // (mc262-ref ConfirmLinkScreen.java:92 -> mc263-ref :75).
+                        com.mojang.blaze3d.Blaze3D.openUri(new URI(link));
                     }
                     catch (URISyntaxException e) {
                         e.printStackTrace();
@@ -111,7 +114,9 @@ public class CHelper {
                 }
                 client.gui.setScreen(parent);
             },
-            link, true
+            // 26.3: the (BooleanConsumer, String, boolean) ctor was removed; only the URI form
+            // remains (mc263-ref ConfirmLinkScreen.java:24).
+            URI.create(link), true
         ));
     }
     

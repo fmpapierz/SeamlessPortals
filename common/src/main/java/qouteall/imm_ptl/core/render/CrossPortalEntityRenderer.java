@@ -1363,7 +1363,9 @@ public class CrossPortalEntityRenderer {
         matrixStack.scale(scaling, scaling, scaling);
 
         if (portal.getRotation() != null) {
-            matrixStack.mulPose(portal.getRotation().toMcQuaternion());
+            // 26.3: PoseStack.mulPose(Quaternionfc) was RENAMED rotate(Quaternionfc) — identical body
+            // `this.last().rotate(by)` (mc262-ref PoseStack.java:43-45 -> mc263-ref :44-46).
+            matrixStack.rotate(portal.getRotation().toMcQuaternion());
         }
 
         matrixStack.translate(-anchor.x, -anchor.y, -anchor.z);

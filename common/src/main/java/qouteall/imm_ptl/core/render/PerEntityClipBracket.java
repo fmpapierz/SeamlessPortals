@@ -520,7 +520,9 @@ public class PerEntityClipBracket {
                     if (entry.plane != null) {
                         com.warwa.seamlessportals.render.FrontClipping.restore(entry.plane);
                     }
-                    dispatcher.renderAllFeatures(entry.storage);
+                    // 26.3: FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage) was deleted (it is now a static over a
+                    // caller-supplied RenderPass + PreparedFrame). The helper is that removed 26.2 method, re-homed — see its javadoc.
+                    MyRenderHelper.renderAllFeaturesToMainTarget(dispatcher, entry.storage);
                 } finally {
                     // ALWAYS restore — a skipped restore leaks the entry's plane (or a
                     // DISABLED_CLIP that DISARMS the dest pass's CASE-3 inner clip) into the
@@ -564,7 +566,9 @@ public class PerEntityClipBracket {
             Snapshot prev = com.warwa.seamlessportals.render.FrontClipping.capture();
             try {
                 com.warwa.seamlessportals.render.FrontClipping.restore(plane);
-                dispatcher.renderAllFeatures(scratch);
+                // 26.3: FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage) was deleted (it is now a static over a
+                // caller-supplied RenderPass + PreparedFrame). The helper is that removed 26.2 method, re-homed — see its javadoc.
+                MyRenderHelper.renderAllFeaturesToMainTarget(dispatcher, scratch);
             } finally {
                 com.warwa.seamlessportals.render.FrontClipping.restore(prev);
             }

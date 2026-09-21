@@ -194,8 +194,12 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
     @Override
     public @Nullable LevelChunk replaceWithPacketData(
         int x, int z,
-        FriendlyByteBuf buf, Map<Heightmap.Types, long[]> heightmaps, // 26.2 #45/#48: CompoundTag nbt -> Map<Heightmap.Types,long[]>
-        Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> consumer
+        // 26.2 #45/#48: CompoundTag nbt -> Map<Heightmap.Types,long[]>
+        // 26.3: vanilla folded (FriendlyByteBuf, Map<Heightmap.Types,long[]>, Consumer<BlockEntityTagOutput>)
+        // into the ONE ClientboundLevelChunkPacketData they all came from (mc262-ref ClientChunkCache.java:102-108
+        // -> mc263-ref :99); the buffer/heightmaps/block-entity reads moved INSIDE
+        // LevelChunk.replaceWithPacketData(chunkX, chunkZ, chunkData) (mc263-ref LevelChunk.java:518-538).
+        ClientboundLevelChunkPacketData chunkData
     ) {
         Validate.isTrue(Thread.currentThread() == mainThread);
 
@@ -203,7 +207,7 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
         LevelChunk worldChunk = chunkMapForMainThread.get(chunkPosLong);
         if (worldChunk == null) {
             worldChunk = new LevelChunk(this.level, new ChunkPos(x, z));
-            loadChunkDataFromPacket(buf, heightmaps, worldChunk, consumer);
+            loadChunkDataFromPacket(x, z, chunkData, worldChunk);
 
             LevelChunk worldChunkToPut = worldChunk; // lambda can only capture effectively final variables
             modifyChunkMap(chunkMap -> {
@@ -212,7 +216,7 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
             emitChunkAdded(worldChunk); // R13f: SOG delta feed (new-chunk added-loaded + added-empty sections)
         }
         else {
-            loadChunkDataFromPacket(buf, heightmaps, worldChunk, consumer);
+            loadChunkDataFromPacket(x, z, chunkData, worldChunk);
             emitRefresh(worldChunk); // R13f: SOG delta feed (api-map #45 existing-chunk refreshEmptySections branch)
         }
 
@@ -231,13 +235,12 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
      * {@link net.minecraft.world.level.chunk.LinearPalette#read(FriendlyByteBuf)}
      */
     private void loadChunkDataFromPacket(
-        FriendlyByteBuf buf,
-        Map<Heightmap.Types, long[]> heightmaps, // 26.2 #48
-        LevelChunk worldChunk,
-        Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> consumer
+        int x, int z,
+        ClientboundLevelChunkPacketData chunkData, // 26.2 #48; 26.3: the three split args re-merged (see replaceWithPacketData above)
+        LevelChunk worldChunk
     ) {
         try {
-            worldChunk.replaceWithPacketData(buf, heightmaps, consumer); // 26.2 #48
+            worldChunk.replaceWithPacketData(x, z, chunkData); // 26.2 #48; 26.3: (chunkX, chunkZ, chunkData)
         }
         catch (Exception e) {
             LOGGER.error(

@@ -137,10 +137,16 @@ public final class RemoteEntityApplier {
         // to absSnapTo for entities that expose no InterpolationHandler.
         entity.syncPacketPositionCodec(p.x(), p.y(), p.z());
         net.minecraft.world.entity.InterpolationHandler interp = entity.getInterpolation();
-        if (interp != null) {
-            interp.interpolateTo(
-                new net.minecraft.world.phys.Vec3(p.x(), p.y(), p.z()),
-                p.yRot(), p.xRot());
+        // 26.3 SEMANTIC TRAP: getInterpolation() is never null any more — an entity with no interpolation
+        // returns InterpolationHandler.NO_OP, whose interpolateTo(...) does nothing and returns FALSE
+        // (mc263-ref InterpolationHandler.java:8,32-35; Entity.java:2630-2636). A bare `interp != null`
+        // test would therefore be always-true and the absSnapTo fallback below would silently never run.
+        // The "no InterpolationHandler" case is now the FALSE return, which is how vanilla's own
+        // moveOrInterpolateTo branches (mc263-ref Entity.java:2615-2624). Same two outcomes as 26.2.
+        if (interp != null && interp.interpolateTo(
+                net.minecraft.world.entity.PositionPath.of(new net.minecraft.world.phys.Vec3(p.x(), p.y(), p.z())),
+                p.yRot(), p.xRot(), true)) {
+            // interpolation accepted the target (the 26.2 `interp != null` branch)
         } else {
             entity.absSnapTo(p.x(), p.y(), p.z(), p.yRot(), p.xRot());
         }

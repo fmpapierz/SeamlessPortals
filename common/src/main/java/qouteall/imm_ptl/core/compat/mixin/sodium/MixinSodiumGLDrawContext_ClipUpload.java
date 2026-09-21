@@ -1,8 +1,8 @@
 package qouteall.imm_ptl.core.compat.mixin.sodium;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import com.warwa.seamlessportals.render.ClipUniformLocationCache;
 import com.warwa.seamlessportals.render.FrontClipping;
 import com.warwa.seamlessportals.render.FullPipelineClipState;

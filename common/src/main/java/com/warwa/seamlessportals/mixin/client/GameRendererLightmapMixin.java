@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.warwa.seamlessportals.render.PortalContextSwitch;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -25,7 +25,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(GameRenderer.class)
 public class GameRendererLightmapMixin {
 
-    @Inject(method = "lightmap()Lcom/mojang/blaze3d/textures/GpuTextureView;",
+    @Inject(method = "lightmap()Lcom/mojang/renderpearl/api/textures/GpuTextureView;",
             at = @At("HEAD"), cancellable = true)
     private void seamlessportals$overrideLightmap(CallbackInfoReturnable<GpuTextureView> cir) {
         GpuTextureView override = PortalContextSwitch.portalLightmapOverride;

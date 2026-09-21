@@ -946,7 +946,7 @@ public class ServerTeleportationManager {
         newA.seamlessportals$setLastHurt(oldA.seamlessportals$getLastHurt());
         newL.hurtTime = oldL.hurtTime;          // serialized in 26.2 ("HurtTime"); kept paired, not load-bearing
         newL.hurtDuration = oldL.hurtDuration;  // not serialized
-        newL.invulnerableTime = oldL.invulnerableTime; // not serialized
+        newL.setInvulnerableTime(oldL.getInvulnerableTime()); // not serialized — 26.3: field went private, same value via the new accessors (mc263-ref Entity.java:255,4214,4218)
         // Brain-based panic (villagers, axolotls, ...): HURT_BY has no codec, so the
         // persisted-memory NBT round-trip drops it — copy it live. (Brain.setMemory
         // silently no-ops on an unregistered slot, so the new-brain write is safe even

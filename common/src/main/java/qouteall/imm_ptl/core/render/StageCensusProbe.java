@@ -157,14 +157,23 @@ public final class StageCensusProbe {
             }
 
             Minecraft mc = Minecraft.getInstance();
-            boolean fabulous = mc.gameRenderer.gameRenderState().useShaderTransparency();
-            boolean translTargetLive = mc.levelRenderer != null
-                && mc.levelRenderer.translucentTarget() != null;
+            // 26.3: GameRenderState.useShaderTransparency() is gone; its successor is GameRenderer.useImprovedTransparency()
+            // (mc263-ref GameRenderer.java:868-870) — the substitution vanilla made at its own caller (mc262-ref
+            // LevelRenderer.java:835 -> mc263-ref :1240). Every use below in this file is the same substitution.
+            boolean fabulous = mc.gameRenderer.useImprovedTransparency();
+            // 26.3: LevelRenderer.translucentTarget() is GONE with the Fabulous stage targets (OIT replaced them;
+            // mc263-ref LevelTargetBundle.java:15-27). The census column is kept so the line schema does not shift,
+            // but there is no such target to be live any more — it now always reads false.
+            //   (26.2) boolean translTargetLive = mc.levelRenderer != null && mc.levelRenderer.translucentTarget() != null;
+            boolean translTargetLive = false;
 
             String key = "pass " + shortDim(destDim) + " L" + layer + (sharedState ? " SD" : " XD");
             String content = "ord=" + ord
                 + " canDraw=" + canDraw + " sodiumArmed=" + sodiumArmed + " sampler=" + samplerOk
-                + " maxIdx=" + destChunks.maxIndicesRequired()
+                // 26.3: ChunkSectionsToRender is no longer a record — maxIndicesRequired() the accessor is gone; this reads the
+                // same int as a (widened) field (AW/AT note; mc263-ref ChunkSectionsToRender.java:27-34). Every use below in this
+                // file is the same substitution.
+                + " maxIdx=" + destChunks.maxIndicesRequired
                 + " draws[s/c/t]=" + solidDraws + "/" + cutoutDraws + "/" + translDraws
                 + " sect[total=" + total + " renderable=" + renderable + " transl=" + withTransl
                 + " tDrawNull=" + tDrawNull + " sliceNull=" + sliceNull + " custom=" + custom
@@ -405,15 +414,18 @@ public final class StageCensusProbe {
     }
 
     private static int countDraws(ChunkSectionsToRender chunks, ChunkSectionLayer layer) {
-        var byMergeKey = chunks.drawGroupsPerLayer().get(layer);
-        if (byMergeKey == null) {
-            return 0;
-        }
-        int n = 0;
-        for (var drawList : byMergeKey.values()) {
-            n += drawList.size();
-        }
-        return n;
+        // 26.3: ChunkSectionsToRender is no longer a record; drawGroupsPerLayer() (layer -> mergeKey -> draws) is gone.
+        // The non-indirect prepareChunkRenders this mod calls returns a DrawSeparate whose (widened) drawsPerLayer is
+        // already FLAT per layer — layer -> draws (mc263-ref ChunkSectionsToRender.java:152-165, LevelRenderer.java:
+        // 810-853), so the count is that list's size: the same number the 26.2 double loop summed.
+        //   (26.2) var byMergeKey = chunks.drawGroupsPerLayer().get(layer); ... for (var drawList : byMergeKey.values()) n += drawList.size();
+        // 26.3 (corrected same day): the dest passes now prepare in the flavour vanilla's render() picks
+        // (com.warwa.seamlessportals.render.DestChunkPrep), so this may be a DrawIndirect — whose per-layer count is
+        // the sum of its indirect groups' drawCount. One flavour-aware counter serves every reader; a type it does
+        // not know (sodium's replacement) still reads 0 here, as the first port's `instanceof DrawSeparate` miss did.
+        //   (first 26.3 port) if (!(chunks instanceof ChunkSectionsToRender.DrawSeparate separate)) return 0;
+        //   (first 26.3 port) var draws = separate.drawsPerLayer.get(layer); return draws == null ? 0 : draws.size();
+        return Math.max(0, com.warwa.seamlessportals.render.DestChunkPrep.countDraws(chunks, layer));
     }
 
     private static String shortDim(ResourceKey<Level> dim) {

@@ -88,7 +88,9 @@ public class TransformationManager {
     private static void processTransformation(Camera camera, PoseStack matrixStack) {
         DQuaternion currentAnimationDelta = getCurrentAnimationDelta();
         if (currentAnimationDelta != null) {
-            matrixStack.mulPose(currentAnimationDelta.toMcQuaternion());
+            // 26.3: PoseStack.mulPose(Quaternionfc) was RENAMED rotate(Quaternionfc) — identical body
+            // `this.last().rotate(by)` (mc262-ref PoseStack.java:43-45 -> mc263-ref :44-46).
+            matrixStack.rotate(currentAnimationDelta.toMcQuaternion());
         }
         
         WorldRenderInfo.applyAdditionalTransformations(matrixStack);

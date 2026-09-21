@@ -1,4 +1,9 @@
 plugins {
-    id 'net.neoforged.moddev' version '2.0.141' apply false
+    // 26.3: 2.0.141 -> 2.0.147 = the version NeoForgeMDKs/MDK-26.3-ModDevGradle pins (read off its build.gradle 2026-09-20).
+    // Required, not cosmetic: NeoForge 26.3.0.7-beta's own AT widens an ANONYMOUS class (ats/accesstransformer.cfg:
+    // `public net.minecraft.core.HolderSet$1 contents()`); 2.0.141's source transformer (jst 2.0.6) leaves it protected and
+    // :neoforge:createMinecraftArtifacts dies in NeoForge's recompile (`contents() in <anonymous HolderSet$1> cannot
+    // override contents() in HolderSet.Named; attempting to assign weaker access privileges`).
+    id 'net.neoforged.moddev' version '2.0.147' apply false
     id 'net.fabricmc.fabric-loom' version '1.17.11' apply false
 }

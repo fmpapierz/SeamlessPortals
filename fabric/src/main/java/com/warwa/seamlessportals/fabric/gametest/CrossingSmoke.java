@@ -132,6 +132,28 @@ public class CrossingSmoke implements FabricClientGameTest {
             ));
             context.waitTicks(40);
 
+            // 26.3 FIXTURE LEVER (-PgametestMainViewTranslucent; DEFAULT OFF, inert for the default gate): TRANSLUCENT
+            // terrain in the MAIN view. The default staging is superflat obsidian — the main view's translucent chunk
+            // layer has NO draw groups, so vanilla's DrawIndirect.render never reaches its per-section
+            // setVertexBuffer(1, ..) (mc263-ref ChunkSectionsToRender.java:126-128). That is how this suite stayed green
+            // on the improved-transparency slot while the user's world (water in view) died with "Vertex buffer at slot
+            // 1 has been closed!". Two stained-glass columns at the platform's north edge, seen through the one-block
+            // gaps between the three ground windows ([px-5,px-2] [px-1,px+2] [px+3,px+6]); stained glass, not water —
+            // static, so nothing flows into a leg path. Clear of every leg path (those run at x px+0.5 / px+4.5 and
+            // stop at the portal planes, z >= pz-8).
+            if (Boolean.getBoolean("seamlessportals.gametest.mainViewTranslucent")) {
+                runCommands(context, List.of(
+                    "fill " + (px - 2) + " " + py + " " + (pz - 10) + " "
+                        + (px - 2) + " " + (py + 3) + " " + (pz - 10) + " minecraft:red_stained_glass",
+                    "fill " + (px + 2) + " " + py + " " + (pz - 10) + " "
+                        + (px + 2) + " " + (py + 3) + " " + (pz - 10) + " minecraft:red_stained_glass"
+                ));
+                context.waitTicks(10);
+                SeamlessPortalsConstants.LOGGER.info(
+                    LOG + "fixture lever: main-view translucent terrain staged (2 stained-glass columns at z={})",
+                    pz - 10);
+            }
+
             // IS2 EM-G PRE-PORTAL CHECKPOINT (defect G evidence; port-note IS-iris-shaders-on
             // §3.1/§3.2): the creative-browse BEFORE any portal entity exists — the
             // discriminator for whether the inventory mangle needs portal machinery to have

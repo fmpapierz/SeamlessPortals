@@ -257,7 +257,9 @@ public class BlockManipulationServer {
             Validate.notNull(world, "missing %s", dimension.identifier());
 
             withRedirect(
-                new Context(world, packet.getHitResult()),
+                // 26.3: ServerboundUseItemOnPacket became a record(hand, hitResult, sequence) —
+                // getHitResult() -> hitResult() (mc263-ref ServerboundUseItemOnPacket.java:11).
+                new Context(world, packet.hitResult()),
                 () -> {
                     doProcessUseItemOn(world, player, packet);
                 }
@@ -349,9 +351,11 @@ public class BlockManipulationServer {
     private static void doProcessUseItemOn(
         ServerLevel world, ServerPlayer player, ServerboundUseItemOnPacket packet
     ) {
-        player.connection.ackBlockChangesUpTo(packet.getSequence());
-        InteractionHand hand = packet.getHand();
-        BlockHitResult blockHitResult = packet.getHitResult();
+        // 26.3: record accessors — getSequence()/getHand()/getHitResult() -> sequence()/hand()/hitResult()
+        // (vanilla's own handleUseItemOn made the same renames, mc263-ref SGPLI.java:1407,1409,1412).
+        player.connection.ackBlockChangesUpTo(packet.sequence());
+        InteractionHand hand = packet.hand();
+        BlockHitResult blockHitResult = packet.hitResult();
         ResourceKey<Level> dimension = world.dimension();
         
         ItemStack itemStack = player.getItemInHand(hand);
@@ -369,6 +373,9 @@ public class BlockManipulationServer {
                 return;
             }
             
+            // 26.3 (@IPVanillaCopy tracks vanilla): the swing animation is now an item property read
+            // BEFORE useItemOn, which may consume the stack (mc263-ref SGPLI.java:1428).
+            net.minecraft.world.item.component.SwingAnimation swingAnimation = itemStack.getInteractAnimation();
             InteractionResult actionResult = player.gameMode.useItemOn(
                 player,
                 world,
@@ -379,9 +386,15 @@ public class BlockManipulationServer {
             // 26.2: InteractionResult.shouldSwing() is GONE (ducks-api-misc.md G7; InteractionResult is now a
             // sealed interface). The server-side swing condition is the vanilla pattern
             // (ServerGamePacketListenerImpl.java:1381-1383): a Success result whose swingSource is SERVER.
-            if (actionResult instanceof InteractionResult.Success success
-                && success.swingSource() == InteractionResult.SwingSource.SERVER) {
-                player.swing(hand, true);
+            // 26.3: vanilla's clause changed at that same site (mc263-ref SGPLI.java:1442-1444). SwingSource
+            // is now {NONE, PREDICTED, SERVER_ONLY} (was {NONE, CLIENT, SERVER}); Success.shouldSwing() is
+            // BACK (= swingSource != NONE); LivingEntity.swing(hand, boolean) is gone in favour of
+            // swingAndResetAttackStrength(hand, SwingAnimation, sendToSwingingEntity), and the server now
+            // swings for PREDICTED results too, echoing to the swinger only when it was NOT predicted.
+            // For the old SERVER case this is unchanged: SERVER_ONLY != PREDICTED -> true == swing(hand, true).
+            if (actionResult instanceof InteractionResult.Success success && success.shouldSwing()) {
+                player.swingAndResetAttackStrength(
+                    hand, swingAnimation, success.swingSource() != InteractionResult.SwingSource.PREDICTED);
             }
         }
         

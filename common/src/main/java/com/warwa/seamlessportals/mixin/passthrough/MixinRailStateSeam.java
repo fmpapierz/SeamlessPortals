@@ -211,30 +211,36 @@ public abstract class MixinRailStateSeam implements SeamShadowHolder {
 
     // ── H3a: connectTo:205. H3b: place:333. A proxy's this.pos is a local coordinate past the
     //         plane; writing it locally would spawn a rail in the SOURCE dimension behind the portal. ──
+    // 26.3: both writes changed from `this.level.setBlock(this.pos, this.state, 3)` to
+    // `this.level.setBlockAndUpdate(this.pos, this.state)` (mc262-ref RailState.java:205,333 -> mc263-ref :205,333; javap:
+    // connectTo 26.2 offset 358 `Level.setBlock:(..I)Z` -> 26.3 offset 357 `Level.setBlockAndUpdate:(..)Z`; place 596 -> 595;
+    // still exactly one site each). setBlockAndUpdate IS `setBlock(pos, blockState, 3)` (mc263-ref LevelWriter.java:12-14), so
+    // the wrapped operation no longer carries a flags operand: the OWNER path calls the 2-arg original, and the PROXY path hands
+    // writeLocal the same literal 3 that 26.2's call site passed.
     @WrapOperation(
         method = "connectTo",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;"
-            + "setBlock(Lnet/minecraft/core/BlockPos;"
-            + "Lnet/minecraft/world/level/block/state/BlockState;I)Z"),
+            + "setBlockAndUpdate(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;)Z"),
         require = 1, allow = 1
     )
     private boolean seamlessportals$writeConnectTo(
-        Level l, BlockPos p, BlockState st, int flags, Operation<Boolean> op
+        Level l, BlockPos p, BlockState st, Operation<Boolean> op
     ) {
-        return seamlessportals$write(l, p, st, flags, op);
+        return seamlessportals$write(l, p, st, 3, op);
     }
 
     @WrapOperation(
         method = "place",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;"
-            + "setBlock(Lnet/minecraft/core/BlockPos;"
-            + "Lnet/minecraft/world/level/block/state/BlockState;I)Z"),
+            + "setBlockAndUpdate(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;)Z"),
         require = 1, allow = 1
     )
     private boolean seamlessportals$writePlace(
-        Level l, BlockPos p, BlockState st, int flags, Operation<Boolean> op
+        Level l, BlockPos p, BlockState st, Operation<Boolean> op
     ) {
-        return seamlessportals$write(l, p, st, flags, op);
+        return seamlessportals$write(l, p, st, 3, op);
     }
 
     @Unique
@@ -243,7 +249,7 @@ public abstract class MixinRailStateSeam implements SeamShadowHolder {
     ) {
         SeamShadow s = this.seamlessportals$shadow;
         if (s == null) {
-            return op.call(l, p, st, flags);
+            return op.call(l, p, st); // 26.3: the wrapped call is the 2-arg setBlockAndUpdate (== flags 3, see note above)
         }
         // A PROXY's position is a shadow coordinate. With the write lever pulled the far write is
         // DROPPED, never executed locally: op.call here would spawn a phantom rail in the SOURCE

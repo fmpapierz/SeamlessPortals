@@ -105,14 +105,23 @@ public class DimensionRenderHelper {
         // Extract from virtual camera's attribute probe — gives destination dimension values.
         // This is the EXACT same logic as LightmapRenderStateExtractor.extract().
         renderState.blockFactor = blockLightFlicker + 1.4F;
-        renderState.blockLightTint = ARGB.vector3fFromRGB24(
-            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.BLOCK_LIGHT_TINT, partialTicks));
+// 26.3: the colour attributes are EnvironmentAttribute<Vector3fc> now (were <Integer> RGB24), so the
+// ARGB.vector3fFromRGB24(..) wrapper is gone — exactly as in vanilla's own extract() (mc262-ref
+// LightmapRenderStateExtractor.java:57,59,70,86 -> mc263-ref :56,58,69,85).
+renderState.blockLightTint = 
+            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.BLOCK_LIGHT_TINT, partialTicks);
         renderState.skyFactor = virtualCamera.attributeProbe().getValue(
             EnvironmentAttributes.SKY_LIGHT_FACTOR, partialTicks);
-        renderState.skyLightColor = ARGB.vector3fFromRGB24(
-            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.SKY_LIGHT_COLOR, partialTicks));
-        renderState.ambientColor = ARGB.vector3fFromRGB24(
-            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.AMBIENT_LIGHT_COLOR, partialTicks));
+// 26.3: the colour attributes are EnvironmentAttribute<Vector3fc> now (were <Integer> RGB24), so the
+// ARGB.vector3fFromRGB24(..) wrapper is gone — exactly as in vanilla's own extract() (mc262-ref
+// LightmapRenderStateExtractor.java:57,59,70,86 -> mc263-ref :56,58,69,85).
+renderState.skyLightColor = 
+            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.SKY_LIGHT_COLOR, partialTicks);
+// 26.3: the colour attributes are EnvironmentAttribute<Vector3fc> now (were <Integer> RGB24), so the
+// ARGB.vector3fFromRGB24(..) wrapper is gone — exactly as in vanilla's own extract() (mc262-ref
+// LightmapRenderStateExtractor.java:57,59,70,86 -> mc263-ref :56,58,69,85).
+renderState.ambientColor = 
+            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.AMBIENT_LIGHT_COLOR, partialTicks);
 
         // Brightness from game options
         float brightnessOption = mc.options.gamma().get().floatValue();
@@ -139,8 +148,11 @@ public class DimensionRenderHelper {
             }
         }
 
-        renderState.nightVisionColor = ARGB.vector3fFromRGB24(
-            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.NIGHT_VISION_COLOR, partialTicks));
+// 26.3: the colour attributes are EnvironmentAttribute<Vector3fc> now (were <Integer> RGB24), so the
+// ARGB.vector3fFromRGB24(..) wrapper is gone — exactly as in vanilla's own extract() (mc262-ref
+// LightmapRenderStateExtractor.java:57,59,70,86 -> mc263-ref :56,58,69,85).
+renderState.nightVisionColor = 
+            virtualCamera.attributeProbe().getValue(EnvironmentAttributes.NIGHT_VISION_COLOR, partialTicks);
         renderState.bossOverlayWorldDarkening = 0.0F; // No boss overlay in portal view
 
         // Render the lightmap texture

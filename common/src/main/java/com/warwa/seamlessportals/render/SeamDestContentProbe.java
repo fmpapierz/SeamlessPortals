@@ -1,8 +1,8 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTextureView;
+import com.mojang.renderpearl.backend.opengl.GlDevice;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.logging.LogUtils;
@@ -110,7 +110,9 @@ public final class SeamDestContentProbe {
      * strip.
      */
     private static void readHandRegion(RenderTarget deferred) {
-        if (!(RenderSystem.getDevice().backend instanceof GlDevice glDevice)
+        // 26.3: GpuDevice is now an interface; the `backend` field lives on its one implementor,
+        // FrontendGpuDevice (created by BOTH backends: mc263-ref GlBackend.java:74, VulkanBackend.java:206).
+        if (!(((com.mojang.renderpearl.frontend.FrontendGpuDevice) RenderSystem.getDevice()).backend instanceof GlDevice glDevice)
             || !(deferred.getColorTextureView() instanceof GlTextureView colorView)
             || !(deferred.getDepthTextureView() instanceof GlTextureView depthView)
         ) {
@@ -180,7 +182,9 @@ public final class SeamDestContentProbe {
     }
 
     private static void readAndReport(RenderTarget mainRT, double distToAperture) {
-        if (!(RenderSystem.getDevice().backend instanceof GlDevice glDevice)
+        // 26.3: GpuDevice is now an interface; the `backend` field lives on its one implementor,
+        // FrontendGpuDevice (created by BOTH backends: mc263-ref GlBackend.java:74, VulkanBackend.java:206).
+        if (!(((com.mojang.renderpearl.frontend.FrontendGpuDevice) RenderSystem.getDevice()).backend instanceof GlDevice glDevice)
             || !(mainRT.getColorTextureView() instanceof GlTextureView colorView)
             || !(mainRT.getDepthTextureView() instanceof GlTextureView depthView)
         ) {

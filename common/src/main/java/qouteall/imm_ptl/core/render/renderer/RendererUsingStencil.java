@@ -1,8 +1,8 @@
 package qouteall.imm_ptl.core.render.renderer;
 
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTextureView;
+import com.mojang.renderpearl.backend.opengl.GlDevice;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import qouteall.q_misc_util.Helper;
@@ -187,7 +187,10 @@ public class RendererUsingStencil extends PortalRenderer {
             // GameRenderState.useShaderTransparency() (GameRenderState.java:17-19). The if-body is
             // IP-commented (no worldRenderer.reload equivalent on 26.2 — the substrate provides the
             // stencil buffer regardless), so this read is inert; kept for IP fidelity + the R13i anchor.
-            if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+            // 26.3: GameRenderState.useShaderTransparency() is gone; its successor is GameRenderer.useImprovedTransparency()
+            // (mc263-ref GameRenderer.java:868-870) — the substitution vanilla made at its own caller (mc262-ref
+            // LevelRenderer.java:835 -> mc263-ref :1240). Every use below in this file is the same substitution.
+            if (client.gameRenderer.useImprovedTransparency()) {
 //                client.worldRenderer.reload();
             }
         }
@@ -210,7 +213,9 @@ public class RendererUsingStencil extends PortalRenderer {
         RenderTarget mainRt = client.gameRenderer.mainRenderTarget();
         // 26.2: RenderSystem.getDevice() returns the GpuDevice FACADE; the GL backend is its
         // (AW-widened) `backend` field — GlDevice implements GpuDeviceBackend.
-        if (RenderSystem.getDevice().backend instanceof GlDevice glDevice
+        // 26.3: GpuDevice is now an interface; the `backend` field lives on its one implementor,
+        // FrontendGpuDevice (created by BOTH backends: mc263-ref GlBackend.java:74, VulkanBackend.java:206).
+        if (((com.mojang.renderpearl.frontend.FrontendGpuDevice) RenderSystem.getDevice()).backend instanceof GlDevice glDevice
             && mainRt.getColorTextureView() instanceof GlTextureView colorView
             && mainRt.getDepthTextureView() instanceof GlTextureView depthView
         ) {

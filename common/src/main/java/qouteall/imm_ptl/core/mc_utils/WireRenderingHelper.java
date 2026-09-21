@@ -52,7 +52,9 @@ public class WireRenderingHelper {
         
         double periodLen = 100;
         
-        matrixStack.mulPose(rotation.toMcQuaternion());
+        // 26.3: PoseStack.mulPose(Quaternionfc) was RENAMED rotate(Quaternionfc) — identical body
+        // `this.last().rotate(by)` (mc262-ref PoseStack.java:43-45 -> mc263-ref :44-46).
+        matrixStack.rotate(rotation.toMcQuaternion());
         Matrix4f matrix = matrixStack.last().pose();
         
         float alpha = ((color >> 24) & 0xff) / 255f;
@@ -184,7 +186,9 @@ public class WireRenderingHelper {
             planeCenter.z - cameraPos.z
         );
         
-        matrixStack.mulPose(
+        // 26.3: PoseStack.mulPose(Quaternionfc) was RENAMED rotate(Quaternionfc) — identical body
+        // `this.last().rotate(by)` (mc262-ref PoseStack.java:43-45 -> mc263-ref :44-46).
+        matrixStack.rotate(
             DQuaternion.rotationByDegrees(normal, CHelper.getSmoothCycles(211) * 360)
                 .toMcQuaternion()
         );
@@ -369,7 +373,9 @@ public class WireRenderingHelper {
             center.z - cameraPos.z
         );
         
-        matrixStack.mulPose(rotation.toMcQuaternion());
+        // 26.3: PoseStack.mulPose(Quaternionfc) was RENAMED rotate(Quaternionfc) — identical body
+        // `this.last().rotate(by)` (mc262-ref PoseStack.java:43-45 -> mc263-ref :44-46).
+        matrixStack.rotate(rotation.toMcQuaternion());
         
         matrixStack.scale((float) scale, (float) scale, (float) scale);
         
@@ -608,7 +614,9 @@ public class WireRenderingHelper {
             sphere.center().z - cameraPos.z
         );
         
-        matrixStack.mulPose(sphereOrientation.toMcQuaternion());
+        // 26.3: PoseStack.mulPose(Quaternionfc) was RENAMED rotate(Quaternionfc) — identical body
+        // `this.last().rotate(by)` (mc262-ref PoseStack.java:43-45 -> mc263-ref :44-46).
+        matrixStack.rotate(sphereOrientation.toMcQuaternion());
         matrixStack.scale((float) sphere.radius(), (float) sphere.radius(), (float) sphere.radius());
         
         Matrix4f matrix = matrixStack.last().pose();

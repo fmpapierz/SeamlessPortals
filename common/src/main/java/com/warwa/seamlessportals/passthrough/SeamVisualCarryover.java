@@ -89,7 +89,10 @@ public final class SeamVisualCarryover {
             e.position(),
             McHelper.lastTickPosOf(e),
             McHelper.getWorldVelocity(e),
-            (interp != null && interp.hasActiveInterpolation()) ? interp.position() : null,
+            // 26.3: InterpolationHandler became an interface; position()/yRot()/xRot() folded into
+            // target() -> @Nullable PositionAndRotation, non-null exactly when hasActiveInterpolation()
+            // (mc263-ref AbstractInterpolationHandler.java:24-26) — the guard already in place here.
+            (interp != null && interp.hasActiveInterpolation()) ? interp.target().position() : null,
             now
         ));
         SeamCartProbe.event(e, "CARRY-STASH dim=" + e.level().dimension().identifier()
@@ -133,7 +136,12 @@ public final class SeamVisualCarryover {
             // z-steps exactly 0.400 — the dip was purely the shortened first lerp aims).
             // Rotation stays the server's (the spawn packet already applied the seam's
             // rotation, if any).
-            interp.interpolateTo(serverPos, fresh.getYRot(), fresh.getXRot());
+            // 26.3: interpolateTo(Vec3, yRot, xRot) -> interpolateTo(PositionPath, yRot, xRot, hasRotation);
+            // PositionPath.of(pos) + hasRotation=true is vanilla's own spelling of the old 3-arg call
+            // (mc263-ref Entity.java:2603-2605). getInterpolation() is never null now — an entity with no
+            // interpolation gets InterpolationHandler.NO_OP, whose interpolateTo is a no-op returning false,
+            // i.e. exactly what the 26.2 null-skip did here.
+            interp.interpolateTo(net.minecraft.world.entity.PositionPath.of(serverPos), fresh.getYRot(), fresh.getXRot(), true);
         }
         SeamCartProbe.event(fresh, "CARRY-APPLY via portal " + crossingPortal.getId()
             + " visual=" + mapped + " server=" + serverPos);

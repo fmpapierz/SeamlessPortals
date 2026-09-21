@@ -55,6 +55,7 @@
     "common.interaction.MixinPlayer_CrossPortalKnockback",
     "common.interaction.MixinServerPlayerGameMode",
     "common.interaction.MixinServerPlayerGameMode_RemoveBlockNeoForge",
+    "common.interaction.MixinServerPlayerGameMode_RemoveBlockForge",
     "common.mc_util.IELevelEntityGetterAdapter",
     "common.mc_util.MixinEntitySection",
     "common.mc_util.MixinEntitySectionStorage",

@@ -237,6 +237,19 @@ public class SeamlessPortalsModNeoForge {
             PortalChunkTracker.bootstrapTicketType();
             com.warwa.seamlessportals.chunk.PortalEntityTracker.bootstrapTicketTypes();
         }
+        else if (event.getRegistryKey() == Registries.COMMAND_ARGUMENT_TYPE) {
+            // 26.3 (user decision 2026-09-20, "do it"): the drain NeoForgePlatform's own javadoc has always promised
+            // ("drained by SeamlessPortalsModNeoForge's mod-bus listeners … at RegisterEvent for COMMAND_ARGUMENT_TYPE")
+            // and nothing ever called — also in the 26.2 source. NeoForgePlatform.registerArgumentType does half 1
+            // (ArgumentTypeInfos.registerByClass) at once and QUEUES half 2, the registry entry; without this branch
+            // IP's three argument types (axis, sub-command, animation timing function) never reached
+            // COMMAND_ARGUMENT_TYPE, so wherever the command tree is serialized the server wrote registry id -1 for
+            // them (javap ClientboundCommandsPacket$ArgumentNodeStub.serializeCap: writeVarInt(getId(info))) and the
+            // client, finding byId(-1) == null, dropped those argument nodes: no completion/validation for the
+            // /portal sub-commands that use them (the server still parsed them). Both flag states have already queued
+            // by now: flag-ON in the init chain at the FIRST RegisterEvent above, flag-OFF in the ctor.
+            NeoForgePlatform.drainArgumentTypeRegistrations(event);
+        }
         else if (event.getRegistryKey() == Registries.CREATIVE_MODE_TAB) {
             if (SeamlessPortalsConfig.isEntityPortals()) {
                 // S19-A: the creative TAB registers FLAG-ON only, mirroring Fabric — tabs are

@@ -889,8 +889,15 @@ public class PortalWorldManager {
                 for (var section : sectionsForChunk) {
                     section.write(buf);
                 }
-                cache.replaceWithPacketData(chunkX, chunkZ, buf,
-                    java.util.Collections.emptyMap(), tag -> {});
+                // 26.3: replaceWithPacketData(int,int,FriendlyByteBuf,Map,Consumer) folded into
+                // (int,int,ClientboundLevelChunkPacketData) (mc263-ref ClientChunkCache.java:99). Same three
+                // inputs — section bytes, empty heightmaps, no block entities — through its widened private
+                // ctor (AW/AT note); sections are read back out of getReadBuffer() exactly as `buf` was read.
+                byte[] bufBytes = new byte[buf.readableBytes()];
+                buf.readBytes(bufBytes);
+                cache.replaceWithPacketData(chunkX, chunkZ,
+                    new net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData(
+                        java.util.Collections.emptyMap(), bufBytes, java.util.Collections.emptyList()));
                 buf.release();
 
                 // Apply stored light (fixes "blue box"/unlit chunks).

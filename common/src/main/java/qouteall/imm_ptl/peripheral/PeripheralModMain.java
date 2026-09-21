@@ -135,6 +135,15 @@ public class PeripheralModMain {
         CommandStickItem.registerDataComponents();
     }
 
+    // 26.3 (user decision 2026-09-20): sink-taking sibling of the method above, same entries in the same order — for the
+    // loader whose DATA_COMPONENT_TYPE cannot be written directly (MinecraftForge; see the item classes' overloads).
+    public static void registerDataComponents(
+        BiConsumer<Identifier, net.minecraft.core.component.DataComponentType<?>> regFunc
+    ) {
+        PortalWandItem.registerDataComponents(regFunc);
+        CommandStickItem.registerDataComponents(regFunc);
+    }
+
     public static void registerItems(BiConsumer<Identifier, Item> regFunc) {
         regFunc.accept(
             McHelper.newResourceLocation("immersive_portals", "portal_helper"),

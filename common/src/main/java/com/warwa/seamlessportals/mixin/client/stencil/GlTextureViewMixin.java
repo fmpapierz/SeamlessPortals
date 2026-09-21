@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client.stencil;
 
-import com.mojang.blaze3d.opengl.DirectStateAccess;
+import com.mojang.renderpearl.backend.opengl.DirectStateAccess;
 import org.lwjgl.opengl.ARBDirectStateAccess;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -39,7 +39,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * com.warwa.seamlessportals.mixin.client.stencil.RenderTargetMixin} (re-pointed
  * at {@code FrameBufferCache.createFbo}). No functionality is dropped.
  */
-@Mixin(targets = "com.mojang.blaze3d.opengl.GlTextureView")
+@Mixin(targets = "com.mojang.renderpearl.backend.opengl.GlTextureView")
 public class GlTextureViewMixin {
 
     /**
@@ -52,7 +52,7 @@ public class GlTextureViewMixin {
      *
      * createFbo signature: private int createFbo(DirectStateAccess dsa, int depthid)
      */
-    @Inject(method = "createFbo(Lcom/mojang/blaze3d/opengl/DirectStateAccess;I)I",
+    @Inject(method = "createFbo(Lcom/mojang/renderpearl/backend/opengl/DirectStateAccess;I)I",
             at = @At("RETURN"))
     private void seamlessportals$fixDepthStencilAttachment(
             DirectStateAccess dsa, int depthId, CallbackInfoReturnable<Integer> cir) {

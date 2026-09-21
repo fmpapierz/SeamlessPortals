@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.warwa.seamlessportals.render.ClipDiscriminatorProbe;
 import com.warwa.seamlessportals.render.ClipUniformLocationCache;
 import com.warwa.seamlessportals.render.FrontClipping;
@@ -66,17 +66,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * renderer never runs, the override stays disarmed, and this handler reads exactly
  * {@code capture().enabled} — GL-state identical to the plain-sodium path.
  */
-@Mixin(targets = "com/mojang/blaze3d/opengl/GlCommandEncoder")
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlCommandEncoder")
 public abstract class GlCommandEncoderClipMixin {
 
+    // 26.3: `private boolean trySetup(GlRenderPass, Collection<String>)` is gone; its per-draw successor is
+    // `private void setupDraw(GlRenderPass)` (mc262-ref com/mojang/blaze3d/opengl/GlCommandEncoder.java:617 -> mc263-ref
+    // com/mojang/renderpearl/backend/opengl/GlCommandEncoder.java:499-587; javap 26.3 confirms the descriptor). Same role and
+    // same position: it is the FIRST statement of every draw entry point — executeDraw :433, executeDraws :465,
+    // executeDrawIndirect :484 (26.2 called trySetup from the same three, :497/:517/:548, plus executeDrawMultiple :405, which
+    // 26.3 deleted) — and it binds the pipeline's program before returning (:510-513 `renderPass.pipeline.bind()` ->
+    // GlRenderPipeline.java:116-117 `GlStateManager._glUseProgram(this.program.getProgramId())`), so GL_CURRENT_PROGRAM read
+    // at RETURN is still the program about to draw. It returns void: 26.2's `false` ("no draw will happen" — an invalid
+    // pipeline) cannot occur any more, because a RenderPass can only be given an already-COMPILED pipeline, so the
+    // early-out has nothing left to test and every setupDraw is followed by its draw.
     @Inject(
-        method = "trySetup(Lcom/mojang/blaze3d/opengl/GlRenderPass;Ljava/util/Collection;)Z",
+        method = "setupDraw(Lcom/mojang/renderpearl/backend/opengl/GlRenderPass;)V",
         at = @At("RETURN"),
         require = 1
     )
-    private void seamlessportals$uploadClipPlaneAtReturn(CallbackInfoReturnable<Boolean> cir) {
-        // Only when trySetup succeeded — false returns mean no draw will happen.
-        if (Boolean.FALSE.equals(cir.getReturnValue())) return;
+    private void seamlessportals$uploadClipPlaneAtReturn(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
         int programId = org.lwjgl.opengl.GL20.glGetInteger(org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM);
         seamlessportals$uploadForProgram(programId);
     }

@@ -47,9 +47,14 @@ public class LevelRendererEntityVisibilityMixin {
      * the MAIN-pass verdict of THIS gate for seam sections, so one live run attributes the
      * vanish to the section gate (compiled/fade) or exonerates it (leaving shouldRender).
      */
+    // 26.3: isSectionCompiledAndVisible(BlockPos) -> (BlockPos, long chunkFadeDuration) (mc262-ref LevelRenderer.java:897 ->
+    // mc263-ref :1269; merged 26.3 jar descriptor (Lnet/minecraft/core/BlockPos;J)Z). The fade duration moved from a per-section
+    // field to a call argument (vanilla :1276 getVisibility(Util.getMillis(), chunkFadeDuration) >= 0.3F, was :904
+    // getVisibility(Util.getMillis())). Neither handler below evaluates the fade term — both exist to BYPASS or merely LOG
+    // it — so the new parameter is only mirrored in the handler signatures, as @Inject requires.
     @Inject(method = "isSectionCompiledAndVisible", at = @At("RETURN"))
     private void seamlessportals$mainPassSeamSectionVerdict(
-            BlockPos blockPos, CallbackInfoReturnable<Boolean> cir) {
+            BlockPos blockPos, long chunkFadeDuration, CallbackInfoReturnable<Boolean> cir) { // 26.3: + long chunkFadeDuration
         if (!com.warwa.seamlessportals.passthrough.AperturePassthroughLever.SEAM_CART_PROBE
             || PortalContextSwitch.isRenderingPortal
             || qouteall.imm_ptl.core.render.SecondaryWorldRenderCore.isDestExtracting) {
@@ -67,7 +72,7 @@ public class LevelRendererEntityVisibilityMixin {
 
     @Inject(method = "isSectionCompiledAndVisible", at = @At("HEAD"), cancellable = true)
     private void seamlessportals$showEntitiesInPortalView(
-            BlockPos blockPos, CallbackInfoReturnable<Boolean> cir) {
+            BlockPos blockPos, long chunkFadeDuration, CallbackInfoReturnable<Boolean> cir) { // 26.3: + long chunkFadeDuration (see note above)
         // SAME-DIM CROSSING GRACE (2026-08-30 entity-blink fix; ring-probe convicted — every
         // same-dim crossing frame extracted ~0 entities, then arrivals trickled in over ~300ms).
         // The MAIN extract on/after the crossing frame fails this gate twice over: (1) the

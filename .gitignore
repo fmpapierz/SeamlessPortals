@@ -11,6 +11,7 @@ fabric/build/
 fabric/runs/
 neoforge/build/
 neoforge/runs/
+forge/runs/
 *.log
 threaddump*.txt
 crash-evidence.txt

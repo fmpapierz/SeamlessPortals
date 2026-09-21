@@ -121,6 +121,78 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         "com.warwa.seamlessportals.mixin.client.HandleRespawnLoadScreenShapeVanilla"
     );
 
+    /**
+     * 26.3 — MINECRAFTFORGE (66.x) is a THIRD loader shape: it patches some of the same vanilla sites NeoForge does,
+     * leaves others vanilla-shaped, and patches a few in its own way. Every row below was read off the Forge-patched
+     * jar ({@code .gradle/mavenizer/repo/net/minecraftforge/forge/26.3-66.0.2}) — static audit of the whole mixin set
+     * against it, then javap on each difference; the evidence is on each variant class. Same contract as the
+     * NeoForge sets: exactly ONE variant of a shape-split mixin applies per loader, so {@code defaultRequire = 1}
+     * stays strict inside each loader.
+     *
+     * <p>{@link #FORGE_TAKES_NEOFORGE_SHAPE}: members of {@link #NEOFORGE_ONLY_MIXINS} whose NeoForge shape is ALSO
+     * Forge's — the {@code extractVisibleBlockEntities} call in {@code LevelExtractor.extract} is 4-arg (trailing
+     * Frustum) on both; and Forge, like NeoForge, has no event between the entity phases and the translucent-terrain
+     * draw (Forge 66 has no level-render stage events AT ALL — see
+     * {@code OitPathPortalSlot.onAfterTranslucentTerrainWithoutLoaderEvent}), so the BEFORE-slot mixin drives it there
+     * too. The two remaining NeoForge-only members stay NeoForge-only: Forge keeps vanilla's
+     * {@code startWaitingForNewLevel} shape, and NeoForge's 4-arg {@code removeBlock} helper does not exist on Forge
+     * (Forge has its own 2-arg one — {@code MixinServerPlayerGameMode_RemoveBlockForge}).
+     */
+    private static final Set<String> FORGE_TAKES_NEOFORGE_SHAPE = Set.of(
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelExtractor_DestSubLevers_BEShapeNeoForge",
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelRenderer_ClipBracketMainPassNeoForge"
+    );
+
+    /** Applied on MinecraftForge ONLY — each is the Forge-shape twin of a member of {@link #NON_FORGE_MIXINS}, or
+     *  serves a slot only Forge lacks. */
+    private static final Set<String> FORGE_ONLY_MIXINS = Set.of(
+        // GlConst's three format translators are (GpuFormat)/(GpuFormat, boolean) PAIRS on Forge; the 1-arg ones delegate.
+        "com.warwa.seamlessportals.mixin.client.stencil.GlConstMixinForge",
+        // Forge keeps the 26.2 shape of RedstoneWireBlock.getConnectingSide (three in-place getBlockState reads).
+        "com.warwa.seamlessportals.mixin.passthrough.MixinRedStoneWireBlockSeamSignalForge",
+        // Forge's own patched-in ServerPlayerGameMode.removeBlock(BlockPos, boolean) escapes the parent level redirect.
+        "qouteall.imm_ptl.core.mixin.common.interaction.MixinServerPlayerGameMode_RemoveBlockForge",
+        // Forge has ONLY the 4-arg extractVisibleBlockEntities (mandatory Frustum).
+        "com.warwa.seamlessportals.mixin.client.LevelExtractorBEInvokerForge",
+        // Forge fires no AFTER_TRANSLUCENT_TERRAIN-equivalent event: the portal driver's classic-fork slot.
+        "com.warwa.seamlessportals.mixin.client.LevelRendererForgeAfterTranslucentSlotMixin"
+    );
+
+    /** Skipped on MinecraftForge — the vanilla-shape originals of the twins above, plus the two vanilla-shape
+     *  members whose Forge replacement is elsewhere ({@code BEShapeVanilla} -> the NeoForge-shape variant;
+     *  {@code IEChunkGenerator_AlternateDim} -> the forge MODULE's own mixin, because Forge retypes
+     *  {@code ChunkGenerator.featuresPerStep} to its {@code ClearableLazy} and a Forge type cannot be named here). */
+    private static final Set<String> NON_FORGE_MIXINS = Set.of(
+        "com.warwa.seamlessportals.mixin.client.stencil.GlConstMixin",
+        "com.warwa.seamlessportals.mixin.passthrough.MixinRedStoneWireBlockSeamSignal",
+        "com.warwa.seamlessportals.mixin.client.LevelExtractorBEInvokerVanilla",
+        "qouteall.imm_ptl.core.mixin.client.render.MixinLevelExtractor_DestSubLevers_BEShapeVanilla",
+        "qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension.IEChunkGenerator_AlternateDim"
+    );
+
+    private static volatile Boolean forgeRuntime = null;
+
+    /**
+     * Whether we are running under MinecraftForge's FML — the exact twin of {@link #isNeoForgeRuntime()}:
+     * {@code net.minecraftforge.fml.loading.FMLLoader} (javap: present in fmlloader-26.3-66.0.2.jar) bootstraps the
+     * mixin service, so it is loaded long before mixin config plugins are instantiated. Absent on Fabric/Quilt and
+     * on NeoForge (whose FML lives in {@code net.neoforged}).
+     */
+    private static boolean isForgeRuntime() {
+        Boolean cached = forgeRuntime;
+        if (cached != null) return cached;
+        boolean present;
+        try {
+            Class.forName("net.minecraftforge.fml.loading.FMLLoader", false,
+                SeamlessMixinConfigPlugin.class.getClassLoader());
+            present = true;
+        } catch (Throwable ignored) {
+            present = false;
+        }
+        forgeRuntime = present;
+        return present;
+    }
+
     private static volatile Boolean neoForgeRuntime = null;
 
     /**
@@ -199,10 +271,20 @@ public class SeamlessMixinConfigPlugin implements IMixinConfigPlugin {
         // NF-PARITY W3/B1: loader-shape variant selection — exactly one variant of a
         // shape-split mixin applies per loader (see the sets' javadoc). Checked FIRST so a
         // variant never leaks through the flag gates below on the wrong loader.
-        if (NEOFORGE_ONLY_MIXINS.contains(mixinClassName) && !isNeoForgeRuntime()) {
+        // 26.3: MinecraftForge shares the NeoForge shape for the FORGE_TAKES_NEOFORGE_SHAPE members, so those two pass
+        // this gate on Forge as well (see that set's javadoc); every other member stays NeoForge-only.
+        if (NEOFORGE_ONLY_MIXINS.contains(mixinClassName) && !isNeoForgeRuntime()
+            && !(FORGE_TAKES_NEOFORGE_SHAPE.contains(mixinClassName) && isForgeRuntime())) {
             return false;
         }
         if (NON_NEOFORGE_MIXINS.contains(mixinClassName) && isNeoForgeRuntime()) {
+            return false;
+        }
+        // 26.3: the MinecraftForge shape sets (see their javadoc) — the third loader shape.
+        if (FORGE_ONLY_MIXINS.contains(mixinClassName) && !isForgeRuntime()) {
+            return false;
+        }
+        if (NON_FORGE_MIXINS.contains(mixinClassName) && isForgeRuntime()) {
             return false;
         }
         // D3 EXCLUSIVITY GATE (entity-portal migration, migration/EXCLUSIVITY_LEDGER.md §4):

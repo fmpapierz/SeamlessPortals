@@ -70,7 +70,7 @@ public abstract class MixinIrisCompositeRenderer_DestPrevWrite {
         method = "renderAll",
         at = @At(
             value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_glBindBuffer(II)V",
+            target = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_glBindBuffer(II)V",
             shift = At.Shift.AFTER
         ),
         remap = false,

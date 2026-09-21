@@ -9,6 +9,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.LinearCongruentialGenerator;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeResolver;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import org.jetbrains.annotations.NotNull;
@@ -18,8 +19,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
-public class ChaosBiomeSource extends BiomeSource {
-    
+// 26.3: BiomeSource no longer implements BiomeResolver and its abstract getNoiseBiome(x, y, z, Climate.Sampler) became
+// abstract createResolver(Climate.Sampler) (mc263-ref BiomeSource.java:28,156; mc262-ref :27,171). Ported the way vanilla
+// ported its own sampler-independent sources: implement BiomeResolver and hand out `this`
+// (mc263-ref CheckerboardColumnBiomeSource.java:10,32-35,43).
+public class ChaosBiomeSource extends BiomeSource implements BiomeResolver {
+
     public static final String[] vanillaBiomes = new String[]{
         "minecraft:savanna_plateau",
         "minecraft:taiga",
@@ -123,6 +128,12 @@ public class ChaosBiomeSource extends BiomeSource {
         return allowedBiomes.get(index);
     }
     
+    // 26.3: new abstract BiomeSource.createResolver (mc263-ref BiomeSource.java:156).
+    @Override
+    public BiomeResolver createResolver(Climate.Sampler sampler) {
+        return this;
+    }
+
     @Override
     protected MapCodec<? extends BiomeSource> codec() {
         return MAP_CODEC;
@@ -133,8 +144,9 @@ public class ChaosBiomeSource extends BiomeSource {
         return allowedBiomes.stream();
     }
     
+    // 26.3: BiomeResolver.getNoiseBiome lost its Climate.Sampler parameter (mc263-ref BiomeResolver.java:10).
     @Override
-    public Holder<Biome> getNoiseBiome(int x, int y, int z, Climate.Sampler sampler) {
+    public Holder<Biome> getNoiseBiome(int x, int y, int z) {
         return getRandomBiome(x, z);
     }
     

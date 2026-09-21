@@ -35,8 +35,19 @@ public class MixinScreenEffectRenderer {
         at = @At("HEAD"),
         cancellable = true
     )
+    // 26.3: static submitBlockSprite(TextureAtlasSprite, PoseStack, SubmitNodeCollector, int) ->
+    // submitBlockSprite(Identifier atlasLocation, float u0, float v0, float u1, float v1, PoseStack, SubmitNodeCollector, int)
+    // (mc262-ref ScreenEffectRenderer.java:66,146 -> mc263-ref :40-49; javap 26.3: private static, descriptor
+    // (Lnet/minecraft/resources/Identifier;FFFFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;I)V).
+    // The sprite is resolved at EXTRACT time now (mc263-ref LevelExtractor.java:438-445 -> PlayerRenderState.blockOverlay) and
+    // only its atlas + UVs reach this method. Still the one in-wall-overlay draw, still driven from submit(..); the handler
+    // never read the sprite, so only its parameter list changes.
     private static void onRenderInWallOverlay(
-        TextureAtlasSprite sprite,
+        net.minecraft.resources.Identifier atlasLocation,
+        float u0,
+        float v0,
+        float u1,
+        float v1,
         PoseStack matrices,
         SubmitNodeCollector submitNodeCollector,
         int packedLight,

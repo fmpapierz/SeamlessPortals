@@ -1,7 +1,7 @@
 package com.warwa.seamlessportals.mixin.client.stencil;
 
-import com.mojang.blaze3d.opengl.GlConst;
-import com.mojang.blaze3d.GpuFormat;
+import com.mojang.renderpearl.backend.opengl.GlConst;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;

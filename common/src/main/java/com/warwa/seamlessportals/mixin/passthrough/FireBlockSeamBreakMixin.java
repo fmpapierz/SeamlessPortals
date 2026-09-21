@@ -46,21 +46,27 @@ public abstract class FireBlockSeamBreakMixin {
         }
     }
 
+    // 26.3: vanilla rewrote this write from `level.setBlock(pos, state, 3)` to `level.setBlockAndUpdate(pos, state)`
+    // (mc262-ref FireBlock.java:242 -> mc263-ref :235; javap checkBurnOut: 26.2 offset 86 `Level.setBlock:(..I)Z` ->
+    // 26.3 offset 85 `Level.setBlockAndUpdate:(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)Z`).
+    // Same write, same flags: setBlockAndUpdate IS `setBlock(pos, blockState, 3)` (mc263-ref LevelWriter.java:12-14; 26.2 had
+    // it on Level, mc262-ref Level.java:307-309). The redirect follows the call; the handler forwards to the same method vanilla
+    // now calls, so the flags stay 3 exactly as 26.2 passed them.
     @Redirect(
         method = "checkBurnOut",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/world/level/Level;setBlock("
+            target = "Lnet/minecraft/world/level/Level;setBlockAndUpdate("
                 + "Lnet/minecraft/core/BlockPos;"
-                + "Lnet/minecraft/world/level/block/state/BlockState;I)Z"
+                + "Lnet/minecraft/world/level/block/state/BlockState;)Z"
         )
     )
     private boolean seamlessportals$burnReplacesLikeAPlayer(
-        Level level, BlockPos pos, BlockState state, int flags
+        Level level, BlockPos pos, BlockState state
     ) {
         Object[] saved = SeamWriteContext.push(SeamWriteSource.PLAYER_BREAK, pos);
         try {
-            return level.setBlock(pos, state, flags);
+            return level.setBlockAndUpdate(pos, state);
         } finally {
             SeamWriteContext.pop(saved);
         }
@@ -110,6 +116,34 @@ public abstract class FireBlockSeamBreakMixin {
             state.isAir() ? SeamWriteSource.PLAYER_BREAK : SeamWriteSource.PLAYER_PLACE, pos);
         try {
             return level.setBlock(pos, state, flags);
+        } finally {
+            SeamWriteContext.pop(saved);
+        }
+    }
+
+    // 26.3: the redirect above matched TWO `ServerLevel.setBlock(..I)Z` sites in tick() on 26.2 (javap 26.2 offsets 177 and 633
+    // = mc262-ref FireBlock.java:157 the age-up `setBlock(pos, state, 260)` and :205 the spread `setBlock(testPos, .., 3)`).
+    // 26.3 rewrote ONLY the second as `level.setBlockAndUpdate(testPos, ..)` (mc263-ref :198; javap 26.3 offset 632
+    // `ServerLevel.setBlockAndUpdate:(..)Z`; offset 177 is unchanged). The redirect above still applies (1 match >= require)
+    // so nothing fails — the spread write would just silently lose its classification. "No ordinal: every matching site in
+    // tick() is a fire lifecycle write and gets the same treatment" (javadoc above): this twin gives the moved site the
+    // identical treatment. setBlockAndUpdate == setBlock(pos, state, 3) (mc263-ref LevelWriter.java:12-14) — the flags 26.2 passed.
+    @Redirect(
+        method = "tick",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerLevel;setBlockAndUpdate("
+                + "Lnet/minecraft/core/BlockPos;"
+                + "Lnet/minecraft/world/level/block/state/BlockState;)Z"
+        )
+    )
+    private boolean seamlessportals$ageLikeAPlayerAndUpdate(
+        net.minecraft.server.level.ServerLevel level, BlockPos pos, BlockState state
+    ) {
+        Object[] saved = SeamWriteContext.push(
+            state.isAir() ? SeamWriteSource.PLAYER_BREAK : SeamWriteSource.PLAYER_PLACE, pos);
+        try {
+            return level.setBlockAndUpdate(pos, state);
         } finally {
             SeamWriteContext.pop(saved);
         }

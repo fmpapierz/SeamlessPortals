@@ -220,10 +220,13 @@ public class TeleportFlashProbe {
         // level's sample). A crossing frame mid-lerp shows last != new; the painted color above
         // sits between them. (getValue may populate newValue if the extract somehow didn't this
         // frame — identical to what vanilla's next read would do; behavior-neutral.)
-        int fogLast = probe.getValue(EnvironmentAttributes.FOG_COLOR, 0.0f);
-        int fogNew = probe.getValue(EnvironmentAttributes.FOG_COLOR, 1.0f);
-        int skyLast = probe.getValue(EnvironmentAttributes.SKY_COLOR, 0.0f);
-        int skyNew = probe.getValue(EnvironmentAttributes.SKY_COLOR, 1.0f);
+        // 26.3: SkyRenderState.skyColor / sunriseAndSunsetColor and the FOG/SKY colour attributes are vectors now
+        // (were packed ints). ARGB.colorFromVector3f / colorFromVector4f are vanilla's exact inverses (mc263-ref
+        // ARGB.java:319-325), used ONLY to keep this probe's hex log format. colorFromVector3f forces alpha 0xFF.
+        int fogLast = net.minecraft.util.ARGB.colorFromVector3f(probe.getValue(EnvironmentAttributes.FOG_COLOR, 0.0f));
+        int fogNew = net.minecraft.util.ARGB.colorFromVector3f(probe.getValue(EnvironmentAttributes.FOG_COLOR, 1.0f));
+        int skyLast = net.minecraft.util.ARGB.colorFromVector3f(probe.getValue(EnvironmentAttributes.SKY_COLOR, 0.0f));
+        int skyNew = net.minecraft.util.ARGB.colorFromVector3f(probe.getValue(EnvironmentAttributes.SKY_COLOR, 1.0f));
 
         float rainFogMult = Float.NaN;
         var atmo = SecondaryWorldRenderCore.getAtmosphericFogEnvironment();
@@ -250,8 +253,8 @@ public class TeleportFlashProbe {
             + " sky " + String.format("%.0f", fog.skyEnd)
             + " cloud " + String.format("%.0f", fog.cloudEnd) + "]"
             + " skybox=" + sky.skybox
-            + " skyCol=" + Integer.toHexString(sky.skyColor)
-            + " sunriseCol=" + Integer.toHexString(sky.sunriseAndSunsetColor)
+            + " skyCol=" + Integer.toHexString(net.minecraft.util.ARGB.colorFromVector3f(sky.skyColor))
+            + " sunriseCol=" + Integer.toHexString(net.minecraft.util.ARGB.colorFromVector4f(sky.sunriseAndSunsetColor))
             + " starB=" + String.format("%.2f", sky.starBrightness)
             + " darkDisc=" + sky.shouldRenderDarkDisc
             + " cloudCol=" + Integer.toHexString(lrs.cloudColor)

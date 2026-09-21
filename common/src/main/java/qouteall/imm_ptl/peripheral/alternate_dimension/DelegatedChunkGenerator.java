@@ -28,6 +28,7 @@ import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.blending.Blender;
+import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
@@ -37,6 +38,7 @@ import qouteall.imm_ptl.core.miscellaneous.IPVanillaCopy;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 @IPVanillaCopy
@@ -55,16 +57,6 @@ public abstract class DelegatedChunkGenerator extends ChunkGenerator {
     }
     
     @Override
-    public void applyCarvers(WorldGenRegion worldGenRegion, long l, RandomState randomState, BiomeManager biomeManager, StructureManager structureManager, ChunkAccess chunkAccess) {
-        delegate.applyCarvers(worldGenRegion, l, randomState, biomeManager, structureManager, chunkAccess);
-    }
-    
-    @Override
-    public void buildSurface(WorldGenRegion worldGenRegion, StructureManager structureManager, RandomState randomState, ChunkAccess chunkAccess) {
-        delegate.buildSurface(worldGenRegion, structureManager, randomState, chunkAccess);
-    }
-    
-    @Override
     public void spawnOriginalMobs(WorldGenRegion region) {
         delegate.spawnOriginalMobs(region);
     }
@@ -74,9 +66,14 @@ public abstract class DelegatedChunkGenerator extends ChunkGenerator {
         return delegate.getGenDepth();
     }
     
+    // 26.3: fillFromNoise(Blender, RandomState, StructureManager, ChunkAccess) -> buildTerrain(...)
+    // (mc263-ref ChunkGenerator.java:668-676; mc262-ref :637-639). NOISE + SURFACE + CARVERS are this one method now,
+    // so the applyCarvers(...) and buildSurface(...) delegations that stood above spawnOriginalMobs are gone with the
+    // methods themselves (mc262-ref ChunkGenerator.java:123-125,430-432; absent in mc263-ref) — vanilla's own
+    // generators dropped the same two overrides (mc263-ref FlatLevelSource.java, DebugLevelSource.java).
     @Override
-    public @NotNull CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomState, StructureManager structureManager, ChunkAccess chunkAccess) {
-        return delegate.fillFromNoise(blender, randomState, structureManager, chunkAccess);
+    public @NotNull CompletableFuture<ChunkAccess> buildTerrain(ChunkAccess chunkAccess, Blender blender, RandomState randomState, StructureManager structureManager, BiomeManager biomeManager, @Nullable WorldGenRegion worldGenRegion, Set<Holder<Biome>> possibleBiomes) {
+        return delegate.buildTerrain(chunkAccess, blender, randomState, structureManager, biomeManager, worldGenRegion, possibleBiomes);
     }
     
     @Override
@@ -99,9 +96,10 @@ public abstract class DelegatedChunkGenerator extends ChunkGenerator {
         return delegate.getBaseColumn(i, j, levelHeightAccessor, randomState);
     }
     
+    // 26.3: addDebugScreenInfo gained a trailing SamplerContext (mc263-ref ChunkGenerator.java:694-696; mc262-ref :657).
     @Override
-    public void addDebugScreenInfo(List<String> list, RandomState randomState, BlockPos blockPos) {
-        delegate.addDebugScreenInfo(list, randomState, blockPos);
+    public void addDebugScreenInfo(List<String> list, RandomState randomState, BlockPos blockPos, SamplerContext samplerContext) {
+        delegate.addDebugScreenInfo(list, randomState, blockPos, samplerContext);
     }
     
     @Override
@@ -145,9 +143,10 @@ public abstract class DelegatedChunkGenerator extends ChunkGenerator {
         return delegate.getBiomeSource();
     }
     
+    // 26.3: first parameter is now the Level, not the biome holder (mc263-ref ChunkGenerator.java:476; mc262-ref :446).
     @Override
-    public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(Holder<Biome> holder, StructureManager structureManager, MobCategory mobCategory, BlockPos blockPos) {
-        return delegate.getMobsAt(holder, structureManager, mobCategory, blockPos);
+    public WeightedList<MobSpawnSettings.SpawnerData> getMobsAt(Level level, StructureManager structureManager, MobCategory mobCategory, BlockPos blockPos) {
+        return delegate.getMobsAt(level, structureManager, mobCategory, blockPos);
     }
     
     @Override

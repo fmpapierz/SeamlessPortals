@@ -54,8 +54,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GameRenderer.class)
 public abstract class GameRendererPortalPrepareMixin {
 
-    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"))
-    private void seamlessportals$prepareDestinationRender(DeltaTracker deltaTracker, CallbackInfo ci) {
+    // 26.3: renderLevel(DeltaTracker) -> renderLevel() (mc262-ref GameRenderer.java:525 -> mc263-ref :635; javap 26.3:
+    // `public void renderLevel()`). The handler never used the DeltaTracker; HEAD is still after extract() (Minecraft.java
+    // :1299 extract -> :1306 render) and before the levelRenderer.render(...) INVOKE (mc263-ref GameRenderer.java:672-674).
+    @Inject(method = "renderLevel()V", at = @At("HEAD"))
+    private void seamlessportals$prepareDestinationRender(CallbackInfo ci) {
         // D3 EXCLUSIVITY GATE (row 14 — StencilPortalRenderer, Phase-1 destination render). Flag ON →
         // the ported PortalRenderer / RendererUsingStencil draw the portals; this block-era phase-1
         // dest render stays off (its Phase-2 composite, registered on AFTER_TRANSLUCENT_TERRAIN, is

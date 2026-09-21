@@ -26,8 +26,13 @@ import qouteall.imm_ptl.core.render.CrossPortalEntityRenderer;
 // annotated Java in the probe; it is wired into the S12 client-mixin set and activated flag-ON at S13.
 @Mixin(EntityRenderDispatcher.class)
 public class MixinEntityRenderDispatcher {
+    // 26.3: shouldRender(E, Frustum, double, double, double) gained a trailing `float partialTicks` (mc262-ref
+    // EntityRenderDispatcher.java:127-130 -> mc263-ref :123-126; javap 26.3 descriptor
+    // (Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDDF)Z). Still vanilla's own
+    // extraction gate (mc263-ref LevelExtractor.java:293). Neither handler reads the new value; it is only mirrored in the
+    // selectors and handler signatures, as @Inject requires.
     @Inject(
-        method = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;shouldRender(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDD)Z",
+        method = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;shouldRender(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDDF)Z",
         at = @At("HEAD"),
         cancellable = true
     )
@@ -37,6 +42,7 @@ public class MixinEntityRenderDispatcher {
         double double_1,
         double double_2,
         double double_3,
+        float float_1, // 26.3: the new trailing `float partialTicks` target param (see note above)
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (!CrossPortalEntityRenderer.shouldRenderEntityNow(entity_1)) {
@@ -81,12 +87,12 @@ public class MixinEntityRenderDispatcher {
      * verdict is the excluder, and this line splits vanilla-false from IP-forced-false.
      */
     @Inject(
-        method = "shouldRender(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDD)Z",
+        method = "shouldRender(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDDF)Z", // 26.3: + F (see note at onShouldRenderEntity)
         at = @At("RETURN")
     )
     private <E extends Entity> void seamlessportals$cartShouldRenderVerdict(
         E entity, net.minecraft.client.renderer.culling.Frustum frustum,
-        double x, double y, double z, CallbackInfoReturnable<Boolean> cir
+        double x, double y, double z, float partialTicks, CallbackInfoReturnable<Boolean> cir // 26.3: + float partialTicks
     ) {
         com.warwa.seamlessportals.render.CartWindowProbe.onShouldRender(
             entity, cir.getReturnValueZ(), "final");

@@ -4,7 +4,11 @@ accessWidener v2 official
 accessible method net/minecraft/client/renderer/rendertype/RenderType create (Ljava/lang/String;Lnet/minecraft/client/renderer/rendertype/RenderSetup;)Lnet/minecraft/client/renderer/rendertype/RenderType;
 
 # Make RenderPipelines.register accessible for registering custom pipelines
-accessible method net/minecraft/client/renderer/RenderPipelines register (Lcom/mojang/blaze3d/pipeline/RenderPipeline;)Lcom/mojang/blaze3d/pipeline/RenderPipeline;
+# 26.3: RenderPipeline moved com/mojang/blaze3d/pipeline -> com/mojang/renderpearl/api/pipeline (the
+# RenderPearl extraction, migration/MC_26_3_VERSION_DELTA.md §1). javap on the 26.3 merged jar: still
+# `private static RenderPipeline register(RenderPipeline)` (a second OitPipelineSet overload now sits
+# beside it — the descriptor below selects this one).
+accessible method net/minecraft/client/renderer/RenderPipelines register (Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;
 
 # 26.2: ViewArea.sections is now private final RotatingSectionStorage<RenderSection>.
 # Widen for the portal-view section-iteration loops.
@@ -68,6 +72,27 @@ accessible method net/minecraft/world/item/context/UseOnContext <init> (Lnet/min
 # widener on the NeoForge ModDevGradle :common classpath).
 extendable class net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator
 
+# 26.3 (alternate_dimension worldgen — NormalSkylandGenerator / ErrorTerrainGenerator buildTerrain): 26.2 ran NOISE,
+# SURFACE and CARVERS as three separately overridable ChunkGenerator methods (mc262-ref ChunkGenerator.java:123-125,
+# 430-432, 637-639); both IP generators override ONLY the fill and leave surface + carvers to another generator's
+# vanilla code. 26.3 merged the three into one buildTerrain (mc263-ref ChunkGenerator.java:668-676) whose pieces are
+# PRIVATE in NoiseBasedChunkGenerator (mc263-ref NoiseBasedChunkGenerator.java:99, 212, 226, 403), so keeping that
+# split identical needs the four pieces callable. javap -p -s on the 26.3 merged jar (the descriptor lines are copied
+# verbatim into the entries below):
+#   `private NoiseChunk createNoiseChunk(ChunkAccess, StructureManager, Blender, RandomState, NoiseSettings)`
+#     descriptor: (Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/world/level/StructureManager;Lnet/minecraft/world/level/levelgen/blending/Blender;Lnet/minecraft/world/level/levelgen/RandomState;Lnet/minecraft/world/level/levelgen/NoiseSettings;)Lnet/minecraft/world/level/levelgen/NoiseChunk;
+#   `private void doFill(NoiseChunk, ChunkAccess)`
+#     descriptor: (Lnet/minecraft/world/level/levelgen/NoiseChunk;Lnet/minecraft/world/level/chunk/ChunkAccess;)V
+#   `private void buildSurface(ChunkAccess, NoiseChunk, RandomState, BiomeManager, Set<Holder<Biome>>, MaterialRule)`
+#     descriptor: (Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/world/level/levelgen/NoiseChunk;Lnet/minecraft/world/level/levelgen/RandomState;Lnet/minecraft/world/level/biome/BiomeManager;Ljava/util/Set;Lnet/minecraft/world/level/levelgen/material/rule/MaterialRule;)V
+#   `private void generateCarvers(ChunkAccess, Blender, NoiseChunk, RandomState, BiomeManager, WorldGenRegion, MaterialRule)`
+#     descriptor: (Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/world/level/levelgen/blending/Blender;Lnet/minecraft/world/level/levelgen/NoiseChunk;Lnet/minecraft/world/level/levelgen/RandomState;Lnet/minecraft/world/level/biome/BiomeManager;Lnet/minecraft/server/level/WorldGenRegion;Lnet/minecraft/world/level/levelgen/material/rule/MaterialRule;)V
+# Paired with the four accesstransformer.cfg `public` entries (the compile-time widener on the :common classpath).
+accessible method net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator createNoiseChunk (Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/world/level/StructureManager;Lnet/minecraft/world/level/levelgen/blending/Blender;Lnet/minecraft/world/level/levelgen/RandomState;Lnet/minecraft/world/level/levelgen/NoiseSettings;)Lnet/minecraft/world/level/levelgen/NoiseChunk;
+accessible method net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator doFill (Lnet/minecraft/world/level/levelgen/NoiseChunk;Lnet/minecraft/world/level/chunk/ChunkAccess;)V
+accessible method net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator buildSurface (Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/world/level/levelgen/NoiseChunk;Lnet/minecraft/world/level/levelgen/RandomState;Lnet/minecraft/world/level/biome/BiomeManager;Ljava/util/Set;Lnet/minecraft/world/level/levelgen/material/rule/MaterialRule;)V
+accessible method net/minecraft/world/level/levelgen/NoiseBasedChunkGenerator generateCarvers (Lnet/minecraft/world/level/chunk/ChunkAccess;Lnet/minecraft/world/level/levelgen/blending/Blender;Lnet/minecraft/world/level/levelgen/NoiseChunk;Lnet/minecraft/world/level/levelgen/RandomState;Lnet/minecraft/world/level/biome/BiomeManager;Lnet/minecraft/server/level/WorldGenRegion;Lnet/minecraft/world/level/levelgen/material/rule/MaterialRule;)V
+
 # Entity-portal migration S13-A (U11 peripheral — CommandStickItem/PortalWandItem creative-tab wiring):
 # 26.2 makes CreativeModeTab.Output a `protected interface` (CreativeModeTab.java:246) — public in IP's
 # 1.21.3. CommandStickItem.addIntoCreativeTag(CreativeModeTab.Output) + PortalWandItem's counterpart
@@ -89,10 +114,44 @@ mutable field net/minecraft/util/profiling/ActiveProfiler WARNING_TIME_NANOS J
 # createRenderPass performs — to bind the LIVE main-target FBO for the per-frame stencil clear
 # (the 26.2 1:1 of IP's mainRenderTarget.bindWrite(false); replaces the stale gameFboId capture
 # that produced the 51k/session GL_INVALID_OPERATION flood + the broken stencil reset).
-accessible class com/mojang/blaze3d/opengl/GlDevice
+# 26.3: GlDevice moved com/mojang/blaze3d/opengl -> com/mojang/renderpearl/backend/opengl; javap on the
+# 26.3 merged jar: still package-private (`class ...GlDevice implements ...GpuDeviceBackend`).
+accessible class com/mojang/renderpearl/backend/opengl/GlDevice
 # S14.21 companion: RenderSystem.getDevice() returns the GpuDevice FACADE; the GL backend
 # (GlDevice implements GpuDeviceBackend) is reachable only through its private `backend` field.
-accessible field com/mojang/blaze3d/systems/GpuDevice backend Lcom/mojang/blaze3d/systems/GpuDeviceBackend;
+# 26.3: the facade split in two. GpuDevice is now an INTERFACE (com/mojang/renderpearl/api/device) and the
+# concrete facade RenderSystem.getDevice() hands back is com/mojang/renderpearl/frontend/FrontendGpuDevice,
+# which is where the SAME `private final GpuDeviceBackend backend` field now lives (javap-verified;
+# GpuDeviceBackend moved to com/mojang/renderpearl/backend/api). Same field, new owner.
+accessible field com/mojang/renderpearl/frontend/FrontendGpuDevice backend Lcom/mojang/renderpearl/backend/api/GpuDeviceBackend;
+# 26.3 (manual chunk feeds — PortalDimensionManager / PortalWorldManager / HandleRespawnMixin): 26.2's
+# ClientChunkCache.replaceWithPacketData(int,int,FriendlyByteBuf,Map<Heightmap.Types,long[]>,Consumer<..>)
+# let those sites hand in a hand-built section buffer + emptyMap + a no-op block-entity consumer. 26.3 folded
+# the three into one ClientboundLevelChunkPacketData argument (mc263-ref ClientChunkCache.java:99), whose only
+# public ctor re-serialises a whole LevelChunk. The PRIVATE ctor takes exactly the same three inputs
+# (heightmaps, byte[] sections, block-entity list) — javap on the 26.3 merged jar:
+# `private ClientboundLevelChunkPacketData(Map, byte[], List)`, descriptor (Ljava/util/Map;[BLjava/util/List;)V.
+# Widening it keeps those feeds byte-for-byte what they were. Paired with the accesstransformer.cfg entry.
+accessible method net/minecraft/network/protocol/game/ClientboundLevelChunkPacketData <init> (Ljava/util/Map;[BLjava/util/List;)V
+
+# 26.3 (dest-pass terrain draw — SecondaryWorldRenderCore / PortalContextSwitch / StageCensusProbe): 26.2's
+# ChunkSectionsToRender was a PUBLIC RECORD, so maxIndicesRequired() (the "is there geometry?" gate) and
+# drawGroupsPerLayer() (the draw census) were free. 26.3 made it an abstract class with two implementations
+# (DrawSeparate / DrawIndirect) and PRIVATE state with no accessors. javap on the 26.3 merged jar:
+# `private final int maxIndicesRequired` (descriptor I) on the base; `private final Map drawsPerLayer`
+# (descriptor Ljava/util/Map;) on ChunkSectionsToRender$DrawSeparate — the type the non-indirect
+# prepareChunkRenders(Matrix4fc, boolean) this mod calls always returns (mc263-ref LevelRenderer.java:853).
+# Read-only, so no `mutable`. Paired with the accesstransformer.cfg entries.
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender maxIndicesRequired I
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawSeparate drawsPerLayer Ljava/util/Map;
+# CORRECTION (same day): "always returns DrawSeparate" described the first port, which called the non-indirect
+# prepare unconditionally — and thereby flipped vanilla's single frame-global chunk-section storage every frame
+# (render/DestChunkPrep has the measurement and the crash it caused). The dest passes now prepare in the flavour
+# vanilla's render() picks, so on multi-draw-indirect devices they hold a DrawIndirect and the draw census reads ITS
+# map: javap `private final EnumMap drawGroupsPerLayer` (descriptor Ljava/util/EnumMap;) on
+# ChunkSectionsToRender$DrawIndirect; the groups are the public record GpuMultiDrawIndexedIndirect (drawCount()).
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawIndirect drawGroupsPerLayer Ljava/util/EnumMap;
+
 # S19-C: CreateWorldScreen$MoreTab is a private inner class; MixinCreateWorldScreenMoreTab_CVB's
 # class-literal @Mixin target needs it accessible (IP precedent: imm_ptl.accesswidener carries
 # the same transitive-accessible line for this exact class).

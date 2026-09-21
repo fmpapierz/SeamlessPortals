@@ -104,7 +104,18 @@ public final class ShaderCodeTransformation {
         String afterGlPos = source.substring(glPosIdx, semiIdx + 1);
         String posExpr = extractPositionExpr(afterGlPos);
         if (posExpr == null) return source;
-        String viewPosExpr = "ModelViewMat * vec4(" + posExpr + ", 1.0)";
+        // 26.3: this transform no longer sees Mojang's GLSL. Vanilla now compiles its sources with shaderc to SPIR-V under
+        // VULKAN rules (mc263-ref com/mojang/renderpearl/frontend/shaders/GlslCompiler.java:79 set_target_env(.., 0, 4202496)),
+        // where the loose `uniform vec4` this patch adds is illegal, and every shader-declared uniform must be declared by the
+        // RenderPipeline (PipelineBuilder.java:276-278 "Unable to find shader defined uniform"). The ONLY GLSL text that still
+        // reaches the GL driver is what spirv-cross regenerates from that SPIR-V (backend/opengl/GlPipelineRecompiler.java
+        // :48-109 -> compileShader :188-191 glShaderSource), so the patch runs THERE (see ShaderManagerCompilationCacheMixin).
+        // In that text every anchor this method uses is intact — reproduced offline with vanilla's exact shaderc/spvc options:
+        //   gl_Position = (_uniform_instance_00_01.ProjMat * _uniform_instance_00_02.ModelViewMat) * vec4(pos, 1.0);
+        // — except that UBO members are reached through the block INSTANCE name spirv-cross is told to emit
+        // (GlPipelineRecompiler.java:148-157 "_uniform_instance_%02d_%02d"). So the one change is to qualify ModelViewMat with
+        // the accessor the source itself uses; a source that declares it as a bare name (the 26.2 form) is handled unchanged.
+        String viewPosExpr = modelViewMatAccessor(source) + " * vec4(" + posExpr + ", 1.0)";
 
         String injection = "\n"
             + "    {\n"
@@ -152,7 +163,18 @@ public final class ShaderCodeTransformation {
     public static String transformFragment(String source) {
         if (source == null || source.isEmpty()) return source;
         if (source.contains(TINT_INJECTED_MARKER)) return source;
-        if (!source.contains("out vec4 fragColor;")) return source;
+        // 26.3: the fragment text this sees is spirv-cross output (see the note in transformVertex), where the fragment outputs
+        // are renamed by location — GlPipelineRecompiler.java:79-81 renameInterfaceVariables(.., 4, "_frag_output_%02d") — so
+        // Mojang's `out vec4 fragColor;` (location 0) arrives as `layout(location = 0) out vec4 _frag_output_00;` (reproduced
+        // offline for position_color/entity/terrain.fsh). Same anchor, same variable, new spelling; the 26.2 spelling still works.
+        String fragColor;
+        if (source.contains("out vec4 fragColor;")) {
+            fragColor = "fragColor";
+        } else if (source.contains("out vec4 _frag_output_00;")) {
+            fragColor = "_frag_output_00";
+        } else {
+            return source;
+        }
 
         int mainIdx = source.indexOf("void main(");
         if (mainIdx < 0) return source;
@@ -168,12 +190,24 @@ public final class ShaderCodeTransformation {
             .append("void main() {\n")
             .append("    seamlessportals_tintRealMain();\n")
             .append("    if (").append(TINT_UNIFORM_NAME).append(".a > 0.001) {\n")
-            .append("        fragColor = vec4(mix(fragColor.rgb, ")
+            .append("        ").append(fragColor).append(" = vec4(mix(").append(fragColor).append(".rgb, ") // 26.3: was the literal fragColor
             .append(TINT_UNIFORM_NAME).append(".rgb, ")
-            .append(TINT_UNIFORM_NAME).append(".a), fragColor.a);\n")
+            .append(TINT_UNIFORM_NAME).append(".a), ").append(fragColor).append(".a);\n")
             .append("    }\n")
             .append("}\n");
         return out.toString();
+    }
+
+    /**
+     * 26.3: how this source spells {@code ModelViewMat} — {@code <blockInstance>.ModelViewMat} in spirv-cross output (see the
+     * note in {@link #transformVertex}), or the bare name when no qualified use exists.
+     */
+    private static final java.util.regex.Pattern MODEL_VIEW_MAT_ACCESSOR =
+        java.util.regex.Pattern.compile("([A-Za-z_][A-Za-z0-9_]*\\.)ModelViewMat\\b");
+
+    private static String modelViewMatAccessor(String source) {
+        java.util.regex.Matcher m = MODEL_VIEW_MAT_ACCESSOR.matcher(source);
+        return m.find() ? m.group(1) + "ModelViewMat" : "ModelViewMat";
     }
 
     /**

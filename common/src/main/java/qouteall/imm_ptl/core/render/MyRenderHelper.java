@@ -1,19 +1,19 @@
 package qouteall.imm_ptl.core.render;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.DepthStencilState;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.systems.GpuDevice;
-import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.device.GpuDevice;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.warwa.seamlessportals.render.PortalRenderTypes;
 import net.minecraft.client.Minecraft;
@@ -167,7 +167,11 @@ public class MyRenderHelper {
                 RenderPipeline.Builder builder = RenderPipeline.builder()
                     .withLocation("seamlessportals/pipeline/portal_area_" + key)
                     .withBindGroupLayout(BindGroupLayouts.GLOBALS)
-                    .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                    // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                    // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                    // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                    .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                    .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                     .withVertexShader("core/position_color")
                     .withFragmentShader("core/position_color")
                     .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
@@ -190,6 +194,18 @@ public class MyRenderHelper {
                         new ColorTargetState(
                             Optional.empty(), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE)
                     );
+                }
+                else {
+                    // 26.3: "Full color = builder default (omit withColorTargetState)" above was true on 26.2 only —
+                    // a builder with NO colour target built ONE default target there (mc262-ref
+                    // RenderPipeline.java:370-372 -> {ColorTargetState.DEFAULT}) and builds ZERO on 26.3 (mc263-ref
+                    // renderpearl/api/pipeline/RenderPipeline.java:378-380); FrontendRenderPass.setPipeline (:111-114)
+                    // then throws "Render pass color attachment count must match pipeline color target state count."
+                    // on the very first view-area draw (measured: the crossing gametest, 2026-09-20). Vanilla made
+                    // the old default explicit on every pipeline of its own that relied on it (mc263-ref
+                    // RenderPipelines.java:214/341/347/350, TRACY_BLIT :1167); same edit, same value — DEFAULT is
+                    // unchanged (empty blend, RGBA8_UNORM, WRITE_ALL), so the built pipeline is the 26.2 one.
+                    builder = builder.withColorTargetState(ColorTargetState.DEFAULT);
                 }
 
                 RenderPipeline pipeline = (RenderPipeline) registerMethod.invoke(null, builder.build());
@@ -559,9 +575,13 @@ public class MyRenderHelper {
             // portalCompositeBlit: Optional.empty() depth state -> depth-test OFF (PortalRenderTypes.java:199),
             // so the composite is never reversed-Z GEQUAL-gated by leftover portal-plane depth (the mod's
             // curtain fix). Full-screen screenquad triangle sampling the FBO color view.
-            pass.setPipeline(PortalRenderTypes.portalCompositeBlit());
+            // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+            // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+            pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(PortalRenderTypes.portalCompositeBlit()));
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture(
+            // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+            // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+            pass.setUniform(
                 "InSampler", textureProvider.getColorTextureView(),
                 RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST)
             );
@@ -750,9 +770,13 @@ public class MyRenderHelper {
             OptionalDouble.empty(),
             new RenderPass.RenderArea(0, 0, mainRt.width, mainRt.height)
         )) {
-            pass.setPipeline(pipeline);
+            // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+            // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+            pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(pipeline));
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture(
+            // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+            // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+            pass.setUniform(
                 "InSampler", texView,
                 RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST)
             );
@@ -764,5 +788,49 @@ public class MyRenderHelper {
         // real DEPTH_TEST=on/cache=off for the rest of the frame AND the next frame's early passes.
         // IP's renderScreenTriangle has no such restores; the next applyPipelineState re-establishes
         // everything through a now-truthful cache.
+    }
+
+    /**
+     * 26.3 PORT — the 26.2 vanilla convenience {@code FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage)},
+     * RE-HOMED because vanilla deleted it. Its whole body was (mc262-ref FeatureRenderDispatcher.java:112-119):
+     * <pre>
+     * try (PreparedFrame frame = this.prepareFrame(submitNodeStorage)) {
+     *     frame.executeSolid(); frame.executeTranslucent();
+     *     frame.executeTranslucentAfterTerrain(); frame.executeAlwaysOnTop();
+     * }</pre>
+     * with every feature draw opening ITS OWN render pass on its RenderType's output target — the main render
+     * target, colour+depth, no clear (mc262-ref PreparedRenderType.java:29-39; this mod never sets
+     * {@code RenderSystem.outputColorTextureOverride}, grep-verified).
+     *
+     * <p>26.3 inverted the ownership: feature renderers draw into a pass the CALLER supplies, and the method became
+     * {@code static renderAllFeatures(RenderPass, PreparedFrame)} (mc263-ref :113-119). Vanilla's own former callers
+     * of the 26.2 form were all rewritten to the block below — it is {@code GameRenderer}'s, line for line (mc262-ref
+     * GameRenderer.java:582 -> mc263-ref :700-711): prepareFrame, skip when empty, ONE pass on the main target with
+     * no clear, bindDefaultUniforms, the static call, close. The static adds {@code executeSeeThrough}; that is not
+     * new content, only a phase vanilla split OUT of the four above in 26.3.
+     *
+     * <p>Exists so the five 26.2 call sites stay the one-line calls they were, in the same place, instead of five
+     * hand-copies of this block drifting apart.
+     */
+    public static void renderAllFeaturesToMainTarget(
+        net.minecraft.client.renderer.feature.FeatureRenderDispatcher featureRenderDispatcher,
+        net.minecraft.client.renderer.SubmitNodeStorage submitNodeStorage
+    ) {
+        try (net.minecraft.client.renderer.feature.FeatureRenderDispatcher.PreparedFrame frame =
+                 featureRenderDispatcher.prepareFrame(submitNodeStorage)) {
+            if (!frame.isEmpty()) {
+                RenderTarget mainRenderTarget = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+                try (RenderPass renderPass = RenderSystem.getDevice()
+                        .createCommandEncoder()
+                        .createRenderPass(
+                            () -> "Portal view features",
+                            mainRenderTarget.getColorTextureView(), Optional.empty(),
+                            mainRenderTarget.getDepthTextureView(), OptionalDouble.empty()
+                        )) {
+                    RenderSystem.bindDefaultUniforms(renderPass);
+                    net.minecraft.client.renderer.feature.FeatureRenderDispatcher.renderAllFeatures(renderPass, frame);
+                }
+            }
+        }
     }
 }

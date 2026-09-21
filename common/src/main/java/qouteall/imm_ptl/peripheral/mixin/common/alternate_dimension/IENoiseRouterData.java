@@ -2,7 +2,7 @@ package qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension;
 
 import net.minecraft.core.HolderGetter;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.world.level.levelgen.densityfunction.DensityFunction; // 26.3: moved from levelgen (mc263-ref levelgen/densityfunction/DensityFunction.java:1)
 import net.minecraft.world.level.levelgen.NoiseRouter;
 import net.minecraft.world.level.levelgen.NoiseRouterData;
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
@@ -42,8 +42,10 @@ public interface IENoiseRouterData {
     // (private static, mc262-ref NoiseRouterData:320). 26.2-DELTA (inherited, toward-vanilla): 26.2's
     // postProcess reorders interpolated()/mul() vs 1.21.11's; using 26.2's own keeps the skyland
     // terrain consistent with how 26.2 generates its end/nether terrain.
+    // 26.3: postProcess gained the interpolation cell size — private static postProcess(DensityFunction, int, int)
+    // (mc263-ref NoiseRouterData:365; 26.2 took it implicitly from NoiseSettings, mc262-ref NoiseRouterData:320).
     @Invoker("postProcess")
-    public static DensityFunction ip_postProcess(DensityFunction densityFunction) {
+    public static DensityFunction ip_postProcess(DensityFunction densityFunction, int cellSizeXz, int cellSizeY) {
         throw new RuntimeException();
     }
 

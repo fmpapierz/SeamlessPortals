@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.compat.mixin.sodium;
 
-import com.mojang.blaze3d.shaders.ShaderType;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
 import net.minecraft.resources.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -36,39 +36,47 @@ import qouteall.imm_ptl.core.compat.sodium_compatibility.SodiumClipShaderPatch;
  * transport silently not weaving would resurrect the undefined-behavior class the retired C2-1
  * interim bracket existed to prevent.
  */
-@Mixin(targets = "net/minecraft/client/renderer/ShaderManager$CompilationCache")
+// 26.3: still the SIBLING of the vanilla transport and still the same seam as it — which MOVED: `ShaderManager$CompilationCache`
+// no longer exists, and the only GLSL text that reaches the GL driver is what GlPipelineRecompiler.compileShader(String name,
+// ShaderType, String source) hands to glShaderSource (full citation on
+// com.warwa.seamlessportals.mixin.client.ShaderManagerCompilationCacheMixin). `name` is the shader Identifier's toString()
+// (PipelineBuilder.java:85), here "sodium:blocks/block_layer_opaque", so the id tests below are unchanged. Both handlers are
+// @ModifyVariable on the same argument and stay branch-disjoint ("minecraft" vs "sodium"), so their order is still irrelevant.
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlPipelineRecompiler")
 public abstract class MixinSodiumShaderManagerCompilationCache_ClipSourcePatch {
 
-    @Inject(
-        method = "getShaderSource(Lnet/minecraft/resources/Identifier;Lcom/mojang/blaze3d/shaders/ShaderType;)Ljava/lang/String;",
-        at = @At("RETURN"),
-        cancellable = true,
+    @org.spongepowered.asm.mixin.injection.ModifyVariable(
+        method = "compileShader(Ljava/lang/String;Lcom/mojang/renderpearl/api/pipeline/ShaderType;Ljava/lang/String;)Lcom/mojang/renderpearl/backend/opengl/GlShaderModule;",
+        at = @At("HEAD"),
+        argsOnly = true,
+        ordinal = 1, // the 2nd String argument = `source` (ordinal 0 is `name`)
         require = 1
     )
-    private void ip_patchSodiumTerrainVertexSource(
-        Identifier id, ShaderType type, CallbackInfoReturnable<String> cir
+    private String ip_patchSodiumTerrainVertexSource(
+        String source, String name, ShaderType type, String sourceArg
     ) {
         if (type != ShaderType.VERTEX) {
-            return;
+            return source;
         }
+        Identifier id = name == null ? null : Identifier.tryParse(name);
         if (id == null || !"sodium".equals(id.getNamespace())) {
-            return;
+            return source;
         }
         if (!id.getPath().startsWith("blocks/block_layer_")) {
-            return;
+            return source;
         }
-        String source = cir.getReturnValue();
         if (source == null) {
-            return;
+            return source;
         }
         // D4 VK self-gate — lazy, evaluated at the first sodium terrain-shader compile (device
         // active by then; mixins weave far earlier, so an install-time check is impossible).
         if (!SodiumClipShaderPatch.isGlBackend()) {
-            return;
+            return source;
         }
         String patched = SodiumClipShaderPatch.patchTerrainVertex(source, id.toString());
         if (patched != source) {
-            cir.setReturnValue(patched);
+            return patched; // 26.3: @ModifyVariable returns the new value (was cir.setReturnValue)
         }
+        return source;
     }
 }

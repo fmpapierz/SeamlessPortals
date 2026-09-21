@@ -23,9 +23,14 @@ import qouteall.imm_ptl.core.render.SecondaryWorldRenderCore;
 @Mixin(LevelExtractor.class)
 public class LevelExtractorEntityProbeMixin {
 
+    // 26.3: isEntityVisible(Entity, Frustum, double, double, double) gained two trailing params ->
+    // (.., float partialTicks, long chunkFadeDuration) (mc262-ref LevelExtractor.java:251 -> mc263-ref :290; merged 26.3 jar
+    // descriptor (Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDDFJ)Z). An @Inject handler
+    // must mirror the full target parameter list, so the two are appended; the bodies never read them.
     @Inject(method = "isEntityVisible", at = @At("HEAD"))
     private void seamlessportals$probeConsidered(
         Entity entity, Frustum frustum, double camX, double camY, double camZ,
+        float partialTicks, long chunkFadeDuration, // 26.3: new target params (see note above)
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (EntityVisibilityProbe.ENABLED && SecondaryWorldRenderCore.isDestExtracting) {
@@ -37,6 +42,7 @@ public class LevelExtractorEntityProbeMixin {
     @Inject(method = "isEntityVisible", at = @At("RETURN"))
     private void seamlessportals$probeRejected(
         Entity entity, Frustum frustum, double camX, double camY, double camZ,
+        float partialTicks, long chunkFadeDuration, // 26.3: new target params (see note at seamlessportals$probeConsidered)
         CallbackInfoReturnable<Boolean> cir
     ) {
         if (EntityVisibilityProbe.ENABLED && SecondaryWorldRenderCore.isDestExtracting

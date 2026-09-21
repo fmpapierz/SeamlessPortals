@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.mojang.blaze3d.opengl.GlProgram;
+import com.mojang.renderpearl.backend.opengl.GlProgram;
 import com.warwa.seamlessportals.render.ClipUniformLocationCache;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;

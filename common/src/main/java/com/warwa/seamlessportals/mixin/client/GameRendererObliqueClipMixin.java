@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.warwa.seamlessportals.render.PortalSlicing;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
@@ -35,11 +35,16 @@ public abstract class GameRendererObliqueClipMixin {
     @org.spongepowered.asm.mixin.Final
     private GameRenderState gameRenderState;
 
+    // 26.3: renderLevel(DeltaTracker) -> renderLevel() (mc262-ref GameRenderer.java:525 -> mc263-ref :635). With require = 0 the
+    // stale selector would not fail — it would silently stop applying (audit: 1 match on 26.2, 0 on 26.3). The INVOKE itself is
+    // unchanged and still unique in the method: javap 26.3 renderLevel()V offset 262 `ProjectionMatrixBuffer.getBuffer:
+    // (Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;` (the HUD projection's getBuffer(Projection)
+    // overload moved out to render3dHud).
     @Redirect(
-        method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+        method = "renderLevel()V",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;",
+            target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;",
             ordinal = 0
         ),
         require = 0

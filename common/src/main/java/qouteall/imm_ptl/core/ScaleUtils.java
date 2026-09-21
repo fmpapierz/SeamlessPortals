@@ -27,23 +27,14 @@ public class ScaleUtils {
     public static final Identifier IPORTAL_SCALING =
         Identifier.fromNamespaceAndPath("iportal", "scaling");
     
+    // 26.3 (NeoForge / MinecraftForge dedicated servers): the BODY lives in ScaleUtilsClient, verbatim. It passes a
+    // LocalPlayer-typed local to doScalingForEntity(Entity, ..) — a verifier assignability load that makes THIS common
+    // class unlinkable wherever nothing strips @Environment(CLIENT) members (full note on ScaleUtilsClient). The
+    // delegate keeps the IP entry point and its one caller (ClientTeleportationManager) unchanged; an invokestatic
+    // into the client holder links it at first execution, which only a client reaches.
     @Environment(EnvType.CLIENT)
     public static void onClientPlayerTeleported(Portal portal) {
-        if (portal.hasScaling() && portal.isTeleportChangesScale()) {
-            Minecraft client = Minecraft.getInstance();
-            
-            LocalPlayer player = client.player;
-            
-            Validate.notNull(player, "Player is null");
-            
-            doScalingForEntity(player, portal);
-            
-            IECamera camera = (IECamera) client.gameRenderer.mainCamera();
-            camera.ip_setCameraY(
-                ((float) (camera.ip_getCameraY() * portal.getScaling())),
-                ((float) (camera.ip_getLastCameraY() * portal.getScaling()))
-            );
-        }
+        ScaleUtilsClient.onClientPlayerTeleported(portal);
     }
     
     public static void onServerEntityTeleported(Entity entity, Portal portal) {
@@ -145,7 +136,8 @@ public class ScaleUtils {
         return getScale(entity);
     }
     
-    private static void doScalingForEntity(Entity entity, Portal portal) {
+    // 26.3: was private; package-private so ScaleUtilsClient (the moved client body) can call it.
+    static void doScalingForEntity(Entity entity, Portal portal) {
         Vec3 eyePos = McHelper.getEyePos(entity);
         Vec3 lastTickEyePos = McHelper.getLastTickEyePos(entity);
         

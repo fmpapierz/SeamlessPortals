@@ -1,7 +1,7 @@
 package qouteall.imm_ptl.core.compat.iris_compatibility;
 
 import com.google.common.collect.ImmutableMap;
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;

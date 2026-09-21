@@ -1,12 +1,12 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
-import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.blaze3d.vertex.*;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import com.warwa.seamlessportals.chunk.RemoteChunkManager;
@@ -354,7 +354,7 @@ public class PortalContextSwitch {
      * Override for GameRenderer.lightmap() during portal rendering.
      * Read by GameRendererLightmapMixin. Removed in Commit 4 (mc.level swap).
      */
-    public static com.mojang.blaze3d.textures.GpuTextureView portalLightmapOverride = null;
+    public static com.mojang.renderpearl.api.textures.GpuTextureView portalLightmapOverride = null;
 
     /**
      * Active secondary FBO for portal world rendering. Repointed per portal (see
@@ -893,7 +893,7 @@ public class PortalContextSwitch {
      * failure leaves the flat fill in place.
      */
     private static void renderPortalSky(LevelRenderer destRenderer, LevelRenderState destLRS,
-            com.mojang.blaze3d.buffers.GpuBufferSlice destFogBuffer, Matrix4f destViewMatrix) {
+            com.mojang.renderpearl.api.buffers.GpuBufferSlice destFogBuffer, Matrix4f destViewMatrix) {
         try {
             SkyRenderState sky = destLRS.skyRenderState;
             if (sky == null || sky.skybox == DimensionType.Skybox.NONE) return;
@@ -904,15 +904,23 @@ public class PortalContextSwitch {
             mv.mul(destViewMatrix);
             try {
                 RenderSystem.setShaderFog(destFogBuffer);
-                if (sky.skybox == DimensionType.Skybox.END) {
-                    sr.renderEndSky();
-                } else {
-                    PoseStack poseStack = new PoseStack();
-                    sr.renderSkyDisc(sky.skyColor);
-                    sr.renderSunriseAndSunset(poseStack, sky.sunAngle, sky.sunriseAndSunsetColor);
-                    sr.renderSunMoonAndStars(poseStack, sky.sunAngle, sky.moonAngle, sky.starAngle,
-                        sky.moonPhase, sky.rainBrightness, sky.starBrightness);
-                    if (sky.shouldRenderDarkDisc) sr.renderDarkDisc();
+                // 26.3: SkyRenderer's per-part draw methods went PRIVATE and now take the caller's RenderPass;
+                // the one public entry is render(skyFog, state), which IS the 26.2 addSkyPass body this block
+                // copied, moved inside the class (mc262-ref LevelRenderer.java:331-349 -> mc263-ref
+                // SkyRenderer.java:132-161): same END / non-END split, same four calls in order, same
+                // `this.renderTarget` attachments with no clear. Full note at the twin block in
+                // SecondaryWorldRenderCore.renderPortalSky.
+                //   (26.2) if (END) sr.renderEndSky();
+                //   (26.2) else { sr.renderSkyDisc(skyColor); sr.renderSunriseAndSunset(..);
+                //   (26.2)        sr.renderSunMoonAndStars(..); if (shouldRenderDarkDisc) sr.renderDarkDisc(); }
+                // ONE DIFFERENCE, held to 26.2 behaviour: vanilla's END branch also draws the End flash; this
+                // block never did, so the intensity is zeroed for the call and restored after.
+                float savedEndFlashIntensity = sky.endFlashIntensity;
+                sky.endFlashIntensity = 0.0F;
+                try {
+                    sr.render(destFogBuffer, sky);
+                } finally {
+                    sky.endFlashIntensity = savedEndFlashIntensity;
                 }
             } finally {
                 mv.popMatrix();
@@ -956,9 +964,25 @@ public class PortalContextSwitch {
         mv.pushMatrix();
         mv.mul(destViewMatrix);
         try {
-            destRenderer.cloudRenderer().render(
+            // 26.3: CloudRenderer.render(<7 args>) SPLIT into prepare(<the same 7>) + render(CloudStatus, RenderPass);
+            // the renderer no longer opens its own pass (mc262-ref CloudRenderer.java:128 -> mc263-ref :129,197-205).
+            // Vanilla's order: prepare -> resizeAllAutoStorageIndexBuffers -> open pass -> render (mc263-ref
+            // LevelRenderer.java:527-548, :442-456). The pass is the one 26.2's render() opened for itself when
+            // non-fabulous: "Clouds" on the MAIN target, colour+depth, no clear (mc262-ref CloudRenderer.java:192-208).
+            // Full note at the twin block in SecondaryWorldRenderCore.
+            destRenderer.cloudRenderer().prepare(
                 destLRS.cloudColor, cloudStatus, destLRS.cloudHeight, ors.cloudRange,
                 destCameraState.pos, destLRS.gameTime, partialTick);
+            RenderSystem.resizeAllAutoStorageIndexBuffers();
+            RenderTarget cloudMainRenderTarget = mc.gameRenderer.mainRenderTarget();
+            try (com.mojang.renderpearl.api.commands.RenderPass cloudRenderPass = RenderSystem.getDevice()
+                    .createCommandEncoder()
+                    .createRenderPass(
+                        () -> "Clouds",
+                        cloudMainRenderTarget.getColorTextureView(), java.util.Optional.empty(),
+                        cloudMainRenderTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                destRenderer.cloudRenderer().render(cloudStatus, cloudRenderPass);
+            }
         } catch (Throwable t) {
             // Clouds are non-critical.
         } finally {
@@ -990,7 +1014,9 @@ public class PortalContextSwitch {
             mv.pushMatrix();
             mv.mul(destViewMatrix);
             try {
-                acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
+                // 26.3: FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage) was deleted (it is now a static over a
+                // caller-supplied RenderPass + PreparedFrame). The helper is that removed 26.2 method, re-homed — see its javadoc.
+                qouteall.imm_ptl.core.render.MyRenderHelper.renderAllFeaturesToMainTarget(acc.seamlessportals$getFeatureRenderDispatcher(), storage);
             } finally {
                 mv.popMatrix();
             }
@@ -1388,7 +1414,7 @@ public class PortalContextSwitch {
         // needs are captured HERE, while mc.levelRenderer is still the MAIN renderer (the
         // world switch is below): the dest renderer's own chunkLayerSampler is null (its main
         // pass never runs), and the main renderer's is live by AFTER_TRANSLUCENT_TERRAIN.
-        final com.mojang.blaze3d.textures.GpuSampler directChunkSampler = stencilDirectMode
+        final com.mojang.renderpearl.api.textures.GpuSampler directChunkSampler = stencilDirectMode
             ? ((LevelRendererAccessorMixin) mc.levelRenderer).seamlessportals$getChunkLayerSampler()
             : null;
         final RenderTarget directMainTarget = stencilDirectMode
@@ -1401,7 +1427,12 @@ public class PortalContextSwitch {
 
         // ===== 6. Build CameraRenderState for destination =====
         CameraRenderState destCameraState = destLRS.cameraRenderState;
-        virtualCamera.extractRenderState(destCameraState, partialTick);
+        // 26.3: Camera.extractRenderState(state, float cameraEntityPartialTicks) -> (state, DeltaTracker): it now derives
+        // the float itself via getCameraEntityPartialTicks(deltaTracker) (mc263-ref Camera.java:114-119). That is
+        // getGameTimeDeltaPartialTick(true) (or 1.0 for a frozen entity) where this code passed (false): identical in
+        // normal play, differs only under /tick freeze. It feeds only the hurt/bob entityRenderState fields plus the
+        // new cameraEntityPartialTicks field, whose one reader is the MAIN-camera path (mc263-ref GameRenderer.java:395).
+        virtualCamera.extractRenderState(destCameraState, deltaTracker);
         // Phase 2 (IP "live window"): re-enable the dest occlusion-graph build in
         // destRenderer.render() (LevelRenderer.render → sectionOcclusionGraph
         // .update(...), gated on !isFrustumCaptured). extractRenderState just set
@@ -1500,7 +1531,7 @@ public class PortalContextSwitch {
         // DO NOT call fogRenderer.updateBuffer() — that overwrites the main renderer's
         // fog buffer (MappableRingBuffer shared memory), causing dark clipping artifacts
         // across the entire world. Instead, write directly to our own buffer.
-        com.mojang.blaze3d.buffers.GpuBufferSlice destFogBuffer = writePortalFogBuffer(destFogData);
+        com.mojang.renderpearl.api.buffers.GpuBufferSlice destFogBuffer = writePortalFogBuffer(destFogData);
         // Record the REAL dest fog colour so the flat opening-fill uses it (no more cyan horizon).
         destSkyFogArgbByDim.put(destDim, argbFromFogColor(destFogData.color));
 
@@ -1669,7 +1700,19 @@ public class PortalContextSwitch {
                     // reflects vanilla's visibleSections (Sodium's draw goes through its
                     // own render(...) wrap), so it remains a valid "is there geometry?"
                     // probe.
-                    ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix);
+                    // 26.3: prepareChunkRenders(Matrix4fc) -> (Matrix4fc, boolean respectTranslucentOrder); TRUE is the
+                    // back-to-front TRANSLUCENT reversal 26.2's renderGroup applied unconditionally (mc262-ref
+                    // ChunkSectionsToRender.java:59-61 -> mc263-ref LevelRenderer.java:816-825). prepare now only
+                    // REQUESTS index capacity, so vanilla's resizeAllAutoStorageIndexBuffers() must follow before any
+                    // pass draws from it (mc263-ref LevelRenderer.java:548, :848-851). Full note at the twin site in
+                    // SecondaryWorldRenderCore.
+                    // 26.3 (corrected same day): prepared in the flavour vanilla's render() picks — the two flavours share
+                    // one frame-global per-section storage that is CLOSED when the other is requested
+                    // (DynamicGpuData.java:90-114), so the unconditional non-indirect call flipped it under the main view
+                    // every frame. Selection + measurement: DestChunkPrep.
+                    //   (first 26.3 port) ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix, true);
+                    ChunkSectionsToRender destChunks = DestChunkPrep.prepare(destRenderer, destViewMatrix);
+                    RenderSystem.resizeAllAutoStorageIndexBuffers();
                     // 26.2 FIX — do NOT bail when destChunks is empty.
                     // The section compile→upload pipeline lives INSIDE
                     // LevelRenderer.render(): prepareChunkRenders (reads uploaded,
@@ -1684,7 +1727,10 @@ public class PortalContextSwitch {
                     // standalone destChunks probe is never null (prepareChunkRenders
                     // always returns a fresh record, LevelRenderer.java:605); it stays
                     // only for the diagnostics + Sodium re-point below.
-                    if (destChunks.maxIndicesRequired() == 0 && phase2FailCount <= 8) {
+                    // 26.3: ChunkSectionsToRender is no longer a record — maxIndicesRequired() the accessor is gone; this reads the
+                    // same int as a (widened) field (AW/AT note; mc263-ref ChunkSectionsToRender.java:27-34). Every use below in this
+                    // file is the same substitution.
+                    if (destChunks.maxIndicesRequired == 0 && phase2FailCount <= 8) {
                         SeamlessPortalsConstants.rlog(
                             "[SEAMLESS] dest empty this frame for {} (#{}) — running render() to compile+upload",
                             destDim.identifier(), phase2FailCount + 1);
@@ -1694,15 +1740,26 @@ public class PortalContextSwitch {
                     // Diagnostic: count draw groups per layer to verify terrain will render.
                     if (phase2SuccessCount <= 5) {
                         int totalDraws = 0;
-                        for (var layerEntry : destChunks.drawGroupsPerLayer().values()) {
-                            for (var drawList : layerEntry.values()) {
-                                totalDraws += drawList.size();
-                            }
+                        // 26.3: not a record any more — drawGroupsPerLayer() is gone. prepareChunkRenders returns a
+                        // DrawSeparate whose (widened) drawsPerLayer is already flat, layer -> draws (mc263-ref
+                        // ChunkSectionsToRender.java:152-165); summing those lists is the same total.
+                        //   (26.2) for (var layerEntry : destChunks.drawGroupsPerLayer().values())
+                        //   (26.2)     for (var drawList : layerEntry.values()) totalDraws += drawList.size();
+                        // 26.3 (corrected same day): the prepare above now returns EITHER flavour (DestChunkPrep), so the
+                        // per-layer count goes through its flavour-aware counter — the same sum for the same visible set.
+                        //   (first 26.3 port) if (destChunks instanceof ChunkSectionsToRender.DrawSeparate destChunksSeparate)
+                        //   (first 26.3 port)     for (var drawList : destChunksSeparate.drawsPerLayer.values()) totalDraws += drawList.size();
+                        for (net.minecraft.client.renderer.chunk.ChunkSectionLayer layer
+                                : net.minecraft.client.renderer.chunk.ChunkSectionLayer.values()) {
+                            totalDraws += Math.max(0, DestChunkPrep.countDraws(destChunks, layer));
                         }
                         SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] destChunks: maxIndices={} totalDraws={} textureView={}",
-                            destChunks.maxIndicesRequired(), totalDraws,
-                            destChunks.textureView() != null ? "valid" : "NULL");
+                            destChunks.maxIndicesRequired, totalDraws,
+                            // 26.3: the record no longer carries the atlas view (it is a renderGroup ARGUMENT now); this
+                            // is the expression vanilla captured it from, in both versions (mc263-ref LevelRenderer.java:806).
+                            mc.getTextureManager().getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)
+                                .getTextureView() != null ? "valid" : "NULL");
                     }
 
                     if (phase2SuccessCount <= 3) {
@@ -1716,7 +1773,7 @@ public class PortalContextSwitch {
                         SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] renderLevel fogColor=({},{},{},{}) destChunks.maxIndices={} skyRender=true cam=({},{},{})",
                             destFogData.color.x, destFogData.color.y, destFogData.color.z, destFogData.color.w,
-                            destChunks.maxIndicesRequired(),
+                            destChunks.maxIndicesRequired,
                             (int) destCameraPos.x, (int) destCameraPos.y, (int) destCameraPos.z);
                         SeamlessPortalsConstants.rlog(
                             "[SEAMLESS DEBUG] fogDistances: envStart={} envEnd={} renderStart={} renderEnd={} skyEnd={} cloudEnd={}",
@@ -1814,7 +1871,9 @@ public class PortalContextSwitch {
                                 mc.gameRenderer.mainRenderTarget().height,
                                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
                                 destLevel.getGameTime(),
-                                deltaTracker,
+                                // 26.3: GlobalSettingsUniform.update(.., DeltaTracker, ..) -> (.., float worldPartialTicks, ..); 26.2 computed
+                                // exactly this expression from the tracker inside the method (mc262-ref GlobalSettingsUniform.java:30 -> mc263-ref :28).
+                                deltaTracker.getGameTimeDeltaPartialTick(false),
                                 mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                                 destCameraPos,
                                 false
@@ -1875,7 +1934,7 @@ public class PortalContextSwitch {
                                     // overworld already in the main target is preserved outside
                                     // the opening.
                                     if (directChunkSampler != null
-                                            && destChunks.maxIndicesRequired() > 0) {
+                                            && destChunks.maxIndicesRequired > 0) {
                                         // DEST FOG: bind the destination dim's fog for ALL the dest
                                         // draws, and RESTORE the main pass's fog after. The chunk
                                         // shader applies fog from the BOUND Fog uniform
@@ -1890,7 +1949,7 @@ public class PortalContextSwitch {
                                         // never re-sets fog, LevelRenderer.java:455-463) must keep
                                         // the SOURCE dim's fog, or nether fog leaks onto overworld
                                         // clouds. (The weather pass re-sets fog itself, :476.)
-                                        com.mojang.blaze3d.buffers.GpuBufferSlice savedShaderFog =
+                                        com.mojang.renderpearl.api.buffers.GpuBufferSlice savedShaderFog =
                                             RenderSystem.getShaderFog();
                                         RenderSystem.setShaderFog(destFogBuffer);
                                         try {
@@ -1918,8 +1977,25 @@ public class PortalContextSwitch {
                                                     destPortal, destCameraPos, destViewMatrix);
                                             }
                                             // OPAQUE = solid + cutout terrain.
-                                            destChunks.renderGroup(
-                                                ChunkSectionLayerGroup.OPAQUE, directChunkSampler);
+                                            // 26.3: renderGroup(group, sampler) -> (group, RenderPass, sampler, atlasView, wireframe): it no longer opens its
+                                            // own pass. This is the pass 26.2's renderGroup opened for itself — same label, colour+depth, no clear,
+                                            // bindDefaultUniforms (mc262-ref ChunkSectionsToRender.java:38-49) — on the main target (what outputTarget()
+                                            // resolved to here; the translucent target itself no longer exists). Atlas view + wireframe flag are what
+                                            // vanilla now passes in (mc263-ref LevelRenderer.java:518-521). Twin of SecondaryWorldRenderCore Steps 10.6/10.9.
+                                            RenderTarget directOpaqueTerrainTarget = mc.gameRenderer.mainRenderTarget();
+                                            try (com.mojang.renderpearl.api.commands.RenderPass directOpaqueTerrainPass = RenderSystem.getDevice()
+                                                    .createCommandEncoder()
+                                                    .createRenderPass(
+                                                        () -> "Section layers for " + ChunkSectionLayerGroup.OPAQUE.label(),
+                                                        directOpaqueTerrainTarget.getColorTextureView(), java.util.Optional.empty(),
+                                                        directOpaqueTerrainTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                                                RenderSystem.bindDefaultUniforms(directOpaqueTerrainPass);
+                                                destChunks.renderGroup(
+                                                    ChunkSectionLayerGroup.OPAQUE, directOpaqueTerrainPass, directChunkSampler,
+                                                    mc.getTextureManager()
+                                                        .getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS).getTextureView(),
+                                                    destLRS.renderWireframeTerrain);
+                                            }
                                             // Step 2c: dest entities / block-entities / particles
                                             // (submit model), drawn over the opaque terrain — matches
                                             // addMainPass's executeSolid placement (after OPAQUE).
@@ -1953,8 +2029,25 @@ public class PortalContextSwitch {
                                             // blended over the opaque dest terrain. Drawn here (before
                                             // the renderOnePortal STEP 3.7 NEAR depth shield) so it
                                             // depth-sorts GEQUAL against the opaque dest terrain.
-                                            destChunks.renderGroup(
-                                                ChunkSectionLayerGroup.TRANSLUCENT, directChunkSampler);
+                                            // 26.3: renderGroup(group, sampler) -> (group, RenderPass, sampler, atlasView, wireframe): it no longer opens its
+                                            // own pass. This is the pass 26.2's renderGroup opened for itself — same label, colour+depth, no clear,
+                                            // bindDefaultUniforms (mc262-ref ChunkSectionsToRender.java:38-49) — on the main target (what outputTarget()
+                                            // resolved to here; the translucent target itself no longer exists). Atlas view + wireframe flag are what
+                                            // vanilla now passes in (mc263-ref LevelRenderer.java:518-521). Twin of SecondaryWorldRenderCore Steps 10.6/10.9.
+                                            RenderTarget directTranslucentTerrainTarget = mc.gameRenderer.mainRenderTarget();
+                                            try (com.mojang.renderpearl.api.commands.RenderPass directTranslucentTerrainPass = RenderSystem.getDevice()
+                                                    .createCommandEncoder()
+                                                    .createRenderPass(
+                                                        () -> "Section layers for " + ChunkSectionLayerGroup.TRANSLUCENT.label(),
+                                                        directTranslucentTerrainTarget.getColorTextureView(), java.util.Optional.empty(),
+                                                        directTranslucentTerrainTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                                                RenderSystem.bindDefaultUniforms(directTranslucentTerrainPass);
+                                                destChunks.renderGroup(
+                                                    ChunkSectionLayerGroup.TRANSLUCENT, directTranslucentTerrainPass, directChunkSampler,
+                                                    mc.getTextureManager()
+                                                        .getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS).getTextureView(),
+                                                    destLRS.renderWireframeTerrain);
+                                            }
                                             // Step 2b: dest CLOUDS last (in front of terrain, depth-sorted).
                                             renderPortalClouds(destRenderer, destLRS, destCameraState,
                                                 destViewMatrix, partialTick);
@@ -1972,14 +2065,20 @@ public class PortalContextSwitch {
                                     // ChunkSectionsToRender — render(...) produces its own
                                     // internally via prepareChunkRenders(modelView)) (D5).
                                     destRenderer.render(
+                                        // 26.3: render(..) lost `DeltaTracker deltaTracker` and `Matrix4fc modelViewMatrix`, gained a trailing
+                                        // `boolean consistentDepthRequired` (mc263-ref LevelRenderer.java:186-194). The model-view is now read from
+                                        // cameraState.viewRotationMatrix (:202) and the terrain matrix from levelRenderState.cameraRenderState
+                                        // .viewRotationMatrix (:265) — 26.2 vanilla passed exactly that field as the arg (mc262-ref GameRenderer.java:533).
+                                        // consistentDepthRequired=false IS the 26.2 behaviour: its always-on-top pass cleared the MAIN depth texture
+                                        // (mc262-ref LevelRenderer.java:500), which is what the false branch does (mc263-ref :486-492, OptionalDouble.of(0.0));
+                                        // true is 26.3's new post-effect path (separate depth + integrate), which no 26.2 code path had.
                                         GraphicsResourceAllocator.UNPOOLED,
-                                        deltaTracker,
                                         false,
                                         destCameraState,
-                                        destViewMatrix,
                                         destFogBuffer,
                                         destFogData.color,
-                                        true
+                                        true,
+                                        false
                                     );
                                     // The dest world was drawn into the FBO — the
                                     // caller may composite it through the stencil.
@@ -2006,7 +2105,9 @@ public class PortalContextSwitch {
                                 mc.gameRenderer.mainRenderTarget().height,
                                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
                                 savedLevelGameTime,
-                                deltaTracker,
+                                // 26.3: GlobalSettingsUniform.update(.., DeltaTracker, ..) -> (.., float worldPartialTicks, ..); 26.2 computed
+                                // exactly this expression from the tracker inside the method (mc262-ref GlobalSettingsUniform.java:30 -> mc263-ref :28).
+                                deltaTracker.getGameTimeDeltaPartialTick(false),
                                 mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                                 savedCameraPos,
                                 false
@@ -2179,7 +2280,10 @@ public class PortalContextSwitch {
         // portal), selected by activePortalId. The big render/composite methods use secondaryFbo.
         TextureTarget fbo = portalFbos.get(activePortalId);
         if (fbo == null) {
-            fbo = new TextureTarget("seamless_portal", w, h, true, com.mojang.blaze3d.GpuFormat.RGBA8_UNORM);
+            // 26.3: TextureTarget(label, w, h, boolean useDepth, GpuFormat) -> (label, w, h, colorFormat, depthFormat).
+            // 26.2's useDepth=true ALWAYS created a GpuFormat.D32_FLOAT depth texture (mc262-ref RenderTarget.java:85-86),
+            // so true -> D32_FLOAT is the identical attachment (mc263-ref RenderTarget.java:98-99; MainTarget.java:21).
+            fbo = new TextureTarget("seamless_portal", w, h, com.mojang.renderpearl.api.GpuFormat.RGBA8_UNORM, com.mojang.renderpearl.api.GpuFormat.D32_FLOAT);
             portalFbos.put(activePortalId, fbo);
             SeamlessPortalsConstants.rlog("[SEAMLESS] Created secondary FBO {}x{} for portal {}", w, h, activePortalId);
         } else if (fbo.width != w || fbo.height != h) {
@@ -2368,14 +2472,14 @@ public class PortalContextSwitch {
      * still be referencing the buffer from the previous frame. Old buffers
      * get GC'd naturally when the reference is overwritten.
      */
-    private static com.mojang.blaze3d.buffers.GpuBuffer portalProjGpuBuffer = null;
-    private static com.mojang.blaze3d.buffers.GpuBuffer restoreProjGpuBuffer = null;
+    private static com.mojang.renderpearl.api.buffers.GpuBuffer portalProjGpuBuffer = null;
+    private static com.mojang.renderpearl.api.buffers.GpuBuffer restoreProjGpuBuffer = null;
 
     /**
      * Write a Matrix4f to a GPU buffer for RenderSystem.setProjectionMatrix().
      * @param forRestore true = use restore buffer slot, false = use portal buffer slot
      */
-    private static com.mojang.blaze3d.buffers.GpuBufferSlice writeProjectionBuffer(Matrix4f matrix, boolean forRestore) {
+    private static com.mojang.renderpearl.api.buffers.GpuBufferSlice writeProjectionBuffer(Matrix4f matrix, boolean forRestore) {
         java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(64)
             .order(java.nio.ByteOrder.nativeOrder());
         matrix.get(buf);     // JOML writes 64 bytes at position 0 without advancing
@@ -2383,9 +2487,9 @@ public class PortalContextSwitch {
         buf.flip();          // now limit=64, position=0 → 64 bytes readable
 
         // Create new buffer — do NOT close the old one (GPU may still be using it)
-        com.mojang.blaze3d.buffers.GpuBuffer gpuBuf = RenderSystem.getDevice().createBuffer(
+        com.mojang.renderpearl.api.buffers.GpuBuffer gpuBuf = RenderSystem.getDevice().createBuffer(
             () -> forRestore ? "portal_proj_restore" : "portal_proj_oblique",
-            com.mojang.blaze3d.buffers.GpuBuffer.USAGE_UNIFORM, buf);
+            com.mojang.renderpearl.api.buffers.GpuBuffer.USAGE_UNIFORM, buf);
 
         if (forRestore) {
             restoreProjGpuBuffer = gpuBuf;
@@ -2458,7 +2562,7 @@ public class PortalContextSwitch {
                 Optional.empty(),
                 mainRT.getDepthTextureView(),
                 OptionalDouble.empty(),
-                new com.mojang.blaze3d.systems.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
+                new com.mojang.renderpearl.api.commands.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
         )) {
             // CURTAIN FIX (2026-06-27): use our TRACY_BLIT clone with an EXPLICIT
             // ALWAYS_PASS depth state instead of vanilla TRACY_BLIT. Vanilla
@@ -2469,13 +2573,17 @@ public class PortalContextSwitch {
             // ~0.5 full-screen-triangle depth, so the source sky showed through (the
             // blue curtain, proven by DIAG-PRE). ALWAYS_PASS writes the full opening.
             // (Still no blend — pipeline has no blend state and we glDisable(BLEND).)
-            pass.setPipeline(PortalRenderTypes.portalCompositeBlit());
+            // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+            // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+            pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(PortalRenderTypes.portalCompositeBlit()));
             RenderSystem.bindDefaultUniforms(pass);
             // Bind our FBO texture via the render pass — this is the correct way.
             // Raw GL glBindTexture does NOT affect render pass sampler bindings.
-            pass.bindTexture("InSampler", secondaryFbo.getColorTextureView(),
+            // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+            // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+            pass.setUniform("InSampler", secondaryFbo.getColorTextureView(),
                 RenderSystem.getSamplerCache().getClampToEdge(
-                    com.mojang.blaze3d.textures.FilterMode.NEAREST));
+                    com.mojang.renderpearl.api.textures.FilterMode.NEAREST));
             pass.draw(3, 1, 0, 0); // Full-screen triangle (vertexCount=3, instanceCount=1)
         }
         // Restore blend + depth state for the rest of the main-frame rendering.
@@ -2492,7 +2600,7 @@ public class PortalContextSwitch {
      * shared with the main renderer's terrainFog slice. Writing to it corrupts
      * the main world's fog → dark clipping artifacts across the entire world.
      */
-    private static com.mojang.blaze3d.buffers.GpuBufferSlice writePortalFogBuffer(FogData fog) {
+    private static com.mojang.renderpearl.api.buffers.GpuBufferSlice writePortalFogBuffer(FogData fog) {
         // Build fog data into a ByteBuffer, then create a GPU buffer from it.
         // This avoids mapping an existing buffer (which may be in use by a render pass).
         // FOG_UBO_SIZE = 48 in MC (std140 padded: vec4(16) + 6*float(24) + 8 padding)
@@ -2512,8 +2620,8 @@ public class PortalContextSwitch {
         buf.position(48);
         buf.flip();
 
-        com.mojang.blaze3d.buffers.GpuBuffer gpuBuf = RenderSystem.getDevice().createBuffer(
-            () -> "portal_fog", com.mojang.blaze3d.buffers.GpuBuffer.USAGE_UNIFORM, buf);
+        com.mojang.renderpearl.api.buffers.GpuBuffer gpuBuf = RenderSystem.getDevice().createBuffer(
+            () -> "portal_fog", com.mojang.renderpearl.api.buffers.GpuBuffer.USAGE_UNIFORM, buf);
         return gpuBuf.slice(); // Full buffer slice
     }
 

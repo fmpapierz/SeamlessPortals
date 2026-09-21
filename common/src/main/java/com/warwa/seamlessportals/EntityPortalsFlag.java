@@ -188,6 +188,20 @@ public final class EntityPortalsFlag {
         } catch (Throwable ignored) {
             // not NeoForge either — fall through to the conventional default
         }
+        // 26.3: MinecraftForge path — the exact twin of the NeoForge arm above. Forge's FML keeps the same shape under
+        // its own package (javap fmlloader-26.3-66.0.2.jar: `public final class net.minecraftforge.fml.loading.FMLPaths
+        // extends Enum`, constant `CONFIGDIR`, `public java.nio.file.Path get()`). Without it Forge fell through to the
+        // working-directory default below, which is only right while the game dir IS the working dir.
+        try {
+            Class<?> pathsClass = Class.forName("net.minecraftforge.fml.loading.FMLPaths");
+            Object configDir = pathsClass.getField("CONFIGDIR").get(null);
+            Object path = pathsClass.getMethod("get").invoke(configDir);
+            if (path instanceof Path p) {
+                return p;
+            }
+        } catch (Throwable ignored) {
+            // not MinecraftForge either — fall through to the conventional default
+        }
         try {
             return Paths.get("config");
         } catch (Throwable ignored) {

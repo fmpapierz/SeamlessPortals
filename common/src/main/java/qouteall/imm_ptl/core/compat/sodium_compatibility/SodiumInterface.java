@@ -108,12 +108,21 @@ public class SodiumInterface {
          * to the vanilla body over the dummy's empty map. Returns TRUE when armed — the caller's
          * canDraw gate must bypass its {@code maxIndicesRequired() > 0} test then (the dummy
          * reports -1). Base/feed-only: false, nothing armed.
+         *
+         * <p><b>26.3 / sodium 0.9.2 — the seam's RETURN TYPE changed, forced by sodium.</b> In 0.9.1
+         * {@code SodiumChunkSection} was a duck INTERFACE mixed into the vanilla record and arming MUTATED the
+         * instance in place ({@code sodium$setRendering}), so a boolean was enough. In 0.9.2 it is an immutable
+         * CLASS that {@code extends ChunkSectionsToRender} (26.3 made that an abstract class) with a
+         * {@code (SodiumWorldRenderer, ChunkRenderMatrices, double, double, double)} constructor — javap on
+         * sodium-mc26.3-0.9.2-fabric.jar; arming now PRODUCES a new object, so the seam must hand it back. Returns
+         * the armed replacement, or {@code null} for "not armed" (the old {@code false}); the caller draws
+         * Steps 10.6/10.9 on the returned object. Base/feed-only: null, nothing armed.
          */
-        public boolean ip_armDestChunkRenders(
+        public @org.jetbrains.annotations.Nullable ChunkSectionsToRender ip_armDestChunkRenders(
             ChunkSectionsToRender destChunks, Matrix4f destDrawProjection, Matrix4f destViewMatrix,
             Vec3 destCameraPos, FogData destFogData
         ) {
-            return false;
+            return null;
         }
 
         /**
@@ -447,7 +456,7 @@ public class SodiumInterface {
          * iris consumer of {@code sodium$getMatrices}, revisit this omission.
          */
         @Override
-        public boolean ip_armDestChunkRenders(
+        public @org.jetbrains.annotations.Nullable ChunkSectionsToRender ip_armDestChunkRenders(
             ChunkSectionsToRender destChunks, Matrix4f destDrawProjection, Matrix4f destViewMatrix,
             Vec3 destCameraPos, FogData destFogData
         ) {
@@ -456,16 +465,27 @@ public class SodiumInterface {
                     .sodium$getWorldRenderer();
             if (((IESodiumWorldRenderer) swr).ip_getRenderSectionManager() == null) {
                 // Same degrade family as the drive: nothing was culled, arm nothing.
-                return false;
+                return null; // 26.3: was `return false` — see the base method's javadoc
             }
             ChunkRenderMatrices matrices = new ChunkRenderMatrices(
                 new Matrix4f(destDrawProjection), new Matrix4f(destViewMatrix)
             );
-            ((SodiumChunkSection) (Object) destChunks).sodium$setRendering(
+            // 26.3 / sodium 0.9.2: this method has always REPLICATED sodium's own LevelRendererMixin.getRenderState
+            // WrapOperation, so it tracks that body. javap on sodium-mc26.3-0.9.2-fabric.jar, getRenderState:
+            //   46-48   SodiumWorldRenderer.updateFogColor(Vector4f)
+            //   51-74   SodiumWorldRenderer.prepareChunkRendering(ChunkRenderMatrices, D, D, D)     <- NEW in 0.9.2
+            //   77-104  new SodiumChunkSection(renderer, matrices, x, y, z)                         <- was sodium$setRendering
+            // in that order. 0.9.1 armed the vanilla instance in place and updated fog AFTER; the replica below
+            // follows 0.9.2's order and adds its new prepare step with the same five values this method always
+            // passed. The deliberate omission stays: no `matrices` putfield (the class javadoc's two reasons hold).
+            //   (26.2) ((SodiumChunkSection) (Object) destChunks).sodium$setRendering(swr, matrices, x, y, z);
+            //   (26.2) swr.updateFogColor(destFogData.color);
+            //   (26.2) return true;
+            swr.updateFogColor(destFogData.color);
+            swr.prepareChunkRendering(matrices, destCameraPos.x, destCameraPos.y, destCameraPos.z);
+            return new SodiumChunkSection(
                 swr, matrices, destCameraPos.x, destCameraPos.y, destCameraPos.z
             );
-            swr.updateFogColor(destFogData.color);
-            return true;
         }
 
         /**

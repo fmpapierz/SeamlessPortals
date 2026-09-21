@@ -2,7 +2,7 @@ package qouteall.imm_ptl.core.mixin.client.render;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
@@ -121,8 +121,12 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
      * guard; ledgered substrate deviation). PROBE reads FIRST (pre-guard state, 1Hz, lever-gated);
      * GUARD then disables both capabilities — in steady state a provable no-op (both already off).
      */
-    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"))
-    private void portal_onRenderLevelHead(DeltaTracker deltaTracker, CallbackInfo ci) {
+    // 26.3: GameRenderer.render(DeltaTracker, boolean) -> render() and renderLevel(DeltaTracker) -> renderLevel(): the render
+    // phase no longer receives a DeltaTracker at all — everything it needs was captured by extract() (mc262-ref
+    // GameRenderer.java:396,425,525 -> mc263-ref :469,497,635). The handlers below never USED that parameter; only their
+    // selectors and parameter lists change.
+    @Inject(method = "renderLevel()V", at = @At("HEAD"))
+    private void portal_onRenderLevelHead(CallbackInfo ci) {
         // S14.31: one-frame draw-trace bracket (armed by debug_capture_frame; dumped at render TAIL).
         qouteall.imm_ptl.core.render.DrawCallTrace.onFrameStart();
         // S14.42: post-promote render-chain probe (self-armed by every promote; 1Hz; also the
@@ -161,13 +165,15 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
     @Unique
     private static long portal_lastBoundaryProbeMs = 0;
 
+    // 26.3: renderItemInHand(CameraRenderState, float, Matrix4fc) -> (CameraRenderState, PlayerRenderState, GpuTextureView)
+    // (javap on the 26.3 merged jar; mc263-ref GameRenderer.java:375). Parameters unused here, mirrored as before.
     @Inject(method = "renderItemInHand", at = @At("HEAD"))
-    private void onRenderHandBegins(CameraRenderState cameraState, float f, Matrix4fc modelViewMatrix, CallbackInfo ci) {
+    private void onRenderHandBegins(CameraRenderState cameraState, net.minecraft.client.renderer.state.level.PlayerRenderState playerState, com.mojang.renderpearl.api.textures.GpuTextureView depthTextureView, CallbackInfo ci) {
         portal_isRenderingHand = true;
     }
 
     @Inject(method = "renderItemInHand", at = @At("RETURN"))
-    private void onRenderHandEnds(CameraRenderState cameraState, float f, Matrix4fc modelViewMatrix, CallbackInfo ci) {
+    private void onRenderHandEnds(CameraRenderState cameraState, net.minecraft.client.renderer.state.level.PlayerRenderState playerState, com.mojang.renderpearl.api.textures.GpuTextureView depthTextureView, CallbackInfo ci) {
         portal_isRenderingHand = false;
     }
 
@@ -237,10 +243,10 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
     // upload at :557 (the :570 HUD upload takes a Projection, not a Matrix4f); ordinal 0 pins it. Woven
     // flag-ON only, so flag-OFF is untouched. Returns the original GpuBufferSlice unchanged (passive snapshot).
     @WrapOperation(
-        method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+        method = "renderLevel()V", // 26.3: was renderLevel(DeltaTracker)V — see the note at portal_onRenderLevelHead
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;",
+            target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;",
             ordinal = 0
         )
     )
@@ -306,11 +312,11 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         method = "render",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel()V", // 26.3: was renderLevel(DeltaTracker)V
             shift = At.Shift.AFTER
         )
     )
-    private void seamlessportals$onAfterRenderingCenter(DeltaTracker deltaTracker, boolean bl, CallbackInfo ci) {
+    private void seamlessportals$onAfterRenderingCenter(CallbackInfo ci) { // 26.3: render() takes no args now
         RenderStates.onTotalRenderEnd();
 
         GuiPortalRendering._onGameRenderEnd();
@@ -334,16 +340,16 @@ public abstract class MixinGameRenderer implements IEGameRenderer {
         method = "render",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V"
+            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel()V" // 26.3: was renderLevel(DeltaTracker)V
         )
     )
     private void seamlessportals$redirectRenderingWorld(
-        GameRenderer instance, DeltaTracker deltaTracker, Operation<Void> original
+        GameRenderer instance, Operation<Void> original // 26.3: the wrapped call has no DeltaTracker argument any more
     ) {
         if (CrossPortalViewRendering.renderCrossPortalView()) {
             return;
         }
-        original.call(instance, deltaTracker);
+        original.call(instance);
     }
 
     // ==== IEGameRenderer ducks (LIVE-called by MyGameRenderer.switchAndRenderTheWorld) ====

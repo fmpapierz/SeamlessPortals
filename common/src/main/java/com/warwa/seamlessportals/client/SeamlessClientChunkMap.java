@@ -120,24 +120,27 @@ public class SeamlessClientChunkMap extends ClientChunkCache {
         return loadOrGenerate ? this.ccEmptyChunk : null;
     }
 
+    // 26.3: vanilla folded (FriendlyByteBuf readBuffer, Map<Heightmap.Types,long[]> heightmaps,
+    // Consumer<BlockEntityTagOutput> blockEntities) into the one ClientboundLevelChunkPacketData they came
+    // from (mc262-ref ClientChunkCache.java:102-108 -> mc263-ref :99), and LevelChunk.replaceWithPacketData
+    // now takes (chunkX, chunkZ, chunkData) and unpacks them itself (mc263-ref LevelChunk.java:518-538).
+    // Body shape is unchanged — same two branches, same order.
     @Override
     public @Nullable LevelChunk replaceWithPacketData(
-            int chunkX, int chunkZ, FriendlyByteBuf readBuffer,
-            Map<Heightmap.Types, long[]> heightmaps,
-            Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> blockEntities) {
+            int chunkX, int chunkZ, ClientboundLevelChunkPacketData chunkData) {
         long key = ChunkPos.pack(chunkX, chunkZ);
         ChunkPos pos = new ChunkPos(chunkX, chunkZ);
         LevelChunk existing = readMap(m -> m.get(key));
         LevelChunk chunk;
         if (existing == null) {
             chunk = new LevelChunk(this.ccLevel, pos);
-            chunk.replaceWithPacketData(readBuffer, heightmaps, blockEntities);
+            chunk.replaceWithPacketData(chunkX, chunkZ, chunkData);
             final LevelChunk added = chunk;
             modifyMap(m -> m.put(key, added));
             emitChunkAdded(chunk);
         } else {
             chunk = existing;
-            chunk.replaceWithPacketData(readBuffer, heightmaps, blockEntities);
+            chunk.replaceWithPacketData(chunkX, chunkZ, chunkData);
             emitRefresh(chunk);
         }
         this.ccLevel.onChunkLoaded(pos);

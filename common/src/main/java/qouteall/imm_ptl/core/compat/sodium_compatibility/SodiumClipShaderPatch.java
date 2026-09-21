@@ -196,10 +196,26 @@ public final class SodiumClipShaderPatch {
 
         // The clip write — the D3 view-space expression, exactly the vanilla injection's math with
         // sodium's symbols; injected before main's closing brace where 'position' is in scope.
+        // 26.3: the source this patches is no longer sodium's own vsh text. Sodium 0.9.2 still builds ordinary vanilla
+        // RenderPipelines (javap 0.9.2 ShaderChunkRenderer.createShader: RenderPipeline.builder()..withVertexShader(
+        // sodium:blocks/block_layer_opaque)..withPushConstantSize(..)), and vanilla 26.3 compiles those with shaderc to SPIR-V
+        // under VULKAN rules, then regenerates GLSL 330 with spirv-cross for the GL driver (see the full citation on
+        // com.warwa.seamlessportals.render.ShaderCodeTransformation#transformVertex). The loose `uniform vec4` this patch adds
+        // is illegal in the first stage (the class javadoc's own D4 note), so it is applied to the REGENERATED text. Reproduced
+        // offline from the real 0.9.2 jar with vanilla's exact options (defines USE_VERTEX_COMPRESSION, USE_FOG) — every anchor
+        // above survives verbatim:
+        //   vec3 position = _vert_position + translation;
+        //   gl_Position = (_uniform_instance_00_00.u_ProjectionMatrix * _uniform_instance_00_00.u_ModelViewMatrix) * vec4(position, 1.0);
+        // The only difference: u_Globals members are reached through the block INSTANCE name spirv-cross emits
+        // (GlPipelineRecompiler.java:148-157). So u_ModelViewMatrix is spelled the way the source itself spells it; a source
+        // that uses the bare symbol (the 0.9.1 / 26.2 form) is handled unchanged.
+        java.util.regex.Matcher mvAccessor =
+            java.util.regex.Pattern.compile("([A-Za-z_][A-Za-z0-9_]*\\.)u_ModelViewMatrix\\b").matcher(source);
+        String modelViewMatrix = mvAccessor.find() ? mvAccessor.group(1) + "u_ModelViewMatrix" : "u_ModelViewMatrix";
         String injection = "\n"
             + "    {\n"
             + "        // SEAMLESSPORTALS_CLIP_INJECTED (sodium terrain, C2-2 D3)\n"
-            + "        gl_ClipDistance[0] = dot((u_ModelViewMatrix * vec4(position, 1.0)).xyz, "
+            + "        gl_ClipDistance[0] = dot((" + modelViewMatrix + " * vec4(position, 1.0)).xyz, " // 26.3: was the bare u_ModelViewMatrix
             + ShaderCodeTransformation.UNIFORM_NAME + ".xyz) + "
             + ShaderCodeTransformation.UNIFORM_NAME + ".w;\n"
             + "    }\n";

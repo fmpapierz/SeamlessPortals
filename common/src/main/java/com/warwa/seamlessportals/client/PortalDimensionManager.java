@@ -106,8 +106,16 @@ public class PortalDimensionManager {
             for (net.minecraft.world.level.chunk.LevelChunkSection section : sections) {
                 section.write(chunkPacket);
             }
-            cache.replaceWithPacketData(chunkX, chunkZ, chunkPacket,
-                java.util.Collections.emptyMap(), tag -> {});
+            // 26.3: replaceWithPacketData(int,int,FriendlyByteBuf,Map,Consumer) folded into
+            // (int,int,ClientboundLevelChunkPacketData) (mc263-ref ClientChunkCache.java:99). The same three
+            // inputs — section bytes, empty heightmaps, no block entities — now travel through its widened
+            // private ctor (AW/AT note); LevelChunk.replaceWithPacketData reads the sections back out of
+            // getReadBuffer() exactly as it read `chunkPacket` before (mc263-ref LevelChunk.java:519-525).
+            byte[] chunkPacketBytes = new byte[chunkPacket.readableBytes()];
+            chunkPacket.readBytes(chunkPacketBytes);
+            cache.replaceWithPacketData(chunkX, chunkZ,
+                new net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData(
+                    java.util.Collections.emptyMap(), chunkPacketBytes, java.util.Collections.emptyList()));
             chunkPacket.release();
 
             // Apply light data to the SAME level's LightEngine

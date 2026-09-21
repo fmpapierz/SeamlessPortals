@@ -32,11 +32,20 @@ import qouteall.imm_ptl.core.render.context_management.WorldRenderInfo;
  * re-expression is this standalone render-slice mixin — the multiworld {@code MixinMinecraft} port omits
  * it (it keeps only the tick/lifecycle/duck handlers whose targets stayed on {@code Minecraft}).
  * Held/UNREGISTERED until S13.
+ *
+ * <p><b>26.3 re-anchor (the flag moved AGAIN — file kept at its 26.2 path, target moved, the same
+ * convention as {@code MixinLivingEntity_C}).</b> {@code GameRenderState.useShaderTransparency()} is GONE
+ * (javap on the 26.3 merged jar: no such member). Its successor is the instance method
+ * {@code GameRenderer.useImprovedTransparency()Z} (mc263-ref GameRenderer.java:868-870:
+ * {@code optionsRenderState.improvedTransparency && !levelRenderState.renderWireframeTerrain}); vanilla
+ * re-pointed its own callers the same way (mc262-ref LevelRenderer.java:835 -> mc263-ref :1240), and it is
+ * what now selects 26.3's order-independent-transparency path (mc263-ref LevelRenderer.java:197,219,269-271).
+ * Same HEAD-cancel, same gate, same force-false-while-portal-rendering semantics.
  */
-@Mixin(GameRenderState.class)
+@Mixin(net.minecraft.client.renderer.GameRenderer.class)
 public class MixinGameRenderState {
     // avoid messing up rendering states in fabulous
-    @Inject(method = "useShaderTransparency", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "useImprovedTransparency", at = @At("HEAD"), cancellable = true)
     private void onIsFabulousGraphicsOrBetter(CallbackInfoReturnable<Boolean> cir) {
         if (WorldRenderInfo.isRendering()) {
             cir.setReturnValue(false);

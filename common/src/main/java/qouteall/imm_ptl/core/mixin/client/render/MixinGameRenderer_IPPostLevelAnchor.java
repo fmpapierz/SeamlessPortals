@@ -76,21 +76,27 @@ public abstract class MixinGameRenderer_IPPostLevelAnchor {
     @Shadow
     public abstract GameRenderState gameRenderState();
 
+    // 26.3: renderLevel(DeltaTracker) -> renderLevel(), and LevelRenderer.render lost `DeltaTracker` + `Matrix4fc modelViewMatrix`
+    // and gained a trailing `boolean consistentDepthRequired` (mc262-ref GameRenderer.java:525,563-565 -> mc263-ref :635,672-674).
+    // javap 26.3 GameRenderer.renderLevel()V: exactly ONE LevelRenderer.render INVOKE (offset 385, descriptor below), followed
+    // at offset 396 by the NEW private render3dHud(CameraRenderState,PlayerRenderState,OptionsRenderState,Z)V, into which the
+    // whole 26.2 :566-589 tail moved (HUD projection switch :681-685, clearDepthTexture :688, renderItemInHand :689). So
+    // shift=AFTER here is the SAME slot the class javadoc describes: after the level render returns, scene depth still valid,
+    // WORLD projection still active, before the hand.
     @Inject(
-        method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+        method = "renderLevel()V",
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/LevelRenderer;render("
                 + "Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;"
-                + "Lnet/minecraft/client/DeltaTracker;Z"
+                + "Z"
                 + "Lnet/minecraft/client/renderer/state/level/CameraRenderState;"
-                + "Lorg/joml/Matrix4fc;"
-                + "Lcom/mojang/blaze3d/buffers/GpuBufferSlice;"
-                + "Lorg/joml/Vector4f;Z)V",
+                + "Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"
+                + "Lorg/joml/Vector4f;ZZ)V",
             shift = At.Shift.AFTER
         )
     )
-    private void seamlessportals$onPostLevelPreHand(DeltaTracker deltaTracker, CallbackInfo ci) {
+    private void seamlessportals$onPostLevelPreHand(CallbackInfo ci) {
         // TP-XDIM census witness: THIS ANCHOR injects INSIDE renderLevel, so it CANNOT fire on a
         // frame that CrossPortalViewRendering rendered instead — that remains true and is what the
         // is0= column measures. It is no longer true of the WORKHORSE it dispatches: since XWIN
@@ -116,8 +122,12 @@ public abstract class MixinGameRenderer_IPPostLevelAnchor {
         // Boolean.getBoolean is not a javac constant). Property absent => static-final
         // false, folded => the probe class never loads.
         if (ShaderpackViewsProbeLever.PROBE_ENABLED) {
+            // 26.3: the DeltaTracker is no longer a renderLevel argument. 26.2 vanilla passed Minecraft's own timer
+            // (mc262-ref Minecraft.java:1302 `this.gameRenderer.render(this.deltaTracker, ..)` -> GameRenderer.java:425) — the
+            // object Minecraft.getDeltaTracker() returns (mc263-ref Minecraft.java:288,2743). Read ONLY inside the lever
+            // branch so the default path stays reachable-code-free, as the class javadoc requires.
             ShaderpackViewsProbe.onPostLevelAnchor(
-                (GameRenderer) (Object) this, deltaTracker
+                (GameRenderer) (Object) this, net.minecraft.client.Minecraft.getInstance().getDeltaTracker()
             );
         }
     }

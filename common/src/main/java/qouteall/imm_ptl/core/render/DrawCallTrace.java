@@ -92,8 +92,11 @@ public class DrawCallTrace {
             + " moonPhase=" + s.moonPhase
             + " rainBrightness=" + s.rainBrightness
             + " starBrightness=" + s.starBrightness
-            + " skyColor=" + Integer.toHexString(s.skyColor)
-            + " sunriseSunsetColor=" + Integer.toHexString(s.sunriseAndSunsetColor)
+            // 26.3: SkyRenderState.skyColor / sunriseAndSunsetColor and the FOG/SKY colour attributes are vectors now
+            // (were packed ints). ARGB.colorFromVector3f / colorFromVector4f are vanilla's exact inverses (mc263-ref
+            // ARGB.java:319-325), used ONLY to keep this probe's hex log format. colorFromVector3f forces alpha 0xFF.
+            + " skyColor=" + Integer.toHexString(net.minecraft.util.ARGB.colorFromVector3f(s.skyColor))
+            + " sunriseSunsetColor=" + Integer.toHexString(net.minecraft.util.ARGB.colorFromVector4f(s.sunriseAndSunsetColor))
             + " darkDisc=" + s.shouldRenderDarkDisc
             + " levelGameTime=" + (level != null ? level.getGameTime() : -1)
             + " levelDim=" + (level != null ? level.dimension().identifier() : "null")

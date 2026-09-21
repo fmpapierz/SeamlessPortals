@@ -1,0 +1,132 @@
+plugins {
+    id 'multiloader-loader'
+    // 26.3 port: MinecraftForge via ForgeGradle 7 (Gradle Plugin Portal; minimum Gradle 9.3 — this build runs 9.5.1).
+    // Applied HERE only (never `apply false` in the root script) so ForgeGradle's classpath stays isolated from
+    // fabric-loom's and ModDevGradle's. The module is opt-in from settings.gradle (-Penable_forge=true).
+    id 'net.minecraftforge.gradle' version '7.0.40'
+}
+
+// The eight mixin configs this mod ships, in the order neoforge.mods.toml lists them. Forge has NO [[mixins]] table:
+// Mixin discovers configs from the jar manifest attribute `MixinConfigs` in production and from one
+// `--mixin.config=` program argument per config in dev runs (Forge's own MixinExtras bundling also keys off that
+// argument in dev) — MinecraftForge 26.3 fmlloader JarInJarDependencyLocator / ModDirTransformerDiscoverer.
+def mixinConfigs = [
+    'seamlessportals-common.mixins.json',
+    'seamlessportals-ip-qmisc.mixins.json',
+    'seamlessportals-ip-core-common.mixins.json',
+    'seamlessportals-ip-client.mixins.json',
+    'seamlessportals-ip-peripheral.mixins.json',
+    'seamlessportals-ip-platform.mixins.json',
+    'seamlessportals-ip-dimlib.mixins.json',
+    'seamlessportals-ip-compat.mixins.json',
+    'seamlessportals-forge.mixins.json',
+]
+
+minecraft {
+    // The ONE access-transformer file is :common's (the same file the NeoForge module feeds ModDevGradle); Forge 26.1+
+    // accepts explicit file lists. Applied by the Mavenizer when it generates the Forge dependency.
+    def at = project(':common').file('src/main/resources/META-INF/accesstransformer.cfg')
+    if (at.exists()) {
+        accessTransformers = files(at)
+    }
+
+    runs {
+        configureEach {
+            systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
+            mixinConfigs.each { cfg -> args "--mixin.config=${cfg}" }
+            // Same C2 inlining guard every other run config in this repo carries (see fabric/build.gradle).
+            jvmArgs '-XX:CompileCommand=dontinline,qouteall.imm_ptl.core.render.ViewAreaRenderer::renderPortalArea'
+        }
+        register('client') {
+            workingDir = layout.projectDirectory.dir('runs/client')
+            // Dev-run convenience, opt-in: -Pforge_quickplay="<save folder name>" drops the client straight into that
+            // singleplayer world (vanilla's own --quickPlaySingleplayer), so a world-join check — the configuration
+            // handshake, the first play packets — can be run without anyone at the keyboard.
+            if (project.hasProperty('forge_quickplay')) {
+                args '--quickPlaySingleplayer', project.property('forge_quickplay').toString()
+            }
+            // -Pforge_quickplay_server=<host:port> — joins a server straight from boot (vanilla's --quickPlayMultiplayer;
+            // the NeoForge module's -PquickPlayServer twin). Used for the dedicated-server check: :forge:runServer in
+            // one process, this client in another, so the F-NET binding is exercised over a real TCP connection.
+            if (project.hasProperty('forge_quickplay_server')) {
+                args '--quickPlayMultiplayer', project.property('forge_quickplay_server').toString()
+            }
+        }
+        register('server') {
+            workingDir = layout.projectDirectory.dir('runs/server')
+            args '--nogui'
+        }
+    }
+}
+
+repositories {
+    // MUST be first and MUST NOT sit behind an exclusiveContent filter for net.minecraftforge (ForgeGradle #1036).
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
+    maven {
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+        content {
+            includeGroupByRegex 'me\\.shedaniel.*'
+        }
+    }
+}
+
+dependencies {
+    implementation minecraft.dependency("net.minecraftforge:forge:${project.minecraft_version}-${project.forge_version}")
+
+    // Compile-only, exactly as the NeoForge module does it: the compat mixins/classes in :common's raw source name
+    // Sodium and Iris types. Neither mod has a MinecraftForge build for 26.3, so they are never present at runtime and
+    // the compat mixin plugin gates every one of those mixins off.
+    compileOnly "maven.modrinth:sodium:${project.sodium_version}"
+    compileOnly "maven.modrinth:iris:${project.iris_version}"
+
+    // Cloth Config has NO MinecraftForge build for any 26.x version. The `me.shedaniel.autoconfig` API the mod's config
+    // code uses is supplied by THIS module's own sources (the repo's F21 functional shim, recovered byte-exact from
+    // git 18b23b34^, plus AutoConfigClient). The one remaining reference — the compat mixin on Cloth's
+    // TooltipListEntry — only has to COMPILE; its target class never loads on Forge, so that mixin never applies.
+    compileOnly("me.shedaniel.cloth:cloth-config-neoforge:${project.cloth_config_version}") {
+        transitive = false
+    }
+}
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes['MixinConfigs'] = mixinConfigs.join(',')
+    }
+}
+
+// Forge bundles upstream SpongePowered Mixin 0.8.7, whose CompatibilityLevel enum ends at JAVA_21 — a config that says
+// "JAVA_25" is REJECTED at init (MixinConfig.initCompatibilityLevel -> MixinInitialisationError). Fabric and NeoForge run
+// the Fabric Mixin fork, which needs JAVA_25 for Java 25 class files. So the level is rewritten in THIS module's
+// processed resources only; :common's files are untouched. (Upstream 0.8.7 only logs a warning for newer class files.)
+tasks.named('processResources', ProcessResources) {
+    filesMatching('*.mixins.json') {
+        filter { String line -> line.replace('"compatibilityLevel": "JAVA_25"', '"compatibilityLevel": "JAVA_21"') }
+    }
+    def replaceProperties = [
+        minecraft_version          : project.minecraft_version,
+        minecraft_version_range    : project.minecraft_version_range,
+        forge_version              : project.forge_version,
+        forge_version_range        : project.forge_version_range,
+        forge_loader_version_range : project.forge_loader_version_range,
+        mod_id                     : project.mod_id,
+        mod_name                   : project.mod_name,
+        mod_license                : project.mod_license,
+        mod_version                : project.mod_version,
+        mod_description            : project.mod_description,
+    ]
+    inputs.properties replaceProperties
+    filesMatching('META-INF/mods.toml') {
+        expand replaceProperties
+    }
+}

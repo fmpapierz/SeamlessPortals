@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.mixin.client.render;
 
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -12,12 +12,12 @@ import qouteall.imm_ptl.core.render.DrawCallTrace;
  * package-private {@code GlCommandEncoder} via {@code targets=} (the proven idiom of the
  * in-tree GlCommandEncoderClipMixin). Zero cost while not capturing (one boolean check).
  */
-@Mixin(targets = "com/mojang/blaze3d/opengl/GlCommandEncoder")
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlCommandEncoder")
 public abstract class MixinGlCommandEncoder_DrawTrace {
 
     @Inject(
-        method = "createRenderPass(Lcom/mojang/blaze3d/systems/RenderPassDescriptor;)"
-            + "Lcom/mojang/blaze3d/systems/RenderPassBackend;",
+        method = "createRenderPass(Lcom/mojang/renderpearl/api/commands/RenderPassDescriptor;)"
+            + "Lcom/mojang/renderpearl/backend/api/RenderPassBackend;",
         at = @At("HEAD"),
         require = 1
     )

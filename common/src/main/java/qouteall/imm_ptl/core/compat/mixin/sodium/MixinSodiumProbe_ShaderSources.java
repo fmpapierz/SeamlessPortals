@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.compat.mixin.sodium;
 
-import com.mojang.blaze3d.shaders.ShaderType;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
 import net.minecraft.resources.Identifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -30,7 +30,10 @@ import java.util.Set;
  * mixin is untouched; this is a pure observer. The class name carries {@code Sodium} so the
  * composed plugin's gate 1 weaves it only when Sodium is present.
  */
-@Mixin(targets = "net/minecraft/client/renderer/ShaderManager$CompilationCache")
+// 26.3: same seam as its sibling, which moved to GlPipelineRecompiler.compileShader(String name, ShaderType, String source) (see
+// com.warwa.seamlessportals.mixin.client.ShaderManagerCompilationCacheMixin). Still a pure observer of which ids flow through
+// it; `name` is the Identifier's toString() (PipelineBuilder.java:85), parsed back for the same namespace|path|type key.
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlPipelineRecompiler")
 public abstract class MixinSodiumProbe_ShaderSources {
 
     private static final boolean seamlessportals$probe = Boolean.getBoolean("seamlessportals.compatProbe");
@@ -40,15 +43,16 @@ public abstract class MixinSodiumProbe_ShaderSources {
         Collections.synchronizedSet(new HashSet<>());
 
     @Inject(
-        method = "getShaderSource(Lnet/minecraft/resources/Identifier;Lcom/mojang/blaze3d/shaders/ShaderType;)Ljava/lang/String;",
-        at = @At("RETURN"),
+        method = "compileShader(Ljava/lang/String;Lcom/mojang/renderpearl/api/pipeline/ShaderType;Ljava/lang/String;)Lcom/mojang/renderpearl/backend/opengl/GlShaderModule;",
+        at = @At("HEAD"),
         require = 0
     )
     private void seamlessportals$probeShaderSource(
-            Identifier id, ShaderType type, CallbackInfoReturnable<String> cir) {
+            String name, ShaderType type, String source, CallbackInfoReturnable<?> cir) {
         if (!seamlessportals$probe) {
             return;
         }
+        Identifier id = name == null ? null : Identifier.tryParse(name);
         if (id == null || type == null) {
             return;
         }
@@ -59,6 +63,6 @@ public abstract class MixinSodiumProbe_ShaderSources {
         com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
             "[COMPAT PROBE P7a] shader-source seam id: namespace={} path={} type={} sourcePresent={}",
             id.getNamespace(), id.getPath(), type,
-            cir.getReturnValue() != null);
+            source != null); // 26.3: the source is this seam's ARGUMENT now (was the old method's return value)
     }
 }

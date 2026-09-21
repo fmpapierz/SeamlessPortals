@@ -7,7 +7,12 @@ displayName="${mod_name}"
 description='''${mod_description}'''
 # Mod-list icon (2026-08-30): the mod's OWN icon (user-supplied), shared with fabric.mod.json —
 # ships in both jars via :common resources, addressed from the jar root.
-logoFile="assets/seamlessportals/icon.png"
+# 26.3: was `logoFile`. NeoForge 26.3 deprecates that key — javap neoforge-26.3.0.7-beta-universal.jar
+# net.neoforged.neoforge.internal.LogoFileWarningsHandler: in a dev run, a mod with `logoFile` and neither `bannerFile`
+# nor `iconFile` gets a mod-loading WARNING ("uses the deprecated `logoFile` property; change to `bannerFile` and/or
+# (for square icons) `iconFile`") and the "Warning while loading mods" screen on every boot. The icon is square
+# (256x256), so `iconFile`; client/gui/modlist/DefaultModDisplayInfo reads `iconFile` first for the mod list.
+iconFile="assets/seamlessportals/icon.png"
 
 [[mixins]]
 config = "seamlessportals-common.mixins.json"

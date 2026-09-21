@@ -486,8 +486,19 @@ public final class SameDimRemesh {
         // These three lines are what compileSections itself does per entry (REF
         // LevelRenderer.java:626-640), minus the sync/async preference: fade 0 so a re-mesh does not
         // fade in like a newly loaded section, and the previously-empty flag cleared the same way.
-        section.setFadeDuration(0L);
-        section.setWasPreviouslyEmpty(false);
+        //
+        // 26.3: compileSections no longer does either — vanilla deleted exactly those lines (mc262-ref
+        // LevelRenderer.java:626-632 -> mc263-ref :974-975) along with RenderSection.fadeDuration /
+        // wasPreviouslyEmpty and their setters (mc263-ref SectionRenderDispatcher.java:205-222). The fade
+        // length is now a caller argument, getVisibility(now, fadeDuration), so there is no per-section
+        // duration left to zero. A re-mesh still does not RESTART a fade: uploadedTime is stamped only while
+        // it is 0, unchanged from 26.2 (mc262-ref SectionRenderDispatcher.java:332-333 -> mc263-ref
+        // :321-325), so an already-uploaded section keeps its first-upload time through a recompile.
+        // Mirroring vanilla's per-entry work, as this block always has, now means: just compile.
+        // KNOWN NUANCE (not fixable without new state vanilla removed): a section re-meshed while still
+        // inside its FIRST fade-in now finishes that fade instead of snapping to 1.0 as fade-0 made it.
+        //   (26.2) section.setFadeDuration(0L);
+        //   (26.2) section.setWasPreviouslyEmpty(false);
         synchronized (AWAITING) {
             if (AWAITING.size() >= MAX_RECENT) {
                 AWAITING.clear();

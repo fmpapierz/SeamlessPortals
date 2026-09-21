@@ -1,21 +1,21 @@
 package qouteall.imm_ptl.core.render;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.pipeline.DepthStencilState;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
-import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.renderer.BindGroupLayouts;
@@ -208,10 +208,21 @@ public class IrisCompatPaste {
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/portal_area_sample"))
                 .withVertexShader(stampVertexShaderId()) // IS5-HAND: capped by default, lever-swapped
                 .withFragmentShader(stampFragmentShaderId("core/portal_area_sample"))
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                // 26.3: a builder with NO colour target used to build ONE default target (mc262-ref
+                // RenderPipeline.java:370-372 -> {ColorTargetState.DEFAULT}); it now builds ZERO (mc263-ref
+                // renderpearl/api/pipeline/RenderPipeline.java:378-380) and FrontendRenderPass.setPipeline (:111-114)
+                // throws on any pass that carries a colour attachment. Vanilla made the old default explicit on its
+                // own pipelines (mc263-ref RenderPipelines.java:214/341/347/350, TRACY_BLIT :1167); same edit, same
+                // value (DEFAULT is unchanged: empty blend = "blend off", RGBA8_UNORM, WRITE_ALL).
+                .withColorTargetState(com.mojang.renderpearl.api.pipeline.ColorTargetState.DEFAULT)
                 .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true))
                 .withCull(false)
                 .build();
@@ -234,10 +245,17 @@ public class IrisCompatPaste {
                     "seamlessportals", "pipeline/portal_area_sample_nodepthwrite"))
                 .withVertexShader(stampVertexShaderId()) // IS5-HAND: capped by default, lever-swapped
                 .withFragmentShader(stampFragmentShaderId("core/portal_area_sample"))
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                // 26.3: the omitted colour target was ONE default target on 26.2 and is ZERO on 26.3 — made explicit
+                // (see the note on portal_area_sample above).
+                .withColorTargetState(com.mojang.renderpearl.api.pipeline.ColorTargetState.DEFAULT)
                 .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, false))
                 .withCull(false)
                 .build();
@@ -255,6 +273,10 @@ public class IrisCompatPaste {
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                // 26.3: the omitted colour target was ONE default target on 26.2 and is ZERO on 26.3 — made explicit
+                // (see the note on portal_area_sample above; this is the TRACY_BLIT shape, which vanilla itself
+                // gave .withColorTargetState(ColorTargetState.DEFAULT) — mc263-ref RenderPipelines.java:1160-1169).
+                .withColorTargetState(com.mojang.renderpearl.api.pipeline.ColorTargetState.DEFAULT)
                 .withDepthStencilState(Optional.empty())
                 .withCull(false)
                 .build();
@@ -377,10 +399,17 @@ public class IrisCompatPaste {
                 .withLocation(Identifier.fromNamespaceAndPath("seamlessportals", "pipeline/" + pipelinePath))
                 .withVertexShader(stampVertexShaderId()) // IS5-HAND: same axis as the shipped pair
                 .withFragmentShader(stampFragmentShaderId(fragmentShaderPath))
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                // 26.3: the omitted colour target was ONE default target on 26.2 and is ZERO on 26.3 — made explicit
+                // (see the note on portal_area_sample in <clinit>).
+                .withColorTargetState(com.mojang.renderpearl.api.pipeline.ColorTargetState.DEFAULT)
                 .withCull(false);
             if (depthOrNull != null) {
                 builder = builder.withDepthStencilState(depthOrNull);
@@ -391,7 +420,13 @@ public class IrisCompatPaste {
             // THE VALIDITY GATE: compile NOW, through the device's live shader source. register()
             // alone proves nothing (map-put), and an invalid registered pipeline would also
             // hard-fail every later resource reload.
-            if (!RenderSystem.getDevice().precompilePipeline(built).isValid()) {
+            // 26.3: GpuDevice.precompilePipeline(..) and CompiledRenderPipeline.isValid() are both gone.
+            // Compilation + caching moved off the device into blaze3d's PipelineCache, reached through
+            // RenderSystem (mc263-ref RenderSystem.java:105-118, PipelineCache.java:30-43): on a miss it
+            // compiles NOW via device.compilePipeline(p, <live shaderSource>, ..).join().finishCompile(),
+            // and an INVALID pipeline is a null result (there is no isValid flag any more). Same gate,
+            // same meaning: compile through the live shader source now; invalid => do not register.
+            if (RenderSystem.getCompiledPipelineNullable(built) == null) {
                 Helper.err("[IrisCompatPaste] IS5-SEAM sibling '" + pipelinePath + "' FAILED TO"
                     + " COMPILE — every " + leverLabel + " leg is VOID until this is fixed"
                     + " (pipeline NOT registered; selection will degrade with a VOID warning)");
@@ -413,6 +448,19 @@ public class IrisCompatPaste {
      */
     public static boolean arePipelinesReady() {
         return PORTAL_AREA_SAMPLE != null && PORTAL_STRAIGHT_COPY != null;
+    }
+
+    /**
+     * 26.3 PORT — read-only handle on the stamp pipeline, for {@code IrisBloomApertureMask}'s VAO bind ONLY.
+     * 26.2 had ONE device-wide {@code VertexArrayCache} keyed by vertex format, so the mask could ask it for a
+     * POSITION_COLOR VAO directly. 26.3 deleted that cache: a VAO now BELONGS to a compiled pipeline
+     * ({@code GlRenderPipeline.vertexArray()}, mc263-ref GlDevice.java:337-338, VertexArray.java:17-37), so a
+     * POSITION_COLOR VAO has to come from a pipeline declared with that binding. This is that pipeline — the mask's
+     * mesh is the stamp's aperture mesh (its own "stamp parity" note). May be null before/without
+     * {@link #arePipelinesReady()}.
+     */
+    public static RenderPipeline stampPipelineForVertexArray() {
+        return PORTAL_AREA_SAMPLE;
     }
 
     /**
@@ -439,9 +487,13 @@ public class IrisCompatPaste {
             OptionalDouble.empty(),
             new RenderPass.RenderArea(0, 0, to.width, to.height) // fix (1): explicit full area
         )) {
-            pass.setPipeline(PORTAL_STRAIGHT_COPY);
+            // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+            // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+            pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(PORTAL_STRAIGHT_COPY));
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture(
+            // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+            // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+            pass.setUniform(
                 "InSampler", from.getColorTextureView(),
                 RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST) // fix (3)
             );
@@ -615,9 +667,13 @@ public class IrisCompatPaste {
                             sel.warnings().isEmpty() ? "" : (" ; " + sel.warnings())
                         );
                     }
-                    pass.setPipeline(sel.pipeline());
+                    // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+                    // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+                    pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(sel.pipeline()));
                     pass.setUniform("Projection", combinedSlice);
-                    pass.bindTexture(
+                    // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+                    // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+                    pass.setUniform(
                         "InSampler", sampleSource.getColorTextureView(),
                         RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST) // fix (3)
                     );

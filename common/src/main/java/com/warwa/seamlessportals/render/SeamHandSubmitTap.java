@@ -428,15 +428,21 @@ public final class SeamHandSubmitTap {
     private static String readHandAnimState() {
         try {
             Minecraft mc = Minecraft.getInstance();
-            net.minecraft.client.renderer.ItemInHandRenderer ihr =
-                mc.gameRenderer.itemInHandRenderer;
+            // 26.3: ItemInHandRenderer was SPLIT. Drawing went to renderer.FirstPersonHandsAndItemsRenderer; the
+            // equip-animation STATE this probe reads went to client.player.FirstPersonHandsAndItems, which is owned
+            // by the LocalPlayer (mc263-ref LocalPlayer.java:158,262-264) — GameRenderer.itemInHandRenderer is gone.
+            // javap on the 26.3 merged jar: the five private fields kept their exact names (mainHandItem,
+            // mainHandHeight, oMainHandHeight, offHandHeight, oOffHandHeight), so only the holder changes.
+            // NOTE for whoever reads this probe's output: the state is now PER PLAYER INSTANCE, not global.
+            net.minecraft.client.player.FirstPersonHandsAndItems ihr =
+                mc.player == null ? null : mc.player.firstPersonHandsAndItems();
             if (ihr == null) {
                 return "NO-IHR";
             }
             if (!handReflAttempted) {
                 handReflAttempted = true;
                 try {
-                    Class<?> c = net.minecraft.client.renderer.ItemInHandRenderer.class;
+                    Class<?> c = net.minecraft.client.player.FirstPersonHandsAndItems.class;
                     fMainHandHeight = c.getDeclaredField("mainHandHeight");
                     fOMainHandHeight = c.getDeclaredField("oMainHandHeight");
                     fOffHandHeight = c.getDeclaredField("offHandHeight");

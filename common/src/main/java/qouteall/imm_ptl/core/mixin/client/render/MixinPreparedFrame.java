@@ -47,16 +47,36 @@ public class MixinPreparedFrame {
     @Unique
     private FrontClipping.Snapshot seamlessportals$prevClip;
 
-    @Inject(method = "executePhase", at = @At("HEAD"))
+    // 26.3: the single private executePhase(FeatureRenderPhase, FeatureFrameContext) (mc262-ref FeatureRenderDispatcher.java
+    // :258-266) became TWO private overloads (mc263-ref :281-296; both in the merged 26.3 jar):
+    //   executePhase(phase, context, RenderPass)            — a one-line delegate: `this.executePhase(phase, context, null, renderPass)`
+    //   executePhase(phase, context, @Nullable OitStage, RenderPass) — the body that walks groupsByPhase and draws; also called
+    //                                                         directly by the new executeOit (:239-246).
+    // The bare name "executePhase" now matches BOTH, and bracketing both would NEST on every non-OIT phase: the inner HEAD
+    // would overwrite the single @Unique prevClip with a snapshot of the ALREADY-PUSHED plane, the inner RETURN would null it,
+    // and the outer RETURN's endPhase(null) would no-op — the ambient store never restored (a leaked clip plane). So the
+    // selector is pinned by full descriptor to the 4-arg overload: still exactly "the point at which one phase object's groups
+    // are drawn" (class javadoc), once per phase, and it covers the OIT path as well.
+    @Inject(
+        method = "executePhase(Lnet/minecraft/client/renderer/feature/phase/FeatureRenderPhase;Lnet/minecraft/client/renderer/feature/FeatureFrameContext;Lnet/minecraft/client/renderer/oit/OitStage;Lcom/mojang/renderpearl/api/commands/RenderPass;)V",
+        at = @At("HEAD")
+    )
     private void seamlessportals$beginPhaseClip(
-        FeatureRenderPhase<?> phase, FeatureFrameContext context, CallbackInfo ci
+        FeatureRenderPhase<?> phase, FeatureFrameContext context,
+        net.minecraft.client.renderer.oit.OitStage stage, com.mojang.renderpearl.api.commands.RenderPass renderPass, // 26.3: new target params
+        CallbackInfo ci
     ) {
         this.seamlessportals$prevClip = PerEntityClipBracket.beginPhaseIfRegistered(phase);
     }
 
-    @Inject(method = "executePhase", at = @At("RETURN"))
+    @Inject(
+        method = "executePhase(Lnet/minecraft/client/renderer/feature/phase/FeatureRenderPhase;Lnet/minecraft/client/renderer/feature/FeatureFrameContext;Lnet/minecraft/client/renderer/oit/OitStage;Lcom/mojang/renderpearl/api/commands/RenderPass;)V", // 26.3: see the note at seamlessportals$beginPhaseClip
+        at = @At("RETURN")
+    )
     private void seamlessportals$endPhaseClip(
-        FeatureRenderPhase<?> phase, FeatureFrameContext context, CallbackInfo ci
+        FeatureRenderPhase<?> phase, FeatureFrameContext context,
+        net.minecraft.client.renderer.oit.OitStage stage, com.mojang.renderpearl.api.commands.RenderPass renderPass, // 26.3: new target params
+        CallbackInfo ci
     ) {
         PerEntityClipBracket.endPhase(this.seamlessportals$prevClip);
         this.seamlessportals$prevClip = null;

@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client.stencil;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.warwa.seamlessportals.render.StencilState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;

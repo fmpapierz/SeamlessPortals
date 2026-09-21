@@ -106,12 +106,15 @@ public abstract class LevelChunkSetBlockStateMixin {
         // the destination ClientLevel and files it with the prediction handler so the server's ack
         // resolves it either way. Everything below is server-only, so this returns rather than
         // falling through.
-        if (this.level instanceof net.minecraft.client.multiplayer.ClientLevel clientLevel) {
-            BlockState settledClient = cir.getReturnValue();
-            if (settledClient != null && SeamRegistry.sectionHasSeam(clientLevel, pos)) {
-                com.warwa.seamlessportals.passthrough.SeamMirrorClient.onSeamCellChanged(
-                    clientLevel, pos, clientLevel.getBlockState(pos));
-            }
+        // 26.3 (Forge dedicated server): the branch BODY lives in SeamMirrorClient.onClientChunkSetBlockState, verbatim.
+        // It was `if (this.level instanceof ClientLevel clientLevel) { .. clientLevel.getBlockState(pos) .. return; }`
+        // right here, and that one `invokevirtual ClientLevel.getBlockState` stopped the first :forge:runServer at
+        // Bootstrap — upstream Mixin 0.8.7 resolves ClassInfo for every method-instruction owner in an applied mixin, and
+        // Forge's RuntimeDistCleaner refuses @OnlyIn(CLIENT) classes (full note on the callee). isClientSide() is true
+        // exactly for ClientLevel instances, so the control flow is unchanged: client level -> mirror + return.
+        if (this.level.isClientSide()) {
+            com.warwa.seamlessportals.passthrough.SeamMirrorClient.onClientChunkSetBlockState(
+                this.level, pos, cir.getReturnValue());
             return;
         }
         if (!(this.level instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;

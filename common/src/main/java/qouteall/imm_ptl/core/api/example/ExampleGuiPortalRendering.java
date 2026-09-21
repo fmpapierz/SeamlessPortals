@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.api.example;
 
-import com.mojang.blaze3d.GpuFormat;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import net.fabricmc.api.EnvType;
@@ -115,7 +115,10 @@ public class ExampleGuiPortalRendering {
                 // because it will be automatically resized when rendering
                 // 26.2: TextureTarget ctor is (label, w, h, useDepth, GpuFormat) — ducks-api-misc.md C8;
                 // standard color format GpuFormat.RGBA8_UNORM (com/mojang/blaze3d/GpuFormat.java:14).
-                frameBuffer = new TextureTarget("imm_ptl gui portal", 2, 2, true, GpuFormat.RGBA8_UNORM);
+                // 26.3: TextureTarget(label, w, h, boolean useDepth, GpuFormat) -> (label, w, h, colorFormat, depthFormat).
+                // 26.2's useDepth=true ALWAYS created a GpuFormat.D32_FLOAT depth texture (mc262-ref RenderTarget.java:85-86),
+                // so true -> D32_FLOAT is the identical attachment (mc263-ref RenderTarget.java:98-99; MainTarget.java:21).
+                frameBuffer = new TextureTarget("imm_ptl gui portal", 2, 2, GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT);
             }
 
             // 26.2: Minecraft.setScreen is GONE — screen ownership moved to Gui; the convenience

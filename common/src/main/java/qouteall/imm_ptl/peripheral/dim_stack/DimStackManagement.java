@@ -194,31 +194,14 @@ public class DimStackManagement {
     }
     
     public static class RemoteCallables {
+        // 26.3 (NeoForge / MinecraftForge dedicated servers): the BODY lives in DimStackManagementClient, verbatim.
+        // This class also holds the SERVER's RPC endpoints below, so it links on servers — and this body's
+        // DimStackScreen -> Screen proof for gui.setScreen(..) is a client-class load the verifier makes at link time
+        // wherever nothing strips @Environment(CLIENT) members (full note on the holder). The endpoint name the
+        // server sends ("...RemoteCallables.clientOpenScreen") is unchanged.
         @Environment(EnvType.CLIENT)
         public static void clientOpenScreen(List<String> dimensions) {
-            List<ResourceKey<Level>> dimensionList =
-                dimensions.stream().map(Helper::dimIdToKey).collect(Collectors.toList());
-            
-            DimStackGuiController controller = new DimStackGuiController(
-                null,
-                () -> dimensionList,
-                dimStackInfo -> {
-                    if (dimStackInfo != null) {
-                        McRemoteProcedureCall.tellServerToInvoke(
-                            "qouteall.imm_ptl.peripheral.dim_stack.DimStackManagement.RemoteCallables.serverSetupDimStack",
-                            dimStackInfo
-                        );
-                    }
-                    else {
-                        McRemoteProcedureCall.tellServerToInvoke(
-                            "qouteall.imm_ptl.peripheral.dim_stack.DimStackManagement.RemoteCallables.serverRemoveDimStack"
-                        );
-                    }
-                    Minecraft.getInstance().gui.setScreen(null);
-                }
-            );
-            controller.initializeAsDefault();
-            Minecraft.getInstance().gui.setScreen(controller.view);
+            DimStackManagementClient.clientOpenScreen(dimensions);
         }
         
         public static void serverSetupDimStack(

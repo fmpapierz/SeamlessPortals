@@ -16,16 +16,19 @@ import com.warwa.seamlessportals.render.HandDrawStateDump;
  * the dump's once-only ARMED line as the landing proof. DEFAULT-OFF lever; the handler's
  * iris reference only executes when iris is present (the mixin does not apply otherwise).
  */
-@Mixin(targets = "com/mojang/blaze3d/opengl/GlCommandEncoder")
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlCommandEncoder")
 public class MixinIrisHandDrawState_GlCommandEncoder {
 
+    // 26.3: trySetup(GlRenderPass, Collection)Z -> setupDraw(GlRenderPass)V — the same per-draw seam, now void (see the full
+    // citation on com.warwa.seamlessportals.mixin.client.GlCommandEncoderClipMixin). 26.2's `false` return (no draw follows)
+    // cannot occur any more, so the probe sees every setup as the successful one it always filtered for.
     @Inject(
-        method = "trySetup(Lcom/mojang/blaze3d/opengl/GlRenderPass;Ljava/util/Collection;)Z",
+        method = "setupDraw(Lcom/mojang/renderpearl/backend/opengl/GlRenderPass;)V",
         at = @At("RETURN"),
         require = 0
     )
-    private void ip_handDrawStateDump(CallbackInfoReturnable<Boolean> cir) {
-        if (!HandDrawStateDump.ENABLED || !cir.getReturnValueZ()) {
+    private void ip_handDrawStateDump(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        if (!HandDrawStateDump.ENABLED) {
             return;
         }
         if (qouteall.imm_ptl.core.render.IrisCompatPaste.STAMP_DRAWING) {

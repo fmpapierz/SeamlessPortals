@@ -1,8 +1,8 @@
 package com.warwa.seamlessportals.mixin.client.stencil;
 
-import com.mojang.blaze3d.opengl.DirectStateAccess;
-import com.mojang.blaze3d.opengl.FrameBufferAttachment;
-import com.mojang.blaze3d.opengl.FrameBufferCache;
+import com.mojang.renderpearl.backend.opengl.DirectStateAccess;
+import com.mojang.renderpearl.backend.opengl.FrameBufferAttachment;
+import com.mojang.renderpearl.backend.opengl.FrameBufferCache;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import org.lwjgl.opengl.GL30;
 import org.spongepowered.asm.mixin.Mixin;
@@ -36,12 +36,18 @@ import java.util.List;
 @Mixin(FrameBufferCache.class)
 public abstract class RenderTargetMixin {
 
+    // 26.3: createFbo gained a trailing `int mipOffset` (mc262-ref com/mojang/blaze3d/opengl/FrameBufferCache.java:21-26 ->
+    // mc263-ref com/mojang/renderpearl/backend/opengl/FrameBufferCache.java:25-31; merged 26.3 jar descriptor
+    // (..FrameBufferCache$CacheKey;..DirectStateAccess;Ljava/util/List;..FrameBufferAttachment;I)I). It offsets only the COLOUR
+    // attachments' mip levels (:41); the depth attachment is still bound at depthAttachment.fboMipLevel() with no offset
+    // (:53-55, identical to 26.2 :48-50), so the re-attach below is untouched — the parameter is only mirrored in the handler.
     @Inject(method = "createFbo", at = @At("RETURN"))
     private void seamlessportals$fixStencilAttachment(
             FrameBufferCache.CacheKey key,
             DirectStateAccess dsa,
             List<FrameBufferAttachment> colorAttachments,
             FrameBufferAttachment depthAttachment,
+            int mipOffset, // 26.3: new target param (see note above)
             CallbackInfoReturnable<Integer> cir) {
         if (depthAttachment == null) return;
         int depthId = depthAttachment.glId();
@@ -56,9 +62,9 @@ public abstract class RenderTargetMixin {
         // applied to this both-flag-states substrate mixin). Cache reads are a valid save source:
         // vanilla routes every bind through the cache (zero raw binds in DirectStateAccess /
         // GlCommandEncoder). The attachment surgery below stays raw (no cached twins).
-        int prevRead = com.mojang.blaze3d.opengl.GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
-        int prevWrite = com.mojang.blaze3d.opengl.GlStateManager.getFrameBuffer(GL30.GL_DRAW_FRAMEBUFFER);
-        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
+        int prevRead = com.mojang.renderpearl.backend.opengl.GlStateManager.getFrameBuffer(GL30.GL_READ_FRAMEBUFFER);
+        int prevWrite = com.mojang.renderpearl.backend.opengl.GlStateManager.getFrameBuffer(GL30.GL_DRAW_FRAMEBUFFER);
+        com.mojang.renderpearl.backend.opengl.GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
 
         // Detach from GL_DEPTH_ATTACHMENT and reattach as GL_DEPTH_STENCIL_ATTACHMENT
         GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL30.GL_TEXTURE_2D, 0, 0);
@@ -75,7 +81,7 @@ public abstract class RenderTargetMixin {
             com.warwa.seamlessportals.render.StencilState.gameFboId = fbo;
         }
 
-        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
-        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevWrite);
+        com.mojang.renderpearl.backend.opengl.GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+        com.mojang.renderpearl.backend.opengl.GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevWrite);
     }
 }

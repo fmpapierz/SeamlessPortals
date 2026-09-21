@@ -114,7 +114,7 @@ public interface LevelRendererAccessorMixin {
      * main pass created it at LevelRenderer.java:402 before drawing opaque terrain).
      */
     @Accessor("chunkLayerSampler")
-    com.mojang.blaze3d.textures.GpuSampler seamlessportals$getChunkLayerSampler();
+    com.mojang.renderpearl.api.textures.GpuSampler seamlessportals$getChunkLayerSampler();
 
     /**
      * The renderer's {@link net.minecraft.client.resources.model.sprite.AtlasManager} — needed
@@ -219,4 +219,17 @@ public interface LevelRendererAccessorMixin {
      */
     @Accessor("targets")
     net.minecraft.client.renderer.LevelTargetBundle seamlessportals$getTargets();
+
+    /**
+     * 26.3: the device/ctor half of vanilla's per-frame chunk-prep FLAVOUR choice — javap 26.3 (Fabric merged,
+     * NeoForge-patched and Forge jars alike): {@code private final boolean multiDrawIndirectAvailable}, set once in the
+     * ctor from the device limits/features/workarounds (mc263-ref LevelRenderer.java:180-182) and ANDed each frame with
+     * {@code levelRenderState.shouldUseMultiDrawIndirectForTerrain} to pick {@code prepareChunkRendersIndirect} vs
+     * {@code prepareChunkRenders} (:266-272). Read off the renderer itself rather than re-derived from the device:
+     * Sodium 0.9.2 forces this very field FALSE in every LevelRenderer ctor (javap core.render.world.LevelRendererMixin
+     * — {@code @Shadow multiDrawIndirectAvailable} + {@code <init>} putfield) to keep vanilla on the branch it
+     * overwrites. Consumer: {@link com.warwa.seamlessportals.render.DestChunkPrep}.
+     */
+    @Accessor("multiDrawIndirectAvailable")
+    boolean seamlessportals$isMultiDrawIndirectAvailable();
 }

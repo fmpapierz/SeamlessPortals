@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.mixin.client.render;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,7 +37,7 @@ public abstract class MixinGlStateManager {
     }
 
     @Inject(
-        method = "Lcom/mojang/blaze3d/opengl/GlStateManager;_enableCull()V",
+        method = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_enableCull()V",
         at = @At("HEAD"),
         cancellable = true
     )
@@ -49,7 +49,7 @@ public abstract class MixinGlStateManager {
     }
 
     @Inject(
-        method = "Lcom/mojang/blaze3d/opengl/GlStateManager;_glGenBuffers()I",
+        method = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_glGenBuffers()I",
         at = @At("HEAD"),
         cancellable = true
     )
@@ -61,7 +61,7 @@ public abstract class MixinGlStateManager {
     }
 
     @Inject(
-        method = "Lcom/mojang/blaze3d/opengl/GlStateManager;_glGenVertexArrays()I",
+        method = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_glGenVertexArrays()I",
         at = @At("HEAD"),
         cancellable = true
     )

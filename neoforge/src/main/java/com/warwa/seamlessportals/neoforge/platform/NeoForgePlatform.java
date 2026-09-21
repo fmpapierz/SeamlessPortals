@@ -63,6 +63,10 @@ public class NeoForgePlatform implements Platform {
     /** Called from the mod-bus {@code RegisterEvent} listener (COMMAND_ARGUMENT_TYPE window). */
     public static void drainArgumentTypeRegistrations(RegisterEvent event) {
         PENDING_ARGUMENT_TYPES.forEach(reg -> reg.accept(event));
+        // 26.3: liveness line — this drain had ZERO callers from the NF-PARITY work until 2026-09-20 and nothing said so.
+        com.warwa.seamlessportals.SeamlessPortalsConstants.LOGGER.info(
+            "[NeoForge] command argument types registered into COMMAND_ARGUMENT_TYPE: {}",
+            PENDING_ARGUMENT_TYPES.size());
     }
 
     // ==== paths & environment ====

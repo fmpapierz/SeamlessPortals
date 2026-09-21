@@ -130,11 +130,13 @@ public final class RedirectedPacketApplier {
             // return null, no throw). Confirm the chunk is actually present in
             // the dest store before acking; anything else stays un-acked, the
             // server's inflight entry expires, and the chunk re-sends.
+            // 26.3: ClientboundLevelChunkWithLightPacket became a record(x, z, chunkData, lightData) —
+            // getX()/getZ() -> x()/z() (mc263-ref ClientboundLevelChunkWithLightPacket.java:14).
             if (destLevel.getChunkSource().hasChunk(
-                    p.innerPacket().getX(), p.innerPacket().getZ())) {
+                    p.innerPacket().x(), p.innerPacket().z())) {
                 ACK_BATCH.computeIfAbsent(p.dimensionId(), k -> new java.util.ArrayList<>())
                     .add(net.minecraft.world.level.ChunkPos.pack(
-                        p.innerPacket().getX(), p.innerPacket().getZ()));
+                        p.innerPacket().x(), p.innerPacket().z()));
             }
         } catch (Throwable t) {
             SeamlessPortalsConstants.LOGGER.error(

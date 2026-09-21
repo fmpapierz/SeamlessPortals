@@ -1085,8 +1085,14 @@ public class ClientTeleportationManager {
             McHelper.setWorldVelocity(e, p.transformLocalVec(McHelper.getWorldVelocity(e)));
             InterpolationHandler interp = e.getInterpolation();
             if (interp != null && interp.hasActiveInterpolation()) {
+                // 26.3: InterpolationHandler became an interface — position()/yRot()/xRot() folded into
+                // target() (non-null exactly when hasActiveInterpolation(), mc263-ref
+                // AbstractInterpolationHandler.java:24-26), and interpolateTo(Vec3,yRot,xRot) became
+                // interpolateTo(PositionPath,yRot,xRot,hasRotation); PositionPath.of(pos) + true is vanilla's
+                // own spelling of the old 3-arg form (mc263-ref Entity.java:2603-2605).
+                net.minecraft.core.PositionAndRotation interpTarget = interp.target();
                 interp.interpolateTo(
-                    p.transformPoint(interp.position()), interp.yRot(), interp.xRot());
+                    net.minecraft.world.entity.PositionPath.of(p.transformPoint(interpTarget.position())), interpTarget.yRot(), interpTarget.xRot(), true);
             }
             com.warwa.seamlessportals.passthrough.SeamCartProbe.event(e,
                 "REBASE via portal " + portalId + " visual=" + mapped + " server=" + serverPos);

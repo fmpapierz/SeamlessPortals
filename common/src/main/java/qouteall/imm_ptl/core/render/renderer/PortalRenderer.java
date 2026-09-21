@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.render.renderer;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.warwa.seamlessportals.event.Event;
 import com.warwa.seamlessportals.event.EventFactory;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -496,7 +496,10 @@ public abstract class PortalRenderer {
         // fabulous-transparency conflict re-anchors onto GameRenderState.useShaderTransparency()
         // (improvedTransparency) — R13i / CUTOVER_SPEC §6.4 / ducks G10. Same intent: warn once when
         // the shader-transparency path that conflicts with the stencil renderer is active.
-        if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+        // 26.3: GameRenderState.useShaderTransparency() is gone; its successor is GameRenderer.useImprovedTransparency()
+        // (mc263-ref GameRenderer.java:868-870) — the substitution vanilla made at its own caller (mc262-ref
+        // LevelRenderer.java:835 -> mc263-ref :1240). Every use below in this file is the same substitution.
+        if (client.gameRenderer.useImprovedTransparency()) {
             if (!fabulousWarned) {
                 fabulousWarned = true;
                 CHelper.printChat(Component.translatable("imm_ptl.fabulous_warning"));

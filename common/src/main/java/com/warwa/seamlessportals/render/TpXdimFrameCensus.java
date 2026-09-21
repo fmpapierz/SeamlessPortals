@@ -763,7 +763,13 @@ public final class TpXdimFrameCensus {
             .append(" xwinLever=").append(
                 IPGlobal.CROSS_VIEW_REVERSE_WINDOW_DISABLED_LEVER ? "DISABLED(no-window repro)" : "ON")
             .append(" xviewRouteLever=").append(
-                IPGlobal.CROSS_VIEW_FULL_PIPELINE_DISABLED_LEVER ? "DISABLED(pre-fix route)" : "ON");
+                IPGlobal.CROSS_VIEW_FULL_PIPELINE_DISABLED_LEVER ? "DISABLED(pre-fix route)" : "ON")
+            // 26.3: WHICH main-pass fork this window's frames took. 26.3 splits the frame into
+            // executeClassicTransparency vs executeOit (mc263-ref LevelRenderer.java:453-460) and the F1 driver hangs
+            // off a DIFFERENT seam on each (loader terrain events vs OitPathPortalSlot), so an f1= reading without
+            // this column cannot say which seam it witnessed. Read at the frame boundary, outside any portal view,
+            // so MixinGameRenderState's force-false-while-portal-rendering override cannot colour it.
+            .append(" improvedTransparency=").append(improvedTransparency());
         out.append("\n  tally:");
         for (int i = 0; i < X_NAME.length; i++) {
             out.append(' ').append(X_NAME[i]).append('=').append(tally[i]);
@@ -1040,6 +1046,17 @@ public final class TpXdimFrameCensus {
     private static String irisPresent() {
         try {
             return String.valueOf(IrisInterface.invoker.isIrisPresent());
+        }
+        catch (Throwable t) {
+            return "UNREADABLE(" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /** 26.3: the main-pass fork selector (GameRenderer.useImprovedTransparency, mc263-ref GameRenderer.java:868-870). */
+    private static String improvedTransparency() {
+        try {
+            return Minecraft.getInstance().gameRenderer.useImprovedTransparency()
+                ? "ON(executeOit)" : "OFF(executeClassicTransparency)";
         }
         catch (Throwable t) {
             return "UNREADABLE(" + t.getClass().getSimpleName() + ")";

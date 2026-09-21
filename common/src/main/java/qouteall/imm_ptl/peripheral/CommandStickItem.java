@@ -240,11 +240,23 @@ public class CommandStickItem extends Item {
      * (flag-ON behavior). Same split as PortalWandItem.
      */
     public static void registerDataComponents() {
-        Registry.register(
-            BuiltInRegistries.DATA_COMPONENT_TYPE,
-            "iportal:command_stick_data",
-            COMPONENT_TYPE
-        );
+        // 26.3: the id now lives in the sink overload below; this no-arg form is unchanged in effect — the same direct
+        // write into the vanilla registry (Registry.register(Registry, String, T) parsed the String with
+        // Identifier.parse, which is what the overload does).
+        registerDataComponents(
+            (id, type) -> Registry.register(BuiltInRegistries.DATA_COMPONENT_TYPE, id, type));
+    }
+
+    /**
+     * 26.3 (user decision 2026-09-20, Forge glue open point): the SINK-taking form, like the block / item / entity-type
+     * registrations already have. MinecraftForge wraps DATA_COMPONENT_TYPE in a ForgeRegistry whose vanilla face is
+     * LOCKED — the direct write above throws there, the only legal route is {@code RegisterEvent.register(key, id,
+     * supplier)} — so the Forge entry class used to repeat this id string itself. One id, one place.
+     */
+    public static void registerDataComponents(
+        java.util.function.BiConsumer<net.minecraft.resources.Identifier, DataComponentType<?>> regFunc
+    ) {
+        regFunc.accept(net.minecraft.resources.Identifier.parse("iportal:command_stick_data"), COMPONENT_TYPE);
     }
 
     public static void init() {

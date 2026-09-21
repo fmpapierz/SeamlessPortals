@@ -623,6 +623,14 @@ public abstract class HandleRespawnMixin implements SeamlessRespawnTransitionAcc
      *
      * Outside of a seamless transition (same-dim respawn, first login, etc.)
      * the vanilla allocation is preserved untouched.
+     *
+     * <p><b>26.3:</b> both overloads gained a trailing {@code ItemActivation} (the 5-arg path is now
+     * 6-arg, the 3-arg path 4-arg; vanilla passes {@code oldPlayer.itemActivation()} in both — mc263-ref
+     * ClientPacketListener.java:1292-1301). javap on the 26.3 merged jar, {@code handleRespawn}: exactly
+     * ONE invokevirtual of each — offset 269
+     * {@code createPlayer(ClientLevel,StatsCounter,ClientRecipeBook,Input,Z,ItemActivation)} and offset 303
+     * {@code createPlayer(ClientLevel,StatsCounter,ClientRecipeBook,ItemActivation)}; the new type is
+     * {@code net.minecraft.client.player.ItemActivation}. Both redirects carry the argument straight through.
      */
     @Redirect(method = "handleRespawn",
         at = @At(value = "INVOKE",
@@ -630,7 +638,8 @@ public abstract class HandleRespawnMixin implements SeamlessRespawnTransitionAcc
                 + "createPlayer(Lnet/minecraft/client/multiplayer/ClientLevel;"
                 + "Lnet/minecraft/stats/StatsCounter;"
                 + "Lnet/minecraft/client/ClientRecipeBook;"
-                + "Lnet/minecraft/world/entity/player/Input;Z)"
+                + "Lnet/minecraft/world/entity/player/Input;Z"
+                + "Lnet/minecraft/client/player/ItemActivation;)"
                 + "Lnet/minecraft/client/player/LocalPlayer;"))
     private LocalPlayer seamlessportals$redirectCreatePlayerFull(
             MultiPlayerGameMode gameMode,
@@ -638,10 +647,11 @@ public abstract class HandleRespawnMixin implements SeamlessRespawnTransitionAcc
             StatsCounter stats,
             ClientRecipeBook recipeBook,
             Input lastSentInput,
-            boolean wasSprinting) {
+            boolean wasSprinting,
+            net.minecraft.client.player.ItemActivation itemActivation) {
         LocalPlayer reused = seamlessportals$maybeReuseOldPlayer(level);
         if (reused != null) return reused;
-        return gameMode.createPlayer(level, stats, recipeBook, lastSentInput, wasSprinting);
+        return gameMode.createPlayer(level, stats, recipeBook, lastSentInput, wasSprinting, itemActivation);
     }
 
     @Redirect(method = "handleRespawn",
@@ -649,16 +659,18 @@ public abstract class HandleRespawnMixin implements SeamlessRespawnTransitionAcc
             target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;"
                 + "createPlayer(Lnet/minecraft/client/multiplayer/ClientLevel;"
                 + "Lnet/minecraft/stats/StatsCounter;"
-                + "Lnet/minecraft/client/ClientRecipeBook;)"
+                + "Lnet/minecraft/client/ClientRecipeBook;"
+                + "Lnet/minecraft/client/player/ItemActivation;)"
                 + "Lnet/minecraft/client/player/LocalPlayer;"))
     private LocalPlayer seamlessportals$redirectCreatePlayerShort(
             MultiPlayerGameMode gameMode,
             ClientLevel level,
             StatsCounter stats,
-            ClientRecipeBook recipeBook) {
+            ClientRecipeBook recipeBook,
+            net.minecraft.client.player.ItemActivation itemActivation) {
         LocalPlayer reused = seamlessportals$maybeReuseOldPlayer(level);
         if (reused != null) return reused;
-        return gameMode.createPlayer(level, stats, recipeBook);
+        return gameMode.createPlayer(level, stats, recipeBook, itemActivation);
     }
 
     /**
@@ -963,8 +975,15 @@ public abstract class HandleRespawnMixin implements SeamlessRespawnTransitionAcc
                             for (var section : sections) {
                                 section.write(buf);
                             }
-                            cache.replaceWithPacketData(pos.x(), pos.z(), buf,
-                                java.util.Collections.emptyMap(), tag -> {});
+                            // 26.3: replaceWithPacketData(int,int,FriendlyByteBuf,Map,Consumer) folded into
+                            // (int,int,ClientboundLevelChunkPacketData) (mc263-ref ClientChunkCache.java:99).
+                            // Same three inputs — section bytes, empty heightmaps, no block entities —
+                            // through its widened private ctor (AW/AT note).
+                            byte[] bufBytes = new byte[buf.readableBytes()];
+                            buf.readBytes(bufBytes);
+                            cache.replaceWithPacketData(pos.x(), pos.z(),
+                                new net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData(
+                                    java.util.Collections.emptyMap(), bufBytes, java.util.Collections.emptyList()));
                             buf.release();
                             fed++;
                         } catch (Exception e) {

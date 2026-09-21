@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
@@ -278,10 +278,12 @@ public final class SeamHandInLevelProbe {
     private static void captureAnchor(RenderTarget mainRT) {
         // The anchor reads mainRT explicitly (the stage-A twin), NOT the live binding: the
         // question here is what iris FINALIZED into the main frame.
-        if (!(mainRT.getColorTextureView() instanceof com.mojang.blaze3d.opengl.GlTextureView colorView)
-            || !(mainRT.getDepthTextureView() instanceof com.mojang.blaze3d.opengl.GlTextureView depthView)
-            || !(com.mojang.blaze3d.systems.RenderSystem.getDevice().backend
-                instanceof com.mojang.blaze3d.opengl.GlDevice glDevice)) {
+        if (!(mainRT.getColorTextureView() instanceof com.mojang.renderpearl.backend.opengl.GlTextureView colorView)
+            || !(mainRT.getDepthTextureView() instanceof com.mojang.renderpearl.backend.opengl.GlTextureView depthView)
+            // 26.3: GpuDevice is now an interface; the `backend` field lives on its one implementor,
+            // FrontendGpuDevice (created by BOTH backends: mc263-ref GlBackend.java:74, VulkanBackend.java:206).
+            || !(((com.mojang.renderpearl.frontend.FrontendGpuDevice) com.mojang.blaze3d.systems.RenderSystem.getDevice()).backend
+                instanceof com.mojang.renderpearl.backend.opengl.GlDevice glDevice)) {
             markUnread(4, "non-GL backend");
             return;
         }

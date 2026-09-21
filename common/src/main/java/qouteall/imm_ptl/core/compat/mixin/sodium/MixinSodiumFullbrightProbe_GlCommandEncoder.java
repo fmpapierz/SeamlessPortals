@@ -23,15 +23,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * {@code fullbrightProbe}, the sibling on {@code compatProbe}) — with neither property set, both are
  * inert.
  */
-@Mixin(targets = "com/mojang/blaze3d/opengl/GlCommandEncoder")
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlCommandEncoder")
 public abstract class MixinSodiumFullbrightProbe_GlCommandEncoder {
 
+    // 26.3: trySetup(GlRenderPass, Collection)Z -> setupDraw(GlRenderPass)V — the same per-draw seam, now void (see the full
+    // citation on com.warwa.seamlessportals.mixin.client.GlCommandEncoderClipMixin). 26.2's `false` return (no draw follows)
+    // cannot occur any more, so the probe sees every setup as the successful one it always filtered for.
     @Inject(
-        method = "trySetup(Lcom/mojang/blaze3d/opengl/GlRenderPass;Ljava/util/Collection;)Z",
+        method = "setupDraw(Lcom/mojang/renderpearl/backend/opengl/GlRenderPass;)V",
         at = @At("RETURN"),
         require = 0
     )
-    private void seamlessportals$fullbrightProbeTrySetup(CallbackInfoReturnable<Boolean> cir) {
-        IrisFullbrightProbe.onDrawSetup(Boolean.TRUE.equals(cir.getReturnValue()));
+    private void seamlessportals$fullbrightProbeTrySetup(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        IrisFullbrightProbe.onDrawSetup(true); // 26.3: setupDraw is void — every return is the "setup succeeded" case
     }
 }

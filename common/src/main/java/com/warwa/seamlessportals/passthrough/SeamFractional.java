@@ -861,7 +861,16 @@ public final class SeamFractional {
         // near pass and the window pass then outline coincident whole cubes that merge into one
         // normal block box, with no cut-face rectangle at the plane. Rays never run inside the
         // extract, so the viewer-half targeting rule below is untouched.
-        if (com.warwa.seamlessportals.render.SeamCounterpartOutline.extractingOutline) {
+        // 26.3 (dedicated server): `lvl.isClientSide() &&` added IN FRONT of the flag read. The flag lives on a
+        // client render class; reading it EXECUTES a getstatic, which loads + links SeamCounterpartOutline, and that
+        // class cannot link on a dedicated server (its bodies need ClientLevel). Measured on :forge:runServer, first
+        // client join: PrepareSpawnTask -> PlayerSpawnFinder.noCollision -> BlockStateBase.getShape -> this line ->
+        // "RuntimeDistCleaner: Attempted to load class ClientLevel" -> "Unexpected error during configuration". The
+        // flag is only ever raised by the client's outline extract, for client levels, so a server level answering
+        // `false` without looking is the same answer — minus one hazard: in singleplayer the SERVER thread could
+        // previously read `true` mid-extract (a plain static shared across threads) and hand a server-side collision
+        // query the DRAW shape.
+        if (lvl.isClientSide() && com.warwa.seamlessportals.render.SeamCounterpartOutline.extractingOutline) {
             // ★ THE OPEN HALF BOX — rounds 18/19's final geometry, viewpoint-INDEPENDENT:
             //
             // - WINDOW pass: unconditional full cube. The portal clip trims it to exactly the
@@ -1233,37 +1242,12 @@ public final class SeamFractional {
             }
         }
         else if (level.isClientSide() && binding.destPos() != null) {
-            // ★ PREDICT THE COUNTERPART FRAGMENT TOO (live round 10, "place mirror has a tiny
-            // lag"): the primary path's counterpart is client-predicted (SeamMirrorClient), so
-            // the gesture must predict as well or the far half pops in one round-trip later —
-            // exactly the lag reported only when the other side is occupied. Same math as the
-            // server install; the server's broadcast confirms/corrects moments later.
-            Direction emptyDirC = Direction.get(
-                emptyHalf == SeamOccupancy.HALF_POSITIVE
-                    ? Direction.AxisDirection.POSITIVE : Direction.AxisDirection.NEGATIVE,
-                axis);
-            byte destHalfC = SeamOccupancy.halfOf(
-                SeamRegistry.mapDir(binding, emptyDirC.getOpposite()));
-            // peekWorld, not PortalWorldManager: the loader's per-dim world is the instance
-            // every portal-view consumer reads (SeamOccupancyClient's proven resolution) — the
-            // manager's store answered NULL cross-dim and the prediction silently died (the
-            // round-13 probe line: "farClient=NULL (no prediction — the lag)").
-            net.minecraft.client.multiplayer.ClientLevel farClient =
-                level.dimension().equals(binding.destDim())
-                    ? (net.minecraft.client.multiplayer.ClientLevel) level
-                    : qouteall.imm_ptl.core.ClientWorldLoader.peekWorld(binding.destDim());
-            if (farClient != null) {
-                SeamOccupancy.setSecondary(farClient, binding.destPos(),
-                    new SeamOccupancy.Secondary(
-                        state.rotate(binding.stateRotation()), destHalfC));
-            }
-            if (AperturePassthroughLever.SEAM_FRACTIONAL_PROBE) {
-                SeamFractionalProbe.onSeamCell(target, "PREDICT-PLACE",
-                    "counterpart fragment prediction: farClient="
-                        + (farClient == null ? "NULL (no prediction — the lag)"
-                            : farClient.dimension().identifier().toString())
-                        + " destPos=" + binding.destPos() + " destHalf=" + destHalfC);
-            }
+            // 26.3 (Forge dedicated server): this branch's BODY moved verbatim to
+            // SeamFractionalClient.predictCounterpartFragment. It passes a ClientLevel-typed local to
+            // SeamOccupancy.setSecondary(Level, ..) — an assignability proof the verifier resolves when THIS class
+            // links, and this class links on a dedicated server as soon as the block-state caches bake
+            // (RuntimeDistCleaner refused ClientLevel -> "Failed to start the minecraft server"; full note on the holder).
+            SeamFractionalClient.predictCounterpartFragment(level, binding, state, emptyHalf, axis, target);
         }
         if (!ctx.getPlayer().getAbilities().instabuild) {
             stack.shrink(1);

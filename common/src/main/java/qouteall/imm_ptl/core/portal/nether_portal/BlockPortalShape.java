@@ -139,11 +139,14 @@ public class BlockPortalShape {
             blockPos -> !area.contains(blockPos)
         ).collect(Collectors.toSet());
         
+        // 26.3: the BlockPos(Vec3i) constructor was removed (mc262-ref BlockPos.java:62-64 was
+        // `this(vec3i.getX(), vec3i.getY(), vec3i.getZ())`; mc263-ref keeps only (int,int,int) :57).
+        // Each line below is that removed constructor inlined verbatim — same value, same order.
         BlockPos[] cornerOffsets = {
-            new BlockPos(directions[0].getUnitVec3i()).offset(directions[1].getUnitVec3i()),
-            new BlockPos(directions[1].getUnitVec3i()).offset(directions[2].getUnitVec3i()),
-            new BlockPos(directions[2].getUnitVec3i()).offset(directions[3].getUnitVec3i()),
-            new BlockPos(directions[3].getUnitVec3i()).offset(directions[0].getUnitVec3i())
+            new BlockPos(directions[0].getUnitVec3i().getX(), directions[0].getUnitVec3i().getY(), directions[0].getUnitVec3i().getZ()).offset(directions[1].getUnitVec3i()),
+            new BlockPos(directions[1].getUnitVec3i().getX(), directions[1].getUnitVec3i().getY(), directions[1].getUnitVec3i().getZ()).offset(directions[2].getUnitVec3i()),
+            new BlockPos(directions[2].getUnitVec3i().getX(), directions[2].getUnitVec3i().getY(), directions[2].getUnitVec3i().getZ()).offset(directions[3].getUnitVec3i()),
+            new BlockPos(directions[3].getUnitVec3i().getX(), directions[3].getUnitVec3i().getY(), directions[3].getUnitVec3i().getZ()).offset(directions[0].getUnitVec3i())
         };
         
         frameAreaWithCorner = area.stream().flatMap(

@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.render;
 
-import com.mojang.blaze3d.GpuFormat;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import net.minecraft.client.Minecraft;
@@ -48,8 +48,11 @@ public class SecondaryFrameBuffer {
             fb = new TextureTarget(
                 "seamlessportals secondary",
                 width, height,
-                true,//has depth attachment
-                GpuFormat.RGBA8_UNORM
+                // 26.3: TextureTarget(label, w, h, boolean useDepth, GpuFormat) -> (label, w, h, colorFormat, depthFormat).
+                // 26.2's useDepth=true ALWAYS created a GpuFormat.D32_FLOAT depth texture (mc262-ref RenderTarget.java:85-86),
+                // so true -> D32_FLOAT is the identical attachment (mc263-ref RenderTarget.java:98-99; MainTarget.java:21).
+                GpuFormat.RGBA8_UNORM,
+                GpuFormat.D32_FLOAT//has depth attachment
             );
             Helper.log("Secondary Framebuffer init");
         }

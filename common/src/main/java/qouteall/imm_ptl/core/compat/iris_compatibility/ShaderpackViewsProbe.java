@@ -1,9 +1,9 @@
 package qouteall.imm_ptl.core.compat.iris_compatibility;
 
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.backend.opengl.GlDevice;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
@@ -259,7 +259,9 @@ public final class ShaderpackViewsProbe {
     // at the wrong site", not "depth unusable".
     private static void runOq4DepthReadback(GameRenderer gameRenderer) {
         RenderTarget main = gameRenderer.mainRenderTarget();
-        if (!(RenderSystem.getDevice().backend instanceof GlDevice glDevice)
+        // 26.3: GpuDevice is now an interface; the `backend` field lives on its one implementor,
+        // FrontendGpuDevice (created by BOTH backends: mc263-ref GlBackend.java:74, VulkanBackend.java:206).
+        if (!(((com.mojang.renderpearl.frontend.FrontendGpuDevice) RenderSystem.getDevice()).backend instanceof GlDevice glDevice)
             || !(main.getColorTextureView() instanceof GlTextureView colorView)
             || !(main.getDepthTextureView() instanceof GlTextureView depthView)
         ) {
@@ -482,7 +484,10 @@ public final class ShaderpackViewsProbe {
         // (ALPHA-BLEND, settled OQ5); no alpha caveat needed.
         TextureTarget snapshot = new TextureTarget(
             "seamlessportals_is0_probe_snapshot",
-            main.width, main.height, true, main.getColorTexture().getFormat()
+            // 26.3: TextureTarget(label, w, h, boolean useDepth, GpuFormat) -> (label, w, h, colorFormat, depthFormat).
+            // 26.2's useDepth=true ALWAYS created a GpuFormat.D32_FLOAT depth texture (mc262-ref RenderTarget.java:85-86),
+            // so true -> D32_FLOAT is the identical attachment (mc263-ref RenderTarget.java:98-99; MainTarget.java:21).
+            main.width, main.height, main.getColorTexture().getFormat(), com.mojang.renderpearl.api.GpuFormat.D32_FLOAT
         );
         RenderSystem.getDevice().createCommandEncoder().copyTextureToTexture(
             main.getColorTexture(), snapshot.getColorTexture(),
@@ -543,19 +548,25 @@ public final class ShaderpackViewsProbe {
             // renderer live: push a portal layer (or assert isRendering()) around the nested
             // render, per the IS1 bracket inventory — else it recurses the real driver.
             targetRenderer.render(
+                // 26.3: render(..) lost `DeltaTracker deltaTracker` and `Matrix4fc modelViewMatrix`, gained a trailing
+                // `boolean consistentDepthRequired` (mc263-ref LevelRenderer.java:186-194). The model-view is now read from
+                // cameraState.viewRotationMatrix (:202) and the terrain matrix from levelRenderState.cameraRenderState
+                // .viewRotationMatrix (:265) — 26.2 vanilla passed exactly that field as the arg (mc262-ref GameRenderer.java:533).
+                // consistentDepthRequired=false IS the 26.2 behaviour: its always-on-top pass cleared the MAIN depth texture
+                // (mc262-ref LevelRenderer.java:500), which is what the false branch does (mc263-ref :486-492, OptionalDouble.of(0.0));
+                // true is 26.3's new post-effect path (separate depth + integrate), which no 26.2 code path had.
                 GraphicsResourceAllocator.UNPOOLED,
-                deltaTracker,
                 false, // renderOutline=FALSE — doubly load-bearing (port-note §1-E: fidelity
                        // AND neutralizes M11 + the Fabric block-outline event)
                 cameraState,
-                cameraState.viewRotationMatrix,
                 worldFog,
                 cameraState.fogData.color,
-                true   // shouldRenderSky — vanilla sources !bossOverlay.shouldCreateWorldFog()
+                true,  // shouldRenderSky — vanilla sources !bossOverlay.shouldCreateWorldFog()
                        // (GameRenderer:562-565); under an active boss world-fog the probe
                        // diverges from the frame's real arg (sky pass runs where vanilla
                        // suppressed it). Immaterial for a one-shot snapshotted/restored
                        // probe; ledgered for arg-sourcing completeness (Lens-A note).
+                false  // 26.3: consistentDepthRequired — false = the 26.2 always-on-top depth behaviour (see note above)
             );
         }
         catch (Throwable t) {

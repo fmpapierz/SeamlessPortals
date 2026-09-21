@@ -97,7 +97,15 @@ public class SeamlessPortalsClientNeoForge {
             // Byte-mirrors SeamlessPortalsClientFabric's AFTER_TRANSLUCENT_TERRAIN driver,
             // including the census witness and the re-entrancy guard (LOAD-BEARING: a layer-0
             // nested render would otherwise recurse — see the Fabric driver's TP-XDIM note).
-            NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterTranslucentBlocks event) -> {
+            // 26.3: NeoForge now posts this event INSIDE vanilla's open "Main" render pass and hands it over
+            // (RenderLevelStageEvent.AfterTranslucentBlocks#getRenderPass); on 26.2 no pass was open here. The portal driver
+            // opens passes, clears and copies, which the 26.3 front end refuses while a pass is open — so the listener
+            // first SUSPENDS the event's pass (com.warwa.seamlessportals.render.MainPassSplit, full citation there);
+            // LevelRendererMainPassSplitMixin reopens one before vanilla's next draw. LOWEST = run after every other
+            // mod's listener, which legitimately draws into that pass and must never be handed a closed one;
+            // same-priority listeners still run in registration order, so driver-then-band-painter is preserved.
+            NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOWEST, (RenderLevelStageEvent.AfterTranslucentBlocks event) -> {
+                com.warwa.seamlessportals.render.MainPassSplit.suspend(event.getRenderPass()); // 26.3: see note above
                 com.warwa.seamlessportals.render.TpXdimFrameCensus.noteF1Driver("flagON");
                 if (PortalRendering.isRendering()
                     || qouteall.imm_ptl.core.render.CrossPortalViewRendering
@@ -124,8 +132,10 @@ public class SeamlessPortalsClientNeoForge {
             // this runs AFTER every portal pass of the frame, and it runs EVERY frame
             // regardless of whether any pass executed (the design PROHIBITS the doRenderPortal
             // epilogue). Thin timing driver only; all logic is common-side.
-            NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterTranslucentBlocks event) ->
-                qouteall.imm_ptl.core.render.SeamBandPainter.onAfterPortalPasses());
+            NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOWEST, (RenderLevelStageEvent.AfterTranslucentBlocks event) -> {
+                com.warwa.seamlessportals.render.MainPassSplit.suspend(event.getRenderPass()); // 26.3: pass-free (see the driver's note); idempotent
+                qouteall.imm_ptl.core.render.SeamBandPainter.onAfterPortalPasses();
+            });
             // The BEFORE_TRANSLUCENT_TERRAIN clip-bracket + seam-clip sites have NO NeoForge
             // event in the gap — driven by the NEOFORGE_ONLY mixin
             // MixinLevelRenderer_ClipBracketMainPassNeoForge instead (W21), which calls BOTH
@@ -143,7 +153,9 @@ public class SeamlessPortalsClientNeoForge {
             // The stencil composite + per-tick pumps, mirroring Fabric's else-branch (same
             // :common bodies). KNOWN DEVIATION (recorded): the block-era client payload
             // HANDLERS remain Fabric-only — see the server class's flag-OFF note.
-            NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterTranslucentBlocks event) -> {
+            // 26.3: pass-free + LOWEST, same reason as the flag-ON driver above (MainPassSplit).
+            NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOWEST, (RenderLevelStageEvent.AfterTranslucentBlocks event) -> {
+                com.warwa.seamlessportals.render.MainPassSplit.suspend(event.getRenderPass());
                 com.warwa.seamlessportals.render.TpXdimFrameCensus.noteF1Driver("stencil");
                 StencilPortalRenderer.renderPortals();
             });

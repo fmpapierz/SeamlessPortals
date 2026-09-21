@@ -530,8 +530,12 @@ public class McHelper {
             commandSender.getRotationVector(),
             (ServerLevel) commandSender.level(),
             PermissionSet.NO_PERMISSIONS,
-            commandSender.getName().getString(),
-            commandSender.getDisplayName(),
+            // 26.3: the (…, String textName, Component displayName, …) ctor is gone; the public
+            // 7-arg form derives both through NamesProvider.FOR_ENTITY (mc263-ref
+            // CommandSourceStack.java:68-72,584-594): displayName = entity.getDisplayName(),
+            // textName = entity.getPlainTextName() = getName().getString() (Nameable.java:9) — the
+            // exact two values passed here before. Vanilla's own Entity site dropped the same two
+            // args (mc262-ref Entity.java:3617 -> mc263-ref :3756).
             ((ServerLevel) commandSender.level()).getServer(),
             commandSender
         ).withPermission(LevelBasedPermissionSet.GAMEMASTER).withSuppressedOutput();

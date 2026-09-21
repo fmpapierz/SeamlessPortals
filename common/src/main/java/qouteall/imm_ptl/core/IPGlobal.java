@@ -262,6 +262,17 @@ public class IPGlobal {
      *  once-per-session self-ID block without reading a single census row. */
     public static int crossViewFullPipelineCount = 0;
 
+    // 26.3 DEST CHUNK-PREP FLAVOUR (com.warwa.seamlessportals.render.DestChunkPrep) — DEFAULT ON. The dest passes
+    // prepare terrain in the flavour vanilla's own render() picks per frame (prepareChunkRendersIndirect on
+    // multi-draw-indirect devices), because vanilla's two flavours share ONE frame-global per-section storage that is
+    // CLOSED the moment the other flavour is requested (mc263-ref DynamicGpuData.java:90-114). The first 26.3 port
+    // called the non-indirect prepare unconditionally: measured ~1730 storage re-creations per gametest run, and the
+    // user's live crash on the improved-transparency slot ("Vertex buffer at slot 1 has been closed!").
+    // Pass this to force the first port's unconditional non-indirect prepare back and REPRODUCE both —
+    //   .\gradlew.bat :fabric:runClient -PdisableDestChunkPrepFlavour=true
+    public static final boolean DEST_CHUNK_PREP_FLAVOUR_DISABLED_LEVER =
+        Boolean.getBoolean("seamlessportals.disableDestChunkPrepFlavour");
+
     // TP-XDIM ESCAPE HATCH — DEFAULT OFF. Decline the cross-portal view entirely while a shaderpack
     // is running: vanilla renderLevel renders the frame and the third-person camera sees the SOURCE
     // world from inside the portal wall (IP's pre-cross-view behaviour — clipping, never

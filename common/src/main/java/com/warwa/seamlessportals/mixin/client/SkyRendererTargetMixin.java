@@ -49,11 +49,16 @@ public abstract class SkyRendererTargetMixin {
 
     @Shadow @Final private RenderTarget renderTarget;
 
+    // 26.3: the captured-target hazard is unchanged — SkyRenderer still stores the RenderTarget it was constructed with
+    // (mc263-ref SkyRenderer.java:66,79-81) — but WHERE it is read moved. 26.2's eight part methods each opened their OWN
+    // pass on this.renderTarget (two GETFIELDs apiece = the 16 matches this redirect had). 26.3 opens ONE "Sky" pass in
+    // render(GpuBufferSlice, SkyRenderState) and hands it to every part (:132-161; the parts now take a RenderPass, :163-309,
+    // and no longer touch the field). javap 26.3: the ONLY renderTarget GETFIELDs in the class are offsets 5 and 13 of
+    // render(..) — getColorTextureView / getDepthTextureView (:134-135). Redirecting those two is the same fix on the same
+    // reads: every sky draw lands in the CURRENT main target. (Probe note: skyDrawsThisFrame / portalSkyDrawsThisFrame now
+    // advance by 2 per sky RENDER instead of 2 per sky PART; TeleportFlashProbe only logs them, and 0 still = "sky skipped".)
     @Redirect(
-        method = {
-            "renderSkyDisc", "renderDarkDisc", "renderSun", "renderMoon",
-            "renderStars", "renderSunriseAndSunset", "renderEndSky", "renderEndFlash"
-        },
+        method = "render(Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;Lnet/minecraft/client/renderer/state/level/SkyRenderState;)V",
         at = @At(
             value = "FIELD",
             target = "Lnet/minecraft/client/renderer/SkyRenderer;renderTarget:Lcom/mojang/blaze3d/pipeline/RenderTarget;",

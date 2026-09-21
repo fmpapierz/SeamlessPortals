@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.mixin.client;
 
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import org.spongepowered.asm.mixin.Mixin;
 
 /**
@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.Mixin;
  * This mixin is kept as a no-op placeholder to document the fix and
  * prevent re-introduction of the bug.
  */
-@Mixin(targets = "com.mojang.blaze3d.opengl.GlCommandEncoder")
+@Mixin(targets = "com.mojang.renderpearl.backend.opengl.GlCommandEncoder")
 public class ClearSkipMixin {
     // Intentionally empty. The previous @Inject that cancelled
     // clearColorAndDepthTextures during portal rendering has been

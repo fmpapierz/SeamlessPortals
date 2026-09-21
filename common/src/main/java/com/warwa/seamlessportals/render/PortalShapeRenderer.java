@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.blaze3d.vertex.*;
 import com.warwa.seamlessportals.portal.PortalInfo;
 import net.minecraft.client.Camera;

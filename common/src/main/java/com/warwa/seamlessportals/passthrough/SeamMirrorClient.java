@@ -74,6 +74,31 @@ public final class SeamMirrorClient {
     private static long declinedNotPredicting = 0L;
 
     /**
+     * 26.3 (Forge dedicated server): the CLIENT BRANCH of {@code LevelChunkSetBlockStateMixin.seamlessportals$driveSeamMirror},
+     * moved here VERBATIM so that mixin's own bytecode names no client class. It used to read
+     * {@code if (this.level instanceof ClientLevel clientLevel) { .. clientLevel.getBlockState(pos) .. }} inside the
+     * mixin, which is fatal on a MinecraftForge dedicated server twice over: (1) Forge runs UPSTREAM Mixin 0.8.7, whose
+     * {@code MixinPreProcessorStandard.transformMethod} resolves ClassInfo for the OWNER of every method instruction in
+     * every mixin it applies — {@code invokevirtual ClientLevel.getBlockState} → {@code RuntimeDistCleaner} refuses the
+     * {@code @OnlyIn(CLIENT)} class → {@code ClassMetadataNotFoundException} → "Failed to start the minecraft server"
+     * (measured, first {@code :forge:runServer}: the load of {@code Level} pulled {@code LevelChunk} in); (2) passing the
+     * {@code ClientLevel}-typed local where {@code Level} is declared is the verifier assignability load that already
+     * breaks NeoForge servers (NF-PARITY rule 1). An {@code invokestatic} into this client-only class is safe on both —
+     * the callee links at first EXECUTION, and only a client level ever gets here.
+     *
+     * @param level   the chunk's level — a {@link ClientLevel} whenever {@code isClientSide()} is true
+     * @param pos     the changed cell
+     * @param settled {@code setBlockState}'s return value (null = the write changed nothing)
+     */
+    public static void onClientChunkSetBlockState(Level level, BlockPos pos, BlockState settled) {
+        if (level instanceof ClientLevel clientLevel) {
+            if (settled != null && SeamRegistry.sectionHasSeam(clientLevel, pos)) {
+                onSeamCellChanged(clientLevel, pos, clientLevel.getBlockState(pos));
+            }
+        }
+    }
+
+    /**
      * Called from the block-write driver for a CLIENT level whose cell is bound to a seam.
      *
      * @param level    the client level that changed

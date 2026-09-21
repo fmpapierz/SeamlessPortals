@@ -106,7 +106,8 @@ public interface LevelExtractorAccessor {
         net.minecraft.client.DeltaTracker deltaTracker,
         net.minecraft.client.renderer.state.level.LevelRenderState output);
 
-    /** S18.4 (same-dim block entities): the ISOLATED BE extract — vanilla's private
+    /* (26.3: a plain block comment now — the member this documented moved, see the closing paragraph.)
+     *  S18.4 (same-dim block entities): the ISOLATED BE extract — vanilla's private
      *  {@code extractVisibleBlockEntities(Camera, float, LevelRenderState)}
      *  (LevelExtractor.java:267-315) iterates {@code this.levelRenderer.visibleSections()} (the
      *  renderer's FIELD — for the same-dim pass this holds the Step-9 PORTAL-camera discovery
@@ -120,12 +121,15 @@ public interface LevelExtractorAccessor {
      *  before the call (tryExtractRenderState's shouldRender is keyed on the prepared pos).
      *  IDENTITY DEPENDENCY (recorded): this relies on
      *  {@code mc.levelExtractor.levelRenderer == destRenderer} for same-dim passes (true: the
-     *  extractor is bound to the main renderer, re-pointed on promote). */
-    @org.spongepowered.asm.mixin.gen.Invoker("extractVisibleBlockEntities")
-    void seamlessportals$invokeExtractVisibleBlockEntities(
-        net.minecraft.client.Camera camera,
-        float deltaPartialTick,
-        net.minecraft.client.renderer.state.level.LevelRenderState output);
+     *  extractor is bound to the main renderer, re-pointed on promote).
+     *
+     *  <p>26.3: the INVOKER ITSELF moved out of this interface, unchanged, into a loader-shape pair —
+     *  {@link LevelExtractorBEInvokerVanilla} (this exact 3-arg invoker; Fabric/Quilt + NeoForge) and
+     *  {@link LevelExtractorBEInvokerForge} (MinecraftForge 26.3-66.0.2 has ONLY a 4-arg form with a mandatory
+     *  Frustum; an {@code @Invoker} with the 3-arg descriptor cannot resolve there and would fail this whole
+     *  accessor mixin). Call through {@code com.warwa.seamlessportals.render.BlockEntityExtractInvoke}.
+     *    (26.2/first 26.3 port) @Invoker("extractVisibleBlockEntities")
+     *    (26.2/first 26.3 port) void seamlessportals$invokeExtractVisibleBlockEntities(Camera camera, float deltaPartialTick, LevelRenderState output); */
 
     /** SAME-DIM outline (user order 2026-08-03 — the ledgered "same-dim passes stay outline-less"
      *  gap closed): vanilla's private {@code extractBlockOutline(Camera, LevelRenderState)}

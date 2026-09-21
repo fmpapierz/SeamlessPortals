@@ -66,11 +66,16 @@ public abstract class LevelExtractorWindowHardeningMixin {
      * asked" (round 6's id-keyed change map could not tell them apart). javap-verified:
      * {@code public boolean isEntityVisible(Entity, Frustum, double, double, double)}.
      */
+    // 26.3: isEntityVisible(Entity, Frustum, double, double, double) gained two trailing params ->
+    // (.., float partialTicks, long chunkFadeDuration) (mc262-ref LevelExtractor.java:251 -> mc263-ref :290; merged 26.3 jar
+    // descriptor (Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDDFJ)Z). An @Inject handler
+    // must mirror the full target parameter list, so the two are appended; the bodies never read them.
     @Inject(method = "isEntityVisible", at = @At("RETURN"))
     private void seamlessportals$cartVisibilityVerdict(
         net.minecraft.world.entity.Entity entity,
         net.minecraft.client.renderer.culling.Frustum frustum,
         double camX, double camY, double camZ,
+        float partialTicks, long chunkFadeDuration, // 26.3: new target params (see note above)
         org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Boolean> cir
     ) {
         com.warwa.seamlessportals.render.CartWindowProbe.onIsEntityVisible(

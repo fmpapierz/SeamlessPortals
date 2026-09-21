@@ -39,6 +39,10 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 @Mixin(EntityRenderer.class)
 public interface EntityRendererCullingBoxInvoker {
 
+    // 26.3: `protected AABB getBoundingBoxForCulling(T entity)` -> `(T entity, float partialTicks)` (mc262-ref
+    // EntityRenderer.java:93-95 -> mc263-ref :93-95; merged 26.3 jar descriptor (Lnet/minecraft/world/entity/Entity;F)
+    // Lnet/minecraft/world/phys/AABB;). An @Invoker must match the target descriptor exactly or the accessor fails to generate,
+    // so the parameter is added here; what value reproduces 26.2's box is decided at the one call site (SeamRenderExtent).
     @Invoker("getBoundingBoxForCulling")
-    AABB seamlessportals$getBoundingBoxForCulling(Entity entity);
+    AABB seamlessportals$getBoundingBoxForCulling(Entity entity, float partialTicks);
 }

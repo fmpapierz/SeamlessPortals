@@ -9,7 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.RedStoneWireBlock;
+import net.minecraft.world.level.block.RedstoneWireBlock; // 26.3: vanilla renamed RedStoneWireBlock -> RedstoneWireBlock (capitalisation only, same package)
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -39,7 +39,7 @@ import org.spongepowered.asm.mixin.injection.At;
  * cancelled by {@link MixinRedStoneWireBlockSeamAuthority} — but its passive {@code getSignal}
  * answers (serving far consumers) do, which is exactly right: the synced POWER is authoritative.
  */
-@Mixin(RedStoneWireBlock.class)
+@Mixin(RedstoneWireBlock.class)
 public abstract class MixinRedStoneWireBlockSeamSignal {
 
     // ── getBlockSignal:7 — the wire's block-power intake, inside the shouldSignal window. ──
@@ -75,7 +75,11 @@ public abstract class MixinRedStoneWireBlockSeamSignal {
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/BlockGetter;"
             + "getBlockState(Lnet/minecraft/core/BlockPos;)"
             + "Lnet/minecraft/world/level/block/state/BlockState;"),
-        require = 3, allow = 3
+        // 26.3: 3 -> 1. Of the three neighbour reads (mc262-ref RedStoneWireBlock.java:240 relativePos, :243 relativePos.above(),
+        // :253 relativePos.below()) only the first is still a getBlockState INVOKE in this method (mc263-ref RedstoneWireBlock.java
+        // :233; javap 26.3 4-arg getConnectingSide: ONE BlockGetter.getBlockState at offset 10). The other two moved inside the
+        // new static shouldConnectTo(BlockGetter, BlockPos) — see seamlessportals$connectionReadInShouldConnectTo below.
+        require = 1, allow = 1
     )
     private BlockState seamlessportals$connectionRead(
         BlockGetter getter, BlockPos queryPos, Operation<BlockState> op,
@@ -87,5 +91,47 @@ public abstract class MixinRedStoneWireBlockSeamSignal {
             return SeamWireBridge.connectionRead(level, wirePos, queryPos, local);
         }
         return local;
+    }
+
+    // 26.3: the above()/below() neighbour reads. 26.2 read the state HERE and tested it:
+    // `shouldConnectTo(level.getBlockState(relativePos.above()))` / `..below()` (mc262-ref :243,:253 -> shouldConnectTo(BlockState)
+    // :381-383). 26.3 moved the read into a new helper, `shouldConnectTo(level, relativePos.above())` / `..below()` (mc263-ref
+    // :236,:246), whose whole body is `return shouldConnectTo(level.getBlockState(pos), level, pos, null);` (:379-381; javap 26.3:
+    // two invokestatic shouldConnectTo:(BlockGetter;BlockPos;)Z at offsets 63 and 121 of the 4-arg getConnectingSide, and these
+    // are its ONLY callers). The read can no longer be wrapped where it happens — the helper is static and has no wire position —
+    // so the two CALLS are wrapped here, where wirePos is still in scope, and the helper's one-line body is evaluated with the
+    // seam-substituted state exactly as 26.2 evaluated shouldConnectTo(<substituted state>). No substitution -> the untouched
+    // vanilla call. Scope is unchanged: only the 4-arg overload's three neighbour reads.
+    @WrapOperation(
+        method = "getConnectingSide(Lnet/minecraft/world/level/BlockGetter;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;Z)"
+            + "Lnet/minecraft/world/level/block/state/properties/RedstoneSide;",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/RedstoneWireBlock;"
+            + "shouldConnectTo(Lnet/minecraft/world/level/BlockGetter;"
+            + "Lnet/minecraft/core/BlockPos;)Z"),
+        require = 2, allow = 2
+    )
+    private boolean seamlessportals$connectionReadInShouldConnectTo(
+        BlockGetter getter, BlockPos queryPos, Operation<Boolean> op,
+        @Local(argsOnly = true) BlockPos wirePos,
+        @Local(argsOnly = true) Direction dir
+    ) {
+        if (getter instanceof Level level) {
+            BlockState local = getter.getBlockState(queryPos);
+            BlockState read = SeamWireBridge.connectionRead(level, wirePos, queryPos, local);
+            if (read != local) {
+                return shouldConnectTo(read, getter, queryPos, null);
+            }
+        }
+        return op.call(getter, queryPos);
+    }
+
+    // 26.3: the helper's delegate (mc263-ref RedstoneWireBlock.java:383-385; javap: protected static
+    // shouldConnectTo:(BlockState;BlockGetter;BlockPos;Direction;)Z) — shadowed so the substituted state runs vanilla's own test.
+    @org.spongepowered.asm.mixin.Shadow
+    protected static boolean shouldConnectTo(
+        BlockState state, BlockGetter level, BlockPos pos, @org.jetbrains.annotations.Nullable Direction direction
+    ) {
+        throw new AssertionError();
     }
 }

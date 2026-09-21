@@ -1,6 +1,6 @@
 package qouteall.imm_ptl.core.compat.mixin.sodium;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.warwa.seamlessportals.render.ShaderCodeTransformation;
 import org.lwjgl.opengl.GL20;
 import org.spongepowered.asm.mixin.Mixin;
@@ -34,7 +34,7 @@ import java.util.Set;
  * and safe under the 26.2 GL-state invariant (never touch a {@code GlStateManager}-cached state).
  * The class name carries {@code Sodium} so gate 1 weaves it only when Sodium is present.
  */
-@Mixin(targets = "com/mojang/blaze3d/opengl/GlCommandEncoder")
+@Mixin(targets = "com/mojang/renderpearl/backend/opengl/GlCommandEncoder")
 public abstract class MixinSodiumProbe_GlCommandEncoder {
 
     private static final boolean seamlessportals$probe = Boolean.getBoolean("seamlessportals.compatProbe");
@@ -47,17 +47,16 @@ public abstract class MixinSodiumProbe_GlCommandEncoder {
     private static final Set<String> seamlessportals$seenPairs =
         Collections.synchronizedSet(new HashSet<>());
 
+    // 26.3: trySetup(GlRenderPass, Collection)Z -> setupDraw(GlRenderPass)V — the same per-draw seam, now void (see the full
+    // citation on com.warwa.seamlessportals.mixin.client.GlCommandEncoderClipMixin). 26.2's `false` return (no draw follows)
+    // cannot occur any more, so the probe sees every setup as the successful one it always filtered for.
     @Inject(
-        method = "trySetup(Lcom/mojang/blaze3d/opengl/GlRenderPass;Ljava/util/Collection;)Z",
+        method = "setupDraw(Lcom/mojang/renderpearl/backend/opengl/GlRenderPass;)V",
         at = @At("RETURN"),
         require = 0
     )
-    private void seamlessportals$probeTrySetup(CallbackInfoReturnable<Boolean> cir) {
+    private void seamlessportals$probeTrySetup(org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
         if (!seamlessportals$probe) {
-            return;
-        }
-        // Only a successful setup precedes a draw.
-        if (Boolean.FALSE.equals(cir.getReturnValue())) {
             return;
         }
         // Throttle the GL round-trip to <=1 Hz (per-draw seam).

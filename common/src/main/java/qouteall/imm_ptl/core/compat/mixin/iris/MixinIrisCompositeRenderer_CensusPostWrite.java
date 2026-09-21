@@ -42,7 +42,7 @@ public abstract class MixinIrisCompositeRenderer_CensusPostWrite {
         method = "renderAll",
         at = @At(
             value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_drawElements(IIIJ)V"
+            target = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_drawElements(IIIJ)V"
         ),
         remap = false,
         require = 0

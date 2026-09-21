@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "package": "com.warwa.seamlessportals.forge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "MixinChunkGenerator_AlternateDimForge",
+    "MixinCustomPacketPayloadCodecForge",
+    "MixinMinecraftServer_DataPackReloadEndForge",
+    "MixinServerCommonPacketListenerImpl_PayloadDispatchForge",
+    "MixinServerGamePacketListenerImpl_PayloadDispatchForge"
+  ],
+  "client": [
+    "MixinClientCommonPacketListenerImpl_PayloadDispatchForge",
+    "MixinRenderTypes_EyesMisPatchForge"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

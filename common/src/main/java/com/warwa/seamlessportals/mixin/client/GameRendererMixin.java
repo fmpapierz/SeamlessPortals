@@ -15,8 +15,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GameRenderer.class)
 public abstract class GameRendererMixin {
 
+    // 26.3: GameRenderer.render(DeltaTracker, boolean) -> render() and renderLevel(DeltaTracker) -> renderLevel() (mc262-ref
+    // GameRenderer.java:396,525 -> mc263-ref :469,635; javap 26.3: `public void render()`, `public void renderLevel()`). The
+    // render phase no longer receives a DeltaTracker/advanceGameTime — extract() captured them. None of the three handlers in
+    // this class ever USED those parameters, so only the selectors' descriptors and the handler parameter lists change.
     @Inject(method = "render", at = @At("HEAD"))
-    private void seamlessportals$beforeRender(DeltaTracker deltaTracker, boolean advanceGameTime, CallbackInfo ci) {
+    private void seamlessportals$beforeRender(CallbackInfo ci) {
         // TP-XDIM: the frame OPEN bracket. Deliberately BEFORE the D3 gate return below — the
         // census needs it in BOTH flag states. Guarantees a throw inside GameRenderer.render cannot
         // carry one frame's per-frame state into the next (it is counted as framesStartedWithoutEnd
@@ -44,9 +48,9 @@ public abstract class GameRendererMixin {
      *
      * <p>Byte-inert at the default: one folded static-final test.
      */
-    @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"))
+    @Inject(method = "renderLevel()V", at = @At("HEAD")) // 26.3: was renderLevel(Lnet/minecraft/client/DeltaTracker;)V — see the note at seamlessportals$beforeRender
     private void seamlessportals$tpXdimCensusRenderLevelHead(
-        DeltaTracker deltaTracker, CallbackInfo ci
+        CallbackInfo ci
     ) {
         if (qouteall.imm_ptl.core.IPGlobal.TP_XDIM_CENSUS_LEVER) {
             com.warwa.seamlessportals.render.TpXdimFrameCensus.noteRenderLevelEntered();
@@ -64,7 +68,7 @@ public abstract class GameRendererMixin {
      * 2026-07-05). TAIL = right after vanilla's own endFrame, the same lifecycle point.
      */
     @Inject(method = "render", at = @At("TAIL"))
-    private void seamlessportals$endSecondaryFrames(DeltaTracker deltaTracker, boolean advanceGameTime, CallbackInfo ci) {
+    private void seamlessportals$endSecondaryFrames(CallbackInfo ci) { // 26.3: render() takes no args now — see the note at seamlessportals$beforeRender
         long t0 = System.nanoTime();
         // IP MyRenderHelper.lateUpdateLight: run each live secondary's light
         // engine at frame-render END so the nether portal view's block light

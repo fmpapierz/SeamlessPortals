@@ -1,4 +1,12 @@
 #version 330
+#extension GL_ARB_separate_shader_objects : require
+
+// 26.3: ported with the SAME four edits Mojang made to its own shaders (diffed 26.2 -> 26.3 jars: core/screenquad.vsh,
+// core/blit_screen.fsh, core/position_color.vsh) because 26.3 compiles every shader with shaderc under Vulkan rules
+// (GlslCompiler.java:79,121): (1) the GL_ARB_separate_shader_objects line, (2) #moj_import -> #include, (3) an explicit
+// layout(location = N) on every in/out -- "SPIR-V requires location for user input/output" -- numbered exactly like
+// vanilla's position_color (Position 0, Color 1; stage-to-stage by matching location), (4) gl_VertexID -> gl_VertexIndex.
+// Nothing else in this file changed.
 
 // IS5-XCUT -- the SOLID-PAINT diagnostic fragment shader, carrying the same PER-FRAGMENT near
 // floor as portal_area_sample_floor.fsh (2026-08-01). Identical to portal_area_solid.fsh except
@@ -23,9 +31,9 @@
 
 uniform sampler2D InSampler;
 
-in vec4 vertexColor;
+layout(location = 0) in vec4 vertexColor;
 
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
 
 void main() {
     vec4 sampled = texelFetch(InSampler, ivec2(gl_FragCoord.xy), 0);

@@ -90,7 +90,9 @@ public class GuiPortalRendering {
             // (so the FBO composites transparently where nothing draws) and — mirroring IP's clear(true),
             // which cleared depth iff useDepth — clears depth to 0.0 = FAR under reversed-Z when the target
             // has a depth attachment.
-            if (framebuffer.useDepth) {
+            // 26.3: the public `useDepth` field is gone (the target now carries a nullable depthFormat); hasDepth()
+            // is its accessor = `depthFormat != null` (mc263-ref RenderTarget.java:141-143). Same test.
+            if (framebuffer.hasDepth()) {
                 RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
                     framebuffer.getColorTexture(), new Vector4f(0, 0, 0, 0),
                     framebuffer.getDepthTexture(), 0.0

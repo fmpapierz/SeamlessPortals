@@ -1,18 +1,18 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.DepthStencilState;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import com.warwa.seamlessportals.SeamlessPortalsConstants;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -78,7 +78,11 @@ public class PortalRenderTypes {
             RenderPipeline stencilPipeline = RenderPipeline.builder()
                 .withLocation("seamlessportals/pipeline/portal_stencil")
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withVertexShader("core/position_color")
                 .withFragmentShader("core/position_color")
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
@@ -101,7 +105,11 @@ public class PortalRenderTypes {
             RenderPipeline stencilDepthPipeline = RenderPipeline.builder()
                 .withLocation("seamlessportals/pipeline/portal_stencil_depth")
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withVertexShader("core/position_color")
                 .withFragmentShader("core/position_color")
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
@@ -121,11 +129,23 @@ public class PortalRenderTypes {
             RenderPipeline noDepthPipeline = RenderPipeline.builder()
                 .withLocation("seamlessportals/pipeline/portal_nodepth_color")
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withVertexShader("core/position_color")
                 .withFragmentShader("core/position_color")
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
                 .withPrimitiveTopology(PrimitiveTopology.QUADS)
+                // 26.3: a builder with NO colour target used to build ONE default target
+                // (mc262-ref RenderPipeline.java:370-372 -> {ColorTargetState.DEFAULT}); it now builds ZERO
+                // (mc263-ref renderpearl/api/pipeline/RenderPipeline.java:378-380), and FrontendRenderPass.setPipeline
+                // (:111-114) throws "Render pass color attachment count must match pipeline color target state
+                // count." against any pass that carries the colour attachment. Vanilla made the old default explicit
+                // on every one of its own pipelines (mc263-ref RenderPipelines.java:214/341/347/350); same edit,
+                // same value (DEFAULT is unchanged: empty blend, RGBA8_UNORM, WRITE_ALL).
+                .withColorTargetState(ColorTargetState.DEFAULT)
                 .withDepthStencilState(Optional.empty()) // no depth test
                 .withCull(false)
                 .build();
@@ -143,7 +163,11 @@ public class PortalRenderTypes {
             RenderPipeline depthClearPipeline = RenderPipeline.builder()
                 .withLocation("seamlessportals/pipeline/portal_depth_clear")
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withVertexShader("core/position_color")
                 .withFragmentShader("core/position_color")
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR)
@@ -166,12 +190,19 @@ public class PortalRenderTypes {
             RenderPipeline fboCompositePipeline = RenderPipeline.builder()
                 .withLocation("seamlessportals/pipeline/portal_fbo_composite")
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
-                .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)
+                // 26.3: BindGroupLayouts.MATRICES_PROJECTION (one layout = DynamicTransforms + Projection,
+                // mc262-ref BindGroupLayouts.java:13-16) was removed; vanilla pipelines now declare the two
+                // separately, in this order (mc263-ref RenderPipelines.java:29-32).
+                .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
                 .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
                 .withVertexShader("core/position_tex")
                 .withFragmentShader("core/position_tex")
                 .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX)
                 .withPrimitiveTopology(PrimitiveTopology.QUADS)
+                // 26.3: the omitted colour target was ONE default target on 26.2 and is ZERO on 26.3 — made explicit,
+                // exactly as vanilla did for its own pipelines (see the note on portal_nodepth_color above).
+                .withColorTargetState(ColorTargetState.DEFAULT)
                 .withDepthStencilState(Optional.empty()) // no depth test
                 .withCull(false)
                 .build();
@@ -197,6 +228,11 @@ public class PortalRenderTypes {
                 // call _disableDepthTest() — fully off, like the mod's other no-depth
                 // pipelines. (ALWAYS_PASS kept the test ENABLED and still gated GEQUAL.)
                 .withDepthStencilState(Optional.empty())
+                // 26.3: the omitted colour target was ONE default target on 26.2 and is ZERO on 26.3 — made explicit,
+                // exactly as vanilla did for TRACY_BLIT itself, the pipeline this one clones (mc262-ref
+                // RenderPipelines.java:762-770 has no colour target -> mc263-ref :1160-1169 adds
+                // .withColorTargetState(ColorTargetState.DEFAULT); see the note on portal_nodepth_color above).
+                .withColorTargetState(ColorTargetState.DEFAULT)
                 .withCull(false)
                 .build();
             PORTAL_COMPOSITE_BLIT = (RenderPipeline) registerMethod.invoke(null, compositeBlitPipeline);
@@ -297,8 +333,29 @@ public class PortalRenderTypes {
             GpuBuffer indexBuffer = indices.getBuffer(indexCount);
             IndexType indexType = indices.type();
             try {
-                renderType.prepare().drawFromBuffer(
-                    vertexBuffer, indexBuffer, indexType, 0, 0, indexCount);
+                // 26.3: PreparedRenderType.drawFromBuffer(vertexBuf, indexBuf, indexType, baseVertex, firstIndex,
+                // indexCount) — the overload that opened ITS OWN pass on outputTarget.getRenderTarget() — is gone; the
+                // one remaining form is drawFromBuffer(StagedVertexBuffer.ExecuteInfo, RenderPass): the caller supplies
+                // the pass (mc262-ref PreparedRenderType.java:28-56 -> mc263-ref :28-59; OutputTarget left the record).
+                // The pass below is the one 26.2 opened: same label, the MAIN render target (this file's render types
+                // never set an output target, so 26.2 resolved the default MAIN_TARGET), colour + depth-if-present, no
+                // clear. ExecuteInfo gained a nullable customIndexBuffer + the topology (mc263-ref
+                // StagedVertexBuffer.java:278-295); passing the sized buffer fetched above as the custom one makes
+                // info.indexBuffer() return exactly it — the six values are the six 26.2 arguments, unchanged.
+                com.mojang.blaze3d.pipeline.RenderTarget mainRenderTarget =
+                    net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
+                try (com.mojang.renderpearl.api.commands.RenderPass renderPass = RenderSystem.getDevice()
+                        .createCommandEncoder()
+                        .createRenderPass(
+                            () -> "Immediate draw with " + renderType,
+                            mainRenderTarget.getColorTextureView(), Optional.empty(),
+                            mainRenderTarget.hasDepth() ? mainRenderTarget.getDepthTextureView() : null,
+                            java.util.OptionalDouble.empty())) {
+                    renderType.prepare().drawFromBuffer(
+                        new net.minecraft.client.renderer.StagedVertexBuffer.ExecuteInfo(
+                            vertexBuffer, indexBuffer, indexType, 0, 0, indexCount, drawState.primitiveTopology()),
+                        renderPass);
+                }
             } finally {
                 vertexBuffer.close();
             }

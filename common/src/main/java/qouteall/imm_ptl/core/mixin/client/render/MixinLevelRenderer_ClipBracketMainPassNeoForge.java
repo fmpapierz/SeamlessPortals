@@ -36,18 +36,29 @@ import qouteall.imm_ptl.core.render.PerEntityClipBracket;
 @Mixin(LevelRenderer.class)
 public class MixinLevelRenderer_ClipBracketMainPassNeoForge {
 
+    // 26.3: the slot this reproduces MOVED with Fabric's. 26.2's main-pass lambda ran executeOutline() and then
+    // renderGroup(TRANSLUCENT) back to back (mc262-ref LevelRenderer.java:436-438), so "AFTER executeOutline" WAS
+    // "BEFORE_TRANSLUCENT_TERRAIN". 26.3 draws translucent terrain inside the new executeClassicTransparency and runs the
+    // outline pass only AFTER that method returns (NF-patched 26.3 LevelRenderer.java:465-475, 713-748), so the old anchor
+    // would now fire AFTER translucent terrain — the wrong side of it. Fabric API 0.161 fires BEFORE_TRANSLUCENT_TERRAIN
+    // from its @WrapOperation on the `renderGroup(TRANSLUCENT, renderPass, ..)` INVOKE in executeClassicTransparency
+    // (javap fabric-rendering-v1 27.0.14 LevelRendererMixin.wrapRenderTranslucentTerrain), i.e. immediately before that
+    // draw — and this injects at exactly that INVOKE. It is a real method now, not a synthetic lambda, so the
+    // lambda-index candidate list is gone (NF-patched jar: exactly one such INVOKE in the method; require/allow = 1).
+    // PASS-FREE: LevelRendererMainPassSplitMixin (priority 900, applied first => runs first) has already closed vanilla's
+    // "Main" pass at this same point, so the handlers below may open their own passes exactly as on 26.2.
     @Inject(
-        method = {
-            "lambda$addMainPass$0", "lambda$addMainPass$1", "lambda$addMainPass$2",
-            "lambda$addMainPass$3", "lambda$addMainPass$4", "lambda$addMainPass$5"
-        },
+        method = "executeClassicTransparency",
         at = @At(
             value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/feature/FeatureRenderDispatcher$PreparedFrame;"
-                + "executeOutline()V",
-            shift = At.Shift.AFTER
+            target = "Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;renderGroup("
+                + "Lnet/minecraft/client/renderer/chunk/ChunkSectionLayerGroup;"
+                + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                + "Lcom/mojang/renderpearl/api/textures/GpuSampler;"
+                + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;Z)V"
         ),
         require = 1,
+        allow = 1,
         remap = false
     )
     private void ip_onMainPassBeforeTranslucentTerrain(CallbackInfo ci) {

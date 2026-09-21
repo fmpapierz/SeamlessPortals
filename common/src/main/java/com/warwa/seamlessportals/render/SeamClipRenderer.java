@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
@@ -877,8 +877,15 @@ public final class SeamClipRenderer {
         if (section.getSectionMesh() == CompiledSectionMesh.UNCOMPILED) {
             return;
         }
-        section.setFadeDuration(0L);
-        section.setWasPreviouslyEmpty(false);
+        // 26.3: RenderSection.setFadeDuration / setWasPreviouslyEmpty are gone — vanilla's own
+        // compileSections dropped the same two per-entry lines (mc262-ref LevelRenderer.java:626-632 ->
+        // mc263-ref :974-975); with the per-section duration gone there is nothing left to zero. A re-mesh
+        // still does not restart a fade — uploadedTime is stamped only while it is 0, unchanged from 26.2
+        // (mc263-ref SectionRenderDispatcher.java:321-325) — and this method only ever recompiles
+        // ALREADY-COMPILED sections (the UNCOMPILED return just above). Full note + the one known nuance
+        // at the twin site in SameDimRemesh.
+        //   (26.2) section.setFadeDuration(0L);
+        //   (26.2) section.setWasPreviouslyEmpty(false);
         section.compileAsync(cache.createRegion(level, node));
         recompilesScheduled++;
     }

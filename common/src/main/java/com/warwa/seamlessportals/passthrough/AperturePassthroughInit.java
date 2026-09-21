@@ -90,21 +90,15 @@ public final class AperturePassthroughInit {
         // (e) DEFECT-B ride sampler. Same ordering guarantee. Costs one boolean test per tick
         // outside a crossing window (SeamRideProbe.windowOpen), and the window is opened only by
         // an actual client-side dimension change and closed after SeamRideProbe.WINDOW_TICKS.
-        qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(() -> {
-            if (!SeamRideProbe.windowOpen()) {
-                return;
-            }
-            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            net.minecraft.world.entity.Entity player = mc == null ? null : mc.player;
-            net.minecraft.world.entity.Entity vehicle = player == null ? null : player.getVehicle();
-            int watched = SeamRideProbe.watchedVehicleId();
-            SeamRideProbe.onEndClientTick(
-                player, vehicle,
-                mc == null || mc.level == null
-                    ? "null" : mc.level.dimension().identifier().toString(),
-                mc != null && mc.level != null && watched >= 0
-                    && mc.level.getEntity(watched) != null);
-        });
+        // 26.3 (Forge dedicated server): the handler BODY moved verbatim to AperturePassthroughInitClient — it holds
+        // `Entity player = mc.player`, a LocalPlayer->Entity assignability proof the verifier resolves when THIS class
+        // links, and this class links on dedicated servers (full note on the holder class).
+        // A LAMBDA, not `AperturePassthroughInitClient::rideProbeEndClientTick`: a method REFERENCE makes the
+        // invokedynamic bootstrap resolve a MethodHandle INTO the holder, which links + verifies it right here in init()
+        // (measured: BootstrapMethodError <- RuntimeDistCleaner refusing LocalPlayer, at this line, on :forge:runServer).
+        // A lambda body is a synthetic method of THIS class holding a plain invokestatic — the holder links at first run.
+        qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
+            () -> AperturePassthroughInitClient.rideProbeEndClientTick());
 
         // RS-XTALK live round 3 — CLIENT-VIEW probe (1 Hz, -PseamSignalProbe only): what the
         // CLIENT holds per seam cell — chunk state with POWERED, occupancy mask, side-table
@@ -112,8 +106,10 @@ public final class AperturePassthroughInit {
         // (SeamClipRenderer reads live client state per frame), so diffing this line against the
         // server-side "pair truth" line attributes a dark-looking seam rail to the client sync,
         // the side-table fragment, or the render, in one glance. Log-only; touches nothing.
+        // 26.3 (Forge dedicated server): body moved verbatim to AperturePassthroughInitClient (ClientLevel->Level proofs).
+        // A lambda for the same reason as the ride sampler above (a method reference would link the holder here).
         qouteall.imm_ptl.core.IPGlobal.POST_CLIENT_TICK_EVENT.register(
-            AperturePassthroughInit::clientSeamViewProbe);
+            () -> AperturePassthroughInitClient.clientSeamViewProbe());
 
         // Journal drain, once per server tick per level. Opportunistic: entries whose chunk is still
         // absent are kept rather than force-loaded, because an entry only exists BECAUSE loading was
@@ -261,42 +257,6 @@ public final class AperturePassthroughInit {
         return ((SeamIndexHolder) level).seamlessportals$bindFingerprints().size();
     }
 
-    private static long clientSeamViewProbeLast = 0;
-
-    /** RS-XTALK round 3 — the 1 Hz client-view line; see the registration comment. Log-only. */
-    private static void clientSeamViewProbe() {
-        if (!AperturePassthroughLever.SEAM_SIGNAL_PROBE) {
-            return;
-        }
-        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-        if (mc == null || mc.level == null) {
-            return;
-        }
-        long now = System.nanoTime();
-        if (now - clientSeamViewProbeLast < 1_000_000_000L) {
-            return;
-        }
-        clientSeamViewProbeLast = now;
-        var cells = ((SeamIndexHolder) mc.level).seamlessportals$seamCells();
-        if (cells.isEmpty()) {
-            return;
-        }
-        var powered = net.minecraft.world.level.block.state.properties.BlockStateProperties.POWERED;
-        for (var e : cells.long2ObjectEntrySet()) {
-            net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.of(e.getLongKey());
-            var st = mc.level.getBlockState(pos);
-            if (st.isAir()) {
-                continue;
-            }
-            var sec = SeamOccupancy.secondaryOf(mc.level, pos);
-            LOGGER.info("[RS-SIGNAL] client view: {} {} powered={} mask={} secondary={}{}",
-                pos, st.getBlock(),
-                st.hasProperty(powered) ? st.getValue(powered) : "n/a",
-                SeamOccupancy.occupancyOf(mc.level, pos),
-                sec != null,
-                sec == null ? "" : (" secBlock=" + sec.state().getBlock() + " secPowered="
-                    + (sec.state().hasProperty(powered) ? sec.state().getValue(powered) : "n/a")
-                    + " secHalf=" + sec.half()));
-        }
-    }
+    // 26.3 (Forge dedicated server): clientSeamViewProbe() and its 1 Hz timestamp moved verbatim to
+    // AperturePassthroughInitClient.
 }

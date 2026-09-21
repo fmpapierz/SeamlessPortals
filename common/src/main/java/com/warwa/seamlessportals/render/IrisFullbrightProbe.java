@@ -1,6 +1,6 @@
 package com.warwa.seamlessportals.render;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4fc;

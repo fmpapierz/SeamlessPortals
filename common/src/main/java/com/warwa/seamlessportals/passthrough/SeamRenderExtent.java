@@ -97,8 +97,15 @@ public final class SeamRenderExtent {
             if (renderer == null) {
                 return collision.inflate(0.5 + SEAM_CLIP_SAFETY);
             }
+            // 26.3: the culling box gained a `float partialTicks` and its BASE changed from `entity.getBoundingBox()` (mc262-ref
+            // EntityRenderer.java:93-95) to `entity.getInterpolatedBoundingBox(partialTicks)` (mc263-ref :93-95), i.e. the
+            // current box moved by lerp(partialTicks, xOld, x) - x (mc263-ref Entity.java:3551-3559). 1.0F makes that offset
+            // zero, so this still measures the CURRENT-TICK box exactly as 26.2 did — every seam predicate this envelope feeds
+            // compares against the current collision box (`collision` above), not an interpolated one. Every per-type widening
+            // the class javadoc relies on is applied on top of that base, unchanged (Illusioner/Sniffer/dragon head/minecart/
+            // HappyGhast/ThrownTrident, mc263-ref renderer overrides).
             AABB culling = ((com.warwa.seamlessportals.mixin.client.EntityRendererCullingBoxInvoker)
-                renderer).seamlessportals$getBoundingBoxForCulling(entity);
+                renderer).seamlessportals$getBoundingBoxForCulling(entity, 1.0F);
             if (culling == null || culling.hasNaN() || culling.getSize() == 0.0) {
                 // Vanilla's own fallback shape for a degenerate culling box.
                 culling = new AABB(

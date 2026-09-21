@@ -302,7 +302,8 @@ public abstract class MixinClientPacketListener implements IEClientPlayNetworkHa
             return;
         }
         int watched = com.warwa.seamlessportals.passthrough.SeamRideProbe.watchedVehicleId();
-        packet.getEntityIds().forEach((int id) -> {
+        // 26.3: ClientboundRemoveEntitiesPacket became a record(IntList entityIds) — getEntityIds() -> entityIds().
+        packet.entityIds().forEach((int id) -> {
             Entity e = level.getEntity(id);
             com.warwa.seamlessportals.passthrough.SeamRideProbe.onRemoveEntities(
                 id, id == watched, e != null && !e.getPassengers().isEmpty());
@@ -351,7 +352,8 @@ public abstract class MixinClientPacketListener implements IEClientPlayNetworkHa
         ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci
     ) {
         if (IPGlobal.chunkPacketDebug) {
-            LOGGER.info("Chunk Load Packet {} {} {}", level.dimension().identifier(), packet.getX(), packet.getZ());
+            // 26.3: record accessors — getX()/getZ() -> x()/z().
+            LOGGER.info("Chunk Load Packet {} {} {}", level.dimension().identifier(), packet.x(), packet.z());
         }
     }
 

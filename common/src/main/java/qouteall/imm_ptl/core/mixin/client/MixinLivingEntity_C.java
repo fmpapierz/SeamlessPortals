@@ -35,24 +35,36 @@ import qouteall.imm_ptl.core.portal.Portal;
  * entity — but it is guarded by {@code ip_getCollidingPortal() != null}, which is only non-null for
  * entities on a portal, so the broadening is benign (and arguably more correct for cross-portal entity
  * motion). Logic is otherwise VERBATIM IP. Held/unregistered until S13.
+ *
+ * <p><b>26.3 retarget (same hook, one class down).</b> {@code InterpolationHandler} became an INTERFACE
+ * (mc263-ref InterpolationHandler.java:7); the 26.2 class body moved into
+ * {@code AbstractInterpolationHandler}. javap on the 26.3 merged jar: {@code protected final Entity entity}
+ * and {@code protected void interpolateTo(PositionPath, float, float)} — descriptor
+ * {@code (Lnet/minecraft/world/entity/PositionPath;FF)V}, 3 {@code return} sites, NOT overridden by either
+ * subclass ({@code LinearInterpolationHandler}, {@code SteppedInterpolationHandler}). Its body is the 26.2
+ * {@code interpolateTo(Vec3,float,float)} body line for line (mc262-ref InterpolationHandler.java:49-67 vs
+ * mc263-ref AbstractInterpolationHandler.java:37-46), so it is the exact analog. The name is now OVERLOADED
+ * (the public 4-arg {@code (PositionPath;FFZ)Z} entry point delegates to it), hence the explicit descriptor.
+ * The interpolation target the 26.2 {@code position} param carried is {@code PositionPath.endPosition()}.
  */
-@Mixin(InterpolationHandler.class)
+@Mixin(net.minecraft.world.entity.AbstractInterpolationHandler.class)
 public class MixinLivingEntity_C {
     @Shadow
     @Final
-    private Entity entity;
+    protected Entity entity;
 
     // avoid entity position interpolate when crossing portal to the same dimension
     @Inject(
-        method = "interpolateTo",
+        method = "interpolateTo(Lnet/minecraft/world/entity/PositionPath;FF)V",
         at = @At("RETURN")
     )
     private void onUpdateTrackedPositionAndAngles(
-        Vec3 position,
+        net.minecraft.world.entity.PositionPath positionPath,
         float yaw,
         float pitch,
         CallbackInfo ci
     ) {
+        Vec3 position = positionPath.endPosition(); // 26.3: the target the 26.2 `Vec3 position` param carried
         Entity this_ = entity;
         if (!IPGlobal.allowClientEntityPosInterpolation) {
             this_.setPos(position.x, position.y, position.z);

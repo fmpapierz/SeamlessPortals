@@ -2,15 +2,15 @@ package qouteall.imm_ptl.core.compat.iris_compatibility;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.backend.opengl.GlDevice;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -647,12 +647,28 @@ public final class IrisBloomApertureMask {
 
         // 9. VAO through the SAME cache iris rides (FullScreenQuadRenderer.bind()'s disassembled
         // pattern, instruction-identical) — coherence in; restored via the quad bind below.
-        ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend())
-            .vertexArrayCache().bindVertexArray(
-                new VertexFormat[]{DefaultVertexFormat.POSITION_COLOR},
-                new GpuBufferSlice[]{vertexSlice},
-                null
-            );
+        // 26.3: that pattern CHANGED, so this tracks it. GlDevice.vertexArrayCache() and the device-wide
+        // VertexArrayCache are gone — a VAO now belongs to a COMPILED PIPELINE. javap of iris 1.11.6
+        // FullScreenQuadRenderer.bind() (was: getBackend() -> GlDevice.vertexArrayCache().bindVertexArray(formats,
+        // slices, null) in 1.11.2):
+        //    0-3   RenderSystem.getCompiledPipeline(CompositeRenderer.COMPOSITE_PIPELINE)
+        //    6     checkcast  com/mojang/renderpearl/frontend/FrontendRenderPipeline
+        //   11-14  .backendRenderPipeline()   checkcast com/mojang/renderpearl/backend/opengl/GlRenderPipeline
+        //   19     .vertexArray()
+        //   22-38  .bind(new GpuBufferSlice[]{ quad.slice() })
+        // Same five steps here, on a pipeline with THIS mesh's layout: iris's composite pipeline is POSITION_TEX,
+        // the mask mesh is POSITION_COLOR, so the pipeline is the stamp's (IrisCompatPaste.stampPipelineForVertexArray,
+        // declared .withVertexBinding(0, POSITION_COLOR)). Attribute locations come from that pipeline's vertex-shader
+        // inputs by element name (mc263-ref PipelineBuilder.java:98-119) — Position = 0, which is the one attribute
+        // the mask program reads (`layout(location = 0) in vec3 Position`; Color deliberately unread).
+        // ★ SHADERS-ON ONLY — needs a live IS5 bloom-band check; nothing here runs without iris.
+        //   (26.2) ((GlDevice) ((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend()).vertexArrayCache()
+        //   (26.2)     .bindVertexArray(new VertexFormat[]{POSITION_COLOR}, new GpuBufferSlice[]{vertexSlice}, null);
+        ((com.mojang.renderpearl.backend.opengl.GlRenderPipeline)
+            ((com.mojang.renderpearl.frontend.FrontendRenderPipeline) RenderSystem.getCompiledPipeline(
+                qouteall.imm_ptl.core.render.IrisCompatPaste.stampPipelineForVertexArray()))
+                .backendRenderPipeline())
+            .vertexArray().bind(new GpuBufferSlice[]{vertexSlice});
         GL20C.glUniformMatrix4fv(locCombined, false, matBuf);
         GL20C.glUniform1i(locSaved, 0);
         if (IPGlobal.debugTintBloomMask) {

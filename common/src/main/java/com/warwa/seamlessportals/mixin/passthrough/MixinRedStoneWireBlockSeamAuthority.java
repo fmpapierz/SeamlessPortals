@@ -10,7 +10,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.RedStoneWireBlock;
+import net.minecraft.world.level.block.RedstoneWireBlock; // 26.3: vanilla renamed RedStoneWireBlock -> RedstoneWireBlock (capitalisation only, same package)
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.redstone.Orientation;
 import org.jetbrains.annotations.Nullable;
@@ -50,7 +50,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * support at the destination. The alternative is the destination deleting a block it did not
  * author, with the same one-block-two-drops duplication shape rails had.
  */
-@Mixin(RedStoneWireBlock.class)
+@Mixin(RedstoneWireBlock.class)
 public abstract class MixinRedStoneWireBlockSeamAuthority {
 
     /** One-shot liveness latch — proves the hook actually weaves and fires, rather than assuming it. */

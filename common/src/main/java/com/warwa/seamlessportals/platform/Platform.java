@@ -117,6 +117,24 @@ public interface Platform {
     /** A vanilla {@code CreativeModeTab.Builder} (Fabric: {@code FabricCreativeModeTab.builder()}; NeoForge: the patched no-arg {@code CreativeModeTab.builder()}). */
     CreativeModeTab.Builder createCreativeTabBuilder();
 
+    /**
+     * 26.3: replace a {@code ChunkGenerator}'s private-final {@code featuresPerStep} (the alternate-dimension skyland
+     * generator's one use, {@code NormalSkylandGenerator}). A DEFAULT method on purpose — Fabric/Quilt and NeoForge
+     * keep the field's vanilla type and inherit this body, which is the call the generator made directly through the
+     * {@code IEChunkGenerator_AlternateDim} accessor mixin until now, unchanged. MinecraftForge retypes the field to
+     * its own {@code ClearableLazy}, so that accessor cannot bind there, is vetoed by the mixin plugin, and — being a
+     * vetoed accessor-mixin interface — cannot even be LOADED by ordinary code on Forge (Mixin registers an accessor
+     * as pass-through only while it still has a target). {@code ForgePlatform} overrides this with the forge module's
+     * own duck; nothing on the Forge path resolves the accessor interface.
+     */
+    default void setChunkGeneratorFeaturesPerStep(
+        net.minecraft.world.level.chunk.ChunkGenerator generator,
+        java.util.function.Supplier<java.util.List<net.minecraft.world.level.biome.FeatureSorter.StepFeatureData>> featuresPerStep
+    ) {
+        ((qouteall.imm_ptl.peripheral.mixin.common.alternate_dimension.IEChunkGenerator_AlternateDim) generator)
+            .ip_setFeaturesPerStep(featuresPerStep);
+    }
+
     // ==== lifecycle events (game bus) ====
 
     /** End of every server tick (Fabric: {@code ServerTickEvents.END_SERVER_TICK}; NeoForge: {@code ServerTickEvent.Post}). */

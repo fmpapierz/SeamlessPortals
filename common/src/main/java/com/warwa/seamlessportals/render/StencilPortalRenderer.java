@@ -557,8 +557,8 @@ public class StencilPortalRenderer {
     // through core/blit_screen from a cached 1×1 texture. Raw-GL stencil EQUAL(1)
     // (set in STEP 3) persists into these passes — blaze3d never touches stencil.
 
-    private static com.mojang.blaze3d.textures.GpuTexture screenFillTexture;
-    private static com.mojang.blaze3d.textures.GpuTextureView screenFillTextureView;
+    private static com.mojang.renderpearl.api.textures.GpuTexture screenFillTexture;
+    private static com.mojang.renderpearl.api.textures.GpuTextureView screenFillTextureView;
     private static int screenFillTextureArgb;
 
     /** Fog/sky ARGB used for the opening fill: the REAL captured dest fog colour when
@@ -573,15 +573,15 @@ public class StencilPortalRenderer {
     }
 
     /** Lazily create the 1×1 RGBA8 fill texture and (re)upload when the colour changes. */
-    private static com.mojang.blaze3d.textures.GpuTextureView ensureScreenFillTexture(int argb) {
-        com.mojang.blaze3d.systems.GpuDevice device =
+    private static com.mojang.renderpearl.api.textures.GpuTextureView ensureScreenFillTexture(int argb) {
+        com.mojang.renderpearl.api.device.GpuDevice device =
             com.mojang.blaze3d.systems.RenderSystem.getDevice();
         if (screenFillTexture == null) {
             screenFillTexture = device.createTexture(
                 "seamlessportals screen fill",
-                com.mojang.blaze3d.textures.GpuTexture.USAGE_TEXTURE_BINDING
-                    | com.mojang.blaze3d.textures.GpuTexture.USAGE_COPY_DST,
-                com.mojang.blaze3d.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
+                com.mojang.renderpearl.api.textures.GpuTexture.USAGE_TEXTURE_BINDING
+                    | com.mojang.renderpearl.api.textures.GpuTexture.USAGE_COPY_DST,
+                com.mojang.renderpearl.api.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
             screenFillTextureView = device.createTextureView(screenFillTexture);
             screenFillTextureArgb = ~argb; // force the first upload
         }
@@ -605,7 +605,7 @@ public class StencilPortalRenderer {
      * enabled with EQUAL(1) (STEP 3 state). No depth test, no depth write.
      */
     private static void drawScreenFillStencilGated(int argb) {
-        com.mojang.blaze3d.textures.GpuTextureView texView = ensureScreenFillTexture(argb);
+        com.mojang.renderpearl.api.textures.GpuTextureView texView = ensureScreenFillTexture(argb);
         com.mojang.blaze3d.pipeline.RenderTarget mainRT =
             Minecraft.getInstance().gameRenderer.mainRenderTarget();
         if (mainRT == null || texView == null) return;
@@ -615,7 +615,7 @@ public class StencilPortalRenderer {
         // unchanged, so force the GL state we depend on.
         GL11.glDisable(GL11.GL_BLEND);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
-        try (com.mojang.blaze3d.systems.RenderPass pass =
+        try (com.mojang.renderpearl.api.commands.RenderPass pass =
                  com.mojang.blaze3d.systems.RenderSystem.getDevice()
                      .createCommandEncoder().createRenderPass(
                 () -> "portal_screen_fill",
@@ -623,13 +623,17 @@ public class StencilPortalRenderer {
                 java.util.Optional.empty(),
                 mainRT.getDepthTextureView(),
                 java.util.OptionalDouble.empty(),
-                new com.mojang.blaze3d.systems.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
+                new com.mojang.renderpearl.api.commands.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
         )) {
-            pass.setPipeline(PortalRenderTypes.portalCompositeBlit());
+            // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+            // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+            pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(PortalRenderTypes.portalCompositeBlit()));
             com.mojang.blaze3d.systems.RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture("InSampler", texView,
+            // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+            // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+            pass.setUniform("InSampler", texView,
                 com.mojang.blaze3d.systems.RenderSystem.getSamplerCache().getClampToEdge(
-                    com.mojang.blaze3d.textures.FilterMode.NEAREST));
+                    com.mojang.renderpearl.api.textures.FilterMode.NEAREST));
             pass.draw(3, 1, 0, 0);
         }
         GL11.glEnable(GL11.GL_BLEND);
@@ -643,7 +647,7 @@ public class StencilPortalRenderer {
      * (STEP 3.5 clear before the dest draws). Colour is masked off by the pipeline.
      */
     private static void drawScreenDepthClearStencilGated() {
-        com.mojang.blaze3d.textures.GpuTextureView texView =
+        com.mojang.renderpearl.api.textures.GpuTextureView texView =
             ensureScreenFillTexture(screenFillTexture == null ? 0xFF000000 : screenFillTextureArgb);
         com.mojang.blaze3d.pipeline.RenderTarget mainRT =
             Minecraft.getInstance().gameRenderer.mainRenderTarget();
@@ -654,7 +658,7 @@ public class StencilPortalRenderer {
         // lastPipeline short-circuit.
         GL11.glEnable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_BLEND);
-        try (com.mojang.blaze3d.systems.RenderPass pass =
+        try (com.mojang.renderpearl.api.commands.RenderPass pass =
                  com.mojang.blaze3d.systems.RenderSystem.getDevice()
                      .createCommandEncoder().createRenderPass(
                 () -> "portal_screen_depth_clear",
@@ -662,13 +666,17 @@ public class StencilPortalRenderer {
                 java.util.Optional.empty(),
                 mainRT.getDepthTextureView(),
                 java.util.OptionalDouble.empty(),
-                new com.mojang.blaze3d.systems.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
+                new com.mojang.renderpearl.api.commands.RenderPass.RenderArea(0, 0, mainRT.width, mainRT.height)
         )) {
-            pass.setPipeline(PortalRenderTypes.portalScreenDepthClear());
+            // 26.3: RenderPass.setPipeline takes a CompiledRenderPipeline; RenderSystem.getCompiledPipeline(p) is
+            // vanilla's own spelling at every call site (e.g. mc263-ref LevelRenderer.java:505, PostPass.java:121).
+            pass.setPipeline(com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline(PortalRenderTypes.portalScreenDepthClear()));
             com.mojang.blaze3d.systems.RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture("InSampler", texView,
+            // 26.3: RenderPass.bindTexture(name, view, sampler) was RENAMED setUniform(name, view, sampler) — same
+            // three arguments (mc262-ref RenderPass.java:102 -> mc263-ref renderpearl/api/commands/RenderPass.java:34).
+            pass.setUniform("InSampler", texView,
                 com.mojang.blaze3d.systems.RenderSystem.getSamplerCache().getClampToEdge(
-                    com.mojang.blaze3d.textures.FilterMode.NEAREST));
+                    com.mojang.renderpearl.api.textures.FilterMode.NEAREST));
             pass.draw(3, 1, 0, 0);
         }
         GL11.glEnable(GL11.GL_BLEND);

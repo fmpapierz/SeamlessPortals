@@ -1,14 +1,14 @@
 package qouteall.imm_ptl.core.render;
 
 import com.mojang.blaze3d.ProjectionType;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.resource.ResourceHandle;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuSampler;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.warwa.seamlessportals.mixin.client.CameraInvokerMixin;
 import com.warwa.seamlessportals.mixin.client.GameRendererAccessorMixin;
@@ -218,8 +218,8 @@ public class SecondaryWorldRenderCore {
     private static int portalSkyW = -1;
     private static int portalSkyH = -1;
     private static RenderTarget portalSkyTarget;
-    private static com.mojang.blaze3d.textures.GpuTextureView portalSkyColorView;
-    private static com.mojang.blaze3d.textures.GpuTextureView portalSkyDepthView;
+    private static com.mojang.renderpearl.api.textures.GpuTextureView portalSkyColorView;
+    private static com.mojang.renderpearl.api.textures.GpuTextureView portalSkyDepthView;
 
     // S14.30 (round-4 verdict): frame-transient UBO ledger. The prior "GC reclaims when the
     // reference is overwritten" retention comment was FALSE — blaze3d has NO Cleaner/finalizer
@@ -501,7 +501,7 @@ public class SecondaryWorldRenderCore {
         return DrawCallTrace.mvTop()
             + " projSlice=" + System.identityHashCode(RenderSystem.getProjectionMatrixBuffer())
             + " fogSlice=" + System.identityHashCode(RenderSystem.getShaderFog())
-            + " drawFbo=" + com.mojang.blaze3d.opengl.GlStateManager.getFrameBuffer(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER)
+            + " drawFbo=" + com.mojang.renderpearl.backend.opengl.GlStateManager.getFrameBuffer(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER)
             + " depthFunc=" + GL11.glGetInteger(GL11.GL_DEPTH_FUNC)
             + " depthMask=" + GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK)
             + " blend=" + GL11.glIsEnabled(GL11.GL_BLEND)
@@ -782,7 +782,12 @@ public class SecondaryWorldRenderCore {
             }
         }
 
-        newCamera.extractRenderState(destCameraState, partialTick);
+        // 26.3: Camera.extractRenderState(state, float cameraEntityPartialTicks) -> (state, DeltaTracker): it now derives
+        // the float itself via getCameraEntityPartialTicks(deltaTracker) (mc263-ref Camera.java:114-119). That is
+        // getGameTimeDeltaPartialTick(true) (or 1.0 for a frozen entity) where this code passed (false): identical in
+        // normal play, differs only under /tick freeze. It feeds only the hurt/bob entityRenderState fields plus the
+        // new cameraEntityPartialTicks field, whose one reader is the MAIN-camera path (mc263-ref GameRenderer.java:395).
+        newCamera.extractRenderState(destCameraState, deltaTracker);
         // dest-pass R13k analog: apply the transform onto the state AFTER extract, never by wrapping
         // the cached Camera.getViewRotationMatrix (consumed downstream by PerEntityClipBracket/R3).
         destCameraState.viewRotationMatrix.set(destViewMatrix);
@@ -880,7 +885,10 @@ public class SecondaryWorldRenderCore {
                         // framegraph-internal-handle class; cross-dim resolves null structurally,
                         // gated anyway for uniformity — fabulous is the ledgered degradation mode).
                         if (!IPGlobal.debugAllowDestParticleExtract
-                            && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                            // 26.3: GameRenderState.useShaderTransparency() is gone; its successor is GameRenderer.useImprovedTransparency()
+                            // (mc263-ref GameRenderer.java:868-870) — the substitution vanilla made at its own caller (mc262-ref
+                            // LevelRenderer.java:835 -> mc263-ref :1240). Every use below in this file is the same substitution.
+                            && !client.gameRenderer.useImprovedTransparency()) {
                             ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
                                 .ip_extractIsolated(
                                     destLRS.particlesRenderState,
@@ -1059,7 +1067,9 @@ public class SecondaryWorldRenderCore {
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
                 mainRT.width, mainRT.height,
                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
-                destLevel.getGameTime(), deltaTracker,
+                // 26.3: GlobalSettingsUniform.update(.., DeltaTracker, ..) -> (.., float worldPartialTicks, ..); 26.2 computed
+                // exactly this expression from the tracker inside the method (mc262-ref GlobalSettingsUniform.java:30 -> mc263-ref :28).
+                destLevel.getGameTime(), deltaTracker.getGameTimeDeltaPartialTick(false),
                 mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                 destCameraPos,
                 // V1-M1 fix: mirror vanilla's RGSS texture-filtering flag (26.2 GameRenderer.render:420),
@@ -1180,10 +1190,39 @@ public class SecondaryWorldRenderCore {
                 censusDiscoveryNs = System.nanoTime() - censusStep9T;
             }
             long censusPrepT = StageCensusProbe.ENABLED ? System.nanoTime() : 0;
-            ChunkSectionsToRender destChunks = destRenderer.prepareChunkRenders(destViewMatrix);
-            boolean sodiumArmed = SodiumInterface.invoker.ip_armDestChunkRenders(
-                destChunks, destDrawProjection, destViewMatrix, destCameraPos, destFogData
+            // 26.3: prepareChunkRenders(Matrix4fc) -> (Matrix4fc, boolean respectTranslucentOrder). The flag is the
+            // back-to-front reversal of the TRANSLUCENT layer (mc263-ref LevelRenderer.java:816-825), which 26.2 did
+            // UNCONDITIONALLY inside renderGroup (`draws = draws.reversed()`, mc262-ref ChunkSectionsToRender.java:
+            // 59-61). Vanilla passes !useImprovedTransparency() only because its OIT path needs no order; this pass
+            // always draws translucent terrain classically (Step 10.9), so TRUE is the 26.2 behaviour.
+            // Also new: prepare now only REQUESTS index capacity (mc263-ref :848-851) where 26.2's renderGroup sized
+            // the buffer on demand (getBuffer(maxIndicesRequired), mc262-ref :33) — vanilla follows with
+            // resizeAllAutoStorageIndexBuffers() before any pass opens (mc263-ref :548); renderLayers' bare
+            // getBuffer() (mc263-ref ChunkSectionsToRender.java:83) depends on it.
+            // 26.3 (corrected same day): 26.2's ONE prepareChunkRenders became TWO flavours that vanilla's render() picks
+            // between per frame (mc263-ref LevelRenderer.java:266-272) and that may NOT be mixed within a frame — they
+            // share one frame-global per-section storage that is closed the moment the other flavour is requested
+            // (DynamicGpuData.java:90-114). Calling the non-indirect one unconditionally closed the MAIN view's prepared
+            // buffer every frame (measured) and crashed the improved-transparency slot. The selection, the measurement
+            // and the crash are on com.warwa.seamlessportals.render.DestChunkPrep; under Sodium it still resolves to
+            // prepareChunkRenders (Sodium forces the renderer's multiDrawIndirectAvailable false), so the C2-1b/C2-1c
+            // arming below is untouched.
+            //   (first 26.3 port) ChunkSectionsToRender vanillaDestChunks = destRenderer.prepareChunkRenders(destViewMatrix, true);
+            ChunkSectionsToRender vanillaDestChunks =
+                com.warwa.seamlessportals.render.DestChunkPrep.prepare(destRenderer, destViewMatrix);
+            // 26.3 / sodium 0.9.2: arming no longer MUTATES the prepared instance — SodiumChunkSection became an
+            // immutable subclass, so the seam returns the armed REPLACEMENT (null = not armed; see
+            // SodiumInterface.Invoker.ip_armDestChunkRenders). Same two outcomes as the 26.2 boolean; Steps 10.6/10.9
+            // draw on whichever object results.
+            //   (26.2) boolean sodiumArmed = SodiumInterface.invoker.ip_armDestChunkRenders(destChunks, ...);
+            ChunkSectionsToRender sodiumDestChunks = SodiumInterface.invoker.ip_armDestChunkRenders(
+                vanillaDestChunks, destDrawProjection, destViewMatrix, destCameraPos, destFogData
             );
+            boolean sodiumArmed = sodiumDestChunks != null;
+            ChunkSectionsToRender destChunks = sodiumArmed ? sodiumDestChunks : vanillaDestChunks;
+            // After BOTH prepares (vanilla's, and sodium 0.9.2's new prepareChunkRendering inside the arm), exactly
+            // where vanilla runs it relative to them (mc263-ref LevelRenderer.java:269-271 then :438 -> :548).
+            RenderSystem.resizeAllAutoStorageIndexBuffers();
             if (StageCensusProbe.ENABLED) {
                 censusPrepareNs = System.nanoTime() - censusPrepT;
             }
@@ -1217,26 +1256,28 @@ public class SecondaryWorldRenderCore {
             // covers the same-dim entity/particle feature draws between 10.6 and 10.9, whose
             // itemEntity/particles probes were in the same not-yet-live class as clouds.
             // A/B lever: -PdisableDestTargetBracket restores the round-1 behavior.
-            LevelTargetBundle destStageTargets = null;
-            ResourceHandle<RenderTarget> savedTranslucentHandle = null;
-            ResourceHandle<RenderTarget> savedItemEntityHandle = null;
-            ResourceHandle<RenderTarget> savedParticlesHandle = null;
-            ResourceHandle<RenderTarget> savedWeatherHandle = null;
-            ResourceHandle<RenderTarget> savedCloudsHandle = null;
-            if (!DISABLE_DEST_TARGET_BRACKET) {
-                destStageTargets = ((LevelRendererAccessorMixin) destRenderer)
-                    .seamlessportals$getTargets();
-                savedTranslucentHandle = destStageTargets.translucent;
-                savedItemEntityHandle = destStageTargets.itemEntity;
-                savedParticlesHandle = destStageTargets.particles;
-                savedWeatherHandle = destStageTargets.weather;
-                savedCloudsHandle = destStageTargets.clouds;
-                destStageTargets.translucent = null;
-                destStageTargets.itemEntity = null;
-                destStageTargets.particles = null;
-                destStageTargets.weather = null;
-                destStageTargets.clouds = null;
-            }
+            //
+            // ===== 26.3: THE BRACKET HAS NOTHING LEFT TO BRACKET — body retired, invariant now BY CONSTRUCTION =====
+            // The five handles it saved + nulled NO LONGER EXIST: 26.3 replaced the Fabulous stage targets with
+            // order-independent transparency, and LevelTargetBundle is now {main, alwaysOnTopDepth, depthBounds,
+            // depthBoundsCulled, transmittance[], accumulate, oitCloudDepth, oitTerrainWithWaterPatchDepth,
+            // entityOutline} (mc262-ref LevelTargetBundle.java:25-31 -> mc263-ref :19-27); LevelRenderer's
+            // translucentTarget()/itemEntityTarget()/particlesTarget()/weatherTarget()/cloudsTarget() went with them.
+            // More to the point, the MECHANISM is gone, not just the fields. Both defects above were a sub-renderer
+            // PROBING the main frame's framegraph for its own output target:
+            //   * ChunkSectionLayerGroup.outputTarget() -> translucentTarget()   (mc262-ref ChunkSectionsToRender.java:38)
+            //   * CloudRenderer.render's internal cloudsTarget() probe            (mc262-ref CloudRenderer.java:192-203)
+            // In 26.3 NOTHING probes: renderGroup, CloudRenderer.render, WeatherEffectRenderer.render and the feature
+            // dispatcher all draw into a RenderPass the CALLER opens (mc263-ref ChunkSectionsToRender.java:45,
+            // CloudRenderer.java:197, WeatherEffectRenderer.java:147, FeatureRenderDispatcher.java:113). Every such
+            // pass in this method is opened explicitly on gameRenderer.mainRenderTarget() (Steps 10.6 / 10.9 /
+            // renderPortalClouds / renderPortalWeather / MyRenderHelper.renderAllFeaturesToMainTarget), so "dest
+            // passes render into the main framebuffer, full stop" holds for same-dim and cross-dim alike without
+            // touching any shared handle. -PdisableDestTargetBracket stays wired but has no code path left to switch.
+            // ★ NEEDS THE USER'S LIVE CHECK — the original repro: same-dim (OW<->OW) window over water, clouds ON.
+            //   (26.2) LevelTargetBundle destStageTargets = null;  + five ResourceHandle<RenderTarget> saved* locals
+            //   (26.2) if (!DISABLE_DEST_TARGET_BRACKET) { destStageTargets = ...seamlessportals$getTargets();
+            //   (26.2)     saved* = destStageTargets.{translucent,itemEntity,particles,weather,clouds};  then each = null; }
 
             // S14.38 lever: skip the dest fog INSTALL (dest draws use the ambient main fog — wrong
             // fog in the window while ON, expected) — attribution only.
@@ -1290,7 +1331,10 @@ public class SecondaryWorldRenderCore {
                     // block-atlas sampler — same capture, vanilla main render() still creates it
                     // under sodium).
                     boolean canDraw = mainChunkSampler != null
-                        && (destChunks.maxIndicesRequired() > 0 || sodiumArmed)
+                        // 26.3: ChunkSectionsToRender is no longer a record — maxIndicesRequired() the accessor is gone; this reads the
+                        // same int as a (widened) field (AW/AT note; mc263-ref ChunkSectionsToRender.java:27-34). Every use below in this
+                        // file is the same substitution.
+                        && (destChunks.maxIndicesRequired > 0 || sodiumArmed)
                         && !IPGlobal.debugSkipPortalTerrain;
                     // STAGE CENSUS (2026-08-29 same-dim water/clouds arc, lever-gated, read-only):
                     // per-pass stage accounting + GL stage snapshots — see StageCensusProbe header.
@@ -1316,12 +1360,15 @@ public class SecondaryWorldRenderCore {
                                 censusScratchSkyState.reset();
                                 censusSr.extractRenderState(
                                     destLevel, partialTick, newCamera, censusScratchSkyState);
+                                // 26.3: SkyRenderState.skyColor is a Vector3fc now (was a packed int);
+                                // ARGB.colorFromVector3f is vanilla's exact inverse (mc263-ref ARGB.java:319-321),
+                                // used only to keep this probe's masked-hex format. It forces alpha 0xFF.
                                 destSampled = Integer.toHexString(
-                                    censusScratchSkyState.skyColor & 0xFFF0F0F0);
+                                    net.minecraft.util.ARGB.colorFromVector3f(censusScratchSkyState.skyColor) & 0xFFF0F0F0);
                             }
                             StageCensusProbe.sky(destDim, censusLayer, sharedState,
                                 "stored=" + (destLRS.skyRenderState != null
-                                    ? Integer.toHexString(destLRS.skyRenderState.skyColor & 0xFFF0F0F0)
+                                    ? Integer.toHexString(net.minecraft.util.ARGB.colorFromVector3f(destLRS.skyRenderState.skyColor) & 0xFFF0F0F0)
                                     : "null")
                                 + " destSampled=" + destSampled
                                 + " fog=" + String.format("%.2f,%.2f,%.2f",
@@ -1333,7 +1380,26 @@ public class SecondaryWorldRenderCore {
                     if (canDraw) {
                         // 10.6 solid+cutout into the OPAQUE output (== the real main target), masked by
                         // the live stencil; LOAD, no clear.
-                        destChunks.renderGroup(ChunkSectionLayerGroup.OPAQUE, mainChunkSampler);
+                        // 26.3: renderGroup(group, sampler) -> (group, RenderPass, sampler, atlasView, wireframe): it no
+                        // longer opens its own pass. The pass below IS the one 26.2's renderGroup opened — same label,
+                        // colour+depth, no clear, bindDefaultUniforms (mc262-ref ChunkSectionsToRender.java:38-49) — on
+                        // what group.outputTarget() resolved to for OPAQUE, the main target. The atlas view and the
+                        // wireframe flag are what vanilla now passes in (mc263-ref LevelRenderer.java:518-521).
+                        RenderTarget opaqueTerrainTarget = client.gameRenderer.mainRenderTarget();
+                        try (com.mojang.renderpearl.api.commands.RenderPass opaqueTerrainPass = RenderSystem.getDevice()
+                                .createCommandEncoder()
+                                .createRenderPass(
+                                    () -> "Section layers for " + ChunkSectionLayerGroup.OPAQUE.label(),
+                                    opaqueTerrainTarget.getColorTextureView(), java.util.Optional.empty(),
+                                    opaqueTerrainTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                            RenderSystem.bindDefaultUniforms(opaqueTerrainPass);
+                            destChunks.renderGroup(
+                                ChunkSectionLayerGroup.OPAQUE, opaqueTerrainPass, mainChunkSampler,
+                                client.getTextureManager()
+                                    .getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)
+                                    .getTextureView(),
+                                destLRS.renderWireframeTerrain);
+                        }
                     }
 
                     // 10.6b SEAM CLIP dest arm (SEAM_CLIP_DESIGN.md §3): dest-level seam cells are
@@ -1395,7 +1461,24 @@ public class SecondaryWorldRenderCore {
                     if (canDraw) {
                         // 10.9 dest translucent (dest translucent target is null → falls back to the
                         // main target, blended over the opaque dest terrain).
-                        destChunks.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, mainChunkSampler);
+                        // 26.3: same caller-supplies-the-pass port as 10.6. There is no translucent TARGET to fall back
+                        // from any more — LevelTargetBundle.translucent and LevelRenderer.translucentTarget() are gone
+                        // (mc263-ref LevelTargetBundle.java:15-27) — so "the main target" is now stated, not inferred.
+                        RenderTarget translucentTerrainTarget = client.gameRenderer.mainRenderTarget();
+                        try (com.mojang.renderpearl.api.commands.RenderPass translucentTerrainPass = RenderSystem.getDevice()
+                                .createCommandEncoder()
+                                .createRenderPass(
+                                    () -> "Section layers for " + ChunkSectionLayerGroup.TRANSLUCENT.label(),
+                                    translucentTerrainTarget.getColorTextureView(), java.util.Optional.empty(),
+                                    translucentTerrainTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                            RenderSystem.bindDefaultUniforms(translucentTerrainPass);
+                            destChunks.renderGroup(
+                                ChunkSectionLayerGroup.TRANSLUCENT, translucentTerrainPass, mainChunkSampler,
+                                client.getTextureManager()
+                                    .getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)
+                                    .getTextureView(),
+                                destLRS.renderWireframeTerrain);
+                        }
                     }
 
                     if (StageCensusProbe.ENABLED) {
@@ -1483,13 +1566,9 @@ public class SecondaryWorldRenderCore {
                 // BEFORE control returns to the main-pass framegraph, so the main frame's later
                 // stages (translucent composite, particles, weather, clouds) see their handles
                 // exactly as vanilla left them.
-                if (destStageTargets != null) {
-                    destStageTargets.translucent = savedTranslucentHandle;
-                    destStageTargets.itemEntity = savedItemEntityHandle;
-                    destStageTargets.particles = savedParticlesHandle;
-                    destStageTargets.weather = savedWeatherHandle;
-                    destStageTargets.clouds = savedCloudsHandle;
-                }
+                // 26.3: nothing was saved, so nothing to restore — see the retired save above.
+                //   (26.2) if (destStageTargets != null) { destStageTargets.{translucent,itemEntity,particles,
+                //   (26.2)     weather,clouds} = saved*Handle; }
                 if (savedShaderFog != null) {
                     RenderSystem.setShaderFog(savedShaderFog);
                 }
@@ -1514,7 +1593,9 @@ public class SecondaryWorldRenderCore {
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
                 mainRT.width, mainRT.height,
                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
-                savedLevelGameTime, deltaTracker,
+                // 26.3: GlobalSettingsUniform.update(.., DeltaTracker, ..) -> (.., float worldPartialTicks, ..); 26.2 computed
+                // exactly this expression from the tracker inside the method (mc262-ref GlobalSettingsUniform.java:30 -> mc263-ref :28).
+                savedLevelGameTime, deltaTracker.getGameTimeDeltaPartialTick(false),
                 mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                 savedCameraPos,
                 // V1-M1 fix: mirror vanilla's RGSS texture-filtering flag (26.2 GameRenderer.render:420).
@@ -1746,7 +1827,12 @@ public class SecondaryWorldRenderCore {
             destCameraState = destLRS.cameraRenderState;
         }
 
-        newCamera.extractRenderState(destCameraState, partialTick);
+        // 26.3: Camera.extractRenderState(state, float cameraEntityPartialTicks) -> (state, DeltaTracker): it now derives
+        // the float itself via getCameraEntityPartialTicks(deltaTracker) (mc263-ref Camera.java:114-119). That is
+        // getGameTimeDeltaPartialTick(true) (or 1.0 for a frozen entity) where this code passed (false): identical in
+        // normal play, differs only under /tick freeze. It feeds only the hurt/bob entityRenderState fields plus the
+        // new cameraEntityPartialTicks field, whose one reader is the MAIN-camera path (mc263-ref GameRenderer.java:395).
+        newCamera.extractRenderState(destCameraState, deltaTracker);
         // IS-BOB C5b (H1 dual-set): the nested render feeds prepareChunkRenders from THIS FIELD
         // while sodium terrain rides the render ARG — setting BOTH to the same bobbed matrix is
         // correct under either plumbing resolution.
@@ -1883,7 +1969,7 @@ public class SecondaryWorldRenderCore {
                         // Isolated world-filtered particle fill (S18 dest particles; render()'s
                         // submitFeatures submits particlesRenderState like any pass).
                         if (!IPGlobal.debugAllowDestParticleExtract
-                            && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                            && !client.gameRenderer.useImprovedTransparency()) {
                             ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
                                 .ip_extractIsolated(
                                     destLRS.particlesRenderState,
@@ -1949,7 +2035,9 @@ public class SecondaryWorldRenderCore {
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
                 mainRT.width, mainRT.height,
                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
-                destLevel.getGameTime(), deltaTracker,
+                // 26.3: GlobalSettingsUniform.update(.., DeltaTracker, ..) -> (.., float worldPartialTicks, ..); 26.2 computed
+                // exactly this expression from the tracker inside the method (mc262-ref GlobalSettingsUniform.java:30 -> mc263-ref :28).
+                destLevel.getGameTime(), deltaTracker.getGameTimeDeltaPartialTick(false),
                 mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                 destCameraPos,
                 mc.gameRenderer.gameRenderState().optionsRenderState.textureFiltering
@@ -2194,16 +2282,26 @@ public class SecondaryWorldRenderCore {
                 && ((GameRendererAccessorMixin) mc.gameRenderer)
                     .seamlessportals$invokeShouldRenderBlockOutline();
             destRenderer.render(
+                // 26.3: render(..) lost `DeltaTracker deltaTracker` and `Matrix4fc modelViewMatrix`, gained a trailing
+                // `boolean consistentDepthRequired` (mc263-ref LevelRenderer.java:186-194). The model-view is now read from
+                // cameraState.viewRotationMatrix (:202) and the terrain matrix from levelRenderState.cameraRenderState
+                // .viewRotationMatrix (:265) — 26.2 vanilla passed exactly that field as the arg (mc262-ref GameRenderer.java:533).
+                // consistentDepthRequired=false IS the 26.2 behaviour: its always-on-top pass cleared the MAIN depth texture
+                // (mc262-ref LevelRenderer.java:500), which is what the false branch does (mc263-ref :486-492, OptionalDouble.of(0.0));
+                // true is 26.3's new post-effect path (separate depth + integrate), which no 26.2 code path had.
                 GraphicsResourceAllocator.UNPOOLED,
-                deltaTracker,
                 destRenderOutline,
                 destCameraState,
                 // IS-BOB C5: the draw modelview (iris captures gbufferModelView from this arg —
                 // BY REFERENCE, which is why destDrawViewMatrix is a fresh per-portal object).
-                destDrawViewMatrix,
+                // 26.3: there is no modelview ARG any more. The draw matrix still reaches render() — Step 4 above already
+                // copies destDrawViewMatrix into destCameraState.viewRotationMatrix (the "H1 dual-set"), and destCameraState
+                // IS destLRS.cameraRenderState in both branches, so :202 and :265 both read the bobbed matrix. VERIFY LIVE
+                // (shaders ON): what iris 1.11.6 now captures gbufferModelView from, since the by-reference arg is gone.
                 destFogBuffer,
                 destFogData.color,
-                WorldRenderInfo.getTopRenderInfo().doRenderSky
+                WorldRenderInfo.getTopRenderInfo().doRenderSky,
+                false
             );
         } finally {
             // ===== the outermost finally — restore everything this core changed ==================
@@ -2215,7 +2313,9 @@ public class SecondaryWorldRenderCore {
             ((GameRendererAccessorMixin) mc.gameRenderer).seamlessportals$getGlobalSettingsUniform().update(
                 mainRT.width, mainRT.height,
                 mc.gameRenderer.gameRenderState().optionsRenderState.glintStrength,
-                savedLevelGameTime, deltaTracker,
+                // 26.3: GlobalSettingsUniform.update(.., DeltaTracker, ..) -> (.., float worldPartialTicks, ..); 26.2 computed
+                // exactly this expression from the tracker inside the method (mc262-ref GlobalSettingsUniform.java:30 -> mc263-ref :28).
+                savedLevelGameTime, deltaTracker.getGameTimeDeltaPartialTick(false),
                 mc.gameRenderer.gameRenderState().optionsRenderState.menuBackgroundBlurriness,
                 savedCameraPos,
                 mc.gameRenderer.gameRenderState().optionsRenderState.textureFiltering
@@ -2562,19 +2662,24 @@ public class SecondaryWorldRenderCore {
             mv.mul(destViewMatrix);
             try {
                 RenderSystem.setShaderFog(destFogBuffer);
-                if (sky.skybox == DimensionType.Skybox.END) {
-                    sr.renderEndSky();
-                } else {
-                    PoseStack poseStack = new PoseStack();
-                    sr.renderSkyDisc(sky.skyColor);
-                    sr.renderSunriseAndSunset(poseStack, sky.sunAngle, sky.sunriseAndSunsetColor);
-                    sr.renderSunMoonAndStars(
-                        poseStack, sky.sunAngle, sky.moonAngle, sky.starAngle,
-                        sky.moonPhase, sky.rainBrightness, sky.starBrightness
-                    );
-                    if (sky.shouldRenderDarkDisc) {
-                        sr.renderDarkDisc();
-                    }
+                // 26.3: SkyRenderer's per-part draw methods went PRIVATE and now take the caller's RenderPass;
+                // the one public entry is render(skyFog, state), which IS the 26.2 addSkyPass body this block
+                // copied, moved inside the class (mc262-ref LevelRenderer.java:331-349 -> mc263-ref
+                // SkyRenderer.java:132-161): same END / non-END split, same four calls in the same order, same
+                // `this.renderTarget` colour+depth attachments with no clear — 26.2 opened one such pass per
+                // part (mc262-ref SkyRenderer.java:255-260), 26.3 opens one for all of them.
+                //   (26.2) if (END) sr.renderEndSky();
+                //   (26.2) else { sr.renderSkyDisc(skyColor); sr.renderSunriseAndSunset(..);
+                //   (26.2)        sr.renderSunMoonAndStars(..); if (shouldRenderDarkDisc) sr.renderDarkDisc(); }
+                // ONE DIFFERENCE, held to 26.2 behaviour: vanilla's END branch also draws the End flash
+                // (mc263-ref SkyRenderer.java:143-146); this block never did. Zeroing the intensity for the
+                // call (restored in the finally) keeps the END branch at renderEndSky() only.
+                float savedEndFlashIntensity = sky.endFlashIntensity;
+                sky.endFlashIntensity = 0.0F;
+                try {
+                    sr.render(destFogBuffer, sky);
+                } finally {
+                    sky.endFlashIntensity = savedEndFlashIntensity;
                 }
             } finally {
                 mv.popMatrix();
@@ -2712,7 +2817,7 @@ public class SecondaryWorldRenderCore {
             return; // session start only — mirrored at the first render TAIL that sees a loaded
                     // texture (a resource reload keeps the last-known record for the pre-TAIL frame)
         }
-        if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+        if (client.gameRenderer.useImprovedTransparency()) {
             if (StageCensusProbe.ENABLED) {
                 StageCensusProbe.cloud(destDim, censusLyr, "fabulous", null);
             }
@@ -2733,10 +2838,28 @@ public class SecondaryWorldRenderCore {
         mv.pushMatrix();
         mv.mul(destViewMatrix);
         try {
-            cloudRenderer.render(
+            // 26.3: CloudRenderer.render(color,status,bottomY,range,camPos,gameTime,partialTicks) SPLIT into
+            // prepare(<the same seven args>) + render(CloudStatus, RenderPass): the renderer no longer opens its
+            // own pass, the caller supplies it (mc262-ref CloudRenderer.java:128 -> mc263-ref :129,197-205).
+            // Vanilla's order is prepare -> RenderSystem.resizeAllAutoStorageIndexBuffers() -> open pass -> render
+            // (mc263-ref LevelRenderer.java:527-548 then :442-456): prepare uploads + REQUESTS index capacity
+            // (CloudRenderer.java:184-185), and uploads cannot happen inside an open pass. The pass below is the
+            // one 26.2's render() opened for itself on this same non-fabulous path (fabulous returned above):
+            // "Clouds" on the MAIN render target, colour+depth, no clear (mc262-ref CloudRenderer.java:192-208).
+            cloudRenderer.prepare(
                 destLRS.cloudColor, cloudStatus, destLRS.cloudHeight, ors.cloudRange,
                 destCameraState.pos, destLRS.gameTime, partialTick
             );
+            RenderSystem.resizeAllAutoStorageIndexBuffers();
+            RenderTarget cloudMainRenderTarget = client.gameRenderer.mainRenderTarget();
+            try (com.mojang.renderpearl.api.commands.RenderPass cloudRenderPass = RenderSystem.getDevice()
+                    .createCommandEncoder()
+                    .createRenderPass(
+                        () -> "Clouds",
+                        cloudMainRenderTarget.getColorTextureView(), java.util.Optional.empty(),
+                        cloudMainRenderTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                cloudRenderer.render(cloudStatus, cloudRenderPass);
+            }
             if (StageCensusProbe.ENABLED) {
                 // CLOUD-CHURN probe (2026-08-30 round): log the drawing camera's cloud cell and
                 // whether it moved since this DIM's last draw — a cell change is what rotates the
@@ -2797,7 +2920,7 @@ public class SecondaryWorldRenderCore {
         if (destLRS.weatherRenderState == null || destCameraState.pos == null) {
             return;
         }
-        if (client.gameRenderer.gameRenderState().useShaderTransparency()) {
+        if (client.gameRenderer.useImprovedTransparency()) {
             return; // fabulous: WEATHER_TARGET is a framegraph-internal handle (see header)
         }
         net.minecraft.client.renderer.WeatherEffectRenderer weatherRenderer =
@@ -2807,7 +2930,25 @@ public class SecondaryWorldRenderCore {
         mv.pushMatrix();
         mv.mul(destViewMatrix);
         try {
-            weatherRenderer.render(destCameraState.pos, destLRS.weatherRenderState);
+            // 26.3: WeatherEffectRenderer.render(camPos, state) SPLIT into prepare(camPos, state) +
+            // render(state, RenderPass) — same caller-supplies-the-pass change as clouds (mc262-ref
+            // WeatherEffectRenderer.java:120 -> mc263-ref :125-150). prepare requests index capacity (:140-141),
+            // so vanilla's order applies here too: prepare -> resizeAllAutoStorageIndexBuffers -> pass -> render.
+            // The pass is the one 26.2's render() opened itself: "Weather Effect" on
+            // OutputTarget.WEATHER_TARGET = the MAIN target when non-fabulous (fabulous returned above),
+            // colour+depth, no clear (mc262-ref WeatherEffectRenderer.java:126-128,153).
+            weatherRenderer.prepare(destCameraState.pos, destLRS.weatherRenderState);
+            RenderSystem.resizeAllAutoStorageIndexBuffers();
+            RenderTarget weatherMainRenderTarget = client.gameRenderer.mainRenderTarget();
+            try (com.mojang.renderpearl.api.commands.RenderPass weatherRenderPass = RenderSystem.getDevice()
+                    .createCommandEncoder()
+                    .createRenderPass(
+                        () -> "Weather Effect",
+                        weatherMainRenderTarget.getColorTextureView(), java.util.Optional.empty(),
+                        weatherMainRenderTarget.getDepthTextureView(), java.util.OptionalDouble.empty())) {
+                RenderSystem.bindDefaultUniforms(weatherRenderPass);
+                weatherRenderer.render(destLRS.weatherRenderState, weatherRenderPass);
+            }
         } catch (Throwable t) {
             // Weather is non-critical.
         } finally {
@@ -2858,7 +2999,7 @@ public class SecondaryWorldRenderCore {
                         + " col=" + Integer.toHexString(mainLrs.cloudColor)
                         + " h=" + mainLrs.cloudHeight
                         + " fabulous="
-                        + client.gameRenderer.gameRenderState().useShaderTransparency()
+                        + client.gameRenderer.useImprovedTransparency()
                         + " texNull=" + mainTexNull);
             } catch (Throwable t) {
                 // probe-only; never let the census break the frame tail
@@ -2986,7 +3127,9 @@ public class SecondaryWorldRenderCore {
             qouteall.imm_ptl.core.render.PerEntityClipBracket
                 .registerPhaseOverride(out0.outline, noClip);
             try {
-                acc.seamlessportals$getFeatureRenderDispatcher().renderAllFeatures(storage);
+                // 26.3: FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage) was deleted (it is now a static over a
+                // caller-supplied RenderPass + PreparedFrame). The helper is that removed 26.2 method, re-homed — see its javadoc.
+                MyRenderHelper.renderAllFeaturesToMainTarget(acc.seamlessportals$getFeatureRenderDispatcher(), storage);
                 // S18 Mechanism-B dest-pass draw site (PerEntityClipBracket design §2.1.3, decided):
                 // drain this pass's deferred one-entity brackets INSIDE the pushed dest view matrix
                 // and the armed inner clip + stencil, right after the pass's own feature draws —
@@ -3241,11 +3384,18 @@ public class SecondaryWorldRenderCore {
                 // main-uploaded already).
                 destRenderer.blockEntityRenderDispatcher().prepare(newCamera.position());
                 sameDimScratchLRS.blockEntityRenderStates.clear();
-                ((LevelExtractorAccessor) (Object) client.levelExtractor)
-                    .seamlessportals$invokeExtractVisibleBlockEntities(
-                        newCamera,
-                        deltaTracker.getGameTimeDeltaPartialTick(false),
-                        sameDimScratchLRS);
+                // 26.3: the invoker is a loader-shape pair now (MinecraftForge's extract is 4-arg with a mandatory
+                // Frustum) — BlockEntityExtractInvoke picks the applied one. Same three arguments; destFrustum is this
+                // pass's frustum, already given to the entity extract above, and is read ONLY on the Forge shape (where
+                // Forge's own extract() pairs the two calls on one frustum the same way).
+                //   (26.2) ((LevelExtractorAccessor) (Object) client.levelExtractor).seamlessportals$invokeExtractVisibleBlockEntities(
+                //   (26.2)     newCamera, deltaTracker.getGameTimeDeltaPartialTick(false), sameDimScratchLRS);
+                com.warwa.seamlessportals.render.BlockEntityExtractInvoke.invoke(
+                    client.levelExtractor,
+                    newCamera,
+                    deltaTracker.getGameTimeDeltaPartialTick(false),
+                    sameDimScratchLRS,
+                    destFrustum);
                 ((LevelRendererAccessorMixin) destRenderer).seamlessportals$invokeSubmitBlockEntities(
                     new com.mojang.blaze3d.vertex.PoseStack(), sameDimScratchLRS, sameDimSubmitStorage);
 
@@ -3260,7 +3410,7 @@ public class SecondaryWorldRenderCore {
                 // handle, and the translucent particle group would draw into it (own depth, no
                 // stencil) and composite FULL-SCREEN over the main view. The clouds/weather class.
                 if (!IPGlobal.debugAllowDestParticleExtract
-                    && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                    && !client.gameRenderer.useImprovedTransparency()) {
                     sameDimScratchLRS.particlesRenderState.particles.clear();
                     ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
                         .ip_extractIsolated(
@@ -3336,7 +3486,9 @@ public class SecondaryWorldRenderCore {
                 qouteall.imm_ptl.core.render.PerEntityClipBracket
                     .registerPhaseOverride(sdOut0.outline, sdNoClip);
                 try {
-                    sameDimFeatureDispatcher.renderAllFeatures(sameDimSubmitStorage);
+                    // 26.3: FeatureRenderDispatcher.renderAllFeatures(SubmitNodeStorage) was deleted (it is now a static over a
+                    // caller-supplied RenderPass + PreparedFrame). The helper is that removed 26.2 method, re-homed — see its javadoc.
+                    MyRenderHelper.renderAllFeaturesToMainTarget(sameDimFeatureDispatcher, sameDimSubmitStorage);
                     // S18 Mechanism-B same-dim draw site (mirrors renderPortalEntities): drain the
                     // brackets this pass's submitEntities deferred (keyed by sameDimSubmitStorage),
                     // inside the same matrix/clip/stencil scope. Inert under Mechanism A.
@@ -3444,9 +3596,11 @@ public class SecondaryWorldRenderCore {
             // vanilla BE walk iterates the shell's fresh empty visibleSections — 0 BEs; benign
             // (that config has no portal terrain either).
             destRenderer.blockEntityRenderDispatcher().prepare(newCamera.position());
-            ((LevelExtractorAccessor) (Object) client.levelExtractor)
-                .seamlessportals$invokeExtractVisibleBlockEntities(
-                    newCamera, partialTick, destLRS);
+            // 26.3: loader-shape invoker pair — see the twin call in renderPortalEntitiesSameDim.
+            //   (26.2) ((LevelExtractorAccessor) (Object) client.levelExtractor)
+            //   (26.2)     .seamlessportals$invokeExtractVisibleBlockEntities(newCamera, partialTick, destLRS);
+            com.warwa.seamlessportals.render.BlockEntityExtractInvoke.invoke(
+                client.levelExtractor, newCamera, partialTick, destLRS, destFrustum);
 
             // Same-dim PARTICLES — the isolated world-filtered extract (fresh caller-owned
             // states; the shared per-group accumulators untouched — S14.41 fully honored).
@@ -3454,7 +3608,7 @@ public class SecondaryWorldRenderCore {
             // Fabulous is structurally off under a pack (iris forbids it) but the gate is
             // kept for uniformity with the cross-dim Step-5 fill.
             if (!IPGlobal.debugAllowDestParticleExtract
-                && !client.gameRenderer.gameRenderState().useShaderTransparency()) {
+                && !client.gameRenderer.useImprovedTransparency()) {
                 ((qouteall.imm_ptl.core.ducks.IEParticleManager) client.particleEngine)
                     .ip_extractIsolated(
                         destLRS.particlesRenderState,

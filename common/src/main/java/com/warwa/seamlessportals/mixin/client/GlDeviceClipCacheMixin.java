@@ -32,10 +32,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * not silently depend on the S14.21 FBO-resolver access-widener line that
  * happens to promote {@code GlDevice} to public (IS2 fold V4-1).
  */
-@Mixin(targets = "com/mojang/blaze3d/opengl/GlDevice")
+// 26.3: `GlDevice.clearPipelineCache` is gone — the GL backend no longer owns a pipeline cache (mc262-ref
+// com/mojang/blaze3d/opengl/GlDevice.java:261-276 -> mc263-ref com/mojang/renderpearl/backend/opengl/GlDevice.java: no such
+// method). The cache moved up into blaze3d: `com.mojang.blaze3d.pipeline.PipelineCache` (mc263-ref PipelineCache.java), and
+// the bulk delete this hook exists for is `PipelineCache.clear()` (:45-48): it closes every cached CompiledRenderPipeline ->
+// FrontendRenderPipeline.close :31-32 -> GlRenderPipeline.close :99-103 -> GlProgram.close :116-118 `glDeleteProgram`. Same
+// callers as before: every resource reload (ShaderManager.apply :226-231 closes the OLD cache; close() :51-53 -> clear()) and
+// device shutdown (RenderSystem.java:235,239). RETURN, as before: the deletions are complete when the cache is dropped.
+@Mixin(targets = "com/mojang/blaze3d/pipeline/PipelineCache")
 public abstract class GlDeviceClipCacheMixin {
 
-    @Inject(method = "clearPipelineCache", at = @At("RETURN"), require = 1)
+    @Inject(method = "clear", at = @At("RETURN"), require = 1) // 26.3: was GlDevice.clearPipelineCache (see note above)
     private void seamlessportals$invalidateClipLocationCache(CallbackInfo ci) {
         ClipUniformLocationCache.clear();
     }
