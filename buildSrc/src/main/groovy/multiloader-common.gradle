@@ -53,7 +53,20 @@ java {
     withSourcesJar()
 }
 
+// The project's licence (Apache-2.0, the LICENSE file at the repository root) ships inside every jar and sources jar —
+// section 4(a) of the licence: recipients get a copy of it. Renamed with the mod id so it cannot collide with another
+// mod's LICENSE when jars are nested or merged.
+sourcesJar {
+    from(rootProject.file('LICENSE')) {
+        rename { "${it}_${project.mod_id}" }
+    }
+}
+
 jar {
+    from(rootProject.file('LICENSE')) {
+        rename { "${it}_${project.mod_id}" }
+    }
+
     manifest {
         attributes([
             'Specification-Title'   : project.mod_id,
