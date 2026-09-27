@@ -20,7 +20,7 @@ import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
-import net.neoforged.neoforge.registries.DataPackRegistryEvent;
+import net.neoforged.neoforge.registries.NewDatapackRegistryEvent;
 import net.neoforged.neoforge.registries.RegisterEvent;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import net.neoforged.neoforgespi.language.IModInfo;
@@ -50,13 +50,13 @@ public class NeoForgePlatform implements Platform {
 
     // ==== mod-bus queues (drained by SeamlessPortalsModNeoForge) ====
 
-    private static final List<Consumer<DataPackRegistryEvent.NewRegistry>>
+    private static final List<Consumer<NewDatapackRegistryEvent>>
         PENDING_DATAPACK_REGISTRIES = new ArrayList<>();
     private static final List<Consumer<RegisterEvent>>
         PENDING_ARGUMENT_TYPES = new ArrayList<>();
 
     /** Called from the mod-bus {@code DataPackRegistryEvent.NewRegistry} listener. */
-    public static void drainDataPackRegistries(DataPackRegistryEvent.NewRegistry event) {
+    public static void drainDataPackRegistries(NewDatapackRegistryEvent event) {
         PENDING_DATAPACK_REGISTRIES.forEach(reg -> reg.accept(event));
     }
 
@@ -171,7 +171,7 @@ public class NeoForgePlatform implements Platform {
     @Override
     public <T> void registerDataPackRegistry(ResourceKey<Registry<T>> key, Codec<T> codec) {
         // Queued: NewRegistry is a MOD-BUS event; the mod class drains at the right window.
-        PENDING_DATAPACK_REGISTRIES.add(event -> event.dataPackRegistry(key, codec));
+        PENDING_DATAPACK_REGISTRIES.add(event -> event.worldRegistry(key, codec));
     }
 
     @Override
