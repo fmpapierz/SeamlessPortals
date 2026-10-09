@@ -91,7 +91,7 @@ public final class VoxySmoke implements FabricClientGameTest {
                 .create()) {
 
             context.waitTicks(100);
-            assertSingleRenderSystem(context, "V0 world open, no portals yet");
+            assertMainHasRenderSystem(context, "V0 world open, no portals yet");
 
             BlockPos feet = context.computeOnClient(mc -> mc.player.blockPosition());
             int px = feet.getX(), py = feet.getY(), pz = feet.getZ();
@@ -121,55 +121,75 @@ public final class VoxySmoke implements FabricClientGameTest {
             spawnBiWayPair(context, Level.OVERWORLD, bOrigin, Level.NETHER, NETHER_DEST);
             context.waitTicks(40);
 
+            // Tier 2 (LODs inside portal windows) is the default; the lever forces the tier-1 posture.
+            final boolean portalLods = !Boolean.getBoolean("seamlessportals.disableVoxyPortalLods");
+            SeamlessPortalsConstants.LOGGER.info(LOG + "portal LODs {}", portalLods ? "ON (tier 2)" : "OFF (tier 1, lever)");
+
             // ---- V1: both portal views on screen with the LOD renderer live ----
             teleport(context, Level.OVERWORLD, px + 3.5, py, pz + 3.0, 180f);
             aimAt(context, aOrigin.x, aOrigin.y, aOrigin.z);
             context.waitTicks(120);   // dest chunks arrive, dest renderers get created and drawn
             screenshot(context, "voxy-1-samedim-view");
-            assertSingleRenderSystem(context, "V1 same-dim portal view rendering");
+            assertMainHasRenderSystem(context, "V1 same-dim portal view rendering");
 
             aimAt(context, bOrigin.x, bOrigin.y, bOrigin.z);
             context.waitTicks(120);
             screenshot(context, "voxy-2-nether-view");
-            assertSingleRenderSystem(context, "V1 cross-dim portal view rendering");
-            assertSecondaryHasNoRenderSystem(context, Level.NETHER, "V1 nether secondary renderer");
+            assertMainHasRenderSystem(context, "V1 cross-dim portal view rendering");
+            // Tier 2: the nether secondary renderer gets its own LOD system in its first portal
+            // pass; tier 1: it never does.
+            assertSecondaryRenderSystem(context, Level.NETHER, portalLods, "V1 nether secondary renderer");
 
             // ---- V2: shrink the render distance so the loaded ring turns into LODs ----
             context.runOnClient(mc -> mc.options.renderDistance().set(3));
             context.waitTicks(200);
             screenshot(context, "voxy-3-rd3-lods-main-world");
-            assertSingleRenderSystem(context, "V2 after render-distance shrink");
+            assertMainHasRenderSystem(context, "V2 after render-distance shrink");
             // Voxy's own F3 lines: the proof that the main pass drives the LOD pipeline (section /
-            // node counts, frame timings) while the portal views stay inert.
+            // node counts, frame timings).
             logVoxyDebug(context, "V2");
+            // The windows at RD 3: with tier 2 the same-dim window shows grass to the horizon and
+            // the nether window shows the dest floor beyond the dest's chunk distance; with tier 1
+            // both windows end at the chunk distance. Nothing outside either aperture may change.
+            aimAt(context, aOrigin.x, aOrigin.y, aOrigin.z);
+            context.waitTicks(100);
+            screenshot(context, "voxy-3b-rd3-samedim-window");
+            aimAt(context, bOrigin.x, bOrigin.y, bOrigin.z);
+            context.waitTicks(100);
+            screenshot(context, "voxy-3c-rd3-nether-window");
+            assertSecondaryRenderSystem(context, Level.NETHER, portalLods, "V2 nether secondary renderer");
 
             // ---- V3: cross-dim crossing by walking (the promote/demote hook) ----
             walkThrough(context, "V3 ow->nether", Level.OVERWORLD,
                 new Vec3(px + 6.5, py, pz - 2.0), 180f, Level.NETHER, NETHER_DEST);
             context.waitTicks(60);
             screenshot(context, "voxy-4-nether-arrived");
-            assertSingleRenderSystem(context, "V3 in the nether after the crossing");
-            assertSecondaryHasNoRenderSystem(context, Level.OVERWORLD, "V3 demoted overworld renderer");
+            assertMainHasRenderSystem(context, "V3 in the nether after the crossing");
+            // Tier 2 keeps the demoted (overworld) system: it renders the portal behind the player.
+            assertSecondaryRenderSystem(context, Level.OVERWORLD, portalLods, "V3 demoted overworld renderer");
 
             // Look back through the return portal (the overworld is now the secondary view).
             aimAt(context, NETHER_DEST.x, NETHER_DEST.y, NETHER_DEST.z);
             context.waitTicks(120);
             screenshot(context, "voxy-5-nether-looking-back");
-            assertSingleRenderSystem(context, "V3 overworld portal view from the nether");
+            assertMainHasRenderSystem(context, "V3 overworld portal view from the nether");
 
             walkThrough(context, "V3 nether->ow", Level.NETHER,
                 new Vec3(NETHER_DEST.x, 128.0, NETHER_DEST.z - 2.0), 0f, Level.OVERWORLD, bOrigin);
             context.waitTicks(60);
             screenshot(context, "voxy-6-back-in-overworld");
-            assertSingleRenderSystem(context, "V3 back in the overworld");
-            assertSecondaryHasNoRenderSystem(context, Level.NETHER, "V3 re-demoted nether renderer");
+            assertMainHasRenderSystem(context, "V3 back in the overworld");
+            assertSecondaryRenderSystem(context, Level.NETHER, portalLods, "V3 re-demoted nether renderer");
 
-            // ---- V4: renderer reload (F3+A) — main recreated, secondaries stay empty ----
+            // ---- V4: renderer reload (F3+A) — the main is recreated; a secondary's system is
+            // recreated lazily in its next portal pass (tier 2) or never (tier 1) ----
             context.runOnClient(mc -> mc.levelExtractor.allChanged());
             context.waitTicks(100);
+            aimAt(context, bOrigin.x, bOrigin.y, bOrigin.z);
+            context.waitTicks(100);
             screenshot(context, "voxy-7-after-reload");
-            assertSingleRenderSystem(context, "V4 after allChanged");
-            assertSecondaryHasNoRenderSystem(context, Level.NETHER, "V4 nether renderer after reload");
+            assertMainHasRenderSystem(context, "V4 after allChanged");
+            assertSecondaryRenderSystem(context, Level.NETHER, portalLods, "V4 nether renderer after reload");
             logVoxyDebug(context, "V4");
 
             SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
@@ -180,23 +200,28 @@ public final class VoxySmoke implements FabricClientGameTest {
     // Assertions
     // ------------------------------------------------------------------------------------------
 
-    /** Exactly one Voxy render system across every renderer this mod knows, on mc.levelRenderer. */
-    private static void assertSingleRenderSystem(ClientGameTestContext context, String leg) {
+    /**
+     * The main renderer (mc.levelRenderer) carries a Voxy render system, and no renderer this mod
+     * does not know carries one; the per-renderer census is logged for the record.
+     */
+    private static void assertMainHasRenderSystem(ClientGameTestContext context, String leg) {
         String verdict = context.computeOnClient(mc -> {
-            List<String> with = new ArrayList<>();
             List<String> seen = new ArrayList<>();
             boolean mainHas = VoxyInterface.invoker.hasRenderSystem(mc.levelRenderer);
+            int count = 0;
             for (var e : ClientWorldLoader.WORLD_RENDERER_MAP.entrySet()) {
                 LevelRenderer r = e.getValue();
                 boolean has = VoxyInterface.invoker.hasRenderSystem(r);
                 seen.add(e.getKey().identifier().getPath() + (r == mc.levelRenderer ? "(main)" : "") + "=" + has);
-                if (has) with.add(e.getKey().identifier().getPath());
+                if (has) count++;
             }
             boolean mainKnown = ClientWorldLoader.WORLD_RENDERER_MAP.containsValue(mc.levelRenderer);
-            int count = with.size() + (mainKnown ? 0 : (mainHas ? 1 : 0));
+            if (!mainKnown && mainHas) count++;
             String summary = "main=" + mainHas + " known=" + seen + " total=" + count;
             if (!mainHas) return "FAIL (main renderer has NO LOD render system): " + summary;
-            if (count != 1) return "FAIL (expected exactly 1 LOD render system): " + summary;
+            if (count > ClientWorldLoader.WORLD_RENDERER_MAP.size() + (mainKnown ? 0 : 1)) {
+                return "FAIL (more LOD render systems than renderers): " + summary;
+            }
             return "OK " + summary;
         });
         SeamlessPortalsConstants.LOGGER.info(LOG + "{}: {}", leg, verdict);
@@ -205,16 +230,20 @@ public final class VoxySmoke implements FabricClientGameTest {
         }
     }
 
-    private static void assertSecondaryHasNoRenderSystem(
-        ClientGameTestContext context, ResourceKey<Level> dim, String leg
+    /** A secondary renderer carries a system iff the dest-LOD feature is on. */
+    private static void assertSecondaryRenderSystem(
+        ClientGameTestContext context, ResourceKey<Level> dim, boolean expected, String leg
     ) {
         String verdict = context.computeOnClient(mc -> {
             LevelRenderer r = ClientWorldLoader.WORLD_RENDERER_MAP.get(dim);
             if (r == null) return "FAIL (no renderer registered for " + dim.identifier() + ")";
             if (r == mc.levelRenderer) return "FAIL (" + dim.identifier() + " IS the main renderer here)";
-            return VoxyInterface.invoker.hasRenderSystem(r)
-                ? "FAIL (secondary " + dim.identifier() + " renderer carries an LOD render system)"
-                : "OK (secondary " + dim.identifier() + " renderer has none)";
+            boolean has = VoxyInterface.invoker.hasRenderSystem(r);
+            if (has != expected) {
+                return "FAIL (secondary " + dim.identifier() + " renderer: LOD render system present=" + has
+                    + ", expected " + expected + ")";
+            }
+            return "OK (secondary " + dim.identifier() + " renderer: LOD render system present=" + has + ")";
         });
         SeamlessPortalsConstants.LOGGER.info(LOG + "{}: {}", leg, verdict);
         if (verdict.startsWith("FAIL")) {

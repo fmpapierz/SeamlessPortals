@@ -68,6 +68,18 @@ public class IPConfig implements ConfigData {
     public boolean irisRecursionLagGuard = false;
 
     /**
+     * Voxy compat tier 2 (2026-10-09, {@code migration/VOXY_COMPAT.md}): far terrain (Voxy's LODs)
+     * inside portal windows. Costs one Voxy render system per dimension looked at through a
+     * portal. Off: LODs only in the player's own world, windows end at the chunk render distance
+     * (the tier-1 posture). Ignored while a shaderpack is active (never LODs in windows there).
+     * Read every pass by {@code VoxyInterface.isPortalLodsEnabled()}; the
+     * {@code -Dseamlessportals.disableVoxyPortalLods=true} JVM lever forces it off for A/B runs.
+     */
+    @ConfigEntry.Category("client")
+    @ConfigEntry.Gui.Tooltip
+    public boolean voxyLodsInPortalViews = true;
+
+    /**
      * How far from the player a portal will still render its WINDOW, in chunks. {@code 0} = follow
      * the render distance, and what the per-entry reset button restores.
      *

@@ -27,13 +27,15 @@ loudly (`require=1`) if they move.
 | `computeProjectionMat` | reads `mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState.projectionMatrix` | tier-2 concern only |
 | Iris path | `LevelRenderer.render` HEAD captures viewport params; `IrisRenderingPipeline.beginLevelRendering` applies them to `getNullable()`; the CUTOUT hook then uses the captured viewport | under the guard a dest pass captures but never consumes; the next main `render` HEAD overwrites the capture — harmless |
 
-## 2. Tier 1 contract (shipped): coexistence
+## 2. Tier 1 contract: coexistence (the posture with the tier-2 feature OFF or a shaderpack ON)
 
 **Exactly the MAIN `LevelRenderer` carries a Voxy render system, and no Voxy hook fires inside a
 portal pass.** LODs render in the main world as without portals; portal views show no LODs
 (their fog is the vanilla render-distance fog). The LOD system follows the player across
 dimensions at each crossing (the same cost vanilla Voxy pays on a respawn-driven dimension
 change: one `VoxyRenderSystem` shutdown + creation, including Voxy's own `System.gc()`).
+Since tier 2 (§3) shipped, this section describes the feature-OFF behaviour; the guard
+pieces below are shared by both tiers.
 
 ### 2.1 Pieces
 
@@ -90,25 +92,57 @@ change: one `VoxyRenderSystem` shutdown + creation, including Voxy's own `System
 | F3+A / resource reload | main `allChanged` → Voxy recreates the main's; the cascade's secondary allChanged under `withSwitchedWorld` → cancelled |
 | disconnect | `Minecraft.disconnect` → `updateLevelInEngines(null)` → `setLevel(null)` on the main extractor, whose `levelRenderer` field the promote re-pointed at the current main → shutdown; `ClientWorldLoader.cleanUp` → `setLevel(null)` on secondaries → no-op |
 
-## 3. Tier 2 (LODs inside portal views) — NOT shipped; what it would take
+## 3. Tier 2 (LODs inside portal views) — SHIPPED 2026-10-09, default ON
 
-- **Cross-dim**: needs a second `VoxyRenderSystem` bound to the dest engine. Its geometry buffer
-  is sized at min(4 GB, free VRAM − 1.5 GB) and `RenderResourceReuse` only reuses buffers of
-  SHUT-DOWN systems, so a live main + a live dest system = two multi-GB buffers (+ threads, + a
-  2M-node manager each). Not affordable as a default; would need an upstream "lite" renderer.
-- **Same-dim**: the main system could render the portal camera into a SEPARATE `Viewport`
-  (Voxy's `ViewportSelector` already keys extra viewports per object for Vivecraft eyes and the
-  iris shadow pass — a `@Pseudo` mixin on `ViewportSelector.getViewport` returning a per-portal-
-  layer viewport), BUT the draw must be bounded to the aperture: Voxy's `finish()` composites
-  through its own scratch FBO with the target depth bound as `GL_DEPTH_ATTACHMENT` and the
-  stencil test disabled. Either bind the main target's depth-stencil texture as
-  `GL_DEPTH_STENCIL_ATTACHMENT` + enable the portal's stencil func inside `AbstractRenderPipeline
-  .runPipeline` (a `@Pseudo` mixin into Voxy's pipeline class), or hand `renderOpaque` our own
-  scratch depth/colour copy and composite it through the stencil ourselves (the IS5 stamp shape).
-  Plus the visible-section stream must be the dest pass's (it is, per pass, if the hooks are
-  un-guarded for that pass only) and `computeProjectionMat`'s raw-projection read must match the
-  dest pass's projection. Under iris, the dest pass renders into its own target and is stamped, so
-  the bound problem differs again. A separate engagement with its own A/B lever.
+Config `voxyLodsInPortalViews` (IPConfig, client category; default true), JVM lever
+`-Dseamlessportals.disableVoxyPortalLods=true` (A/B, forces the tier-1 posture), and never while
+a shaderpack is active (`IrisInterface.invoker.isShaders()` — the shaders-ON renderer stamps the
+dest view from its own target; the stencil bound below does not apply there).
+
+**Mechanism.** Inside a portal pass the renderer driving the pass (`mc.levelRenderer`: the dest
+dimension's secondary renderer, or the main renderer for a same-dimension portal) exposes its
+render system (`VoxyInterface.shouldHideRenderSystem`), so Voxy's hooks run for that pass as
+they do for the main pass: the dest sodium cull fills the visible-section stream, the dest
+CUTOUT pass draws the dest LODs into the main target, the dest fog is pushed out, and the
+mesh-upload ingest lands in the DEST renderer's own engine (the right LOD store). Passes are
+sequential (main cull → main draw → dest cull → dest draw), so the stream is per pass.
+1. **One render system per dimension, created lazily.** `createSecondaryClientWorld`'s
+   setLevel→allChanged still does not create one (secondary context → PENDING on that renderer);
+   the first portal pass that uses the renderer creates it — the pass's own cull hooks are the
+   first callers, before any draw, and `mc.level` IS that dimension then (Voxy's constructor reads
+   it for the Y bounds). Both renderers keep their systems across a crossing (no shutdown+create
+   hitch at crossings any more). Cost per extra dimension ≈ its model atlas (~540 MB VRAM) +
+   node buffers; the geometry buffer is a sparse reservation on NVIDIA (`Buf/Tex` went
+   `[27/4398],[6/542]` → `[61/8837],[14/1086]` with the nether system alive).
+2. **A viewport per (portal UUID, layer)** (`MixinVoxyViewportSelector_PortalViewports`): a Voxy
+   `Viewport` is cross-frame occlusion state (HiZ, frame counter); the selector already keys extra
+   viewports per Vivecraft eye / Iris shadow pass. Unused for 300 frames → deleted.
+3. **Same-dimension passes never re-centre the main tracker** (`MixinVoxyRenderSystem_PortalPass`
+   redirects `RenderDistanceTracker.setCenterAndProcess`): the ring of 512-block top-level nodes
+   follows the player's camera only; a same-dim destination farther than that ring (~8 km at the
+   default 16-section distance) shows no LODs in its window. Cross-dim passes use the dest
+   system's own tracker, which rightly follows the dest camera.
+4. **The composite is bound to the aperture** (`MixinVoxyAbstractRenderPipeline_StencilBound`):
+   Voxy composites its LODs into a scratch FBO holding the target's depth + colour wherever the
+   target depth is still far — on every sky pixel of the screen. The scratch FBO now binds the
+   main target's `DEPTH24_STENCIL8` texture as `GL_DEPTH_STENCIL_ATTACHMENT` (always, so the
+   attachments never alternate), and in a portal pass `transformBlitDepth`'s opening
+   `glDisable(GL_STENCIL_TEST)` becomes enable + `setStencilLimitation(layer)` (EQUAL, KEEP).
+5. **The limitation is re-armed after Voxy's draw** (`renderOpaque` RETURN): Voxy's state restore
+   leaves `GL_STENCIL_TEST` disabled, which would unbound every later dest draw of the pass.
+6. Clip planes: the mod enables `GL_CLIP_DISTANCE0` per draw inside the command encoder only, so
+   Voxy's raw draws are never clipped (LODs start beyond the chunk distance anyway).
+
+**Evidence (dev, `VoxySmoke`, 2026-10-09):** ON and OFF (lever) both ALL LEGS PASS. With the
+feature on, the nether renderer's system is created "inside its first portal pass", survives the
+crossings, is re-created after the render-distance change and after allChanged; total systems =
+2. Pixel diff ON vs OFF (deterministic runs: ON-vs-ON = 0.0 % everywhere): the only differing
+pixels are a horizon band INSIDE each portal window (the same-dim window: x 372–490; the nether
+window: x 362–481; the other portal's window at the screen edge likewise) — the far side's chunk
+edge replaced by its LODs — and NOTHING outside any aperture (the stencil bound holds). At RD 8
+the windows are identical ON vs OFF (the dest's real chunks fill them). Deferred-creation
+artefact found and fixed on the way: a probe of a non-current renderer (the test's census) must
+not trigger the lazy creation; only `mc.levelRenderer` creates.
 
 ## 4. Verification
 
@@ -206,6 +240,14 @@ change: one `VoxyRenderSystem` shutdown + creation, including Voxy's own `System
   IS5-MB diagnostic, IP's `Chunk loading failure` tickets, and FML rewriting the minimal
   `fml.toml` the script seeds. The window was restored once (never in front) while the user was
   Alt-Tabbing (`Task Switching` was the foreground window at that moment).
+- 2026-10-09 **RELEASE CHECK of the tier-2 jars** (`tools\release-test.ps1 -Loaders fabric,neoforge
+  -Work build\release-test-t2 -Port 25573`, jars built 03:59, SHA-256 fabric 7f9ab632…,
+  neoforge 369e0d31…): **Fabric PASSED / PASSED, NeoForge 26.2.0.88 PASSED / PASSED.** On the
+  real Fabric client with the released Sodium + Voxy: the nether's LOD system was created
+  "inside its first portal pass" (1), 2 systems alive, both kept across the two walking
+  crossings ("moved … demoted keeps its own=true" ×2), no broken-jar line, in multiplayer and in
+  singleplayer alike. NeoForge (no Voxy) unchanged: crossings both ways, both legs. Windows
+  minimized and never in front throughout.
 - 2026-10-09 regression gate (`runCrossingGametest`, sodium-absent): legs 1, 2, 3, 7, 4, 6a, 6b
   PASS, then **`RS-A step-1 SEAM MAP GATE FAILED: registry hot-path gate missed section for bound
   cell (-311,-59,-319) (portal 20)`** — the leg-6b generated overworld portal. ATTRIBUTED

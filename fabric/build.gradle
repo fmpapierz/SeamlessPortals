@@ -521,6 +521,8 @@ loom {
             c2JitArgs().each { vmArg(it) }
             // Unattended test client (-PtestClient=true): minimized, unfocused, prompts answered.
             testClientJvmArgs().each { vmArg(it) }
+            // VOXY TIER-2 A/B (mirror of the voxyGametest row): no LODs in portal windows.
+            if (project.findProperty('disableVoxyPortalLods') == 'true') { vmArg('-Dseamlessportals.disableVoxyPortalLods=true') }
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -1019,6 +1021,9 @@ loom {
             testClientJvmArgs().each { vmArg(it) }
             vmArg('-XX:-OmitStackTraceInFastThrow')
             if (project.findProperty('gametestScreenshots') == 'true') { vmArg('-Dseamlessportals.gametest.screenshots=true') }
+            // VOXY TIER-2 A/B: force the dest-LOD feature OFF (the tier-1 posture, no LODs in windows) —
+            //   .\gradlew.bat :fabric:runVoxyGametest -PvoxyRuntime=true -PtestClient=true -PdisableVoxyPortalLods=true
+            if (project.findProperty('disableVoxyPortalLods') == 'true') { vmArg('-Dseamlessportals.disableVoxyPortalLods=true') }
         }
         crossingGametest {
             client()

@@ -37,15 +37,19 @@ param(
     [string]$NeoForgeVersion = '26.2.0.88',
     [string]$FabricApiVersion = '',
     [string]$SodiumVersion = '',
-    [string]$VoxyVersion = ''
+    [string]$VoxyVersion = '',
+    # Where this run's server and client folders go (relative to the project root). The launcher install and
+    # the downloads always stay in build\release-test, so a second work folder reuses them — use one when the
+    # default folder's server or client is still in use (tools\play-client.ps1 plays on them).
+    [string]$Work = 'build\release-test'
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $root = Split-Path -Parent $PSScriptRoot
-$work = Join-Path $root 'build\release-test'
-$launcher = Join-Path $work 'launcher'
-$downloads = Join-Path $work 'downloads'
+$work = Join-Path $root $Work
+$launcher = Join-Path $root 'build\release-test\launcher'
+$downloads = Join-Path $root 'build\release-test\downloads'
 $playerName = 'SelfTester'
 $javaHome = 'C:\Program Files\Zulu\zulu-25'
 $java = Join-Path $javaHome 'bin\java.exe'
@@ -821,8 +825,9 @@ function Test-Loader([string]$Loader) {
         }
         if ($voxyLeg) {
             $checks['Voxy present + compat installed (expect 1 each)']     = "$(Count-Lines @($clientLatest) 'Voxy is present') + $(Count-Lines @($clientLatest) 'Voxy compat installed')"
-            $checks['Voxy LOD systems created (expect 3 or more)']          = (Count-Lines @($clientLatest) 'Creating Voxy render system')
+            $checks['Voxy LOD systems created (expect 2 or more)']          = (Count-Lines @($clientLatest) 'Creating Voxy render system')
             $checks['LOD system moved at crossings (expect 2)']             = (Count-Lines @($clientLatest) 'LOD render system moved to the promoted')
+            $checks['dest LOD system created in a portal pass (expect 1+)'] = (Count-Lines @($clientLatest) 'inside its first portal pass')
         }
         $checks.Keys | ForEach-Object { Say ("   {0,-55} {1}" -f $_, $checks[$_]) }
         $outcome = Stop-TestClient $client $clientDir
@@ -836,7 +841,8 @@ function Test-Loader([string]$Loader) {
         $passed = $legs.ArrivedNether -and $legs.ArrivedHome -and $legs.Crossings -ge 2 -and $problems.Count -eq 0
         if ($voxyLeg) {
             $passed = $passed -and (Count-Lines @($clientLatest) 'Voxy compat installed') -eq 1 -and
-                (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2
+                (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2 -and
+                (Count-Lines @($clientLatest) 'inside its first portal pass') -ge 1
         }
         $result.Server = if ($passed) { 'PASSED' } else { 'FAILED' }
         $result.Notes += @($problems | ForEach-Object { "server + client: $_" })
@@ -882,8 +888,9 @@ function Test-Loader([string]$Loader) {
         }
         if ($voxyLeg) {
             $checks['Voxy present + compat installed (expect 1 each)']     = "$(Count-Lines @($clientLatest) 'Voxy is present') + $(Count-Lines @($clientLatest) 'Voxy compat installed')"
-            $checks['Voxy LOD systems created (expect 3 or more)']          = (Count-Lines @($clientLatest) 'Creating Voxy render system')
+            $checks['Voxy LOD systems created (expect 2 or more)']          = (Count-Lines @($clientLatest) 'Creating Voxy render system')
             $checks['LOD system moved at crossings (expect 2)']             = (Count-Lines @($clientLatest) 'LOD render system moved to the promoted')
+            $checks['dest LOD system created in a portal pass (expect 1+)'] = (Count-Lines @($clientLatest) 'inside its first portal pass')
         }
         $checks.Keys | ForEach-Object { Say ("   {0,-55} {1}" -f $_, $checks[$_]) }
         $outcome = Stop-TestClient $client $clientDir
@@ -895,7 +902,8 @@ function Test-Loader([string]$Loader) {
         $passed = $legs.ArrivedNether -and $legs.ArrivedHome -and $legs.Crossings -ge 2 -and $problems.Count -eq 0
         if ($voxyLeg) {
             $passed = $passed -and (Count-Lines @($clientLatest) 'Voxy compat installed') -eq 1 -and
-                (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2
+                (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2 -and
+                (Count-Lines @($clientLatest) 'inside its first portal pass') -ge 1
         }
         $result.Singleplayer = if ($passed) { 'PASSED' } else { 'FAILED' }
         $result.Notes += @($problems | ForEach-Object { "singleplayer: $_" })
@@ -928,7 +936,7 @@ $configLines = @(Get-Content -LiteralPath $launchConfig | ForEach-Object { $_.Tr
 $assetIndex = $configLines[[array]::IndexOf($configLines, '--assetIndex') + 1]
 $assetsDir = $configLines[[array]::IndexOf($configLines, '--assetsDir') + 1]
 
-New-Item -ItemType Directory -Force $launcher, $downloads | Out-Null
+New-Item -ItemType Directory -Force $work, $launcher, $downloads | Out-Null
 
 if (-not $SkipBuild) {
     Say 'Building the release jars...'

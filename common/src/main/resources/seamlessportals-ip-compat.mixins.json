@@ -34,6 +34,9 @@
     "iris.MixinIrisCompositeRenderer_CensusPostWrite",
     "iris.MixinIrisProgram_Census",
     "voxy.MixinVoxyLevelRenderer_PassGuard",
+    "voxy.MixinVoxyViewportSelector_PortalViewports",
+    "voxy.MixinVoxyRenderSystem_PortalPass",
+    "voxy.MixinVoxyAbstractRenderPipeline_StencilBound",
     "cloth.MixinClothTooltipListEntry_LabelHover"
   ],
   "injectors": {

@@ -201,6 +201,8 @@
   "text.autoconfig.immersive_portals.option.portalWindowRenderDistance.@Tooltip": "How far away portal windows still show their view, in chunks. 0=default (~88 blocks).",
   "text.autoconfig.immersive_portals.option.irisRecursionLagGuard": "Reduce Shaderpack Recursion When Laggy",
   "text.autoconfig.immersive_portals.option.irisRecursionLagGuard.@Tooltip": "Auto-lower shaderpack recursion while the frame rate is low. off=default.",
+  "text.autoconfig.immersive_portals.option.voxyLodsInPortalViews": "Voxy LODs In Portal Views",
+  "text.autoconfig.immersive_portals.option.voxyLodsInPortalViews.@Tooltip": "With Voxy installed, show its far terrain inside portal windows too. Costs one Voxy renderer per dimension seen through a portal. Not used while a shaderpack is on. on=default.",
   "text.autoconfig.immersive_portals.option.lagAttackProof": "Lag Attack Proof",
   "text.autoconfig.immersive_portals.option.lagAttackProof.@Tooltip": "Rendering fewer portal content when lagging",
   "text.autoconfig.immersive_portals.option.compatibilityRenderMode": "Compatibility Render Mode",

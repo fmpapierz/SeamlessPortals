@@ -3,10 +3,13 @@ package qouteall.imm_ptl.core.compat.voxy_compatibility;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import org.slf4j.Logger;
 import qouteall.imm_ptl.core.ClientWorldLoader;
+import qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface;
+import qouteall.imm_ptl.core.platform_specific.IPConfig;
 import qouteall.imm_ptl.core.render.SecondaryWorldRenderCore;
 import qouteall.imm_ptl.core.render.context_management.PortalRendering;
 
@@ -19,41 +22,39 @@ import qouteall.imm_ptl.core.render.context_management.PortalRendering;
  * keyed on the level's {@code WorldIdentifier}; every one of its hooks (the sodium cull stream, the
  * CUTOUT-pass LOD draw, the fog override, the mesh-upload ingest, the fade cancel) resolves that
  * system through {@code Minecraft.getInstance().levelRenderer} AT CALL TIME — the same call-time
- * resolution class as sodium's {@code checkRenderer} (memory {@code c2-lessons} #1). Flag-ON this
- * mod (a) creates a {@code LevelRenderer} + {@code LevelExtractor} per secondary dimension and
- * {@code setLevel}s it (→ Voxy would build a FULL render system per dimension: a multi-GB geometry
- * buffer, worker threads, and for a same-identifier level it steals the engine's dirty callback),
- * (b) repoints {@code mc.levelRenderer} to the dest renderer during every portal pass (→ Voxy's
- * hooks would reset/refill the main pass's visible-section stream with dest sections, clobber the
- * main viewport's temporal occlusion state with the portal camera, draw dest LODs into the main
- * target with no stencil bound, and ingest dest-dimension sections into the main dimension's
- * LOD store), and (c) re-points the main extractor at a promoted renderer on a cross-dim crossing
- * WITHOUT {@code allChanged} (→ no render system on the new main renderer: no LODs after walking
- * through a nether portal).
+ * resolution class as sodium's {@code checkRenderer} (memory {@code c2-lessons} #1).
  *
- * <p><b>The contract this facade keeps (tier 1, coexistence):</b> exactly the MAIN
- * {@code LevelRenderer} carries a Voxy render system, and no Voxy hook fires inside a portal
- * pass. Three pieces:
- * <ol>
- *   <li>{@code MixinVoxyLevelRenderer_PassGuard} (compat mixin set, substring-gated on "Voxy"):
- *       {@code voxy$createRenderer} is cancelled in any secondary context (secondary world
- *       creation, {@code withSwitchedWorld}, a portal pass) and {@code voxy$getRenderSystem}
- *       answers {@code null} inside a portal pass — one guard makes every Voxy hook inert there.</li>
- *   <li>{@link #onPlayerDimensionChangePromoted}: the promote/demote cutover moves the render
- *       system to the promoted renderer (shut the demoted one down FIRST so its geometry buffer
- *       returns to Voxy's reuse cache, then create on the promoted one) — the same cost vanilla
- *       Voxy pays on a respawn-driven dimension change.</li>
- *   <li>{@code ImmPtlClientChunkMap.voxy$cheekyGetChunk}: Voxy reads unloading chunks through
- *       vanilla's {@code ClientChunkCache.storage}, which IP's chunk map never fills — the override
- *       routes it to IP's own map so the unload-ingest keeps working.</li>
- * </ol>
- * Portal views therefore show NO LODs (tier 2 is a separate engagement — see the design doc for
- * why the per-secondary render system is not affordable and what a same-dim viewport would need).
+ * <p><b>Tier 1 (always):</b> a Voxy hook never runs in a non-render secondary context (secondary
+ * world creation, {@code withSwitchedWorld}), a render system is never created inside such a
+ * context (it is marked PENDING on that renderer and created at the first safe call instead), and
+ * the main renderer always carries one.
+ *
+ * <p><b>Tier 2 ({@link #isPortalLodsEnabled()}, the shipped default):</b> LODs inside portal
+ * windows. Inside a portal pass the renderer driving the pass ({@code mc.levelRenderer}, the dest
+ * dimension's secondary renderer, or the main one for a same-dimension portal) exposes its render
+ * system, so Voxy's hooks run for that pass exactly as they do for the main pass: the dest
+ * sodium cull fills the visible-section stream, the dest CUTOUT pass draws the dest LODs, the
+ * dest fog is pushed out. Three things make that correct (the Voxy-side mixins):
+ * <ul>
+ *   <li>a secondary renderer's system is created lazily in its FIRST portal pass (then
+ *       {@code mc.level} IS that dimension, which Voxy's constructor reads for the Y bounds), and
+ *       kept across crossings (the promoted and the demoted renderer both keep theirs — no
+ *       shutdown + creation hitch at a crossing any more);</li>
+ *   <li>each (portal, layer) gets its own Voxy viewport (temporal occlusion state), and a
+ *       same-dimension pass never re-centres the main system's render-distance tracker;</li>
+ *   <li>Voxy's final composite is bound to the aperture: its scratch framebuffer carries the
+ *       main target's depth-STENCIL texture and the blit runs under the portal's stencil
+ *       limitation; afterwards the limitation is re-armed for the rest of the dest pass.</li>
+ * </ul>
+ * Off (config {@code voxyLodsInPortalViews}, the {@code -Dseamlessportals.disableVoxyPortalLods}
+ * lever, or a shaderpack active — the shaders-ON renderer composites differently) every portal
+ * pass hides the system again (tier 1: no LODs in windows). The cost of tier 2 is one Voxy
+ * render system per dimension looked at through a portal (its model atlas and node buffers;
+ * the geometry buffer is a sparse reservation on NVIDIA).
  *
  * <p><b>Classloading discipline</b> (the sodium/iris precedent): the base {@link Invoker} references
  * NO Voxy type; {@link OnVoxyPresent} is classloaded only by
  * {@code RenderCompatGating.detectAndGateRenderCompat} on a voxy-present install.
- * {@link #isSecondaryContext()} is the ONE predicate both the mixin and the facade share.
  */
 @Environment(EnvType.CLIENT)
 public class VoxyInterface {
@@ -84,7 +85,7 @@ public class VoxyInterface {
             return java.util.List.of();
         }
 
-        /** The deferred main-renderer creation (pass guard); no-op when Voxy is absent. */
+        /** The deferred creation (pass guard); no-op when Voxy is absent. */
         public void createRendererNow(LevelRenderer renderer) {
         }
     }
@@ -92,12 +93,11 @@ public class VoxyInterface {
     public static Invoker invoker = new Invoker();
 
     /**
-     * Set by the pass guard when Voxy asked to create the MAIN renderer's system inside a
-     * secondary context (Iris creating a dest-dimension pipeline reloads the main extractor from
-     * inside the dest bracket); consumed by the first {@code voxy$getRenderSystem} call outside
-     * any bracket, or cleared by any creation that goes through. Render-thread state only.
+     * TRUE while {@link OnVoxyPresent#createRendererNow} runs: the pass guard lets that one
+     * {@code voxy$createRenderer} through even inside a portal pass (the lazy dest creation).
+     * Render-thread state only.
      */
-    public static boolean deferredMainCreate = false;
+    public static boolean creatingNow = false;
 
     /**
      * Is this the player's MAIN renderer — the one the global {@code Minecraft.levelExtractor}
@@ -106,7 +106,7 @@ public class VoxyInterface {
      * the main one.
      */
     public static boolean isMainRenderer(LevelRenderer renderer) {
-        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        Minecraft mc = Minecraft.getInstance();
         if (renderer == null || mc.levelExtractor == null) {
             return false;
         }
@@ -120,11 +120,52 @@ public class VoxyInterface {
      * allChanged), a {@code ClientWorldLoader.withSwitchedWorld} bracket (the reload cascade's
      * per-dim allChanged, secondary ticking), a portal pass ({@code RendererUsingStencil.doRenderPortal}
      * push/pop + every iris renderer), and the dest extract bracket. Render-thread state only.
+     * This is the CREATION gate: Voxy's own creation call is deferred in every one of these.
      */
     public static boolean isSecondaryContext() {
         return ClientWorldLoader.getIsCreatingClientWorld()
             || ClientWorldLoader.getIsWorldSwitched()
             || PortalRendering.isRendering()
+            || SecondaryWorldRenderCore.isDestExtracting;
+    }
+
+    /** Tier 2 switch: config, the A/B lever, and never under an active shaderpack. */
+    public static boolean isPortalLodsEnabled() {
+        if (Boolean.getBoolean("seamlessportals.disableVoxyPortalLods")) {
+            return false;
+        }
+        IPConfig config = IPConfig.getConfig();
+        if (config != null && !config.voxyLodsInPortalViews) {
+            return false;
+        }
+        return !IrisInterface.invoker.isShaders();
+    }
+
+    /** A portal pass in which the dest LODs render (the Voxy-side mixins key on this). */
+    public static boolean isPortalLodPass() {
+        return PortalRendering.isRendering() && isPortalLodsEnabled();
+    }
+
+    /**
+     * A portal pass whose dest renderer IS the main renderer (a same-dimension portal): the
+     * main system renders it through a separate viewport and must not re-centre its tracker.
+     */
+    public static boolean isSameDimLodPass() {
+        return isPortalLodPass() && isMainRenderer(Minecraft.getInstance().levelRenderer);
+    }
+
+    /**
+     * The VISIBILITY gate for {@code voxy$getRenderSystem}: should this renderer answer
+     * {@code null} right now? Inside a portal pass the renderer driving the pass answers
+     * normally when tier 2 is on, and every renderer hides otherwise; outside a pass, the
+     * non-render secondary contexts hide.
+     */
+    public static boolean shouldHideRenderSystem(LevelRenderer self) {
+        if (PortalRendering.isRendering()) {
+            return !(isPortalLodsEnabled() && self == Minecraft.getInstance().levelRenderer);
+        }
+        return ClientWorldLoader.getIsCreatingClientWorld()
+            || ClientWorldLoader.getIsWorldSwitched()
             || SecondaryWorldRenderCore.isDestExtracting;
     }
 
@@ -147,27 +188,31 @@ public class VoxyInterface {
             if (promotedRenderer == demotedRenderer) {
                 return;
             }
-            // The explicit creation below supersedes any pending deferral (a second creation on
-            // a live system throws inside Voxy).
-            deferredMainCreate = false;
             var demoted = (me.cortex.voxy.client.core.IVoxyRenderSystemHolder) demotedRenderer;
             var promoted = (me.cortex.voxy.client.core.IVoxyRenderSystemHolder) promotedRenderer;
-            // Demoted FIRST: shutdown gives the geometry buffer back to Voxy's reuse cache, so the
-            // promoted system's creation reuses it instead of allocating a second multi-GB buffer.
-            try {
-                demoted.voxy$shutdownRenderer();
-            } catch (Throwable t) {
-                LOGGER.error("[Voxy compat] shutting down the demoted renderer's LOD system failed", t);
+            if (!isPortalLodsEnabled()) {
+                // Tier 1: exactly one system, on the main renderer. Demoted FIRST: shutdown gives
+                // the geometry buffer back to Voxy's reuse cache, so the promoted system's creation
+                // reuses it instead of allocating a second multi-GB buffer.
+                try {
+                    demoted.voxy$shutdownRenderer();
+                } catch (Throwable t) {
+                    LOGGER.error("[Voxy compat] shutting down the demoted renderer's LOD system failed", t);
+                }
             }
+            // Tier 2: the demoted renderer keeps its system (it is the dest renderer for the
+            // portal behind the player now), and the promoted one usually already has one from
+            // the portal view that led here — no hitch at the crossing.
             try {
                 // Mirrors Voxy's own MixinLevelExtractor.setLevel → allChanged sequence for the
                 // promoted renderer (the promote deliberately skips allChanged — mesh-preserving).
                 promoted.voxy$setWorld(toWorld);
                 if (promoted.voxy$getRenderSystem() == null) {
-                    promoted.voxy$createRenderer();
+                    createRendererNow(promotedRenderer);
                 }
-                LOGGER.info("[Voxy compat] LOD render system moved to the promoted {} renderer (present={})",
-                    toWorld.dimension().identifier(), promoted.voxy$getRenderSystem() != null);
+                LOGGER.info("[Voxy compat] LOD render system moved to the promoted {} renderer (present={}, demoted keeps its own={})",
+                    toWorld.dimension().identifier(), promoted.voxy$getRenderSystem() != null,
+                    demoted.voxy$getRenderSystem() != null);
             } catch (Throwable t) {
                 // A creation failure must never break the crossing — the player just loses LODs
                 // until the next allChanged (F3+A / resource reload) recreates it.
@@ -185,15 +230,22 @@ public class VoxyInterface {
         @Override
         public void createRendererNow(LevelRenderer renderer) {
             var holder = (me.cortex.voxy.client.core.IVoxyRenderSystemHolder) renderer;
+            boolean saved = creatingNow;
+            creatingNow = true;
             try {
                 if (holder.voxy$getRenderSystem() == null) {
                     holder.voxy$createRenderer();
-                    LOGGER.info("[Voxy compat] deferred LOD render system creation ran for the main renderer (present={})",
+                    Minecraft mc = Minecraft.getInstance();
+                    LOGGER.info("[Voxy compat] LOD render system created for the {} renderer{} (present={})",
+                        mc.level == null ? "?" : mc.level.dimension().identifier(),
+                        PortalRendering.isRendering() ? " inside its first portal pass" : "",
                         holder.voxy$getRenderSystem() != null);
                 }
             } catch (Throwable t) {
-                LOGGER.error("[Voxy compat] deferred LOD render system creation failed; "
-                    + "no LODs until the next renderer reload", t);
+                LOGGER.error("[Voxy compat] LOD render system creation failed; no LODs for that "
+                    + "renderer until the next renderer reload", t);
+            } finally {
+                creatingNow = saved;
             }
         }
 
