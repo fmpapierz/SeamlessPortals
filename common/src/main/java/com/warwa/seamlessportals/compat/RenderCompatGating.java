@@ -86,9 +86,10 @@ public final class RenderCompatGating {
                 qouteall.imm_ptl.core.compat.voxy_compatibility.VoxyInterface.invoker =
                     new qouteall.imm_ptl.core.compat.voxy_compatibility.VoxyInterface.OnVoxyPresent();
                 SeamlessPortalsConstants.LOGGER.info(
-                    "Seamless Portals: Voxy compat installed — LODs render in the main world only; "
-                        + "portal views show no LODs (the LOD system follows the player across "
-                        + "dimensions at each crossing).");
+                    "Seamless Portals: Voxy compat installed — LODs render in the main world and, "
+                        + "with the voxyLodsInPortalViews setting on (the default), inside portal views, "
+                        + "with or without a shaderpack; each dimension's renderer gets its own LOD "
+                        + "system (-Dseamlessportals.disableVoxyPortalLods=true for main-world-only LODs).");
             }
 
             // One-shot HONEST experimental notice (GOLD — a notice, not a failure).

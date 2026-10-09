@@ -27,11 +27,12 @@ loudly (`require=1`) if they move.
 | `computeProjectionMat` | reads `mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState.projectionMatrix` | tier-2 concern only |
 | Iris path | `LevelRenderer.render` HEAD captures viewport params; `IrisRenderingPipeline.beginLevelRendering` applies them to `getNullable()`; the CUTOUT hook then uses the captured viewport | under the guard a dest pass captures but never consumes; the next main `render` HEAD overwrites the capture — harmless |
 
-## 2. Tier 1 contract: coexistence (the posture with the tier-2 feature OFF or a shaderpack ON)
+## 2. Tier 1 contract: coexistence (the posture with the tier-2 feature OFF: config off or the lever)
 
 **Exactly the MAIN `LevelRenderer` carries a Voxy render system, and no Voxy hook fires inside a
 portal pass.** LODs render in the main world as without portals; portal views show no LODs
-(their fog is the vanilla render-distance fog). The LOD system follows the player across
+(their fog is the vanilla render-distance fog). Since tier 3 (§3.1) this posture is no longer
+tied to a shaderpack; it is the feature-off posture only. The LOD system follows the player across
 dimensions at each crossing (the same cost vanilla Voxy pays on a respawn-driven dimension
 change: one `VoxyRenderSystem` shutdown + creation, including Voxy's own `System.gc()`).
 Since tier 2 (§3) shipped, this section describes the feature-OFF behaviour; the guard
@@ -346,3 +347,19 @@ band in the window's sky" (run B note in §5) did not appear in these shots. GL 
   harmless — the same class as the NeoForge 26.2 note in the release-check reference); those
   lines are now noise in the script, and the re-run (same jars, `-SkipBuild`) PASSED / PASSED.
   NeoForge (no Voxy, no Iris) unchanged. Windows minimized and never in front throughout.
+  Final jars (the "Voxy compat installed" log line, which still described the tier-1 posture,
+  reworded; built 05:38, SHA-256 fabric f346dc8e…, neoforge 10a6743c…): the whole check run
+  again, **Fabric PASSED / PASSED (Iris + BSL + Voxy), NeoForge 26.2.0.88 PASSED / PASSED**,
+  same counts (4 of 4 systems on the Iris pipeline, 0 failures, 2 crossings per leg).
+- 2026-10-09 **"does it still work the same without Voxy?" — measured on the same final jar**
+  (user question; two new script switches): `-NoVoxy` (real Fabric client with the released
+  Sodium, NO Voxy): **PASSED / PASSED** — "Voxy is not present" ×1, "Voxy compat installed" ×0,
+  joined the real server, crossings both ways, singleplayer the same, no broken-jar line;
+  `-NoSodium` (plain Fabric client, no Sodium, no Voxy): **PASSED / PASSED** — no Voxy line at
+  all (the detection lives in the Sodium branch), same legs. Together with the two NeoForge
+  legs (no Voxy possible), every Voxy-absent posture the mod ships for has run the portal legs
+  on the real jar: the compat is inert without Voxy. Code audit the same day: the four Voxy
+  mixins weave only behind `IPCompatMixinPlugin.isVoxyPresent()` (three target Voxy classes,
+  the fourth targets methods only Voxy merges), the facade's real implementation is installed
+  only after `detectMod("voxy")`, the one call from ordinary mod code (the promote hook) hits the
+  no-op base otherwise, and no ordinary class references a `me.cortex.voxy` type.

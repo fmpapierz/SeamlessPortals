@@ -24,6 +24,8 @@
     tools\release-test.ps1
     tools\release-test.ps1 -Loaders fabric -SkipBuild
     tools\release-test.ps1 -Shaders                          # the Fabric client with Iris + BSL on (Voxy LODs on the Iris pipeline)
+    tools\release-test.ps1 -Loaders fabric -NoVoxy           # Sodium without Voxy: the compat must stay inert
+    tools\release-test.ps1 -Loaders fabric -NoSodium         # plain Fabric client (no Sodium, no Voxy)
     tools\release-test.ps1 -Work build\release-test-2 -Port 25573   # a second run beside one whose server is still up
 #>
 param(
@@ -46,6 +48,11 @@ param(
     [switch]$Shaders,
     [string]$ShaderPack = 'BSL_v10.1.3.zip',
     [string]$IrisVersion = '',
+    # The Fabric client WITHOUT Voxy (Sodium stays) or without Sodium and Voxy (plain Fabric): the regression legs that
+    # prove the Voxy compat stays inert when Voxy is absent (no "Voxy compat installed" line, portals still work).
+    # -Shaders needs Sodium (Iris requires it), so -Shaders with -NoSodium is refused.
+    [switch]$NoVoxy,
+    [switch]$NoSodium,
     # Where this run's server and client folders go (relative to the project root). The launcher install and
     # the downloads always stay in build\release-test, so a second work folder reuses them — use one when the
     # default folder's server or client is still in use (tools\play-client.ps1 plays on them).
@@ -53,6 +60,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+if ($Shaders -and $NoSodium) { throw '-Shaders needs Sodium (Iris requires it): drop -NoSodium or -Shaders' }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $root = Split-Path -Parent $PSScriptRoot
 $work = Join-Path $root $Work
@@ -469,8 +477,8 @@ function Set-Mods([string]$Loader, [string]$Dir, [bool]$IsClient) {
     if ($Loader -eq 'fabric') {
         Copy-Item -LiteralPath $fabricApi -Destination $mods
         if ($IsClient) {
-            Copy-Item -LiteralPath $sodiumJar -Destination $mods
-            Copy-Item -LiteralPath $voxyJar -Destination $mods
+            if (-not $NoSodium) { Copy-Item -LiteralPath $sodiumJar -Destination $mods }
+            if (-not $NoSodium -and -not $NoVoxy) { Copy-Item -LiteralPath $voxyJar -Destination $mods }
             if ($Shaders) { Copy-Item -LiteralPath $irisJar -Destination $mods }
         }
     }
@@ -828,7 +836,10 @@ function Test-Loader([string]$Loader) {
     $clientDir = Join-Path $dir 'client'
     $serverDir = Join-Path $dir 'server'
     $serverArguments = Install-Server $Loader $serverDir
-    $voxyLeg = ($Loader -eq 'fabric')
+    $voxyLeg = ($Loader -eq 'fabric') -and -not $NoVoxy -and -not $NoSodium
+    # The Fabric client without Voxy: the compat must never install ("Voxy is not present" is logged only when
+    # Sodium is there, since the detection lives in the Sodium branch).
+    $noVoxyLeg = ($Loader -eq 'fabric') -and -not $voxyLeg
 
     # 1. A real dedicated server with the release jar, and a real client with it joining and crossing portals.
     Say "$Loader dedicated server and client ($versionId)..."
@@ -863,6 +874,9 @@ function Test-Loader([string]$Loader) {
             $checks['LOD system moved at crossings (expect 2)']             = (Count-Lines @($clientLatest) 'LOD render system moved to the promoted')
             $checks['dest LOD system created in a portal pass (expect 1+)'] = (Count-Lines @($clientLatest) 'inside its first portal pass')
             if ($Shaders) { Add-ShaderChecks $checks $clientLatest }
+        } elseif ($noVoxyLeg) {
+            $checks['"Voxy is not present" (expect 1 with Sodium, 0 without)'] = (Count-Lines @($clientLatest) 'Voxy is not present')
+            $checks['"Voxy is present" / compat installed (expect 0)']          = (Count-Lines @($clientLatest) 'Voxy is present|Voxy compat installed')
         }
         $checks.Keys | ForEach-Object { Say ("   {0,-55} {1}" -f $_, $checks[$_]) }
         $outcome = Stop-TestClient $client $clientDir
@@ -879,6 +893,9 @@ function Test-Loader([string]$Loader) {
                 (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2 -and
                 (Count-Lines @($clientLatest) 'inside its first portal pass') -ge 1
             if ($Shaders) { $passed = $passed -and (Test-ShaderPass $clientLatest) }
+        } elseif ($noVoxyLeg) {
+            $passed = $passed -and (Count-Lines @($clientLatest) 'Voxy is present|Voxy compat installed') -eq 0 -and
+                ($NoSodium -or (Count-Lines @($clientLatest) 'Voxy is not present') -ge 1)
         }
         $result.Server = if ($passed) { 'PASSED' } else { 'FAILED' }
         $result.Notes += @($problems | ForEach-Object { "server + client: $_" })
@@ -928,6 +945,9 @@ function Test-Loader([string]$Loader) {
             $checks['LOD system moved at crossings (expect 2)']             = (Count-Lines @($clientLatest) 'LOD render system moved to the promoted')
             $checks['dest LOD system created in a portal pass (expect 1+)'] = (Count-Lines @($clientLatest) 'inside its first portal pass')
             if ($Shaders) { Add-ShaderChecks $checks $clientLatest }
+        } elseif ($noVoxyLeg) {
+            $checks['"Voxy is not present" (expect 1 with Sodium, 0 without)'] = (Count-Lines @($clientLatest) 'Voxy is not present')
+            $checks['"Voxy is present" / compat installed (expect 0)']          = (Count-Lines @($clientLatest) 'Voxy is present|Voxy compat installed')
         }
         $checks.Keys | ForEach-Object { Say ("   {0,-55} {1}" -f $_, $checks[$_]) }
         $outcome = Stop-TestClient $client $clientDir
@@ -942,6 +962,9 @@ function Test-Loader([string]$Loader) {
                 (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2 -and
                 (Count-Lines @($clientLatest) 'inside its first portal pass') -ge 1
             if ($Shaders) { $passed = $passed -and (Test-ShaderPass $clientLatest) }
+        } elseif ($noVoxyLeg) {
+            $passed = $passed -and (Count-Lines @($clientLatest) 'Voxy is present|Voxy compat installed') -eq 0 -and
+                ($NoSodium -or (Count-Lines @($clientLatest) 'Voxy is not present') -ge 1)
         }
         $result.Singleplayer = if ($passed) { 'PASSED' } else { 'FAILED' }
         $result.Notes += @($problems | ForEach-Object { "singleplayer: $_" })
@@ -1030,7 +1053,8 @@ foreach ($loader in $Loaders) {
     $jar = Get-Item -LiteralPath $releaseJars[$loader]
     $summary += ("  {0}  ({1:n0} bytes, built {2}, SHA-256 {3})" -f $jar.Name, $jar.Length, $jar.LastWriteTime, (Get-FileHash -LiteralPath $jar.FullName -Algorithm SHA256).Hash.ToLower())
 }
-$summary += "  Fabric: loader $($properties.fabric_loader_version), Fabric API $FabricApiVersion, Sodium $SodiumVersion, Voxy $VoxyVersion (client only)$(if ($Shaders) { ", Iris $IrisVersion with $ShaderPack ON (client only)" })"
+$clientExtras = if ($NoSodium) { 'no Sodium, no Voxy (plain Fabric client)' } elseif ($NoVoxy) { "Sodium $SodiumVersion, NO Voxy (client only)" } else { "Sodium $SodiumVersion, Voxy $VoxyVersion (client only)" }
+$summary += "  Fabric: loader $($properties.fabric_loader_version), Fabric API $FabricApiVersion, $clientExtras$(if ($Shaders) { ", Iris $IrisVersion with $ShaderPack ON (client only)" })"
 $summary += "  NeoForge: $NeoForgeVersion"
 $summary += ''
 $summary += 'Summary      server + client   singleplayer'
