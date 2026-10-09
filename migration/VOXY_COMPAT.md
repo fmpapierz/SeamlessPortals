@@ -176,6 +176,36 @@ change: one `VoxyRenderSystem` shutdown + creation, including Voxy's own `System
   jars (the dev gametest IS a real client with the real Sodium/Voxy jars, but launched through
   loom); nothing in this change is loader-packaging-sensitive (26.2 is unobfuscated, the compat
   mixin config is the same file, the facade classloads by presence).
+- 2026-10-09 **RELEASE CHECK, Fabric** (`tools\release-test.ps1 -Loaders fabric`, written this
+  session from TACZ 26.2's): a real dedicated server (official `fabric-server-launch.jar`,
+  loader 0.19.3, Fabric API 0.152.1+26.2, the release jar; flat world, offline, EULA accepted)
+  and a real launcher-profile client (vanilla jar from Mojang, the Fabric profile from
+  meta.fabricmc.net, mods = release jar + Fabric API + **released Sodium mc26.2-0.9.1 + Voxy
+  0.2.19-beta from Modrinth**, the window agent attached): **PASSED / PASSED** (server+client,
+  singleplayer). The client joined over the socket, a 3×3 bi-way pair overworld↔nether was made
+  with `/portal cb_make_portal` on armor-stand anchors, the portal view rendered the nether
+  (`mp-1`), the player walked through into the nether and back (both crossing cutovers logged,
+  `state` lines confirm the dimension), the LOD system moved at each crossing (×2), `Voxy is
+  present` + `Voxy compat installed` ×1, 3 LOD systems created, NO broken-jar line (missing
+  class/member, mixin failure, crash report, "Cannot have multiple renderers") in any log. The
+  server's world then opened in singleplayer with cheats patched on: same legs, same result.
+  Window: minimized and never in front throughout (user32 poll); one restore (not in front)
+  seen right after a crossing in run 1 only. Observation, not Voxy's: the nether sky inside the
+  window looked teal in the first singleplayer view (`sp-1`) and red in multiplayer (`mp-1`).
+  Script pitfalls paid for: `cb_make_portal` is entered from the side OPPOSITE the anchor's
+  view vector; a server world has cheats off in singleplayer (patch `allowCommands` in
+  level.dat); stdout + latest.log double every count; `Copy-Item -Recurse` into an existing
+  folder nests it; `$pid`/`$input` are reserved in PowerShell.
+- 2026-10-09 **RELEASE CHECK, NeoForge 26.2.0.88** (the newest 26.2 NeoForge, installed by its
+  own installer for both the client profile and the server; mods = the release jar only, Cloth
+  Config is bundled): **PASSED / PASSED**. Server booted (`Done (0.452s)`), the client joined,
+  the portal view rendered the nether (`neoforge/screenshots-mp/mp-1`), walked into the nether
+  and back (2 cutovers), singleplayer the same; no broken-jar line. Voxy does not exist on
+  NeoForge, so this leg is the regression proof that the compat code is inert there (the facade
+  stays the no-op base, the mixin never weaves). Only pre-existing lines in the warnings: the
+  IS5-MB diagnostic, IP's `Chunk loading failure` tickets, and FML rewriting the minimal
+  `fml.toml` the script seeds. The window was restored once (never in front) while the user was
+  Alt-Tabbing (`Task Switching` was the foreground window at that moment).
 - 2026-10-09 regression gate (`runCrossingGametest`, sodium-absent): legs 1, 2, 3, 7, 4, 6a, 6b
   PASS, then **`RS-A step-1 SEAM MAP GATE FAILED: registry hot-path gate missed section for bound
   cell (-311,-59,-319) (portal 20)`** — the leg-6b generated overworld portal. ATTRIBUTED

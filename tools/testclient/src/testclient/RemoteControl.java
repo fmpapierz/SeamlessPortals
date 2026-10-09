@@ -28,8 +28,9 @@ import java.util.stream.Stream;
  * <ul>
  * <li>{@code screenshot} saves a screenshot from the main render target into {@code screenshots/};</li>
  * <li>{@code cmd <command>} runs a command as the local player;</li>
- * <li>{@code shoot <count>} fires the gun in the main hand that many times, through TACZ's own client API (the call
- * its shoot key makes; the key itself only works in a focused window), and prints each {@code ShootResult};</li>
+ * <li>{@code screenshot [name]} saves a screenshot (optionally under that name) from the main render target;</li>
+ * <li>{@code nudge <dx> <dz> <ticks>} walks the player: that movement per tick for that many ticks;</li>
+ * <li>{@code state} prints the player's dimension and position;</li>
  * <li>{@code quit} shuts the game down cleanly (saving the world).</li>
  * </ul>
  * Minecraft 26.x is not obfuscated, so everything goes through reflection by Mojang names on every loader, in
@@ -211,19 +212,52 @@ final class RemoteControl implements Runnable {
             Method stop = minecraftClass.getMethod("stop");
             System.out.println("[testclient] quitting");
             execute.invoke(minecraft, (Runnable) () -> invokeQuietly(stop, minecraft));
-        } else if (line.equals("screenshot")) {
+        } else if (line.equals("screenshot") || line.startsWith("screenshot ")) {
+            String name = line.length() > "screenshot".length() ? line.substring("screenshot ".length()).trim() : "";
             execute.invoke(minecraft, (Runnable) () -> {
                 try {
                     Class<?> screenshot = Class.forName("net.minecraft.client.Screenshot", true, gameLoader);
                     Class<?> renderTarget = Class.forName("com.mojang.blaze3d.pipeline.RenderTarget", true, gameLoader);
                     File gameDirectory = (File) minecraftClass.getField("gameDirectory").get(minecraft);
-                    Object target = minecraftClass.getMethod("getMainRenderTarget").invoke(minecraft);
-                    Consumer<Object> done = message -> System.out.println("[testclient] screenshot saved");
-                    screenshot.getMethod("grab", File.class, renderTarget, Consumer.class).invoke(null, gameDirectory, target, done);
+                    // 26.2: Minecraft.getMainRenderTarget() is gone; the target hangs off the GameRenderer.
+                    Object gameRenderer = minecraftClass.getField("gameRenderer").get(minecraft);
+                    Object target = gameRenderer.getClass().getMethod("mainRenderTarget").invoke(gameRenderer);
+                    Consumer<Object> done = message -> System.out.println("[testclient] screenshot saved" + (name.isEmpty() ? "" : " (" + name + ")"));
+                    if (name.isEmpty()) {
+                        screenshot.getMethod("grab", File.class, renderTarget, Consumer.class).invoke(null, gameDirectory, target, done);
+                    } else {
+                        screenshot.getMethod("grab", File.class, String.class, renderTarget, int.class, Consumer.class).invoke(null, gameDirectory, name + ".png", target, 1, done);
+                    }
                 } catch (Throwable t) {
                     System.err.println("[testclient] screenshot failed: " + t);
                 }
             });
+        } else if (line.startsWith("nudge ")) {
+            // nudge <dx> <dz> <ticks>: pushes the player that far per tick for that many ticks, the way walking does
+            // (the client moves the player itself and reports the moves to the server), so a portal crossing happens the
+            // way it does for a real player even though a minimized, unfocused window gets no key input.
+            String[] parts = line.substring("nudge ".length()).trim().split("\s+");
+            double dx = Double.parseDouble(parts[0]);
+            double dz = Double.parseDouble(parts[1]);
+            int ticks = Integer.parseInt(parts[2]);
+            for (int i = 0; i < ticks; i++) {
+                execute.invoke(minecraft, (Runnable) () -> {
+                    try {
+                        Object player = minecraftClass.getField("player").get(minecraft);
+                        if (player == null) {
+                            return;
+                        }
+                        Class<?> entity = findSuper(player.getClass(), "net.minecraft.world.entity.Entity");
+                        Object delta = entity.getMethod("getDeltaMovement").invoke(player);
+                        double dy = (double) delta.getClass().getField("y").get(delta);
+                        entity.getMethod("setDeltaMovement", double.class, double.class, double.class).invoke(player, dx, dy, dz);
+                    } catch (Throwable t) {
+                        System.err.println("[testclient] nudge failed: " + t);
+                    }
+                });
+                Thread.sleep(50);
+            }
+            System.out.println("[testclient] nudge done (" + dx + ", " + dz + ") x " + ticks);
         } else if (line.startsWith("cmd ")) {
             String command = line.substring("cmd ".length()).trim();
             execute.invoke(minecraft, (Runnable) () -> {
@@ -240,31 +274,24 @@ final class RemoteControl implements Runnable {
                     System.err.println("[testclient] /" + command + " failed: " + t);
                 }
             });
-        } else if (line.startsWith("shoot ")) {
-            int count = Integer.parseInt(line.substring("shoot ".length()).trim());
-            Class<?> operatorClass = Class.forName("com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator", true, gameLoader);
-            Class<?> localPlayer = Class.forName("net.minecraft.client.player.LocalPlayer", true, gameLoader);
-            Method fromLocalPlayer = operatorClass.getMethod("fromLocalPlayer", localPlayer);
-            Method shoot = operatorClass.getMethod("shoot");
-            for (int i = 1; i <= count; i++) {
-                int shot = i;
-                execute.invoke(minecraft, (Runnable) () -> {
-                    try {
-                        Object player = minecraftClass.getField("player").get(minecraft);
-                        if (player == null) {
-                            System.err.println("[testclient] no player to shoot with");
-                            return;
-                        }
-                        Object result = shoot.invoke(fromLocalPlayer.invoke(null, player));
-                        System.out.println("[testclient] shot " + shot + ": " + result);
-                    } catch (Throwable t) {
-                        System.err.println("[testclient] shot " + shot + " failed: " + t);
+        } else if (line.equals("state")) {
+            // state: one line with the player's dimension and position, for a script to read from the log.
+            execute.invoke(minecraft, (Runnable) () -> {
+                try {
+                    Object player = minecraftClass.getField("player").get(minecraft);
+                    Object level = minecraftClass.getField("level").get(minecraft);
+                    if (player == null || level == null) {
+                        System.out.println("[testclient] state: no player");
+                        return;
                     }
-                });
-                // An AK-47 cycles in 100 ms; leave each shot time to reach the server.
-                Thread.sleep(350);
-            }
-            System.out.println("[testclient] shooting done");
+                    Class<?> entity = findSuper(player.getClass(), "net.minecraft.world.entity.Entity");
+                    Object dimension = level.getClass().getMethod("dimension").invoke(level);
+                    Object position = entity.getMethod("position").invoke(player);
+                    System.out.println("[testclient] state: " + dimension.getClass().getMethod("identifier").invoke(dimension) + " @ " + position);
+                } catch (Throwable t) {
+                    System.err.println("[testclient] state failed: " + t);
+                }
+            });
         } else {
             System.err.println("[testclient] unknown remote command: " + line);
         }
