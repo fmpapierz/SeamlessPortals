@@ -56,7 +56,7 @@ public abstract class MixinVoxyRenderSystem_PortalPass {
 
     @Inject(method = "renderOpaque", at = @At("RETURN"))
     private void ip_rearmStencilLimitation(CallbackInfo ci) {
-        if (VoxyInterface.isPortalLodPass()) {
+        if (VoxyInterface.isStencilBoundedLodPass()) {
             GL11.glEnable(GL11.GL_STENCIL_TEST);
             RendererUsingStencil.setStencilLimitation(PortalRendering.getPortalLayer());
         }

@@ -89,7 +89,7 @@ public abstract class MixinVoxyAbstractRenderPipeline_StencilBound {
         at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/GL11C;glDisable(I)V", ordinal = 0)
     )
     private static void ip_boundCompositeToAperture(int cap) {
-        if (cap == GL11.GL_STENCIL_TEST && VoxyInterface.isPortalLodPass()) {
+        if (cap == GL11.GL_STENCIL_TEST && VoxyInterface.isStencilBoundedLodPass()) {
             GL11.glEnable(GL11.GL_STENCIL_TEST);
             RendererUsingStencil.setStencilLimitation(PortalRendering.getPortalLayer());
             return;

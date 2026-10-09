@@ -57,9 +57,20 @@ public class IrisInterface {
         public boolean isShaders() {
             return false;
         }
-        
+
         public boolean isRenderingShadowMap() {
             return false;
+        }
+
+        /**
+         * Voxy compat tier 3 (2026-10-09): Iris's CURRENT pipeline (the one its pipeline manager
+         * last prepared — the dest dimension's during a nested dest render). Voxy binds a new
+         * render system's Iris pipeline to exactly this one, so a renderer's system may only be
+         * created while this equals {@link #getPipeline(LevelRenderer)} of that renderer.
+         */
+        @Nullable
+        public Object getCurrentPipeline() {
+            return null;
         }
         
         public Object getPipeline(LevelRenderer worldRenderer) {
@@ -165,10 +176,15 @@ public class IrisInterface {
         public boolean isShaders() {
             return Iris.getCurrentPack().isPresent();
         }
-        
+
         @Override
         public boolean isRenderingShadowMap() {
             return ShadowRenderer.ACTIVE;
+        }
+
+        @Override
+        public @Nullable Object getCurrentPipeline() {
+            return Iris.getPipelineManager().getPipelineNullable();
         }
 
         /**

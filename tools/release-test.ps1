@@ -23,6 +23,8 @@
 .EXAMPLE
     tools\release-test.ps1
     tools\release-test.ps1 -Loaders fabric -SkipBuild
+    tools\release-test.ps1 -Shaders                          # the Fabric client with Iris + BSL on (Voxy LODs on the Iris pipeline)
+    tools\release-test.ps1 -Work build\release-test-2 -Port 25573   # a second run beside one whose server is still up
 #>
 param(
     [ValidateSet('fabric', 'neoforge')]
@@ -38,6 +40,12 @@ param(
     [string]$FabricApiVersion = '',
     [string]$SodiumVersion = '',
     [string]$VoxyVersion = '',
+    # The Fabric client with Iris and a shaderpack ON (the Voxy dest-LOD feature has a shaders-on path of its own:
+    # LOD systems on Voxy's Iris pipeline, which must never fall back or switch the pack off). The pack is copied
+    # from fabric\runs\client-sodium\shaderpacks; the NeoForge leg stays plain.
+    [switch]$Shaders,
+    [string]$ShaderPack = 'BSL_v10.1.3.zip',
+    [string]$IrisVersion = '',
     # Where this run's server and client folders go (relative to the project root). The launcher install and
     # the downloads always stay in build\release-test, so a second work folder reuses them — use one when the
     # default folder's server or client is still in use (tools\play-client.ps1 plays on them).
@@ -463,6 +471,7 @@ function Set-Mods([string]$Loader, [string]$Dir, [bool]$IsClient) {
         if ($IsClient) {
             Copy-Item -LiteralPath $sodiumJar -Destination $mods
             Copy-Item -LiteralPath $voxyJar -Destination $mods
+            if ($Shaders) { Copy-Item -LiteralPath $irisJar -Destination $mods }
         }
     }
     Copy-Item -LiteralPath $releaseJars[$Loader] -Destination $mods
@@ -487,6 +496,12 @@ function Set-ClientDir([string]$Loader, [string]$Dir) {
     New-Item -ItemType Directory -Force $config | Out-Null
     # Immersive Portals' first-launch information screen ("I Know") would stall an unattended client.
     [IO.File]::WriteAllText((Join-Path $config 'immersive_portals.json'), "{`n  `"initialScreenShown`": true`n}`n")
+    if ($Loader -eq 'fabric' -and $Shaders) {
+        $packs = Join-Path $Dir 'shaderpacks'
+        New-Item -ItemType Directory -Force $packs | Out-Null
+        Copy-Item -LiteralPath $shaderPackFile -Destination $packs -Force
+        [IO.File]::WriteAllText((Join-Path $config 'iris.properties'), "enableShaders=true`nshaderPack=$ShaderPack`ndisableUpdateMessage=true`n")
+    }
     if ($Loader -eq 'neoforge') {
         # No early loading window: it would open in front, outside the agent's reach.
         $fml = Join-Path $config 'fml.toml'
@@ -642,7 +657,9 @@ function Get-WindowState($Client) {
 $problemPattern = 'NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError|IllegalAccessError|AbstractMethodError|IncompatibleClassChangeError|LinkageError|ExceptionInInitializerError|InvalidInjectionException|InjectionError|MixinApplyError|MixinTransformerError|Mixin apply.* failed|refmap|has failed to load correctly|Failed to load|Missing or unsupported mandatory dependencies|Crash report saved|---- Minecraft Crash Report|Cannot have multiple renderers'
 # Netty's kqueue and epoll natives only exist on macOS and Linux; on Windows log4j's debug appender trips over them.
 # Voxy's optional-mod mixins (Flashback, Nvidium, Chunky, Iris when absent) log their missing targets as warnings.
-$noisePattern = 'io\.netty\.channel\.(kqueue|epoll)|Only supported on (OSX/BSD|Linux)|@Mixin target .* was not found|Error loading class: (com/moulberry|me/cortex/nvidium|org/popcraft|net/irisshaders)|Failed to load (Realms|texture|sound)'
+# The released Iris jar names refmaps it does not ship (26.2 is unobfuscated, so none is needed); Fabric Loader warns
+# "could not be read" for each of its mixin configs — Iris's, not this mod's.
+$noisePattern = 'io\.netty\.channel\.(kqueue|epoll)|Only supported on (OSX/BSD|Linux)|@Mixin target .* was not found|Error loading class: (com/moulberry|me/cortex/nvidium|org/popcraft|net/irisshaders)|Failed to load (Realms|texture|sound)|Reference map ''iris[-a-z]*\.refmap\.json'' for mixins\.iris'
 function Find-Problems([string[]]$Paths) {
     $found = @()
     foreach ($path in $Paths) {
@@ -780,6 +797,23 @@ function Invoke-PortalLegs($Client, [string]$Dir, [string]$StdoutLog, [string]$T
     }
 }
 
+# The shaders-on checks: every LOD system must sit on Voxy's Iris pipeline (never the plain one), and Voxy must never
+# have switched the pack off — it does that when its Iris pipeline fails to build ("Pipeline data already bound" was
+# the 2026-10-09 case, a system created against another dimension's pipeline).
+$shaderFailurePattern = 'Shaders are disabled because enableShaders|Failed to create iris render pipeline|Pipeline data already bound'
+function Add-ShaderChecks($Checks, [string]$ClientLatest) {
+    $Checks['LOD systems on the Iris pipeline (expect all)']          = "$(Count-Lines @($ClientLatest) "using pipeline 'IrisVoxyRenderPipeline'") of $(Count-Lines @($ClientLatest) 'Voxy render system created with')"
+    $Checks['shaderpack switched off / pipeline failures (expect 0)'] = (Count-Lines @($ClientLatest) $shaderFailurePattern)
+    $Checks['shaderpack pipelines created (expect 2: both dims)']     = (Count-Lines @($ClientLatest) 'Creating pipeline for dimension')
+}
+function Test-ShaderPass([string]$ClientLatest) {
+    $created = Count-Lines @($ClientLatest) 'Voxy render system created with'
+    $onIris = Count-Lines @($ClientLatest) "using pipeline 'IrisVoxyRenderPipeline'"
+    return ($created -ge 1) -and ($onIris -eq $created) -and
+        (Count-Lines @($ClientLatest) $shaderFailurePattern) -eq 0 -and
+        (Count-Lines @($ClientLatest) 'Creating pipeline for dimension') -ge 2
+}
+
 # ---------------------------------------------------------------------------------------------------------------
 # One loader
 # ---------------------------------------------------------------------------------------------------------------
@@ -828,6 +862,7 @@ function Test-Loader([string]$Loader) {
             $checks['Voxy LOD systems created (expect 2 or more)']          = (Count-Lines @($clientLatest) 'Creating Voxy render system')
             $checks['LOD system moved at crossings (expect 2)']             = (Count-Lines @($clientLatest) 'LOD render system moved to the promoted')
             $checks['dest LOD system created in a portal pass (expect 1+)'] = (Count-Lines @($clientLatest) 'inside its first portal pass')
+            if ($Shaders) { Add-ShaderChecks $checks $clientLatest }
         }
         $checks.Keys | ForEach-Object { Say ("   {0,-55} {1}" -f $_, $checks[$_]) }
         $outcome = Stop-TestClient $client $clientDir
@@ -843,6 +878,7 @@ function Test-Loader([string]$Loader) {
             $passed = $passed -and (Count-Lines @($clientLatest) 'Voxy compat installed') -eq 1 -and
                 (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2 -and
                 (Count-Lines @($clientLatest) 'inside its first portal pass') -ge 1
+            if ($Shaders) { $passed = $passed -and (Test-ShaderPass $clientLatest) }
         }
         $result.Server = if ($passed) { 'PASSED' } else { 'FAILED' }
         $result.Notes += @($problems | ForEach-Object { "server + client: $_" })
@@ -891,6 +927,7 @@ function Test-Loader([string]$Loader) {
             $checks['Voxy LOD systems created (expect 2 or more)']          = (Count-Lines @($clientLatest) 'Creating Voxy render system')
             $checks['LOD system moved at crossings (expect 2)']             = (Count-Lines @($clientLatest) 'LOD render system moved to the promoted')
             $checks['dest LOD system created in a portal pass (expect 1+)'] = (Count-Lines @($clientLatest) 'inside its first portal pass')
+            if ($Shaders) { Add-ShaderChecks $checks $clientLatest }
         }
         $checks.Keys | ForEach-Object { Say ("   {0,-55} {1}" -f $_, $checks[$_]) }
         $outcome = Stop-TestClient $client $clientDir
@@ -904,6 +941,7 @@ function Test-Loader([string]$Loader) {
             $passed = $passed -and (Count-Lines @($clientLatest) 'Voxy compat installed') -eq 1 -and
                 (Count-Lines @($clientLatest) 'LOD render system moved to the promoted') -ge 2 -and
                 (Count-Lines @($clientLatest) 'inside its first portal pass') -ge 1
+            if ($Shaders) { $passed = $passed -and (Test-ShaderPass $clientLatest) }
         }
         $result.Singleplayer = if ($passed) { 'PASSED' } else { 'FAILED' }
         $result.Notes += @($problems | ForEach-Object { "singleplayer: $_" })
@@ -926,6 +964,7 @@ $minecraft = $properties.minecraft_version
 if (-not $FabricApiVersion) { $FabricApiVersion = $properties.fabric_version }
 if (-not $SodiumVersion) { $SodiumVersion = $properties.sodium_version }
 if (-not $VoxyVersion) { $VoxyVersion = $properties.voxy_version }
+if (-not $IrisVersion) { $IrisVersion = $properties.iris_version }
 
 # The game's assets are already on this machine: the Fabric dev environment keeps them.
 $launchConfig = Join-Path $root '.gradle\loom-cache\projects\fabric\launch.cfg'
@@ -958,11 +997,22 @@ Install-Vanilla
 $fabricApi = Join-Path $downloads "fabric-api-$FabricApiVersion.jar"
 $sodiumJar = Join-Path $downloads "sodium-$SodiumVersion.jar"
 $voxyJar = Join-Path $downloads "voxy-$VoxyVersion.jar"
+$irisJar = Join-Path $downloads "iris-$IrisVersion.jar"
+$shaderPackFile = Join-Path $root "fabric\runs\client-sodium\shaderpacks\$ShaderPack"
 if ($Loaders -contains 'fabric') {
     Get-File "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/$FabricApiVersion/fabric-api-$FabricApiVersion.jar" $fabricApi '?'
     # The released Sodium and Voxy jars, from Modrinth's maven (the same artifacts the dev runs resolve).
     Get-File "https://api.modrinth.com/maven/maven/modrinth/sodium/$SodiumVersion/sodium-$SodiumVersion.jar" $sodiumJar $null
     Get-File "https://api.modrinth.com/maven/maven/modrinth/voxy/$VoxyVersion/voxy-$VoxyVersion.jar" $voxyJar $null
+    if ($Shaders) {
+        # The released Iris jar: the Gradle cache already holds the Modrinth artifact the dev runs resolve, so reuse it.
+        if (-not (Test-Path -LiteralPath $irisJar)) {
+            $cached = Get-ChildItem -LiteralPath (Join-Path $env:USERPROFILE '.gradle\caches\modules-2\files-2.1\maven.modrinth\iris') -Recurse -Filter "iris-$IrisVersion.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($cached) { Copy-Item -LiteralPath $cached.FullName -Destination $irisJar }
+        }
+        Get-File "https://api.modrinth.com/maven/maven/modrinth/iris/$IrisVersion/iris-$IrisVersion.jar" $irisJar $null
+        if (-not (Test-Path -LiteralPath $shaderPackFile)) { throw "$shaderPackFile is missing (the shaderpack to copy into the client)" }
+    }
 }
 
 $results = @()
@@ -980,7 +1030,7 @@ foreach ($loader in $Loaders) {
     $jar = Get-Item -LiteralPath $releaseJars[$loader]
     $summary += ("  {0}  ({1:n0} bytes, built {2}, SHA-256 {3})" -f $jar.Name, $jar.Length, $jar.LastWriteTime, (Get-FileHash -LiteralPath $jar.FullName -Algorithm SHA256).Hash.ToLower())
 }
-$summary += "  Fabric: loader $($properties.fabric_loader_version), Fabric API $FabricApiVersion, Sodium $SodiumVersion, Voxy $VoxyVersion (client only)"
+$summary += "  Fabric: loader $($properties.fabric_loader_version), Fabric API $FabricApiVersion, Sodium $SodiumVersion, Voxy $VoxyVersion (client only)$(if ($Shaders) { ", Iris $IrisVersion with $ShaderPack ON (client only)" })"
 $summary += "  NeoForge: $NeoForgeVersion"
 $summary += ''
 $summary += 'Summary      server + client   singleplayer'

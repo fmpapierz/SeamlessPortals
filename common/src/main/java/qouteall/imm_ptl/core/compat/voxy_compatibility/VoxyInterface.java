@@ -88,6 +88,20 @@ public class VoxyInterface {
         /** The deferred creation (pass guard); no-op when Voxy is absent. */
         public void createRendererNow(LevelRenderer renderer) {
         }
+
+        /**
+         * May this renderer's pending system be created right now? Voxy builds the system's
+         * Iris pipeline against Iris's CURRENT pipeline, so under a shaderpack the creation must
+         * wait until that is the renderer's own (inside its {@code LevelRenderer.render}, after
+         * Iris's {@code preparePipeline}) — a dest renderer's first cull hook runs BEFORE that,
+         * and a between-frames reload of the main renderer (a render-distance change) runs while
+         * the LAST portal pass's dest pipeline is still current; creating in either bound the new
+         * system to the other pipeline's data ("Pipeline data already bound", upon which Voxy
+         * switches the shaders off; both observed 2026-10-09). Shaders off: always true.
+         */
+        public boolean canCreateNow(LevelRenderer renderer) {
+            return true;
+        }
     }
 
     public static Invoker invoker = new Invoker();
@@ -129,21 +143,30 @@ public class VoxyInterface {
             || SecondaryWorldRenderCore.isDestExtracting;
     }
 
-    /** Tier 2 switch: config, the A/B lever, and never under an active shaderpack. */
+    /** Tier 2 switch: config and the A/B lever. Shaders off and on alike (tier 3, 2026-10-09). */
     public static boolean isPortalLodsEnabled() {
         if (Boolean.getBoolean("seamlessportals.disableVoxyPortalLods")) {
             return false;
         }
         IPConfig config = IPConfig.getConfig();
-        if (config != null && !config.voxyLodsInPortalViews) {
-            return false;
-        }
-        return !IrisInterface.invoker.isShaders();
+        return config == null || config.voxyLodsInPortalViews;
     }
 
     /** A portal pass in which the dest LODs render (the Voxy-side mixins key on this). */
     public static boolean isPortalLodPass() {
         return PortalRendering.isRendering() && isPortalLodsEnabled();
+    }
+
+    /**
+     * A dest-LOD portal pass under the STENCIL renderer (shaders off): the dest draws straight
+     * into the main target bounded by the aperture's stencil value, so Voxy's composite must be
+     * stencil-tested and the limitation re-armed after its draw. Under a shaderpack the dest
+     * renders full-screen through its own Iris pipeline and the aperture is applied afterwards
+     * by the stamp copy ({@code IrisCompatPaste.stampPortalArea}) — no stencil mask exists there,
+     * and enabling an EQUAL test would reject everything.
+     */
+    public static boolean isStencilBoundedLodPass() {
+        return isPortalLodPass() && !IrisInterface.invoker.isShaders();
     }
 
     /**
@@ -208,7 +231,15 @@ public class VoxyInterface {
                 // promoted renderer (the promote deliberately skips allChanged — mesh-preserving).
                 promoted.voxy$setWorld(toWorld);
                 if (promoted.voxy$getRenderSystem() == null) {
-                    createRendererNow(promotedRenderer);
+                    if (canCreateNow(promotedRenderer)) {
+                        createRendererNow(promotedRenderer);
+                    } else {
+                        // Under a shaderpack the promote runs in the tick, with another (or no)
+                        // pipeline current: Voxy's creation call goes through the pass guard,
+                        // which marks it pending and performs it at the promoted renderer's next
+                        // own render (its first visible call that may create).
+                        promoted.voxy$createRenderer();
+                    }
                 }
                 LOGGER.info("[Voxy compat] LOD render system moved to the promoted {} renderer (present={}, demoted keeps its own={})",
                     toWorld.dimension().identifier(), promoted.voxy$getRenderSystem() != null,
@@ -225,6 +256,15 @@ public class VoxyInterface {
         public boolean hasRenderSystem(LevelRenderer renderer) {
             return renderer != null
                 && ((me.cortex.voxy.client.core.IVoxyRenderSystemHolder) renderer).voxy$getRenderSystem() != null;
+        }
+
+        @Override
+        public boolean canCreateNow(LevelRenderer renderer) {
+            if (!IrisInterface.invoker.isShaders()) {
+                return true;
+            }
+            Object own = IrisInterface.invoker.getPipeline(renderer);
+            return own != null && own == IrisInterface.invoker.getCurrentPipeline();
         }
 
         @Override

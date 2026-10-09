@@ -95,9 +95,9 @@ pieces below are shared by both tiers.
 ## 3. Tier 2 (LODs inside portal views) — SHIPPED 2026-10-09, default ON
 
 Config `voxyLodsInPortalViews` (IPConfig, client category; default true), JVM lever
-`-Dseamlessportals.disableVoxyPortalLods=true` (A/B, forces the tier-1 posture), and never while
-a shaderpack is active (`IrisInterface.invoker.isShaders()` — the shaders-ON renderer stamps the
-dest view from its own target; the stencil bound below does not apply there).
+`-Dseamlessportals.disableVoxyPortalLods=true` (A/B, forces the tier-1 posture). Shaders off
+and on alike since tier 3 (§3.1, 2026-10-09); the stencil pieces (4 and 5 below) apply only
+shaders-off (`VoxyInterface.isStencilBoundedLodPass`).
 
 **Mechanism.** Inside a portal pass the renderer driving the pass (`mc.levelRenderer`: the dest
 dimension's secondary renderer, or the main renderer for a same-dimension portal) exposes its
@@ -144,15 +144,73 @@ the windows are identical ON vs OFF (the dest's real chunks fill them). Deferred
 artefact found and fixed on the way: a probe of a non-current renderer (the test's census) must
 not trigger the lazy creation; only `mc.levelRenderer` creates.
 
+### 3.1 Tier 3: the same under a shaderpack — SHIPPED 2026-10-09
+
+User report: "voxy showing lods in destination when shader off but not when shader on".
+
+**Why it differs from shaders-off.** Under a pack the dest renders through its OWN Iris pipeline
+(`IrisCompatOn262Renderer`: a nested full `LevelRenderer.render()` into the main target, then
+`IrisCompatPaste.stampPortalArea` copies the aperture) — no stencil mask exists in that pass, so
+the stencil pieces of §3 must stay off (an EQUAL test there rejects everything), and the stamp
+itself is the bound. Voxy's Iris integration is per Iris pipeline: `MixinIrisRenderingPipeline`
+builds one `IrisVoxyRenderPipelineData` per `IrisRenderingPipeline` (per dimension), and an
+`IrisVoxyRenderPipeline` binds itself to that data (`data.thePipeline`, single-binding:
+"Pipeline data already bound" otherwise). `RenderPipelineFactory.createIrisPipeline` binds a NEW
+render system to whatever `Iris.getPipelineManager().getPipelineNullable()` holds at creation
+time, and on any failure calls `IrisUtil.disableIrisShaders()` — the pack is switched OFF
+(`enableShaders=false` written to `iris.properties`) and the system falls back to the plain
+pipeline. So a system may only be created while Iris's CURRENT pipeline is the renderer's own.
+1. `VoxyInterface.isPortalLodsEnabled()` no longer excludes shaders; `isStencilBoundedLodPass()`
+   (= portal LOD pass AND no pack) gates the two stencil pieces.
+2. **Creation gate `Invoker.canCreateNow(renderer)`** (shaders off: always true): the renderer's
+   own Iris pipeline (Iris's per-renderer `LevelRenderer.pipeline` field, which Iris writes at
+   every render start) must be non-null and identical to the manager's current one
+   (`IrisInterface.Invoker.getCurrentPipeline()`, new). The pass guard's `voxy$createRenderer`
+   HEAD now defers (PENDING) whenever the renderer is in a secondary context OR may not create,
+   and the pending creation is consumed at the renderer's first visible `voxy$getRenderSystem`
+   call that may. Two main-renderer cases needed this beyond tier 2's secondary-context deferral:
+   - a dest renderer's first cull hook runs before Iris has prepared the dest pipeline inside the
+     nested render (run 1: the dest system bound to the MAIN pipeline's data);
+   - a between-frames reload of the main renderer — the V2 render-distance change, F3+A, any
+     `allChanged` from a tick — runs while Iris still holds the LAST portal pass's dest pipeline
+     as current (run 2: the main system bound to the NETHER pipeline's data). Iris's own
+     `preparePipeline` also calls `levelExtractor.allChanged()` right after creating a pipeline
+     (javap of PipelineManager), which is the in-bracket main reload tier 2 already deferred.
+   The promote hook (`onPlayerDimensionChangePromoted`) creates immediately when it may, else
+   calls Voxy's `voxy$createRenderer` so the guard marks it pending.
+3. `VoxySmoke` V5 asserts the pack is still active at the end (Voxy's silent switch-off is the
+   failure mode, so a run that "passes" with the pack off must fail).
+
+**Evidence (dev, 2026-10-09, Iris 1.11.2 + ComplementaryReimagined r5.8.1, `-PirisRuntime=true`):**
+run 3 **ALL LEGS PASS**, pack active at start and end, 0 × "Pipeline data already bound" /
+"Failed to create iris render pipeline" / "Shaders are disabled", every one of the 10 render
+systems created on `IrisVoxyRenderPipeline` (nether "inside its first portal pass" ×3: first
+view, after the RD change, after allChanged; main re-created after the RD change, both
+crossings, allChanged; both systems kept across the crossings). A/B against the lever-OFF run
+(same pack): differing pixels inside the windows 46 % (same-dim) / 26 % (nether) of the window
+area; OUTSIDE the windows 0.018 % / 0.035 % / 0.057 % (63–206 px: horizon-edge pixels of the
+main LOD plane and HUD) — no leak. Zoom of the nether window: ON shows the dest's LOD roof plane
+and fog layering, OFF is near-black beyond the few loaded chunks. The earlier "main LOD horizon
+band in the window's sky" (run B note in §5) did not appear in these shots. GL HIGH errors: the
+6 pre-existing Iris `copyPreHandDepth` "Invalid format" lines only.
+
 ## 4. Verification
 
 - `VoxySmoke` (fabric client gametest, `-Dseamlessportals.gametest.only=voxy`, run config
   `voxyGametest`): legs V0–V4 assert from the client's own state that exactly one render system
   exists (on `mc.levelRenderer`) before portals, while a same-dim and a cross-dim view render,
   after walking into the nether and back (promote/demote), and after `allChanged`; the walks
-  assert arrival. Screenshots `voxy-1…7` are the visual pre-screen (LODs in the main world after
-  the RD shrink, none in the windows, no leak outside the aperture).
+  assert arrival; V5 asserts the shaderpack (if any) is still on. Screenshots `voxy-1…7` are the
+  visual pre-screen (LODs in the main world after the RD shrink, in the windows with the feature
+  on, no leak outside the aperture).
   `.\gradlew.bat :fabric:runVoxyGametest -PvoxyRuntime=true -PtestClient=true`
+  (+ `-PirisRuntime=true` for the shaders-on leg — `runs/gametest-voxy/config/iris.properties`
+  must say `enableShaders=true`: a failed run leaves it `false`; + `-PdisableVoxyPortalLods=true`
+  for the A/B baseline). Pixel diff: `diffimage.ps1`-style red-map plus an inside/outside count
+  over the window rectangles read off the ON screenshot.
+- Release check: `tools\release-test.ps1 -Shaders` adds Iris + a pack (default BSL) to the real
+  Fabric client and checks every LOD system is on the Iris pipeline, no pipeline failure, and
+  the pack was never switched off; `-Work <folder> -Port <n>` for a run beside a live server.
 - Log classification after the run (`runs/gametest-voxy/logs/latest.log`): `Voxy is present`,
   `Voxy compat installed`, `Creating Voxy render system` count (1 at login + 1 per crossing + 1
   per reload), `LOD render system moved to the promoted`, and NONE of `Cannot have multiple
@@ -255,3 +313,36 @@ not trigger the lazy creation; only `mc.levelRenderer` creates.
   build wiring kept) the suite fails at the SAME gate with the same message (cell -309,-59,-319).
   The run dir's last green suite log is dated 2026-08-02; nothing in this engagement touches
   the seam registry. Left for its own session (chip spawned).
+- 2026-10-09 **tier 3 (shaders ON)**, user report "lods in destination when shader off but not
+  when shader on". Run 1 (stencil pieces gated off, shaders no longer excluded): Voxy "Failed to
+  create iris render pipeline … Pipeline data already bound" at the nether system's creation in
+  its first cull hook, then "Shaders are disabled" — Voxy wrote `enableShaders=false`. Cause:
+  the dest system was created before Iris prepared the dest pipeline, against the main's data.
+  Fix: `canCreateNow` (own pipeline == current). Run 2: the nether system created cleanly
+  "inside its first portal pass", then the SAME failure at V2's render-distance change — the
+  main system re-created between frames while the nether pipeline was still current. Fix: the
+  guard defers every creation that may not run now, not only secondary-context ones. Run 3:
+  **ALL LEGS PASS**, pack on at start and end (new V5 assertion), 10/10 systems on
+  `IrisVoxyRenderPipeline`, 0 failures. Lever-OFF baseline run under the same pack: 13 legs
+  OK, then the client was stopped from outside the test 2 s after the second crossing (a clean
+  `Stopping!`, no test-thread line, no failure, gradle successful — most likely the window was
+  closed by hand; the RD 3 window screenshots it exists for were already taken). Pixel diff ON
+  vs OFF as in §3.1: inside the windows 26–46 %, outside 0.02–0.06 %. The first failed run's
+  JVM hung at exit after Voxy's "Not all worlds shutdown, force closing worlds" and was ended
+  by PID (positively identified: this project's gametest client).
+- 2026-10-09 **RELEASE CHECK of the tier-3 jars** (`tools\release-test.ps1 -Shaders -Work
+  build\release-test-t3 -Port 25573`; jars built 05:25, SHA-256 fabric 56f766c2…, neoforge
+  45fb8e39…): **Fabric PASSED / PASSED, NeoForge 26.2.0.88 PASSED / PASSED.** The real Fabric
+  client ran the released Sodium + Voxy + **Iris 1.11.2 with BSL v10.1.3 ON** (new `-Shaders`
+  switch: Iris jar from the Gradle cache / Modrinth, the pack copied in, `iris.properties`
+  seeded): joined the real server, portal view rendered the nether under BSL (`mp-1`/`sp-1`:
+  netherrack floor + BSL's nether fog in the window), walked into the nether and back (2
+  cutovers), singleplayer the same; **4 of 4 LOD systems on `IrisVoxyRenderPipeline`, 0
+  "Pipeline data already bound" / "Failed to create iris render pipeline" / "Shaders are
+  disabled", 3 Iris pipelines created (overworld, nether, + one reload)** in both legs; no
+  broken-jar line. First pass of the Fabric legs was reported FAILED by the script's own
+  `refmap` problem pattern matching Iris's "Reference map 'iris.refmap.json' … could not be
+  read" warnings (the released Iris names refmaps it does not ship; 26.2 is unobfuscated, so
+  harmless — the same class as the NeoForge 26.2 note in the release-check reference); those
+  lines are now noise in the script, and the re-run (same jars, `-SkipBuild`) PASSED / PASSED.
+  NeoForge (no Voxy, no Iris) unchanged. Windows minimized and never in front throughout.

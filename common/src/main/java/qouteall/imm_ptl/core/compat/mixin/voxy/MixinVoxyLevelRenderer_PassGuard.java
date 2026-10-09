@@ -31,16 +31,22 @@ import qouteall.imm_ptl.core.compat.voxy_compatibility.VoxyInterface;
  *       own system — the ingest lands in the right LOD store), and every renderer answers
  *       {@code null} otherwise (tier 1). Outside a pass, the non-render secondary contexts hide.
  *       A visible call also performs a PENDING creation (below).</li>
- *   <li>{@code voxy$createRenderer()} — in a secondary context the creation is NOT run but
- *       marked pending on that renderer, and performed at its first visible
- *       {@code voxy$getRenderSystem} call: for a secondary renderer that is its first portal
- *       pass (where {@code mc.level} IS that dimension, which Voxy's constructor reads for the Y
- *       bounds, and where the pass's own cull hooks are the first callers — before any draw);
- *       for the main renderer it is the next main-pass hook (Iris's dest-dimension pipeline
- *       creation reloads the main extractor from inside the dest bracket — observed 2026-10-09).
- *       Creation sites in a secondary context: {@code createSecondaryClientWorld}'s setLevel →
- *       allChanged, the reload cascade's {@code withSwitchedWorld} allChanged, that Iris reload.
- *       The facade's own creation ({@link VoxyInterface#creatingNow}) passes through.</li>
+ *   <li>{@code voxy$createRenderer()} — in a secondary context, or while the renderer may not
+ *       create under the shaderpack ({@link VoxyInterface.Invoker#canCreateNow}: Iris's current
+ *       pipeline is not the renderer's own), the creation is NOT run but marked pending on that
+ *       renderer, and performed at its first visible {@code voxy$getRenderSystem} call that may:
+ *       for a secondary renderer that is its first portal pass (where {@code mc.level} IS that
+ *       dimension, which Voxy's constructor reads for the Y bounds, where Iris has just prepared
+ *       the dest pipeline, and where the pass's own cull hooks are the first callers — before any
+ *       draw); for the main renderer it is the next main-pass hook. Two main-renderer cases
+ *       (both observed 2026-10-09): Iris's dest-dimension pipeline creation reloads the main
+ *       extractor from inside the dest bracket; and a between-frames reload (a render-distance
+ *       change) runs while Iris still holds the LAST portal pass's dest pipeline as current —
+ *       creating there bound the main system to the dest pipeline's data ("Pipeline data already
+ *       bound"), upon which Voxy switched the shaders off. Creation sites in a secondary
+ *       context: {@code createSecondaryClientWorld}'s setLevel → allChanged, the reload cascade's
+ *       {@code withSwitchedWorld} allChanged, that Iris reload. The facade's own creation
+ *       ({@link VoxyInterface#creatingNow}) passes through.</li>
  * </ul>
  *
  * <p>Both bodies are a few static reads — zero cost off the portal path. Woven only flag-ON +
@@ -62,7 +68,8 @@ public abstract class MixinVoxyLevelRenderer_PassGuard {
             return;
         }
         if (this.ip_voxyPendingCreate && !VoxyInterface.creatingNow
-            && self == net.minecraft.client.Minecraft.getInstance().levelRenderer) {
+            && self == net.minecraft.client.Minecraft.getInstance().levelRenderer
+            && VoxyInterface.invoker.canCreateNow(self)) {
             // Only the renderer currently driving the frame creates (the main one between passes,
             // a dest one inside its own pass): Voxy's hooks all go through mc.levelRenderer, and
             // a probe of some other renderer (the smoke test's census) must not create anything.
@@ -75,13 +82,18 @@ public abstract class MixinVoxyLevelRenderer_PassGuard {
     }
 
     @Inject(method = "voxy$createRenderer", at = @At("HEAD"), cancellable = true, remap = false)
-    private void ip_voxyDeferCreationInSecondaryContext(CallbackInfo ci) {
-        if (VoxyInterface.creatingNow || !VoxyInterface.isSecondaryContext()) {
+    private void ip_voxyDeferCreation(CallbackInfo ci) {
+        LevelRenderer self = (LevelRenderer) (Object) this;
+        if (VoxyInterface.creatingNow
+            || (!VoxyInterface.isSecondaryContext() && VoxyInterface.invoker.canCreateNow(self))) {
             // A creation that goes through (login, respawn, F3+A, the facade's own) supersedes
             // any pending deferral — a second creation on a live system would throw in Voxy.
             this.ip_voxyPendingCreate = false;
             return;
         }
+        // Voxy's own allChanged hook has already shut the old system down (HEAD of allChanged:
+        // shutdown, then this), so nothing stale survives the deferral — the renderer simply has
+        // no system until its next own pass.
         this.ip_voxyPendingCreate = true;
         ci.cancel();
     }

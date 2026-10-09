@@ -92,6 +92,12 @@ public final class VoxySmoke implements FabricClientGameTest {
 
             context.waitTicks(100);
             assertMainHasRenderSystem(context, "V0 world open, no portals yet");
+            // Shaders-on leg: Voxy switches the shaderpack OFF when it fails to build its Iris
+            // pipeline (seen 2026-10-09: a dest system created against the wrong pipeline).
+            // The pack must still be on at the end.
+            final boolean shadersAtStart = context.computeOnClient(mc ->
+                qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.invoker.isShaders());
+            SeamlessPortalsConstants.LOGGER.info(LOG + "shaderpack active at start: {}", shadersAtStart);
 
             BlockPos feet = context.computeOnClient(mc -> mc.player.blockPosition());
             int px = feet.getX(), py = feet.getY(), pz = feet.getZ();
@@ -191,6 +197,14 @@ public final class VoxySmoke implements FabricClientGameTest {
             assertMainHasRenderSystem(context, "V4 after allChanged");
             assertSecondaryRenderSystem(context, Level.NETHER, portalLods, "V4 nether renderer after reload");
             logVoxyDebug(context, "V4");
+
+            boolean shadersAtEnd = context.computeOnClient(mc ->
+                qouteall.imm_ptl.core.compat.iris_compatibility.IrisInterface.invoker.isShaders());
+            SeamlessPortalsConstants.LOGGER.info(LOG + "V5 shaderpack active at end: {} (start: {})", shadersAtEnd, shadersAtStart);
+            if (shadersAtStart && !shadersAtEnd) {
+                throw new AssertionError(LOG + "V5 FAILED: the shaderpack was switched off during the run "
+                    + "(Voxy disables shaders when its Iris pipeline fails to build)");
+            }
 
             SeamlessPortalsConstants.LOGGER.info(LOG + "ALL LEGS PASS");
         }

@@ -274,6 +274,19 @@ final class RemoteControl implements Runnable {
                     System.err.println("[testclient] /" + command + " failed: " + t);
                 }
             });
+        } else if (line.startsWith("option renderDistance ")) {
+            // option renderDistance <chunks>: sets the vanilla render distance option on the render thread (the slider).
+            int chunks = Integer.parseInt(line.substring("option renderDistance ".length()).trim());
+            execute.invoke(minecraft, (Runnable) () -> {
+                try {
+                    Object options = minecraftClass.getField("options").get(minecraft);
+                    Object instance = options.getClass().getMethod("renderDistance").invoke(options);
+                    instance.getClass().getMethod("set", Object.class).invoke(instance, chunks);
+                    System.out.println("[testclient] render distance set to " + chunks);
+                } catch (Throwable t) {
+                    System.err.println("[testclient] option renderDistance failed: " + t);
+                }
+            });
         } else if (line.equals("state")) {
             // state: one line with the player's dimension and position, for a script to read from the log.
             execute.invoke(minecraft, (Runnable) () -> {

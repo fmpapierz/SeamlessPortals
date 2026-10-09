@@ -71,7 +71,8 @@ public class IPConfig implements ConfigData {
      * Voxy compat tier 2 (2026-10-09, {@code migration/VOXY_COMPAT.md}): far terrain (Voxy's LODs)
      * inside portal windows. Costs one Voxy render system per dimension looked at through a
      * portal. Off: LODs only in the player's own world, windows end at the chunk render distance
-     * (the tier-1 posture). Ignored while a shaderpack is active (never LODs in windows there).
+     * (the tier-1 posture). Shaders off and on alike (under a shaderpack the dest draws through
+     * its own Iris pipeline and the stamp copy bounds it; shaders off, the stencil does).
      * Read every pass by {@code VoxyInterface.isPortalLodsEnabled()}; the
      * {@code -Dseamlessportals.disableVoxyPortalLods=true} JVM lever forces it off for A/B runs.
      */
