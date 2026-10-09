@@ -75,6 +75,22 @@ public final class RenderCompatGating {
             // live. OnSodiumPresent classloads only here.
             SodiumInterface.invoker = new SodiumInterface.OnSodiumPresent();
 
+            // ===== VOXY (2026-10-09, migration/VOXY_COMPAT.md) =================================
+            // Voxy requires sodium, so it only ever matters inside this branch. The pass-guard
+            // mixin is woven by presence alone; this install wires the promote/demote hook
+            // (OnVoxyPresent classloads only here). Tier 1: LODs in the main world, none in
+            // portal views.
+            boolean isVoxyPresent = Platform.get().isModLoaded("voxy");
+            SeamlessPortalsConstants.LOGGER.info("Voxy is {}present", isVoxyPresent ? "" : "not ");
+            if (isVoxyPresent) {
+                qouteall.imm_ptl.core.compat.voxy_compatibility.VoxyInterface.invoker =
+                    new qouteall.imm_ptl.core.compat.voxy_compatibility.VoxyInterface.OnVoxyPresent();
+                SeamlessPortalsConstants.LOGGER.info(
+                    "Seamless Portals: Voxy compat installed — LODs render in the main world only; "
+                        + "portal views show no LODs (the LOD system follows the player across "
+                        + "dimensions at each crossing).");
+            }
+
             // One-shot HONEST experimental notice (GOLD — a notice, not a failure).
             final boolean irisInstalled = irisActive;
             IPGlobal.CLIENT_TASK_LIST.addTask(MyTaskList.oneShotTask(() -> {

@@ -113,6 +113,10 @@ dependencies {
     // convention as fabric-api/modmenu. Retired with the rest of the compat holding at S20/C2.
     compileOnly "maven.modrinth:sodium:${project.sodium_version}"
     compileOnly "maven.modrinth:iris:${project.iris_version}"
+    // Voxy compat (2026-10-09): the real Voxy jar on the compile classpath for the facade
+    // (VoxyInterface.OnVoxyPresent) + the pass-guard mixin. compileOnly like sodium/iris —
+    // never shipped; the fabric runs add it with -PvoxyRuntime=true. migration/VOXY_COMPAT.md.
+    compileOnly "maven.modrinth:voxy:${project.voxy_version}"
 
     // S19-E: real Cloth Config 26.2.155 on :common:compileJava's compile classpath,
     // replacing the retired F21 me.shedaniel.autoconfig no-op (the 8 in-tree

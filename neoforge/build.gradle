@@ -152,6 +152,10 @@ dependencies {
     // these jars must NEVER enter the NeoForge runtime.
     compileOnly "maven.modrinth:sodium:${project.sodium_version}"
     compileOnly "maven.modrinth:iris:${project.iris_version}"
+    // Voxy compat (2026-10-09): compile-only so :common's VoxyInterface / pass-guard mixin
+    // compile here too. Voxy is Fabric-only; on NeoForge the facade stays the no-op base invoker
+    // and the mixin is never woven (IPCompatMixinPlugin gate 2 + the "Voxy" presence arm).
+    compileOnly "maven.modrinth:voxy:${project.voxy_version}"
 
     // NF-PARITY W15: real Cloth Config, NEOFORGE build — and IMPLEMENTATION + jarJar, not
     // compileOnly: IPConfig implements ConfigData, which resolves at class-definition time →

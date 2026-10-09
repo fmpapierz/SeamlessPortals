@@ -87,6 +87,9 @@ dependencies {
     // compileOnly, never modCompileOnly.
     compileOnly "maven.modrinth:sodium:${project.sodium_version}"
     compileOnly "maven.modrinth:iris:${project.iris_version}"
+    // Voxy compat (2026-10-09): same convention — compileOnly here (the loader recompiles
+    // :common's VoxyInterface + pass-guard mixin), runtime only with -PvoxyRuntime=true below.
+    compileOnly "maven.modrinth:voxy:${project.voxy_version}"
 
     // S19-E OPT-IN runtime scoping. By default sodium/iris are compile-only and never load;
     // pass a property to add them to the runtime for a live compat test:
@@ -104,6 +107,44 @@ dependencies {
         runtimeOnly "maven.modrinth:sodium:${project.sodium_version}"
         runtimeOnly "maven.modrinth:iris:${project.iris_version}"
     }
+    // Voxy compat (2026-10-09): Voxy requires sodium at runtime (=0.9.1), so this adds both.
+    // Combine with -PirisRuntime=true for the shaders-ON leg —
+    //   .\gradlew.bat :fabric:runClientSodium -PvoxyRuntime=true
+    //   .\gradlew.bat :fabric:runVoxyGametest -PvoxyRuntime=true -PtestClient=true
+    if (project.hasProperty('voxyRuntime')) {
+        runtimeOnly "maven.modrinth:sodium:${project.sodium_version}"
+        runtimeOnly "maven.modrinth:voxy:${project.voxy_version}"
+    }
+}
+
+// ===== UNATTENDED TEST CLIENTS (user rule 2026-10-04: every automated client runs minimized) ======
+// -PtestClient=true attaches the Java agent in tools/testclient (copied from TACZ 26.2, verified on
+// 26.2 production clients of all 4 loaders 2026-10-08 + the Alex's Caves 26.2 dev client 2026-10-09):
+// it patches LWJGL's GLFW so the game window opens MINIMIZED and never takes the focus, and its
+// RemoteControl answers the narrator onboarding ("Continue", never Enter) and any "Experimental"
+// world-settings screen. Never part of the mod: the agent only exists on the command line of a run.
+// Rebuild the jar after editing the sources:
+//   javac --release 25 -d tools/testclient/build/classes tools/testclient/src/testclient/*.java
+//   jar --create --file tools/testclient/build/testclient-agent.jar --manifest tools/testclient/build/MANIFEST.MF -C tools/testclient/build/classes .
+ext.testClientJvmArgs = {
+    if (project.findProperty('testClient') != 'true') return []
+    def agent = rootProject.file('tools/testclient/build/testclient-agent.jar')
+    if (!agent.isFile()) throw new GradleException("-PtestClient: missing ${agent} (build it, see fabric/build.gradle)")
+    return ["-javaagent:${agent.absolutePath}".toString()]
+}
+// The run folder presets the same rule asks for (no pause on focus loss, no narrator prompt,
+// no multiplayer warning). Written before every launch of the runs that opt in below.
+ext.seedUnattendedOptions = { File runDir ->
+    runDir.mkdirs()
+    def options = new File(runDir, 'options.txt')
+    def lines = options.isFile() ? options.readLines() : []
+    def wanted = ['pauseOnLostFocus:false', 'onboardAccessibility:false', 'narrator:0', 'skipMultiplayerWarning:true']
+    wanted.each { w ->
+        def key = w.substring(0, w.indexOf(':') + 1)
+        lines.removeAll { it.startsWith(key) }
+        lines.add(w)
+    }
+    options.text = lines.join('\n') + '\n'
 }
 
 // ===== C2 JIT PROTECTION =====================================================================
@@ -478,6 +519,8 @@ loom {
             // at the top of this file. Default: one dontinline on the leaf. Levers:
             // -Pc2LegacyExcludes (the historical six), -Pc2NoProtection (reproduce), -Pc2Inlining.
             c2JitArgs().each { vmArg(it) }
+            // Unattended test client (-PtestClient=true): minimized, unfocused, prompts answered.
+            testClientJvmArgs().each { vmArg(it) }
             // C2-0 compat probes (migration/C2_DESIGN.md §4): opt in to arm the lever-gated,
             // log-only Sodium diagnostics — .\gradlew.bat :fabric:runClientSodium -PsodiumRuntime=true -PcompatProbe=true
             if (project.findProperty('compatProbe') == 'true') { vmArg('-Dseamlessportals.compatProbe=true') }
@@ -956,6 +999,27 @@ loom {
             c2JitArgs().each { vmArg(it) }
             vmArg('-XX:-OmitStackTraceInFastThrow')
         }
+        // VOXY SMOKE (2026-10-09, migration/VOXY_COMPAT.md §4): VoxySmoke drives a real client
+        // with Sodium + Voxy loaded — portal views (same-dim + cross-dim) with the LOD renderer
+        // live, a cross-dim crossing by walking (the promote hook), a resource reload, and the
+        // log-classifiable assertions (exactly one LOD render system, on the main renderer; no
+        // Voxy error; no "Cannot have multiple renderers"). Screenshots land in
+        // runs/gametest-voxy/screenshots. Needs the runtime mods on the classpath:
+        //   .\gradlew.bat :fabric:runVoxyGametest -PvoxyRuntime=true -PtestClient=true
+        //   .\gradlew.bat :fabric:runVoxyGametest -PvoxyRuntime=true -PirisRuntime=true -PtestClient=true   (shaders-ON leg; stage a pack first)
+        voxyGametest {
+            client()
+            setConfigName('Voxy Smoke')
+            runDir('runs/gametest-voxy')
+            property('fabric.client.gametest', 'true')
+            property('fabric.client.gametest.modid', project.mod_id)
+            property('seamlessportals.gametest.only', 'voxy')
+            programArgs('--username', 'VoxySmoke')
+            c2JitArgs().each { vmArg(it) }
+            testClientJvmArgs().each { vmArg(it) }
+            vmArg('-XX:-OmitStackTraceInFastThrow')
+            if (project.findProperty('gametestScreenshots') == 'true') { vmArg('-Dseamlessportals.gametest.screenshots=true') }
+        }
         crossingGametest {
             client()
             setConfigName('Entity Crossing Smoke')
@@ -1425,6 +1489,24 @@ tasks.matching { it.name == 'runDedicatedServerGametest' }.configureEach {
         // The in-process DedicatedServer runs with the run dir as its cwd and refuses to start
         // on an unaccepted EULA (the client-gametest framework writes server.properties only).
         new File(file('runs/gametest-dedicated'), 'eula.txt').text = 'eula=true\n'
+    }
+}
+
+// Voxy smoke run dir: the same flag-ON + no-splash seed, plus the unattended-client presets.
+tasks.matching { it.name == 'runVoxyGametest' }.configureEach {
+    doFirst {
+        def runDir = file('runs/gametest-voxy')
+        def cfgDir = new File(runDir, 'config')
+        cfgDir.mkdirs()
+        new File(cfgDir, 'seamlessportals.properties').text = 'entityPortals=true\n'
+        new File(cfgDir, 'immersive_portals.json').text = '{\n  "initialScreenShown": true\n}\n'
+        seedUnattendedOptions(runDir)
+    }
+}
+// The plain Sodium client run gets the unattended presets too when it is a test launch.
+tasks.matching { it.name == 'runClientSodium' }.configureEach {
+    doFirst {
+        if (project.findProperty('testClient') == 'true') seedUnattendedOptions(file('runs/client-sodium'))
     }
 }
 

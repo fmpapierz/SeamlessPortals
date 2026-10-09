@@ -20,7 +20,8 @@
     "fabric-client-gametest": [
       "com.warwa.seamlessportals.fabric.gametest.TitleCardCapture",
       "com.warwa.seamlessportals.fabric.gametest.CrossingSmoke",
-      "com.warwa.seamlessportals.fabric.gametest.DedicatedServerSmoke"
+      "com.warwa.seamlessportals.fabric.gametest.DedicatedServerSmoke",
+      "com.warwa.seamlessportals.fabric.gametest.VoxySmoke"
     ],
     "modmenu": [
       "com.warwa.seamlessportals.fabric.ModMenuIntegration"

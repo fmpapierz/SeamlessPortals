@@ -169,6 +169,23 @@ public class ImmPtlClientChunkMap extends ClientChunkCache {
         });
     }
 
+    /**
+     * Voxy compat (2026-10-09, migration/VOXY_COMPAT.md §3.3). Voxy's
+     * {@code MixinClientChunkCache} merges {@code ICheekyClientChunkCache.voxy$cheekyGetChunk(int,int)}
+     * into {@code ClientChunkCache}, reading the chunk straight out of vanilla's
+     * {@code storage} array — which this map never fills ({@code super(clientWorld, 1)}; every
+     * chunk lives in {@link #chunkMapForMainThread}). Voxy's chunk-UNLOAD ingest (the path that
+     * records a chunk's final state into the LOD store; {@code RenderSectionManager.onChunkRemoved}
+     * / {@code ClientChunkCache.drop} HEAD under Bobby) goes through that method, so without this
+     * override it silently returned {@code null} for EVERY level flag-ON and player edits never
+     * reached the LODs. A same-name, same-descriptor method on the subclass overrides the merged
+     * one at runtime; with Voxy absent it is an unused method that references no Voxy type.
+     */
+    @SuppressWarnings("unused")
+    public @Nullable LevelChunk voxy$cheekyGetChunk(int x, int z) {
+        return getChunk(x, z, ChunkStatus.FULL, false);
+    }
+
     public boolean isChunkLoaded(int x, int z) {
         return readChunkMap(chunkMap -> {
             return chunkMap.containsKey(ChunkPos.pack(x, z)); // 26.2 #42

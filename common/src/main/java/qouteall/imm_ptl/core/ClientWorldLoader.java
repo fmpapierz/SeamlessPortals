@@ -1175,6 +1175,13 @@ public class ClientWorldLoader {
         // S14.45: arm the teleport-flash/stutter capture (batched ring dump ~40 frames later).
         qouteall.imm_ptl.core.render.TeleportFlashProbe.armOnPromote(
             fromDim.identifier().getPath(), toDim.identifier().getPath(), coldPromote);
+        // Voxy compat (2026-10-09, migration/VOXY_COMPAT.md): the LOD render system lives on
+        // exactly the main renderer, and this promote skips allChanged (mesh-preserving), so the
+        // facade moves it here — demoted shut down first, then created on the promoted renderer.
+        // CLIENT.level is already toWorld at this point (ClientTeleportationManager sets it
+        // before calling in), which Voxy's render-system constructor reads for the Y bounds.
+        qouteall.imm_ptl.core.compat.voxy_compatibility.VoxyInterface.invoker
+            .onPlayerDimensionChangePromoted(promotedRenderer, toWorld, demotedRenderer);
         qouteall.imm_ptl.core.render.TeleportFlashProbe.promoteNanosThisFrame +=
             System.nanoTime() - promoteT0;
     }

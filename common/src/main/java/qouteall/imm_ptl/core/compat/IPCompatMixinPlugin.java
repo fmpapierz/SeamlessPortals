@@ -115,6 +115,12 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         else if (mixinClassName.contains("Sodium")) {
             gate1 = isSodiumPresent();
         }
+        else if (mixinClassName.contains("Voxy")) {
+            // Voxy compat (2026-10-09, migration/VOXY_COMPAT.md): the pass-guard mixin targets
+            // methods Voxy's own mixin merges into LevelRenderer, so it must never weave without
+            // Voxy (require=1 would fail the boot). Voxy requires sodium at runtime itself.
+            gate1 = isVoxyPresent();
+        }
         else if (mixinClassName.contains("Cloth")) {
             // Cloth Config (2026-08-30, tooltip hover-scope mixin). A hard flag-ON dependency in
             // practice, but keep the presence gate honest — a cloth-absent boot must not weave.
@@ -171,6 +177,18 @@ public class IPCompatMixinPlugin implements IMixinConfigPlugin {
         }
         boolean detected = detectMod("iris");
         irisPresent = detected;
+        return detected;
+    }
+
+    private static volatile Boolean voxyPresent = null;
+
+    private static boolean isVoxyPresent() {
+        Boolean cached = voxyPresent;
+        if (cached != null) {
+            return cached;
+        }
+        boolean detected = detectMod("voxy");
+        voxyPresent = detected;
         return detected;
     }
 

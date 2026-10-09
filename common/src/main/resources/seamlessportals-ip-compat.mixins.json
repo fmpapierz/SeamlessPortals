@@ -33,6 +33,7 @@
     "iris.MixinIrisCompositeRenderer_Census",
     "iris.MixinIrisCompositeRenderer_CensusPostWrite",
     "iris.MixinIrisProgram_Census",
+    "voxy.MixinVoxyLevelRenderer_PassGuard",
     "cloth.MixinClothTooltipListEntry_LabelHover"
   ],
   "injectors": {

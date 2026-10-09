@@ -19,7 +19,11 @@ def collectJars = tasks.register('collectJars', Sync) {
     group = 'build'
     description = "Mirrors every loader module's built jars into the root build/libs"
     loaderModules.each { sp ->
-        from(sp.layout.buildDirectory.dir('libs')) { include '*.jar' }
+        from(sp.layout.buildDirectory.dir('libs')) {
+            include '*.jar'
+            // Release jars only (user rule 2026-10-04): the extra jar kinds stay in the module folders.
+            exclude '*-sources.jar', '*-javadoc.jar', '*-dev.jar', '*-dev-shadow.jar', '*-thin.jar', '*-slim.jar', '*-api.jar'
+        }
         // Ordering only (never a dependency): running :fabric:build must not drag :neoforge:build
         // along, yet whichever jar tasks ARE in this build must finish before the copy.
         mustRunAfter sp.tasks.withType(Jar)
